@@ -1,0 +1,160 @@
+import type {
+  ParagraphFormat,
+  ParagraphScenario,
+  DatabaseResultItem,
+  Annotation,
+} from "./types";
+import {
+  PARAGRAPH_FORMATS,
+  PARAGRAPH_SCENARIOS,
+} from "./constants";
+
+export function formatLabel(format: ParagraphFormat): string {
+  return PARAGRAPH_FORMATS.find((f) => f.id === format)?.label ?? format;
+}
+export function scenarioLabel(scenario: ParagraphScenario): string {
+  return PARAGRAPH_SCENARIOS.find((s) => s.id === scenario)?.label ?? scenario;
+}
+
+/* Build a numbered citation list string from result items / references. */
+export function buildCitationContext(
+  items: { title: string; authors?: string; journal?: string; year?: string; url?: string; externalId?: string; source?: string }[],
+  prefix = "REFERENCES"
+): string {
+  if (!items.length) return "";
+  const lines = items.map((it, i) => {
+    const auth = it.authors || "Anonymous";
+    const yr = it.year || "n.d.";
+    const jour = it.journal ? `, *${it.journal}*` : "";
+    const url = it.url ? ` — ${it.url}` : "";
+    const ext = it.externalId ? ` [${it.source?.toUpperCase() || "ID"}:${it.externalId}]` : "";
+    return `[${i + 1}] ${auth} (${yr})${jour}. ${it.title}.${ext}${url}`;
+  });
+  return `${prefix}:\n${lines.join("\n")}`;
+}
+
+/* Extract inline citation markers like [1], [2], [PMID:123], etc. */
+export function extractCitationMarkers(text: string): string[] {
+  const set = new Set<string>();
+  const re = /\[(\d+(?:[,-]\s?\d+)*|[A-Z]+:\s?[^\]]+)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    set.add(m[1].trim());
+  }
+  return [...set];
+}
+
+/* The main writing system prompt. */
+export function writingSystemPrompt(opts: {
+  format: ParagraphFormat;
+  scenario: ParagraphScenario;
+  field?: string;
+  language?: string;
+}): string {
+  const lang = opts.language || "English";
+  const fLabel = formatLabel(opts.format);
+  const sLabel = scenarioLabel(opts.scenario);
+  return `You are a senior scientific research writer and domain expert (${opts.field || "life sciences"}).
+Your task is to compose a single, publication-quality ${fLabel} paragraph in the scenario of "${sLabel}".
+
+STRICT REQUIREMENTS:
+1. Write in ${lang}, using formal, precise academic prose (third person, past tense for results/methods).
+2. Length: 180–320 words. One cohesive paragraph (no headings, no markdown headers).
+3. Every factual claim MUST be supported by an inline citation in the form [n], where n is the
+   1-based index into the provided REFERENCE LIST. If a fact comes from a structural / sequence
+   database record, cite it as [SOURCE:ID] (e.g. [PDB:1A3N], [UniProt:P04637], [PMID:12345678]).
+4. Do NOT invent references. Only cite from the provided material. If material is insufficient,
+   state the limitation plainly and avoid fabricating a citation.
+5. Use domain-correct terminology; explain jargon only if the scenario is "clinical".
+6. End with a single transition sentence that motivates the next paragraph where appropriate.
+7. Output ONLY the paragraph text (optionally followed by a blank line and "### Citations" with the
+   numbered list you actually used). No preamble, no commentary.`;
+}
+
+export function buildWritePrompt(opts: {
+  topic: string;
+  focus?: string;
+  format: ParagraphFormat;
+  scenario: ParagraphScenario;
+  referencesContext: string;
+  searchContext: string;
+}): string {
+  const parts: string[] = [];
+  parts.push(`RESEARCH TOPIC:\n${opts.topic}`);
+  if (opts.focus) parts.push(`FOCUS / ANGLE:\n${opts.focus}`);
+  if (opts.referencesContext) parts.push(opts.referencesContext);
+  if (opts.searchContext) parts.push(`WEB-RETRIEVED CONTEXT (use critically, cite by [n]):\n${opts.searchContext}`);
+  parts.push(
+    `\nNow compose the ${formatLabel(opts.format)} paragraph for the "${scenarioLabel(opts.scenario)}" scenario, following the system rules strictly.`
+  );
+  return parts.join("\n\n");
+}
+
+export function buildRevisePrompt(opts: {
+  content: string;
+  annotations: Annotation[];
+  instructions?: string;
+  mode: "annotations" | "instructions" | "polish";
+}): string {
+  const lines: string[] = [];
+  lines.push("CURRENT PARAGRAPH:\n" + opts.content);
+  if (opts.mode === "annotations" && opts.annotations.length) {
+    lines.push("REVIEWER ANNOTATIONS (address every one):");
+    opts.annotations.forEach((a, i) => {
+      const sel = a.selectedText ? ` on "${a.selectedText.slice(0, 80)}"` : "";
+      lines.push(
+        `- [${i + 1}] (${a.severity}${a.type !== "comment" ? "/" + a.type : ""})${sel}: ${a.comment}`
+      );
+    });
+  } else if (opts.mode === "instructions" && opts.instructions) {
+    lines.push("REVISION INSTRUCTIONS:\n" + opts.instructions);
+  } else {
+    lines.push("MODE: Polish for clarity, flow, and academic register without changing meaning.");
+  }
+  lines.push(
+    "\nReturn the REVISED paragraph only (same citation style as the original, keep [n] / [SOURCE:ID] markers). Keep it one cohesive paragraph."
+  );
+  return lines.join("\n\n");
+}
+
+export function buildComposePrompt(opts: {
+  title: string;
+  abstract?: string;
+  paragraphs: { title: string; format: string; content: string }[];
+  depth: "shallow" | "standard" | "deep";
+}): string {
+  const parts: string[] = [];
+  parts.push(`Compose a coherent, deeper research article titled "${opts.title}".`);
+  if (opts.abstract) parts.push(`Suggested abstract: ${opts.abstract}`);
+  parts.push(`Composition depth: ${opts.depth}.`);
+  parts.push("Source paragraphs (in order):");
+  opts.paragraphs.forEach((p, i) => {
+    parts.push(`\n--- Paragraph ${i + 1}: ${p.title} [${p.format}] ---\n${p.content}`);
+  });
+  parts.push(
+    `\nInstructions:
+- Produce a unified article with section headings (## Introduction, ## Background, ## Methods, ## Results, ## Discussion, ## Conclusion — only include sections that have content).
+- ${opts.depth === "deep" ? "Deepen the analysis: add synthesis, contrast, and a forward-looking discussion. Bridge paragraphs with transitions." : opts.depth === "standard" ? "Synthesize the paragraphs with smooth transitions and a brief synthesis." : "Lightly stitch the paragraphs with minimal additions."}
+- Preserve ALL inline citations [n] and [SOURCE:ID] markers exactly as they appear.
+- After the article body, output a "## References" section aggregating every cited source, deduplicated, as a numbered list.
+- Output in Markdown.`
+  );
+  return parts.join("\n\n");
+}
+
+export function summarizeDataSource(items: DatabaseResultItem[]): string {
+  return items
+    .slice(0, 8)
+    .map((it, i) => {
+      const auth = it.authors || it.source.toUpperCase();
+      const yr = it.year ? ` (${it.year})` : "";
+      const jour = it.journal ? ` ${it.journal}.` : "";
+      const ext = it.externalId ? ` [${it.source.toUpperCase()}:${it.externalId}]` : "";
+      return `[${i + 1}] ${auth}${yr}${jour} ${it.title}.${ext}`;
+    })
+    .join("\n");
+}
+
+export function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}

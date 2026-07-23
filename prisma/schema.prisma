@@ -1,0 +1,128 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id          String      @id @default(cuid())
+  title       String
+  topic       String
+  description String?
+  field       String? // research field, e.g. structural-biology, genomics
+  status      String      @default("active") // active, archived
+  paragraphs  Paragraph[]
+  articles    Article[]
+  dataSources DataSource[]
+  references  Reference[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+model Paragraph {
+  id               String              @id @default(cuid())
+  projectId        String
+  project          Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title            String
+  content          String              // markdown content with inline citations like [PMID:123]
+  format           String              @default("background") // background, intro, methods, results, discussion, conclusion, abstract
+  scenario         String              @default("literature-review") // literature-review, protein-structure, sequence-analysis, mechanism, comparative, clinical, custom
+  status           String              @default("draft") // draft, annotated, revising, revised, finalized
+  order            Int                 @default(0)
+  wordCount        Int                 @default(0)
+  annotations      Annotation[]
+  references       Reference[]
+  articleParagraph ArticleParagraph[]
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([projectId])
+}
+
+model Annotation {
+  id           String    @id @default(cuid())
+  paragraphId  String
+  paragraph    Paragraph @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+  startOffset  Int       @default(0)
+  endOffset    Int       @default(0)
+  selectedText String    @default("")
+  comment      String
+  type         String    @default("comment") // comment, revise-request, question, highlight, praise
+  severity     String    @default("info") // info, warning, critical
+  resolved     Boolean   @default(false)
+  aiResponse   String?
+  createdAt    DateTime  @default(now())
+
+  @@index([paragraphId])
+}
+
+model Reference {
+  id          String     @id @default(cuid())
+  paragraphId String?
+  paragraph   Paragraph? @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+  projectId   String?
+  project     Project?   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type        String     // pubmed, uniprot, pdb, ncbi, blast, web, manual
+  externalId  String?
+  title       String
+  authors     String?
+  journal     String?
+  year        String?
+  url         String?
+  doi         String?
+  abstract    String?
+  citationKey String?
+  createdAt   DateTime   @default(now())
+
+  @@index([paragraphId])
+  @@index([projectId])
+}
+
+model DataSource {
+  id         String   @id @default(cuid())
+  projectId  String?
+  project    Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  source     String   // rcsb, uniprot, pubmed, ncbi, blast, web
+  query      String
+  rawJson    String
+  summary    String?
+  title      String?
+  externalId String?
+  url        String?
+  pinned     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([projectId])
+}
+
+model Article {
+  id               String              @id @default(cuid())
+  projectId        String
+  project          Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title            String
+  abstract         String?
+  content          String
+  articleParagraph ArticleParagraph[]
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([projectId])
+}
+
+model ArticleParagraph {
+  id          String    @id @default(cuid())
+  articleId   String
+  article     Article   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  paragraphId String
+  paragraph   Paragraph @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+  order       Int
+  section     String?
+
+  @@index([articleId])
+}
