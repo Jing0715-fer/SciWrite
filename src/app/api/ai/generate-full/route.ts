@@ -6,7 +6,7 @@ import { writingSystemPrompt, countWords, summarizeDataSource } from "@/lib/writ
 import type { ParagraphFormat, ParagraphScenario } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 600; // 10 minutes for full generation
+export const maxDuration = 900; // 15 minutes for full generation with deep analysis
 
 interface GenerateFullBody {
   projectId: string;
@@ -58,18 +58,18 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
       (q: any) => q.database && q.query && ["pubmed", "uniprot", "rcsb", "ncbi", "blast"].includes(q.database)
     );
 
-    // Execute all queries in parallel and collect results
+    // Execute all queries in parallel and collect results (limit to 5 queries for speed)
     const queryResults = await Promise.allSettled(
-      queries.slice(0, 8).map((q: any) =>
+      queries.slice(0, 5).map((q: any) =>
         queryDatabase(q.database as any, q.query).then((r) => ({ ...r, rationale: q.query }))
       )
     );
 
-    // Collect all items as data sources + references
+    // Collect all items as data sources + references (limit to top 5 per query for speed)
     const allItems: any[] = [];
     for (const r of queryResults) {
       if (r.status === "fulfilled") {
-        for (const item of r.value.items || []) {
+        for (const item of (r.value.items || []).slice(0, 5)) {
           allItems.push({
             ...item,
             queryUsed: r.value.query,
@@ -103,35 +103,25 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
       });
       savedDataSources.push(ds);
 
-      // Save as reference (for all sources except blast — blast is sequence similarity, not a citable reference)
-      if (item.source !== "blast") {
-        // For PDB entries, try to find the associated publication
-        let refTitle = item.title;
-        let refAuthors = item.authors;
-        let refJournal = item.journal;
-        let refYear = item.year;
-        let refUrl = item.url;
-        let refDoi = item.doi;
-        let refAbstract = item.abstract;
+      // Save as reference ONLY for PubMed sources (PDB/UniProt/NCBI are data sources, not references)
+      // For PDB entries with associated publications, we save the publication info as a reference
+      // ONLY if it has a real PMID or DOI (meaning it's a citable publication, not just a structure)
+      const isPubMed = item.source === "pubmed";
+      const isRcsbWithPub = item.source === "rcsb" && item.extra?.hasPublication;
+      const isCitable = isPubMed || isRcsbWithPub;
 
-        if (item.source === "rcsb" && item.externalId) {
-          // RCSB structures are associated with publications — we store the PDB info
-          // but the reference should be to the publication. The structure metadata
-          // (resolution, method) is in `extra` and will be shown in UI but not in export.
-          refJournal = refJournal ? `${refJournal} (PDB: ${item.externalId})` : `PDB: ${item.externalId}`;
-        }
-
+      if (isCitable) {
         const ref = await db.reference.create({
           data: {
-            type: item.source,
+            type: "pubmed", // Always treat as pubmed reference type for citation purposes
             externalId: item.externalId || null,
-            title: refTitle,
-            authors: refAuthors || null,
-            journal: refJournal || null,
-            year: refYear || null,
-            url: refUrl || null,
-            doi: refDoi || null,
-            abstract: refAbstract || null,
+            title: item.title,
+            authors: item.authors || null,
+            journal: item.journal || null,
+            year: item.year || null,
+            url: item.url || null,
+            doi: item.doi || null,
+            abstract: item.abstract || null,
             projectId: body.projectId,
           },
         });
@@ -139,11 +129,49 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
       }
     }
 
-    if (savedReferences.length === 0) {
+    if (savedReferences.length === 0 && savedDataSources.length === 0) {
       return NextResponse.json({
         error: "No data sources could be gathered. Please try again or add sources manually.",
         queriesAttempted: queries.length,
       }, { status: 422 });
+    }
+
+    // ============ STEP 1.5: Analyze source relationships ============
+    // Use LLM to understand how sources relate, identify themes, contradictions
+    let relationshipContext = "";
+    let relationshipSummary = "";
+    try {
+      const sourceList = savedDataSources.map((s, i) => {
+        const parts = [`[S${i + 1}] (${s.source}) ${s.title || s.query}`];
+        if (s.authors) parts.push(`Authors: ${s.authors}`);
+        if (s.journal) parts.push(`Journal: ${s.journal}`);
+        if (s.year) parts.push(`Year: ${s.year}`);
+        if (s.abstract) parts.push(`Abstract: ${s.abstract.slice(0, 150)}`);
+        return parts.join("\n");
+      }).join("\n\n");
+
+      const relSystem =
+        "You are a scientific knowledge graph analyst. Analyze relationships between data sources " +
+        "and produce a thematic summary for deep article writing.";
+
+      const relPrompt = `RESEARCH TOPIC: ${project.topic}
+
+DATA SOURCES:
+${sourceList}
+
+Analyze how these sources relate. Respond as STRICT JSON:
+{
+  "summary": "2-3 sentence overview of source relationships",
+  "themes": [{"name": "theme", "sourceLabels": ["S1","S3"], "description": "how they connect"}],
+  "keyConnections": ["connection 1", "connection 2"],
+  "contradictions": [{"sourceLabels": ["S2","S7"], "description": "what they disagree on"}]
+}`;
+      const relRaw = await chat(relPrompt, { system: relSystem, temperature: 0.4 });
+      const relParsed = safeParseJSON(relRaw, { summary: "", themes: [], keyConnections: [], contradictions: [] });
+      relationshipSummary = relParsed.summary || "";
+      relationshipContext = `\nSOURCE RELATIONSHIP ANALYSIS (use to write deeper, more connected discussion):\n${relParsed.summary || ""}\n\nKey connections between sources:\n${(relParsed.keyConnections || []).map((k: string, i: number) => `${i + 1}. ${k}`).join("\n")}\n\nThematic clusters:\n${(relParsed.themes || []).map((t: any) => `- ${t.name}: ${t.description}`).join("\n")}\n${(relParsed.contradictions || []).length ? `\nContradictions to discuss:\n${(relParsed.contradictions || []).map((c: any) => `- ${c.sourceLabels.join(" vs ")}: ${c.description}`).join("\n")}` : ""}`;
+    } catch {
+      // Relationship analysis is optional — continue without it
     }
 
     // ============ STEP 2: Plan article sections ============
@@ -233,13 +261,16 @@ SCENARIO: ${section.scenario}
 FOCUS: ${section.focus}
 TARGET WORDS: ${section.targetWords}
 
-REFERENCE LIST (use ONLY these — do NOT fabricate any citation):
+REFERENCE LIST (use ONLY these — cite as [n] where n is the 1-based index):
 ${refContext}
 
-DATABASE RECORDS (cite as [SOURCE:ID] where applicable):
+DATABASE RECORDS (structural/sequence data — reference the associated publication, not the PDB/UniProt ID):
 ${dsContext}
+${relationshipContext}
 
-Now compose this section. Every citation MUST reference one of the sources above.
+Now compose this section. Write DEEPLY — discuss connections between sources, highlight
+agreements and contradictions, synthesize findings across studies. Every citation MUST
+reference one of the sources above (use [n] for references, NOT [SOURCE:ID] in the body text).
 If you cannot support a claim with a provided source, write [$REF] as a placeholder.`;
 
       const content = await chat(prompt, { system, temperature: 0.65 });
@@ -310,6 +341,7 @@ Instructions:
     return NextResponse.json({
       success: true,
       article,
+      relationshipSummary,
       stats: {
         sourcesGathered: savedDataSources.length,
         referencesSaved: savedReferences.length,

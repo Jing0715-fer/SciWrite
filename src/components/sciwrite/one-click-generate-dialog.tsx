@@ -53,7 +53,7 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
   const qc = useQueryClient();
   const [journalTemplate, setJournalTemplate] = React.useState("generic");
   const [language, setLanguage] = React.useState("English");
-  const [targetWords, setTargetWords] = React.useState(2000);
+  const [targetWords, setTargetWords] = React.useState(3000);
   const [result, setResult] = React.useState<any>(null);
   const [currentStep, setCurrentStep] = React.useState(-1);
 
@@ -70,7 +70,7 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
       setCurrentStep(0);
       const stepInterval = setInterval(() => {
         setCurrentStep((s) => Math.min(s + 1, STEPS.length - 1));
-      }, 8000);
+      }, 15000);
       try {
         const data = await api.aiGenerateFull({
           projectId,
@@ -154,13 +154,17 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
                   <Label className="text-xs">Target word count: {targetWords}</Label>
                   <input
                     type="range"
-                    min={1000}
-                    max={5000}
+                    min={1500}
+                    max={10000}
                     step={500}
                     value={targetWords}
                     onChange={(e) => setTargetWords(Number(e.target.value))}
                     className="w-full h-2"
                   />
+                  <div className="flex justify-between text-[9px] text-muted-foreground">
+                    <span>1,500</span>
+                    <span>10,000</span>
+                  </div>
                 </div>
 
                 <div className="rounded-lg border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/20 p-3">

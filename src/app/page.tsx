@@ -38,7 +38,8 @@ import { KnowledgePanel } from "@/components/sciwrite/knowledge-panel";
 import { ParagraphCard } from "@/components/sciwrite/paragraph-card";
 import { SortableParagraphs } from "@/components/sciwrite/sortable-paragraphs";
 import { TopicComposer } from "@/components/sciwrite/topic-composer";
-import { ArticleComposer, ArticleViewer } from "@/components/sciwrite/article-composer";
+import { ArticleComposer } from "@/components/sciwrite/article-composer";
+import { ArticleViewerWithTabs } from "@/components/sciwrite/article-viewer-tabs";
 import { DataGatheringDialog } from "@/components/sciwrite/data-gathering-dialog";
 import { ExportMenu } from "@/components/sciwrite/export-menu";
 import { InsightsDialog } from "@/components/sciwrite/insights-dialog";
@@ -294,7 +295,11 @@ export default function Home() {
         />
       )}
       {viewArticle && (
-        <ArticleViewer article={viewArticle} onClose={() => setViewArticle(null)} />
+        <ArticleViewerWithTabs
+          article={viewArticle}
+          projectId={activeProjectId!}
+          onClose={() => setViewArticle(null)}
+        />
       )}
       {activeProjectId && project && (
         <DataGatheringDialog
