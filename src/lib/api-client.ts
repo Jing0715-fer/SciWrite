@@ -187,6 +187,11 @@ export const api = {
     jfetch<{ dataSource: DataSource }>(`/api/data-sources`, { method: "POST", body: JSON.stringify(input) }),
   updateDataSource: (id: string, input: Partial<DataSource>) =>
     jfetch<{ dataSource: DataSource }>(`/api/data-sources/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
+  deepReadDataSource: (id: string) =>
+    jfetch<{ dataSource: DataSource; summary: string; contentLength: number }>(
+      `/api/data-sources/${id}/deep-read`,
+      { method: "POST" }
+    ),
   deleteDataSource: (id: string) =>
     jfetch<{ ok: boolean }>(`/api/data-sources/${id}`, { method: "DELETE" }),
 

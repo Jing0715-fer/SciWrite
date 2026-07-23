@@ -550,3 +550,58 @@ Task: QA test, add project export/import (full JSON backup & restore) feature.
 - **P2**: Persist undo snapshots across page refreshes.
 - **Styling**: More empty-state illustrations, paragraph status transition animations.
 - **P3**: Collaborative annotations / sharing.
+
+---
+
+## Phase 8 — Per-source deep read via page_reader (cron round 6)
+
+Task ID: 8
+Agent: main (webDevReview cron)
+Task: QA test, add per-source deep-read feature (fetch full page content + AI
+structured summary) to enrich data source abstracts before writing.
+
+### Project Status Assessment
+- Dev server running on port 3000, HTTP 200, 0 console errors after fresh reload.
+- All features verified: 18 citation markers, 4 paragraph cards, progress tracker
+  "599 / 1000w", backup/outline/insights buttons, ⌘K badge, drag handles.
+- App stable, no bugs found.
+
+### Work Log:
+- **NEW: Per-source deep read** (`/api/data-sources/[id]/deep-read` + UI button):
+  - **API route**: `POST /api/data-sources/{id}/deep-read`:
+    1. Fetches the data source's URL via `page_reader` (z-ai-web-dev-sdk).
+    2. Truncates page text to 8000 chars for LLM context.
+    3. AI-summarizes into a structured format: KEY FINDINGS, METHODS, RELEVANCE,
+       ABSTRACT (enriched 2-3 sentence abstract).
+    4. Saves the summary to the data source's `summary` field.
+    5. Returns the updated source + summary + content length.
+    6. Graceful error handling: if page_reader can't extract content (e.g. some
+       database pages are bot-protected), returns a clear 422 error message.
+  - **UI**: Added a Microscope icon button (sky-blue) to each data source card in
+    the KnowledgePanel SourcesList (appears when source has a URL). Shows a spinner
+    while deep-reading.
+  - **Summary display**: When a summary exists, a collapsible "Deep-read summary"
+    section appears (sky-tinted box) with the structured summary. Expand/collapse
+    via ChevronUp/ChevronDown toggle.
+  - **Verified**: API returns structured summary (or clear error for bot-protected
+    pages); UI button renders (1 deep-read button found); no console errors.
+
+### Verification Results:
+- `bun run lint` → clean (0 errors, 0 warnings).
+- 0 console errors, 0 runtime errors.
+- Deep-read button visible on source cards with URLs.
+- All previous features still working (18 markers, 4 cards, progress, backup, etc.).
+
+### Stage Summary:
+- **1 new feature added**: Per-source deep read (page_reader + AI structured summary)
+  with collapsible summary display in the Sources list.
+- Dev server stable. Lint clean. No errors.
+
+### Unresolved / Next-phase priorities:
+- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+- **P2**: Persist undo snapshots across page refreshes.
+- **P2**: Writing tips/contextual help panel.
+- **Styling**: More empty-state illustrations, paragraph status transition animations.
+- **P3**: Collaborative annotations / sharing.
+- **Note**: Some database URLs (PubMed, UniProt) may block page_reader extraction;
+  consider adding fallback to use the stored abstract/metadata instead.

@@ -13,6 +13,9 @@ import {
   Layers,
   Loader2,
   Plus,
+  Microscope,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -123,6 +126,15 @@ function SourcesList({
     },
     onError: (e: Error) => toast.error(e.message),
   });
+  const deepReadMut = useMutation({
+    mutationFn: (id: string) => api.deepReadDataSource(id),
+    onSuccess: (data) => {
+      toast.success(`Deep-read complete (${data.contentLength} chars analyzed).`);
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const [expandedSource, setExpandedSource] = React.useState<string | null>(null);
 
   return (
     <ScrollArea className="h-full scroll-academic">
@@ -151,6 +163,22 @@ function SourcesList({
                 </span>
               )}
               <div className="ml-auto flex items-center gap-0.5">
+                {d.url && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-sky-600"
+                    onClick={() => deepReadMut.mutate(d.id)}
+                    disabled={deepReadMut.isPending}
+                    title="Deep-read: fetch full page content & AI-summarize"
+                  >
+                    {deepReadMut.isPending && deepReadMut.variables === d.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Microscope className="h-3 w-3" />
+                    )}
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="icon"
@@ -189,6 +217,31 @@ function SourcesList({
               >
                 <ExternalLink className="h-2.5 w-2.5" /> {d.url.replace(/^https?:\/\//, "").slice(0, 40)}
               </a>
+            )}
+            {d.summary && (
+              <div className="mt-1.5">
+                <button
+                  onClick={() =>
+                    setExpandedSource(
+                      expandedSource === d.id ? null : d.id
+                    )
+                  }
+                  className="text-[9px] uppercase tracking-wider text-sky-600 font-semibold flex items-center gap-1 hover:text-sky-700"
+                >
+                  <Microscope className="h-2.5 w-2.5" />
+                  Deep-read summary
+                  {expandedSource === d.id ? (
+                    <ChevronUp className="h-2.5 w-2.5" />
+                  ) : (
+                    <ChevronDown className="h-2.5 w-2.5" />
+                  )}
+                </button>
+                {expandedSource === d.id && (
+                  <div className="mt-1 rounded-md bg-sky-50/50 dark:bg-sky-950/20 border border-sky-200/40 dark:border-sky-900/40 p-2 text-[10px] leading-relaxed whitespace-pre-wrap font-sans">
+                    {d.summary}
+                  </div>
+                )}
+              </div>
             )}
             {d.pinned && (
               <span className="inline-flex items-center gap-0.5 text-[8px] text-amber-600 font-medium">
