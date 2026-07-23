@@ -52,6 +52,19 @@ export const api = {
     jfetch<{ project: Project }>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteProject: (id: string) =>
     jfetch<{ ok: boolean }>(`/api/projects/${id}`, { method: "DELETE" }),
+  exportProject: (projectId: string) =>
+    fetch(`/api/projects/export?projectId=${projectId}`).then(async (res) => {
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || `Export failed (${res.status})`);
+      }
+      return res.json();
+    }),
+  importProject: (data: unknown) =>
+    jfetch<{ project: Project; stats: any }>(`/api/projects/import`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
   /* Paragraphs */
   listParagraphs: (projectId?: string) =>

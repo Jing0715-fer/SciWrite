@@ -489,3 +489,64 @@ revision comparison/diff view.
 - **P2**: Persist undo snapshots across page refreshes (currently in-memory only).
 - **Styling**: More empty-state illustrations, paragraph status transition animations.
 - **P3**: Collaborative annotations / sharing.
+
+---
+
+## Phase 7 — Project export/import backup (cron round 5)
+
+Task ID: 7
+Agent: main (webDevReview cron)
+Task: QA test, add project export/import (full JSON backup & restore) feature.
+
+### Project Status Assessment
+- Dev server was down at start of round — restarted via `.zscripts/dev.sh`.
+- After restart: HTTP 200, 0 console errors, all features verified working
+  (18 citation markers, 4 paragraph cards, progress tracker "599 / 1000w",
+  outline/insights buttons, ⌘K badge, drag handles).
+- App stable, no bugs found.
+
+### Work Log:
+- **NEW: Project Export/Import backup** (`/api/projects/export` + `/api/projects/import`
+  + `ProjectImportExport` component):
+  - **Export API** (`GET /api/projects/export?projectId=...`):
+    - Serializes the entire project: title, topic, field, status + all paragraphs
+      (with annotations + references), data sources, project-level references,
+      articles (with paragraph-order mapping).
+    - Returns a versioned JSON blob (version: 1) with Content-Disposition header
+      for download.
+  - **Import API** (`POST /api/projects/import`):
+    - Accepts the exported JSON, creates a new project titled "{original} (imported)".
+    - Recreates all paragraphs (with annotations + references), data sources,
+      project references, and articles (with ArticleParagraph links via order mapping).
+    - Returns the new project + stats (counts of imported entities).
+  - **UI**: `ProjectImportExport` dropdown component added to ProjectsSidebar header
+    (FileJson icon, "Backup" label). Contains:
+    - "Export as JSON" — downloads the .sciwrite.json file.
+    - "Import from JSON" — opens file picker, reads + parses JSON, shows a preview
+      dialog (project title, topic, entity-count badges: ¶/refs/sources/articles),
+      then "Import project" button creates the new project and auto-selects it.
+  - **Verified via API**: export returned v1 JSON with 3 paragraphs, 1 data source,
+    3 articles, 1 project reference; import created "CRISPR-Cas9 Specificity Review
+    (imported)" with matching stats.
+  - **Verified in browser**: Backup button visible in sidebar; dropdown shows
+    Export/Import menu items.
+
+### Verification Results:
+- `bun run lint` → clean (0 errors, 0 warnings).
+- 0 console errors, 0 runtime errors.
+- Export API → returns complete project JSON (v1, 3 paragraphs, 3 articles).
+- Import API → creates new project with all data restored.
+- Backup button visible in ProjectsSidebar.
+- All previous features still working.
+
+### Stage Summary:
+- **1 new feature added**: Full project export/import (JSON backup & restore)
+  with preview dialog.
+- Dev server stable on port 3000. Lint clean. No errors.
+
+### Unresolved / Next-phase priorities:
+- **P2**: Per-source "deep read" via page_reader to enrich abstracts before writing.
+- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+- **P2**: Persist undo snapshots across page refreshes.
+- **Styling**: More empty-state illustrations, paragraph status transition animations.
+- **P3**: Collaborative annotations / sharing.

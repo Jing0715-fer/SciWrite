@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { ProjectImportExport } from "./project-import-export";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -79,15 +80,23 @@ export function ProjectsSidebar({ projects, activeId, onSelect }: Props) {
           </div>
           <span className="text-xs font-semibold tracking-tight">Projects</span>
         </div>
-        <Button
-          size="sm"
-          variant="default"
-          className="h-7 px-2 gap-1"
-          onClick={() => setCreateOpen(true)}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          New
-        </Button>
+        <div className="flex items-center gap-0.5">
+          <ProjectImportExport
+            projectId={activeId}
+            variant="ghost"
+            size="icon"
+            onImported={(id) => onSelect(id)}
+          />
+          <Button
+            size="sm"
+            variant="default"
+            className="h-7 px-2 gap-1"
+            onClick={() => setCreateOpen(true)}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New
+          </Button>
+        </div>
       </div>
 
       <ScrollArea className="flex-1 min-h-0 scroll-academic">
