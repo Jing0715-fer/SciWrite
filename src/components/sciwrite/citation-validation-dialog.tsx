@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { toast } from "sonner";
 import {
   ShieldCheck,
   ShieldAlert,
@@ -10,6 +11,7 @@ import {
   AlertTriangle,
   Quote,
   BookX,
+  Wand2,
 } from "lucide-react";
 import {
   Dialog,
@@ -18,10 +20,11 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { api } from "@/lib/api-client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 
 interface Props {
   open: boolean;
@@ -36,10 +39,21 @@ export function CitationValidationDialog({
   paragraphId,
   paragraphTitle,
 }: Props) {
+  const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["validate-citations", paragraphId],
     queryFn: () => api.validateCitations(paragraphId!),
     enabled: open && !!paragraphId,
+  });
+
+  const autoFixMut = useMutation({
+    mutationFn: () => api.autoFixCitations(paragraphId!),
+    onSuccess: (data) => {
+      toast.success(data.message);
+      qc.invalidateQueries({ queryKey: ["validate-citations", paragraphId] });
+      qc.invalidateQueries({ queryKey: ["project"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const allValid = data && data.missingCount === 0 && data.orphanedCount === 0;
@@ -236,6 +250,27 @@ export function CitationValidationDialog({
             )}
           </div>
         </ScrollArea>
+        {/* Auto-fix footer */}
+        {data && data.missingCount > 0 && (
+          <div className="px-6 py-3 border-t border-border/60 flex items-center justify-between gap-2 shrink-0">
+            <span className="text-[10px] text-muted-foreground">
+              AI will search databases to resolve missing citations
+            </span>
+            <Button
+              size="sm"
+              className="gap-1.5 text-xs"
+              onClick={() => autoFixMut.mutate()}
+              disabled={autoFixMut.isPending}
+            >
+              {autoFixMut.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Wand2 className="h-3.5 w-3.5" />
+              )}
+              Auto-fix {data.missingCount} missing
+            </Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

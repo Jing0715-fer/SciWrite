@@ -789,3 +789,59 @@ project at once, with an aggregate report and per-paragraph breakdown.
 - **Styling**: More empty-state illustrations, paragraph status transition animations.
 - **P3**: Collaborative annotations / sharing.
 - **P3**: Auto-fix missing citations (AI suggests references for unresolved markers).
+
+---
+
+## Phase 12 — Auto-fix missing citations (cron round 10)
+
+Task ID: 12
+Agent: main (webDevReview cron)
+Task: QA test, add auto-fix feature that uses AI to suggest database queries for
+unresolved citation markers, executes them, and saves found references.
+
+### Project Status Assessment
+- Dev server running on port 3000, HTTP 200, 0 console errors after fresh reload.
+- All features verified: 18 citation markers, 4 paragraph cards, progress tracker
+  "599 / 1000w", tips/backup/outline/insights buttons, ⌘K badge, drag handles.
+- App stable, no bugs found.
+
+### Work Log:
+- **NEW: Auto-fix missing citations** (`/api/paragraphs/[id]/auto-fix-citations` +
+  UI button in CitationValidationDialog):
+  - **API route** (`POST /api/paragraphs/{id}/auto-fix-citations`):
+    1. Identifies missing citation markers (same logic as validation: numeric
+       markers beyond saved-reference range, or SOURCE:ID markers with no match).
+    2. Sends the paragraph context + missing markers to the AI, which suggests
+       concrete database queries (PubMed/RCSB/UniProt/NCBI) for each marker.
+    3. Executes up to 5 suggested queries via the database router.
+    4. For each query result, saves the first found item as a new reference
+       linked to the paragraph (skips duplicates).
+    5. Returns: message, fixed count, totalMissing, saved references, suggestion count.
+  - **UI**: "Auto-fix N missing" button (Wand2 icon) added to the
+    CitationValidationDialog footer. Only appears when missingCount > 0.
+    Shows a spinner while processing; on success, invalidates the validation
+    query to refresh the report.
+  - **Verified via API**: paragraph with 10 missing citations → AI suggested 10
+    queries, 4 new references saved (resolved 4 of 10). Button now shows
+    "Auto-fix 6 missing" (remaining).
+  - **Verified in browser**: CitationValidationDialog footer shows "Auto-fix 6
+    missing" button; no console errors.
+
+### Verification Results:
+- `bun run lint` → clean (0 errors, 0 warnings).
+- 0 console errors, 0 runtime errors.
+- Auto-fix API → resolved 4 of 10 missing citations, saved 4 references.
+- Auto-fix button → visible in CitationValidationDialog when missingCount > 0.
+- All previous features still working.
+
+### Stage Summary:
+- **1 new feature added**: Auto-fix missing citations — AI suggests database
+  queries for unresolved markers, executes them, and saves found references.
+- Dev server stable on port 3000. Lint clean. No errors.
+
+### Unresolved / Next-phase priorities:
+- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+- **P2**: Persist undo snapshots across page refreshes.
+- **Styling**: More empty-state illustrations, paragraph status transition animations.
+- **P3**: Collaborative annotations / sharing.
+- **P3**: Batch auto-fix across all paragraphs in a project.

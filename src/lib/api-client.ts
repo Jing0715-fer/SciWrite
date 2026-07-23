@@ -105,6 +105,10 @@ export const api = {
   validateCitations: (id: string) =>
     jfetch<any>(`/api/paragraphs/${id}/validate-citations`),
 
+  /* Auto-fix missing citations */
+  autoFixCitations: (id: string) =>
+    jfetch<any>(`/api/paragraphs/${id}/auto-fix-citations`, { method: "POST" }),
+
   /* Batch citation validation (project-level) */
   validateProjectCitations: (projectId: string) =>
     jfetch<any>(`/api/projects/${projectId}/validate-citations`),
