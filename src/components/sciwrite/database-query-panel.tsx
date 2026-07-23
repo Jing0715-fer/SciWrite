@@ -245,12 +245,29 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
             </div>
           )}
           {searchMut.isPending && (
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               {[0, 1, 2].map((i) => (
                 <div
                   key={i}
-                  className="h-24 rounded-lg bg-muted/60 animate-pulse"
-                />
+                  className="rounded-lg border border-border/70 bg-card p-3 space-y-2 overflow-hidden"
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="h-2 w-4 bg-muted/60 rounded animate-pulse mt-0.5" />
+                    <div className="flex-1 space-y-1">
+                      <div className="h-3 bg-muted/60 rounded animate-pulse w-full" />
+                      <div className="h-3 bg-muted/40 rounded animate-pulse w-3/4" />
+                    </div>
+                  </div>
+                  <div className="flex gap-1 pl-6">
+                    <div className="h-3 w-12 bg-muted/40 rounded animate-pulse" />
+                    <div className="h-3 w-10 bg-muted/30 rounded animate-pulse" />
+                  </div>
+                  <div className="h-5 bg-muted/30 rounded animate-pulse w-full" />
+                  <div className="flex gap-1 pt-1 border-t border-border/30">
+                    <div className="h-4 w-14 bg-muted/40 rounded animate-pulse" />
+                    <div className="h-4 w-16 bg-muted/40 rounded animate-pulse" />
+                  </div>
+                </div>
               ))}
             </div>
           )}

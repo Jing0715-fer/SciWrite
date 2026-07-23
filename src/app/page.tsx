@@ -295,9 +295,7 @@ export default function Home() {
           {
             id: "dark",
             label: "Toggle dark mode",
-            icon: document.documentElement.classList.contains("dark")
-              ? <Sun className="h-3.5 w-3.5" />
-              : <Moon className="h-3.5 w-3.5" />,
+            icon: <Moon className="h-3.5 w-3.5" />,
             shortcut: "D",
             onSelect: () => {
               const isDark = document.documentElement.classList.contains("dark");

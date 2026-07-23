@@ -12,10 +12,12 @@ import {
   PinOff,
   Layers,
   Loader2,
+  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { AddReferenceDialog } from "./add-reference-dialog";
 import {
   Tabs,
   TabsContent,
@@ -49,7 +51,9 @@ export function KnowledgePanel({
   articles: (Article & { _count?: any })[];
   onOpenArticle: (a: Article) => void;
 }) {
+  const [addRefOpen, setAddRefOpen] = React.useState(false);
   return (
+    <>
     <Tabs defaultValue="sources" className="flex flex-col h-full overflow-hidden">
       <TabsList className="grid grid-cols-3 mx-3 mt-3 h-8 shrink-0">
         <TabsTrigger value="sources" className="text-[11px] gap-1">
@@ -78,12 +82,22 @@ export function KnowledgePanel({
         <SourcesList projectId={projectId} items={dataSources} />
       </TabsContent>
       <TabsContent value="refs" className="flex-1 mt-0 min-h-0 overflow-hidden">
-        <ReferencesList projectId={projectId} items={references} />
+        <ReferencesList
+          projectId={projectId}
+          items={references}
+          onAdd={() => setAddRefOpen(true)}
+        />
       </TabsContent>
       <TabsContent value="articles" className="flex-1 mt-0 min-h-0 overflow-hidden">
         <ArticlesList items={articles} onOpen={onOpenArticle} projectId={projectId} />
       </TabsContent>
     </Tabs>
+    <AddReferenceDialog
+      open={addRefOpen}
+      onOpenChange={setAddRefOpen}
+      projectId={projectId}
+    />
+    </>
   );
 }
 
@@ -191,9 +205,11 @@ function SourcesList({
 function ReferencesList({
   projectId,
   items,
+  onAdd,
 }: {
   projectId: string | null;
   items: Reference[];
+  onAdd?: () => void;
 }) {
   const qc = useQueryClient();
   const del = useMutation({
@@ -208,7 +224,18 @@ function ReferencesList({
   return (
     <ScrollArea className="h-full scroll-academic">
       <div className="px-3 py-2 space-y-2">
-        {items.length === 0 && (
+        {onAdd && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full h-7 text-[11px] gap-1.5 border-dashed"
+            onClick={onAdd}
+          >
+            <Plus className="h-3 w-3" />
+            Add reference (PMID / DOI / manual)
+          </Button>
+        )}
+        {items.length === 0 && !onAdd && (
           <EmptyState
             icon={<BookOpen className="h-7 w-7" />}
             title="No references yet"

@@ -16,6 +16,7 @@ import {
   PenLine,
   Copy,
   X,
+  Undo2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -71,6 +72,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
   const [annOpen, setAnnOpen] = React.useState(false);
   const [activeAnnotation, setActiveAnnotation] = React.useState<Annotation | null>(null);
   const [selection, setSelection] = React.useState<{ text: string; rect: DOMRect } | null>(null);
+  const [undoSnapshot, setUndoSnapshot] = React.useState<string | null>(null);
   const bodyRef = React.useRef<HTMLDivElement>(null);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["project", projectId] });
@@ -123,10 +125,32 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
   });
 
   const reviseMut = useMutation({
-    mutationFn: (input: { mode?: string; instructions?: string }) =>
-      api.reviseParagraph(paragraph.id, input),
+    mutationFn: async (input: { mode?: string; instructions?: string }) => {
+      // Save snapshot before revising (for undo)
+      setUndoSnapshot(paragraph.content);
+      return api.reviseParagraph(paragraph.id, input);
+    },
     onSuccess: () => {
-      toast.success("Paragraph revised by AI.");
+      toast.success("Paragraph revised by AI. Undo available.");
+      invalidate();
+    },
+    onError: (e: Error) => {
+      setUndoSnapshot(null);
+      toast.error(e.message);
+    },
+  });
+
+  const undoReviseMut = useMutation({
+    mutationFn: async () => {
+      if (!undoSnapshot) throw new Error("No undo snapshot available.");
+      return api.updateParagraph(paragraph.id, {
+        content: undoSnapshot,
+        status: "annotated",
+      });
+    },
+    onSuccess: () => {
+      toast.success("Reverted to pre-revision content.");
+      setUndoSnapshot(null);
       invalidate();
     },
     onError: (e: Error) => toast.error(e.message),
@@ -402,6 +426,23 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
             reviseMut.mutate({ mode, instructions })
           }
         />
+        {undoSnapshot && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-[11px] gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+            onClick={() => undoReviseMut.mutate()}
+            disabled={undoReviseMut.isPending}
+            title="Undo last AI revision"
+          >
+            {undoReviseMut.isPending ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Undo2 className="h-3 w-3" />
+            )}
+            Undo
+          </Button>
+        )}
         <ExportMenu
           type="paragraph"
           id={paragraph.id}

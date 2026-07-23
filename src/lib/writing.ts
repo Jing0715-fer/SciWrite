@@ -132,23 +132,143 @@ export function buildComposePrompt(opts: {
   paragraphs: { title: string; format: string; content: string }[];
   depth: "shallow" | "standard" | "deep";
 }): string {
+  // Pre-renumber citations across all paragraphs so [n] is globally unique.
+  const { renumberedParagraphs, mappingSummary } = renumberCitations(opts.paragraphs);
+
   const parts: string[] = [];
   parts.push(`Compose a coherent, deeper research article titled "${opts.title}".`);
   if (opts.abstract) parts.push(`Suggested abstract: ${opts.abstract}`);
   parts.push(`Composition depth: ${opts.depth}.`);
-  parts.push("Source paragraphs (in order):");
-  opts.paragraphs.forEach((p, i) => {
+  if (mappingSummary) {
+    parts.push(
+      `CITATION RENUMBERING (already applied to source paragraphs below — preserve these new numbers):\n${mappingSummary}`
+    );
+  }
+  parts.push("Source paragraphs (in order, citations already renumbered globally):");
+  renumberedParagraphs.forEach((p, i) => {
     parts.push(`\n--- Paragraph ${i + 1}: ${p.title} [${p.format}] ---\n${p.content}`);
   });
   parts.push(
     `\nInstructions:
 - Produce a unified article with section headings (## Introduction, ## Background, ## Methods, ## Results, ## Discussion, ## Conclusion — only include sections that have content).
 - ${opts.depth === "deep" ? "Deepen the analysis: add synthesis, contrast, and a forward-looking discussion. Bridge paragraphs with transitions." : opts.depth === "standard" ? "Synthesize the paragraphs with smooth transitions and a brief synthesis." : "Lightly stitch the paragraphs with minimal additions."}
-- Preserve ALL inline citations [n] and [SOURCE:ID] markers exactly as they appear.
-- After the article body, output a "## References" section aggregating every cited source, deduplicated, as a numbered list.
+- Preserve ALL inline citations [n] and [SOURCE:ID] markers EXACTLY as they appear in the renumbered source paragraphs (do NOT renumber again).
+- [SOURCE:ID] markers (e.g. [PMID:12345], [PDB:1A3N]) are absolute and must never change.
+- After the article body, output a "## References" section aggregating every cited source, deduplicated, as a numbered list. For [SOURCE:ID] markers, list them with their source:ID.
 - Output in Markdown.`
   );
   return parts.join("\n\n");
+}
+
+/**
+ * Renumber numeric [n] citations across multiple paragraphs so they are globally
+ * unique and sequential. [SOURCE:ID] markers are left untouched (they're absolute).
+ * Returns renumbered paragraph contents + a summary of the mapping.
+ *
+ * Example: paragraph A has [1],[2]; paragraph B has [1],[3].
+ * Result: A keeps [1],[2]; B's [1]→[3], [3]→[4]. Summary: "¶2 [1]→[3], [3]→[4]"
+ */
+export function renumberCitations(
+  paragraphs: { title: string; format: string; content: string }[]
+): {
+  renumberedParagraphs: { title: string; format: string; content: string }[];
+  mappingSummary: string;
+} {
+  // Map: per-paragraph, old-number → new-global-number
+  const renumbered: { title: string; format: string; content: string }[] = [];
+  const changesLog: string[] = [];
+  let nextGlobalNum = 1;
+
+  paragraphs.forEach((p, pIdx) => {
+    // First pass: find all numeric citations in order, assign new numbers
+    const seenOldNums: number[] = [];
+    let content = p.content;
+    const matches: { oldStr: string; nums: number[] }[] = [];
+    let m: RegExpExecArray | null;
+    const re1 = /\[(\d{1,3}(?:[,\-–\s]\d{1,3})*)\]/g;
+    while ((m = re1.exec(content))) {
+      const inner = m[1];
+      const nums = expandCitationRange(inner);
+      matches.push({ oldStr: inner, nums });
+      for (const n of nums) {
+        if (!seenOldNums.includes(n)) seenOldNums.push(n);
+      }
+    }
+
+    // Assign new global numbers in order of first appearance within this paragraph
+    const numAssignments: Record<number, number> = {};
+    const paraChanges: string[] = [];
+    for (const oldNum of seenOldNums) {
+      numAssignments[oldNum] = nextGlobalNum;
+      if (oldNum !== nextGlobalNum) {
+        paraChanges.push(`[${oldNum}]→[${nextGlobalNum}]`);
+      }
+      nextGlobalNum++;
+    }
+
+    // Second pass: replace each numeric citation with renumbered version
+    // We process from right to left to preserve indices
+    const replacements: { start: number; end: number; newStr: string }[] = [];
+    for (const match of matches) {
+      // Find the full match position in the current content
+      const re2 = new RegExp(
+        `\\[${escapeRegex(match.oldStr)}\\]`,
+        "g"
+      );
+      let m2: RegExpExecArray | null;
+      while ((m2 = re2.exec(content))) {
+        const newNums = match.nums.map((n) => numAssignments[n] ?? n);
+        const newInner = newNums.length > 1 ? newNums.join(",") : String(newNums[0]);
+        replacements.push({
+          start: m2.index,
+          end: m2.index + m2[0].length,
+          newStr: `[${newInner}]`,
+        });
+        // Avoid infinite loop on zero-length matches
+        if (m2[0].length === 0) re2.lastIndex++;
+      }
+    }
+    // Apply replacements from right to left
+    replacements.sort((a, b) => b.start - a.start);
+    for (const r of replacements) {
+      content = content.slice(0, r.start) + r.newStr + content.slice(r.end);
+    }
+
+    if (paraChanges.length > 0) {
+      changesLog.push(`¶${pIdx + 1}: ${paraChanges.join(", ")}`);
+    }
+
+    renumbered.push({ title: p.title, format: p.format, content });
+  });
+
+  return {
+    renumberedParagraphs: renumbered,
+    mappingSummary: changesLog.length
+      ? changesLog.join("\n")
+      : "(no numeric citations needed renumbering)",
+  };
+}
+
+function expandCitationRange(inner: string): number[] {
+  const trimmed = inner.trim();
+  const nums: number[] = [];
+  const parts = trimmed.split(/[,;]\s*/);
+  for (const p of parts) {
+    const rangeMatch = p.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+    if (rangeMatch) {
+      const a = parseInt(rangeMatch[1], 10);
+      const b = parseInt(rangeMatch[2], 10);
+      for (let n = a; n <= b; n++) nums.push(n);
+    } else {
+      const n = parseInt(p, 10);
+      if (!isNaN(n)) nums.push(n);
+    }
+  }
+  return nums;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function summarizeDataSource(items: DatabaseResultItem[]): string {

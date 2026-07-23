@@ -275,3 +275,95 @@ keyboard shortcuts/command palette, paragraph drag-to-reorder).
 - **Styling**: More empty-state illustrations, skeleton loaders for async states.
 
 
+
+---
+
+## Phase 4 — SSR crash fix + citation renumbering + undo + manual refs (cron round 2)
+
+Task ID: 4
+Agent: main (webDevReview cron)
+Task: QA test, fix SSR crash bug, add citation renumbering on compose, AI revise
+undo, manual reference add (PMID/DOI lookup), skeleton loaders.
+
+### Project Status Assessment
+- Dev server running on port 3000.
+- **CRITICAL BUG found**: Home page returning HTTP 500 with
+  `ReferenceError: document is not defined` — caused by CommandPalette's `icon`
+  field referencing `document.documentElement` at render time (SSR-incompatible,
+  introduced in Phase 3).
+- All other features (insights, command palette, drag handles, citations) verified
+  working once the SSR crash was fixed.
+
+### Work Log:
+- **FIX (P0): SSR crash "document is not defined"** — The `actions` array in
+  `CommandPalette` rendered `icon: document.documentElement.classList.contains("dark")
+  ? <Sun/> : <Moon/>` which executes during SSR. Changed to a static `<Moon/>` icon
+  (the `onSelect` handler still reads `document` correctly since it only runs
+  client-side on click). Verified: HTTP 200, page loads cleanly.
+
+- **NEW (P1): Citation renumbering on compose** — Added `renumberCitations()` in
+  `src/lib/writing.ts`:
+  - Pre-processes all source paragraphs before sending to the compose LLM.
+  - Collects numeric `[n]` citations across paragraphs in order of first appearance,
+    assigns globally-unique sequential numbers (e.g. ¶A keeps [1],[2]; ¶B's [1]→[3],
+    [3]→[4]).
+  - Handles ranges like `[1-3]` and comma lists `[2,3]`.
+  - Leaves `[SOURCE:ID]` markers (PMID, PDB, etc.) untouched since they're absolute.
+  - Updated `buildComposePrompt` to pass renumbered paragraphs + a mapping summary
+    to the LLM, with instructions to preserve the new numbers.
+  - **Verified**: composed article now has globally-unique citation numbers (1,4,5,7,8,9)
+    instead of conflicting [1]s from different paragraphs.
+
+- **NEW: AI revise undo** — Added undo capability to `ParagraphCard`:
+  - `undoSnapshot` state saves the pre-revision content before each AI revise.
+  - "Undo" button (amber-colored, with Undo2 icon) appears in the action bar only
+    when a snapshot exists.
+  - `undoReviseMut` restores the snapshot content + sets status back to "annotated".
+  - Toast confirms "Reverted to pre-revision content."
+  - Snapshot cleared on error or after undo.
+
+- **NEW: Manual reference add (PMID/DOI lookup)** — `AddReferenceDialog` component:
+  - Two modes: "Lookup" (by PMID or DOI) and "Manual" (full form).
+  - PMID lookup uses NCBI E-utilities esummary (returns title, authors, journal,
+    year, DOI, URL).
+  - DOI lookup uses CrossRef API (returns full metadata + abstract).
+  - Lookup result preview card with source badge + open link before saving.
+  - Manual mode: title/authors/year/journal/DOI/URL/abstract fields.
+  - New API route `/api/references/lookup?type=pmid|doi&id=...`.
+  - "Add reference" dashed button added to top of Refs tab in KnowledgePanel.
+  - **Verified**: PMID 25189619 returned "HPS6 interacts with dynactin..." metadata;
+    DOI 10.1126/science.1225829 returned the CRISPR Jinek 2012 Science paper.
+
+- **Polish: Skeleton loaders**:
+  - TopicComposer: added a research-progress indicator with 3 animated steps
+    ("Searching databases & references", "Synthesizing scholarly prose", "Adding
+    inline citations") + skeleton text lines while AI is writing.
+  - DatabaseQueryPanel: replaced plain `h-24` pulse blocks with detailed skeleton
+    cards matching the real result-card layout (badge, title lines, authors,
+    abstract, action buttons).
+
+### Verification Results:
+- `bun run lint` → clean (0 errors, 0 warnings).
+- Home page HTTP 200 (was 500).
+- 0 console errors, 0 runtime errors after fresh reload.
+- Citation hover → shows resolved reference.
+- Insights dialog → 4 stat cards + distributions render.
+- Command palette → opens via footer ⌘K button.
+- Drag handles → 3 visible on paragraph cards.
+- Add Reference dialog → PMID/DOI lookup + manual form both work.
+- Compose renumbering → globally-unique citation numbers verified.
+- 18 citation markers, 4 paragraph cards, 6 export menus all present.
+
+### Stage Summary:
+- **1 P0 bug fixed** (SSR crash from document reference in render).
+- **3 new features added**: Citation renumbering on compose (P1), AI revise undo,
+  Manual reference add with PMID/DOI lookup.
+- **Polish**: skeleton loaders for TopicComposer + DatabaseQueryPanel.
+- Dev server stable. Lint clean. No errors.
+
+### Unresolved / Next-phase priorities:
+- **P2**: Project-level "research brief" / outline auto-suggester.
+- **P2**: Per-source "deep read" via page_reader to enrich abstracts before writing.
+- **P2**: Full click-test of text-selection → annotate popover (browser click-test).
+- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+- **Styling**: More empty-state illustrations, paragraph status transition animations.

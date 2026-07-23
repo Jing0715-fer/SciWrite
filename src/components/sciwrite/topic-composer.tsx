@@ -294,6 +294,44 @@ export function TopicComposer({
               />
             </div>
 
+            {writeMut.isPending && !generated && (
+              <div className="rounded-lg border border-primary/30 bg-primary/[0.02] p-4 space-y-3 acad-fade-in">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  <span className="text-xs font-semibold text-primary">
+                    Researching &amp; writing…
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {[
+                    "Searching databases & references",
+                    "Synthesizing scholarly prose",
+                    "Adding inline citations",
+                  ].map((step, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-2 text-[11px] text-muted-foreground"
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${
+                          i === 0
+                            ? "bg-primary animate-pulse"
+                            : "bg-muted-foreground/30"
+                        }`}
+                      />
+                      {step}
+                    </div>
+                  ))}
+                </div>
+                <div className="space-y-1.5">
+                  <div className="h-3 rounded bg-muted/60 animate-pulse w-3/4" />
+                  <div className="h-3 rounded bg-muted/40 animate-pulse w-full" />
+                  <div className="h-3 rounded bg-muted/40 animate-pulse w-5/6" />
+                  <div className="h-3 rounded bg-muted/30 animate-pulse w-2/3" />
+                </div>
+              </div>
+            )}
+
             {generated && (
               <div className="rounded-lg border border-primary/30 bg-primary/[0.02] p-4 acad-fade-in">
                 <div className="flex items-center justify-between mb-2">
