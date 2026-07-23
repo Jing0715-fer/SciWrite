@@ -181,3 +181,97 @@ add Word/PDF export.
 - **P2**: Project-level "research brief" / outline auto-suggester.
 - **P2**: Per-source "deep read" via page_reader to enrich abstracts before writing.
 
+---
+
+## Phase 3 — QA round + bug fix + 3 new features (cron review round 1)
+
+Task ID: 3
+Agent: main (webDevReview cron)
+Task: QA test the app with agent-browser, fix bugs, add new features (insights dashboard,
+keyboard shortcuts/command palette, paragraph drag-to-reorder).
+
+### Project Status Assessment
+- Dev server was running on port 3000 (via `.zscripts/dev.sh`).
+- Page loaded; 18 citation markers, 4 paragraph cards, 3 reference lists rendered.
+- Dark mode toggle works (`.dark` class applied correctly).
+- No nested-button hydration errors (fixed in Phase 2).
+- **Bug found**: Citation `[1]` markers showed "No matching reference record found"
+  tooltip because the AI's `### Citations` block uses bare `PDB:5F9R` / `PMID:29162691`
+  format (not bracketed `[SOURCE:ID]`), which the parser didn't handle.
+
+### Work Log:
+- **FIX (P1): Citation resolution** — Rewrote `parseCitationsBlock` in
+  `markdown-citations.tsx`:
+  - Now handles BOTH bracketed `[SOURCE:ID]` and bare `SOURCE:ID` formats (regex
+    fallback: `\b([A-Z]{2,12}):\s?([A-Za-z0-9_\-\.]+)`).
+  - Normalizes source aliases: `PMID`→`pubmed`, `PDB`→`rcsb`.
+  - Auto-builds URLs from source+id when none provided (PubMed, UniProt, RCSB, NCBI,
+    DOI links).
+  - `resolveCitation` also normalizes aliases when matching `[SOURCE:ID]` markers
+    against saved references.
+  - **Verified**: hovering `[1]` on a paragraph with `### Citations` block now shows
+    "RCSB:5F9R" with an open link, instead of the fallback message.
+
+- **NEW: Project Insights Dashboard** (`/api/insights` + `InsightsDialog`):
+  - API computes: total paragraphs/articles/sources/references/words, avg words,
+    total citations, citation coverage %, annotation counts (resolved/unresolved),
+    status/format/source/reference-type distributions, writing timeline.
+  - Dialog shows 4 stat cards (Paragraphs/Words/Citations/Articles), citation
+    coverage progress bar, annotation status cards, 4 stacked-bar distribution
+    charts (Status/Format/Sources/Reference Types) with legends, avg-words row,
+    writing timeline (each paragraph with status dot + word/citation counts),
+    composed articles list.
+  - "Insights" ghost button added to header (with BarChart3 icon).
+
+- **NEW: Keyboard Shortcuts + Command Palette**:
+  - `CommandPalette` component using `cmdk` (CommandDialog).
+  - Global keydown handler: `⌘/Ctrl+K` toggles palette; single-key shortcuts
+    `N` (new paragraph), `G` (gather), `I` (insights), `C` (compose), `D` (dark
+    mode) — all disabled when typing in inputs/textareas.
+  - Palette lists 5 commands (Write/Gather/Compose/Insights/DarkMode) with hints
+    + shortcuts, plus a "Shortcuts" help group.
+  - Footer now shows a clickable `⌘K commands` badge.
+  - **Bug fixed**: keyboard useEffect referenced `paragraphs` before initialization →
+    moved the effect after `paragraphs` is defined (was causing 500 "Cannot access
+    'paragraphs' before initialization").
+
+- **NEW: Paragraph Drag-to-Reorder** (`SortableParagraphs` using `@dnd-kit/sortable`):
+  - Wraps each `ParagraphCard` in a `useSortable` container with a grip-handle
+    button (appears on hover, `-left-6` offset).
+  - `DndContext` + `SortableContext` with `verticalListSortingStrategy`.
+  - On drag end, reorders locally + persists new `order` values via batch
+    `updateParagraph` calls; invalidates project query.
+  - Local order syncs when paragraph set changes (new/deleted) but preserves
+    user reordering during the session.
+  - Divider now shows "drag ⠿ to reorder" hint.
+
+### Verification Results:
+- `bun run lint` → clean (0 errors, 0 warnings).
+- Fresh page load → 0 console errors, 0 runtime errors.
+- Citation hover → shows resolved reference "RCSB:5F9R" + open link (was fallback
+  text before).
+- Insights dialog → 4 stat cards, coverage bar, 4 distribution charts, timeline all
+  render correctly.
+- Command palette → opens via footer `⌘K` button; 5 commands + shortcuts help
+  visible.
+- Drag handles → 3 grip handles render on paragraph cards.
+- Dark mode → toggles correctly.
+- Reference lists → 3 lists with proper RCSB/PUBMED entries + links.
+
+### Stage Summary:
+- **1 P1 bug fixed** (citation resolution for AI-generated citation blocks).
+- **3 new features added**: Insights dashboard, Command palette + keyboard shortcuts,
+  Paragraph drag-to-reorder.
+- Dev server stable on port 3000. Lint clean. No console/runtime errors.
+
+### Unresolved / Next-phase priorities:
+- **P1**: Citation renumbering when composing articles (normalize [n] across paragraphs
+  from different sources).
+- **P2**: Project-level "research brief" / outline auto-suggester.
+- **P2**: Per-source "deep read" via page_reader to enrich abstracts before writing.
+- **P2**: Full click-test of text-selection → annotate popover (API verified, browser
+  click-test still pending).
+- **P2**: Undo for AI revise (keep previous content version).
+- **Styling**: More empty-state illustrations, skeleton loaders for async states.
+
+

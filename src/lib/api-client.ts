@@ -125,6 +125,10 @@ export const api = {
       return res.blob();
     }),
 
+  /* Project insights */
+  getInsights: (projectId: string) =>
+    jfetch<any>(`/api/insights?projectId=${projectId}`),
+
   /* Database queries */
   queryDatabase: (input: {
     source: string;

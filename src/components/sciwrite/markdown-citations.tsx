@@ -87,14 +87,25 @@ function resolveCitation(
   // SOURCE:ID form
   const srcMatch = trimmed.match(/^([A-Z]{2,12}):\s?(.+)$/);
   if (srcMatch) {
-    const source = srcMatch[1].toLowerCase();
+    const rawSource = srcMatch[1].toLowerCase();
+    // Normalize aliases
+    const source =
+      rawSource === "pmid" ? "pubmed" :
+      rawSource === "pdb" ? "rcsb" :
+      rawSource;
     const id = srcMatch[2].trim();
     const found = references.find(
-      (r) =>
-        r.type?.toLowerCase() === source &&
-        (r.externalId?.toLowerCase() === id.toLowerCase() ||
+      (r) => {
+        const rType =
+          r.type?.toLowerCase() === "pmid" ? "pubmed" :
+          r.type?.toLowerCase() === "pdb" ? "rcsb" :
+          r.type?.toLowerCase();
+        return rType === source && (
+          r.externalId?.toLowerCase() === id.toLowerCase() ||
           r.externalId?.toLowerCase().includes(id.toLowerCase()) ||
-          id.toLowerCase().includes(r.externalId?.toLowerCase() || "___"))
+          id.toLowerCase().includes(r.externalId?.toLowerCase() || "___")
+        );
+      }
     );
     return found ? [found] : [];
   }
@@ -119,7 +130,11 @@ function resolveCitation(
 
 /**
  * Parse the AI-generated "### Citations" block into structured references.
- * Lines look like: "[1] Author (year) Journal. Title. — url"
+ * Handles multiple formats the AI may emit:
+ *   [1] PDB:5F9R
+ *   [2] PMID:29162691
+ *   [3] Authors (2021) Journal. Title. — https://...
+ *   [4] Author (year) Journal. Title. [SOURCE:ID] — url
  */
 function parseCitationsBlock(text: string): CitationRef[] {
   const lines = text.split("\n").filter((l) => l.trim());
@@ -128,25 +143,55 @@ function parseCitationsBlock(text: string): CitationRef[] {
     const m = line.match(/^\s*\[(\d+)\]\s*(.+)$/);
     if (!m) continue;
     const body = m[2].trim();
-    // Try to extract: Authors (year) Journal. Title. [SOURCE:ID] — url
     const yearMatch = body.match(/\((\d{4}[a-z]?)\)/);
     const year = yearMatch?.[1];
-    const sourceMatch = body.match(/\[([A-Z]{2,12}):\s?([^\]]+)\]/);
-    const type = sourceMatch?.[1]?.toLowerCase();
+
+    // Source:ID may appear with or without brackets: "PDB:5F9R" or "[PDB:5F9R]"
+    const sourceMatch =
+      body.match(/\[([A-Z]{2,12}):\s?([^\]]+)\]/) ||
+      body.match(/\b([A-Z]{2,12}):\s?([A-Za-z0-9_\-\.]+)/);
+    const rawType = sourceMatch?.[1]?.toLowerCase();
+    // Normalize common aliases
+    const type =
+      rawType === "pmid" ? "pubmed" :
+      rawType === "pdb" ? "rcsb" :
+      rawType;
     const externalId = sourceMatch?.[2]?.trim();
+
     const urlMatch = body.match(/(https?:\/\/[^\s]+)/);
-    const url = urlMatch?.[1];
-    // Title is usually after the journal; take the longest sentence fragment
-    const cleaned = body
+    let url = urlMatch?.[1];
+    // Build URL from source:ID if not explicitly provided
+    if (!url && type && externalId) {
+      const id = externalId.trim();
+      if (type === "pubmed" || type === "pmid")
+        url = `https://pubmed.ncbi.nlm.nih.gov/${id}/`;
+      else if (type === "pmc") url = `https://www.ncbi.nlm.nih.gov/pmc/articles/${id}/`;
+      else if (type === "uniprot") url = `https://www.uniprot.org/uniprotkb/${id}`;
+      else if (type === "rcsb" || type === "pdb") url = `https://www.rcsb.org/structure/${id}`;
+      else if (type === "ncbi" || type === "gene") url = `https://www.ncbi.nlm.nih.gov/gene/${id}`;
+      else if (type === "doi") url = `https://doi.org/${id}`;
+    }
+
+    // Build a human-readable title
+    let cleaned = body;
+    if (sourceMatch) {
+      // remove the source:ID token (with or without brackets)
+      cleaned = cleaned.replace(/\[?[A-Z]{2,12}:\s?[^\]\s]+]?/g, "");
+    }
+    cleaned = cleaned
       .replace(/\(\d{4}[a-z]?\)/, "")
-      .replace(/\[[A-Z]{2,12}:\s?[^\]]+\]/, "")
       .replace(/https?:\/\/[^\s]+/, "")
       .replace(/[—–-]\s*$/, "")
+      .replace(/^\s*[—–-]\s*/, "")
       .trim();
+
+    // If all we have is a source:ID, construct a title from it
+    const fallbackTitle = type && externalId ? `${type.toUpperCase()}:${externalId}` : body;
+
     refs.push({
       type: type || "manual",
       externalId,
-      title: cleaned.slice(0, 200) || body.slice(0, 200),
+      title: cleaned.slice(0, 200) || fallbackTitle,
       year,
       url,
       authors: undefined,

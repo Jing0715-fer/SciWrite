@@ -14,6 +14,9 @@ import {
   Lightbulb,
   ArrowRight,
   Radar,
+  BarChart3,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,10 +32,13 @@ import { ProjectsSidebar } from "@/components/sciwrite/projects-sidebar";
 import { DatabaseQueryPanel } from "@/components/sciwrite/database-query-panel";
 import { KnowledgePanel } from "@/components/sciwrite/knowledge-panel";
 import { ParagraphCard } from "@/components/sciwrite/paragraph-card";
+import { SortableParagraphs } from "@/components/sciwrite/sortable-paragraphs";
 import { TopicComposer } from "@/components/sciwrite/topic-composer";
 import { ArticleComposer, ArticleViewer } from "@/components/sciwrite/article-composer";
 import { DataGatheringDialog } from "@/components/sciwrite/data-gathering-dialog";
 import { ExportMenu } from "@/components/sciwrite/export-menu";
+import { InsightsDialog } from "@/components/sciwrite/insights-dialog";
+import { CommandPalette } from "@/components/sciwrite/command-palette";
 import type { Article, Project } from "@/lib/types";
 
 export default function Home() {
@@ -42,6 +48,8 @@ export default function Home() {
   const [composeOpen, setComposeOpen] = React.useState(false);
   const [viewArticle, setViewArticle] = React.useState<Article | null>(null);
   const [gatherOpen, setGatherOpen] = React.useState(false);
+  const [insightsOpen, setInsightsOpen] = React.useState(false);
+  const [paletteOpen, setPaletteOpen] = React.useState(false);
 
   const projectsQ = useQuery({
     queryKey: ["projects"],
@@ -89,6 +97,48 @@ export default function Home() {
     return [...map.values()];
   }, [paragraphs, project?.references]);
 
+  // Keyboard shortcuts (defined after paragraphs so it can reference it)
+  React.useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey;
+      const tag = (e.target as HTMLElement)?.tagName;
+      const isTyping =
+        tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable;
+      // Cmd/Ctrl+K always opens palette
+      if (meta && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+        return;
+      }
+      // Single-key shortcuts only when not typing and no modifier (except Shift)
+      if (isTyping || meta || e.altKey) return;
+      if (!activeProjectId) return;
+      const k = e.key.toLowerCase();
+      if (k === "n") {
+        e.preventDefault();
+        setWriteOpen(true);
+      } else if (k === "g") {
+        e.preventDefault();
+        setGatherOpen(true);
+      } else if (k === "i") {
+        e.preventDefault();
+        setInsightsOpen(true);
+      } else if (k === "c" && paragraphs.length >= 2) {
+        e.preventDefault();
+        setComposeOpen(true);
+      } else if (k === "d") {
+        e.preventDefault();
+        const isDark = document.documentElement.classList.contains("dark");
+        document.documentElement.classList.toggle("dark", !isDark);
+        try {
+          localStorage.setItem("theme", isDark ? "light" : "dark");
+        } catch {}
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [activeProjectId, paragraphs.length]);
+
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
       <Header
@@ -96,6 +146,7 @@ export default function Home() {
         onOpenWrite={() => setWriteOpen(true)}
         onOpenCompose={() => setComposeOpen(true)}
         onOpenGather={() => setGatherOpen(true)}
+        onOpenInsights={() => setInsightsOpen(true)}
         paragraphCount={paragraphs.length}
         articleCount={articles.length}
       />
@@ -145,7 +196,7 @@ export default function Home() {
         </ResizablePanelGroup>
       </main>
 
-      <Footer />
+      <Footer onOpenPalette={() => setPaletteOpen(true)} />
 
       {/* Modals */}
       {activeProjectId && project && (
@@ -190,6 +241,75 @@ export default function Home() {
           onProceedToWrite={() => setWriteOpen(true)}
         />
       )}
+      {activeProjectId && (
+        <InsightsDialog
+          open={insightsOpen}
+          onOpenChange={setInsightsOpen}
+          projectId={activeProjectId}
+        />
+      )}
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        actions={[
+          {
+            id: "write",
+            label: "AI Write paragraph",
+            hint: "Draft a citation-backed paragraph",
+            icon: <Sparkles className="h-3.5 w-3.5" />,
+            shortcut: "N",
+            onSelect: () => setWriteOpen(true),
+            group: "Writing",
+            disabled: !activeProjectId,
+          },
+          {
+            id: "gather",
+            label: "Gather sources (AI)",
+            hint: "Clarify → organize → adversarial critique",
+            icon: <Radar className="h-3.5 w-3.5" />,
+            shortcut: "G",
+            onSelect: () => setGatherOpen(true),
+            group: "Writing",
+            disabled: !activeProjectId,
+          },
+          {
+            id: "compose",
+            label: "Compose article",
+            hint: "Stitch paragraphs into a deeper article",
+            icon: <Layers className="h-3.5 w-3.5" />,
+            shortcut: "C",
+            onSelect: () => setComposeOpen(true),
+            group: "Writing",
+            disabled: paragraphs.length < 2,
+          },
+          {
+            id: "insights",
+            label: "Project insights",
+            hint: "Word count, citation coverage, distributions",
+            icon: <BarChart3 className="h-3.5 w-3.5" />,
+            shortcut: "I",
+            onSelect: () => setInsightsOpen(true),
+            group: "Project",
+            disabled: !activeProjectId,
+          },
+          {
+            id: "dark",
+            label: "Toggle dark mode",
+            icon: document.documentElement.classList.contains("dark")
+              ? <Sun className="h-3.5 w-3.5" />
+              : <Moon className="h-3.5 w-3.5" />,
+            shortcut: "D",
+            onSelect: () => {
+              const isDark = document.documentElement.classList.contains("dark");
+              document.documentElement.classList.toggle("dark", !isDark);
+              try {
+                localStorage.setItem("theme", isDark ? "light" : "dark");
+              } catch {}
+            },
+            group: "Project",
+          },
+        ]}
+      />
     </div>
   );
 }
@@ -199,6 +319,7 @@ function Header({
   onOpenWrite,
   onOpenCompose,
   onOpenGather,
+  onOpenInsights,
   paragraphCount,
   articleCount,
 }: {
@@ -206,6 +327,7 @@ function Header({
   onOpenWrite: () => void;
   onOpenCompose: () => void;
   onOpenGather: () => void;
+  onOpenInsights: () => void;
   paragraphCount: number;
   articleCount: number;
 }) {
@@ -254,6 +376,16 @@ function Header({
               <Layers className="h-2.5 w-2.5" />
               {articleCount}
             </Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs gap-1.5"
+              onClick={onOpenInsights}
+              title="Project insights & analytics"
+            >
+              <BarChart3 className="h-3.5 w-3.5" />
+              <span className="hidden lg:inline">Insights</span>
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -375,15 +507,11 @@ function WritingWorkspace({
               <div className="divider-academic mb-1">
                 <Library className="h-3 w-3" />
                 Paragraphs ({paragraphs.length})
+                <span className="text-[9px] text-muted-foreground/70 normal-case tracking-normal ml-2">
+                  drag ⠿ to reorder
+                </span>
               </div>
-              {paragraphs.map((p, i) => (
-                <ParagraphCard
-                  key={p.id}
-                  paragraph={p}
-                  projectId={activeProjectId}
-                  index={i}
-                />
-              ))}
+              <SortableParagraphs paragraphs={paragraphs} projectId={activeProjectId} />
               <div className="pt-2">
                 <Button
                   variant="outline"
@@ -441,7 +569,7 @@ function EmptyWorkspace() {
   );
 }
 
-function Footer() {
+function Footer({ onOpenPalette }: { onOpenPalette?: () => void }) {
   return (
     <footer className="shrink-0 px-4 py-1.5 border-t border-border/60 bg-card/60 backdrop-blur flex items-center justify-between text-[10px] text-muted-foreground">
       <div className="flex items-center gap-2">
@@ -455,6 +583,16 @@ function Footer() {
         </span>
       </div>
       <div className="flex items-center gap-2">
+        {onOpenPalette && (
+          <button
+            onClick={onOpenPalette}
+            className="hidden md:inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 hover:bg-muted/60 transition-colors"
+            title="Open command palette"
+          >
+            <kbd className="font-mono text-[9px] font-semibold">⌘K</kbd>
+            <span className="text-muted-foreground">commands</span>
+          </button>
+        )}
         <span className="hidden md:inline">RCSB · UniProt · PubMed · NCBI · BLAST</span>
         <span>·</span>
         <span>SciWrite</span>
