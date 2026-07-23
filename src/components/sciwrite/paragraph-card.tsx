@@ -18,6 +18,7 @@ import {
   X,
   Undo2,
   GitCompare,
+  ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -59,6 +60,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { MarkdownCitations } from "./markdown-citations";
 import { ExportMenu } from "./export-menu";
 import { DiffView } from "./diff-view";
+import { CitationValidationDialog } from "./citation-validation-dialog";
 import { Icon } from "./icon";
 
 interface Props {
@@ -76,6 +78,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
   const [selection, setSelection] = React.useState<{ text: string; rect: DOMRect } | null>(null);
   const [undoSnapshot, setUndoSnapshot] = React.useState<string | null>(null);
   const [diffOpen, setDiffOpen] = React.useState(false);
+  const [validateOpen, setValidateOpen] = React.useState(false);
   const bodyRef = React.useRef<HTMLDivElement>(null);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["project", projectId] });
@@ -255,6 +258,9 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
               }
             >
               <Copy className="h-3.5 w-3.5" /> Copy text
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setValidateOpen(true)}>
+              <ShieldCheck className="h-3.5 w-3.5" /> Validate citations
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <FormatSelect
@@ -483,6 +489,13 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
           title={paragraph.title}
         />
       )}
+
+      <CitationValidationDialog
+        open={validateOpen}
+        onOpenChange={setValidateOpen}
+        paragraphId={paragraph.id}
+        paragraphTitle={paragraph.title}
+      />
     </div>
   );
 }

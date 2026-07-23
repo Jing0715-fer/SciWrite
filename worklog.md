@@ -664,3 +664,65 @@ best practices that adapt to the current paragraph format & scenario.
 - **P2**: Persist undo snapshots across page refreshes.
 - **Styling**: More empty-state illustrations, paragraph status transition animations.
 - **P3**: Collaborative annotations / sharing.
+
+---
+
+## Phase 10 — Citation validation check (cron round 8)
+
+Task ID: 10
+Agent: main (webDevReview cron)
+Task: QA test, add citation validation feature that verifies every citation
+marker in a paragraph resolves to a saved reference or AI-generated citation.
+
+### Project Status Assessment
+- Dev server was down at start of round — restarted via `.zscripts/dev.sh`.
+- After restart: HTTP 200, 0 console errors, all features verified (18 citation
+  markers, 4 paragraph cards, progress tracker, tips/backup/outline buttons).
+- App stable, no bugs found.
+
+### Work Log:
+- **NEW: Citation validation** (`/api/paragraphs/[id]/validate-citations` +
+  `CitationValidationDialog` component):
+  - **API route** (`GET /api/paragraphs/{id}/validate-citations`):
+    - Extracts all citation markers `[n]` and `[SOURCE:ID]` from the paragraph body
+      (excludes the `### Citations` block).
+    - Parses the AI-generated `### Citations` block into a numbered map.
+    - For each marker, checks if it resolves to: (a) a saved reference (by index
+      for numeric, by type+externalId for SOURCE:ID with alias normalization
+      PMID→pubmed, PDB→rcsb), or (b) an AI-citation-block entry.
+    - Returns: totalMarkers, validCount, missingCount, orphanedCount, detailed
+      results (marker, type, status, resolvedTo, suggestion), orphaned references
+      (saved but never cited), and metadata (hasCitationsBlock, aiCitationCount,
+      savedReferenceCount).
+  - **Dialog component**: Shows a summary banner (green if all valid, amber if
+    issues), 4 stat boxes (Markers/Valid/Missing/Orphaned), missing citations
+    list (with suggestions for how to fix), orphaned references list, and valid
+    citations list (collapsed after 10).
+  - **UI integration**: "Validate citations" menu item added to the paragraph card
+    dropdown menu (ShieldCheck icon, between "Copy text" and format selectors).
+  - **Verified via API**: paragraph without citations block → 8 markers, 0 valid,
+    10 missing (numeric ranges expanded); paragraph with AI citations block → 5
+    markers, 5 valid, 0 missing.
+  - **Verified in browser**: dropdown shows "Validate citations" item; dialog opens
+    with "Citation Validation" title, shows "8 citation markers · 0 resolved" and
+    missing citations section.
+
+### Verification Results:
+- `bun run lint` → clean (0 errors, 0 warnings).
+- 0 console errors, 0 runtime errors.
+- Citation validation API → correct counts for both cited and uncited paragraphs.
+- Dialog → opens with summary, stat boxes, missing/orphaned/valid sections.
+- All previous features still working.
+
+### Stage Summary:
+- **1 new feature added**: Citation validation check that scans paragraph content
+  for citation markers and verifies each resolves to a saved reference or AI
+  citation block entry, with detailed missing/orphaned reporting.
+- Dev server stable on port 3000. Lint clean. No errors.
+
+### Unresolved / Next-phase priorities:
+- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+- **P2**: Persist undo snapshots across page refreshes.
+- **Styling**: More empty-state illustrations, paragraph status transition animations.
+- **P3**: Collaborative annotations / sharing.
+- **P3**: Batch citation validation across all paragraphs in a project.

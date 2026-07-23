@@ -101,6 +101,10 @@ export const api = {
       { method: "POST", body: JSON.stringify(input) }
     ),
 
+  /* Citation validation */
+  validateCitations: (id: string) =>
+    jfetch<any>(`/api/paragraphs/${id}/validate-citations`),
+
   /* AI write */
   aiWrite: (input: WriteRequest) =>
     jfetch<{ paragraph: Paragraph | null; content: string }>(`/api/ai/write`, {
