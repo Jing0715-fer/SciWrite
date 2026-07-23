@@ -27,6 +27,7 @@ import { api } from "@/lib/api-client";
 import { DATABASE_SOURCES } from "@/lib/constants";
 import type { DatabaseQueryResponse, DatabaseResultItem } from "@/lib/types";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useI18n } from "@/lib/i18n";
 
 const SOURCE_BADGE: Record<string, string> = {
   pubmed: "badge-emerald",
@@ -47,6 +48,7 @@ const SOURCE_DOT: Record<string, string> = {
 };
 
 export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) {
+  const { t } = useI18n();
   const [source, setSource] = React.useState<string>("pubmed");
   const [query, setQuery] = React.useState("");
   const [blastProgram, setBlastProgram] = React.useState<"blastp" | "blastn">("blastp");
@@ -127,7 +129,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
         <div className="flex items-center gap-2">
           <Database className="h-4 w-4 text-primary" />
           <h3 className="text-sm font-semibold tracking-tight">
-            Scientific Databases
+            {t("db.title")}
           </h3>
         </div>
         <Select value={source} onValueChange={setSource}>
@@ -239,8 +241,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
             <div className="text-center py-10 text-muted-foreground">
               <FlaskConical className="h-8 w-8 mx-auto mb-2 opacity-40" />
               <p className="text-xs">
-                Query a database to retrieve papers, structures, sequences, or
-                genes.
+                {t("db.noResults")}
               </p>
             </div>
           )}

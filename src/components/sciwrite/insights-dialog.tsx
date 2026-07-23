@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { BatchValidationDialog } from "./batch-validation-dialog";
+import { useI18n } from "@/lib/i18n";
 import {
   Dialog,
   DialogContent,
@@ -55,6 +56,7 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
+  const { t } = useI18n();
   const [batchValidateOpen, setBatchValidateOpen] = React.useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ["insights", projectId],
@@ -69,10 +71,10 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60">
           <DialogTitle className="flex items-center gap-2 text-base">
             <BarChart3 className="h-4 w-4 text-primary" />
-            Project Insights
+            {t("insights.title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Writing progress, citation coverage, and source distribution analytics.
+            {t("insights.desc")}
           </DialogDescription>
         </DialogHeader>
 
@@ -118,7 +120,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-semibold flex items-center gap-1.5">
                       <Target className="h-3.5 w-3.5 text-primary" />
-                      Citation Coverage
+                      {t("insights.citationCoverage")}
                     </span>
                     <span className="text-sm font-bold text-primary">
                       {data.stats.citationCoverage}%
@@ -142,7 +144,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                     <div className="flex items-center gap-1.5 mb-1">
                       <MessageSquare className="h-3.5 w-3.5 text-amber-600" />
                       <span className="text-[10px] uppercase tracking-wide font-semibold text-amber-700 dark:text-amber-400">
-                        Unresolved
+                        {t("insights.unresolved")}
                       </span>
                     </div>
                     <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">
@@ -154,7 +156,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                     <div className="flex items-center gap-1.5 mb-1">
                       <MessageSquare className="h-3.5 w-3.5 text-emerald-600" />
                       <span className="text-[10px] uppercase tracking-wide font-semibold text-emerald-700 dark:text-emerald-400">
-                        Resolved
+                        {t("insights.resolved")}
                       </span>
                     </div>
                     <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">
@@ -295,7 +297,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
             onClick={() => setBatchValidateOpen(true)}
           >
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-            Audit all citations
+            {t("insights.auditAll")}
           </Button>
         </div>
       </DialogContent>

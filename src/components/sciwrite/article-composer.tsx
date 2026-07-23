@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/lib/api-client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useI18n } from "@/lib/i18n";
 import { MarkdownCitations } from "./markdown-citations";
 import { ExportMenu } from "./export-menu";
 import { ReviewDialog } from "./review-dialog";
@@ -53,6 +54,7 @@ export function ArticleComposer({
   projectId,
   paragraphs,
 }: Props) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [title, setTitle] = React.useState("");
   const [abstract, setAbstract] = React.useState("");
@@ -109,7 +111,7 @@ export function ArticleComposer({
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60">
           <DialogTitle className="flex items-center gap-2 text-base">
             <Layers className="h-4 w-4 text-primary" />
-            Compose Deeper Article
+            {t("compose.title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
             Arrange paragraphs into a coherent, deeply-synthesized research article.
@@ -120,7 +122,7 @@ export function ArticleComposer({
         <ScrollArea className="flex-1 min-h-0 scroll-academic">
           <div className="px-6 py-4 space-y-4">
             <div className="space-y-1.5">
-              <Label className="text-xs">Article title</Label>
+              <Label className="text-xs">{t("compose.articleTitle")}</Label>
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
@@ -129,29 +131,29 @@ export function ArticleComposer({
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Abstract (optional)</Label>
+              <Label className="text-xs">{t("compose.abstract")}</Label>
               <Textarea
                 value={abstract}
                 onChange={(e) => setAbstract(e.target.value)}
-                placeholder="Optional guiding abstract for the AI…"
+                placeholder={t("compose.abstractPlaceholder")}
                 className="text-xs min-h-[56px]"
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Composition depth</Label>
+              <Label className="text-xs">{t("compose.depth")}</Label>
               <Select value={depth} onValueChange={(v) => setDepth(v as any)}>
                 <SelectTrigger className="text-xs h-9">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="shallow" className="text-xs">
-                    Shallow — light stitching
+                    {t("compose.shallow")}
                   </SelectItem>
                   <SelectItem value="standard" className="text-xs">
-                    Standard — smooth synthesis
+                    {t("compose.standard")}
                   </SelectItem>
                   <SelectItem value="deep" className="text-xs">
-                    Deep — full synthesis &amp; discussion
+                    {t("compose.deep")}
                   </SelectItem>
                 </SelectContent>
               </Select>
@@ -160,13 +162,13 @@ export function ArticleComposer({
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <Label className="text-xs flex items-center gap-1.5">
-                  <FileStack className="h-3 w-3" /> Paragraph order ({order.length})
+                  <FileStack className="h-3 w-3" /> {t("compose.paragraphOrder")} ({order.length})
                 </Label>
               </div>
               <div className="space-y-1.5 rounded-md border border-border/60 p-2">
                 {orderedParagraphs.length === 0 && (
                   <p className="text-[11px] text-muted-foreground p-2">
-                    No paragraphs available. Generate some first.
+                    {t("compose.noParagraphs")}
                   </p>
                 )}
                 {orderedParagraphs.map((p, i) => (
@@ -219,7 +221,7 @@ export function ArticleComposer({
             ) : (
               <Sparkles className="h-4 w-4" />
             )}
-            {composeMut.isPending ? "Composing…" : "Compose article"}
+            {composeMut.isPending ? t("compose.composing") : t("compose.compose")}
           </Button>
         </DialogFooter>
       </DialogContent>

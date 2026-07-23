@@ -51,15 +51,27 @@ export function writingSystemPrompt(opts: {
   field?: string;
   language?: string;
 }): string {
-  const lang = opts.language || "English";
+  // Normalize language: "en", "zh", "both", or descriptive string
+  let lang = opts.language || "English";
+  let langInstruction = `Write in ${lang}, using formal, precise academic prose (third person, past tense for results/methods).`;
+  if (lang === "both" || lang === "English + 中文" || lang === "中英") {
+    langInstruction = `Write the paragraph in BOTH English and Chinese. First the English version, then a blank line, then "## 中文" on its own line, then the Chinese version. Both versions must contain the same inline citations. Use formal, precise academic prose (third person, past tense for results/methods).`;
+    lang = "English and Chinese (中文)";
+  } else if (lang === "zh" || lang === "中文" || lang === "Chinese") {
+    langInstruction = `用中文撰写，使用正式、精确的学术语言（第三人称，结果/方法部分使用过去时）。`;
+    lang = "中文 (Chinese)";
+  } else if (lang === "en" || lang === "English") {
+    langInstruction = `Write in English, using formal, precise academic prose (third person, past tense for results/methods).`;
+    lang = "English";
+  }
   const fLabel = formatLabel(opts.format);
   const sLabel = scenarioLabel(opts.scenario);
   return `You are a senior scientific research writer and domain expert (${opts.field || "life sciences"}).
 Your task is to compose a single, publication-quality ${fLabel} paragraph in the scenario of "${sLabel}".
 
 STRICT REQUIREMENTS:
-1. Write in ${lang}, using formal, precise academic prose (third person, past tense for results/methods).
-2. Length: 180–320 words. One cohesive paragraph (no headings, no markdown headers in the body).
+1. ${langInstruction}
+2. Length: 180–320 words per language version. One cohesive paragraph (no headings, no markdown headers in the body).
 3. Every factual claim MUST be supported by an inline citation in the form [n], where n is the
    1-based index into the REFERENCE LIST you provide at the end. If a fact comes from a structural /
    sequence database record, cite it as [SOURCE:ID] (e.g. [PDB:1A3N], [UniProt:P04637], [PMID:12345678]).
@@ -70,7 +82,7 @@ STRICT REQUIREMENTS:
 
 OUTPUT FORMAT (MANDATORY):
 - First, the paragraph text (no markdown headers, no preamble).
-- Then a blank line.
+${lang === "English and Chinese (中文)" ? "- Then a blank line, then \"## 中文\" on its own line, then the Chinese version of the paragraph.\n" : ""}- Then a blank line.
 - Then exactly "### Citations" on its own line.
 - Then a numbered list of EVERY source you cited, one per line, in this exact format:
   [1] Authors (Year) Journal. Title. [SOURCE:ID] — URL

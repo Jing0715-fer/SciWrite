@@ -34,6 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/lib/api-client";
+import { useI18n } from "@/lib/i18n";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 interface Props {
@@ -44,22 +45,23 @@ interface Props {
 }
 
 const VERDICT_STYLES: Record<string, { label: string; color: string; icon: string }> = {
-  accept: { label: "Accept", color: "emerald", icon: "CheckCircle2" },
-  "minor-revision": { label: "Minor Revision", color: "amber", icon: "AlertTriangle" },
-  "major-revision": { label: "Major Revision", color: "rose", icon: "XCircle" },
-  reject: { label: "Reject", color: "rose", icon: "XCircle" },
+  accept: { label: "review.accept", color: "emerald", icon: "CheckCircle2" },
+  "minor-revision": { label: "review.minorRevision", color: "amber", icon: "AlertTriangle" },
+  "major-revision": { label: "review.majorRevision", color: "rose", icon: "XCircle" },
+  reject: { label: "review.reject", color: "rose", icon: "XCircle" },
 };
 
-const SCORE_LABELS: Record<string, string> = {
-  novelty: "Novelty",
-  significance: "Significance",
-  clarity: "Clarity",
-  methodology: "Methodology",
-  citations: "Citations",
-  overall: "Overall",
-};
+const SCORE_KEYS = [
+  "novelty",
+  "significance",
+  "clarity",
+  "methodology",
+  "citations",
+  "overall",
+] as const;
 
 export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Props) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [reviewData, setReviewData] = React.useState<any>(null);
   const [autoRounds, setAutoRounds] = React.useState(2);
@@ -116,12 +118,12 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">
             <Gavel className="h-4 w-4 text-primary" />
-            AI Peer Review
+            {t("review.title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            {articleTitle || "Structured review with multi-dimensional scoring"}
+            {articleTitle || t("review.desc")}
             <span className="ml-1 text-muted-foreground/70">
-              · inspired by Nature Review Studio + ChatReviewer
+              {t("review.inspired")}
             </span>
           </DialogDescription>
         </DialogHeader>
@@ -141,7 +143,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                 ) : (
                   <Gavel className="h-3.5 w-3.5" />
                 )}
-                Run review
+                {t("review.runReview")}
               </Button>
 
               <div className="flex items-center gap-1.5">
@@ -152,7 +154,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                   <SelectContent>
                     {[1, 2, 3, 4, 5].map((n) => (
                       <SelectItem key={n} value={String(n)} className="text-xs">
-                        {n} round{n > 1 ? "s" : ""}
+                        {n} {t("review.round")}{n > 1 ? t("review.rounds") : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -169,7 +171,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                   ) : (
                     <RotateCw className="h-3.5 w-3.5" />
                   )}
-                  Auto-iterate
+                  {t("review.autoIterate")}
                 </Button>
               </div>
             </div>
@@ -179,7 +181,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
               <div className="space-y-3">
                 <div className="flex items-center gap-2 text-sm">
                   <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                  <span>{autoIterateMut.isPending ? "Running review + revision iterations…" : "Reviewing article…"}</span>
+                  <span>{autoIterateMut.isPending ? t("review.iterating") : t("review.reviewing")}</span>
                 </div>
                 {[0, 1, 2].map((i) => (
                   <div key={i} className="h-16 rounded-lg bg-muted/40 animate-pulse" />
@@ -218,11 +220,11 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                             : "text-amber-700 dark:text-amber-400"
                         }`}
                       >
-                        Verdict: {verdictMeta.label}
+                        {t("review.verdict")}: {verdictMeta ? t(verdictMeta.label as any) : verdict}
                       </span>
                       {reviewData.review?.round && (
-                        <Badge variant="outline" className="text-[9px] h-4 ml-auto">
-                          Round {reviewData.review.round}
+                          <Badge variant="outline" className="text-[9px] h-4 ml-auto">
+                          {t("review.round")} {reviewData.review.round}
                         </Badge>
                       )}
                     </div>
@@ -233,10 +235,11 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                 {scores && (
                   <div className="space-y-2">
                     <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
-                      <Star className="h-3 w-3" /> Dimension Scores
+                      <Star className="h-3 w-3" /> {t("review.dimensionScores")}
                     </p>
                     <div className="grid grid-cols-2 gap-2">
-                      {Object.entries(SCORE_LABELS).map(([key, label]) => {
+                      {SCORE_KEYS.map((key) => {
+                        const label = t(`review.${key}` as any);
                         const val = scores[key];
                         if (val === undefined || val === null) return null;
                         const pct = (val / 10) * 100;
@@ -274,13 +277,13 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                 {reviewData.review && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     <ReviewList
-                      title="Strengths"
+                      title={t("review.strengths")}
                       items={safeParse(reviewData.review.strengths)}
                       icon={<TrendingUp className="h-3 w-3" />}
                       color="emerald"
                     />
                     <ReviewList
-                      title="Weaknesses"
+                      title={t("review.weaknesses")}
                       items={safeParse(reviewData.review.weaknesses)}
                       icon={<TrendingDown className="h-3 w-3" />}
                       color="rose"
@@ -292,7 +295,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                 {reviewData.review && (
                   <div className="space-y-1.5">
                     <p className="text-[10px] uppercase tracking-wider text-primary font-semibold flex items-center gap-1">
-                      <Wand2 className="h-3 w-3" /> Revision Suggestions
+                      <Wand2 className="h-3 w-3" /> {t("review.revisionSuggestions")}
                     </p>
                     {safeParse(reviewData.review.suggestions).map((s: any, i: number) => (
                       <div
@@ -319,7 +322,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                 {iterationLog.length > 0 && (
                   <div className="space-y-1">
                     <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                      Iteration Log
+                      {t("review.iterationLog")}
                     </p>
                     {iterationLog.map((r, i) => (
                       <div key={i} className="flex items-center gap-2 text-[10px] rounded-md bg-muted/30 px-2 py-1">
@@ -328,10 +331,10 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                           {r.phase}
                         </Badge>
                         {r.phase === "review" && r.verdict && (
-                          <span className="text-muted-foreground">{VERDICT_STYLES[r.verdict]?.label || r.verdict}</span>
+                          <span className="text-muted-foreground">{t(`review.${r.verdict}` as any)}</span>
                         )}
                         {r.phase === "revise" && (
-                          <span className="text-emerald-600">revised ✓</span>
+                          <span className="text-emerald-600">{t("review.revised")} ✓</span>
                         )}
                       </div>
                     ))}
@@ -345,7 +348,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                 <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
                   <Gavel className="h-7 w-7 text-primary" />
                 </div>
-                <h3 className="text-sm font-semibold">AI Peer Review</h3>
+                <h3 className="text-sm font-semibold">{t("review.title")}</h3>
                 <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
                   Get a structured, multi-dimensional review of your article with scores,
                   strengths, weaknesses, and actionable revision suggestions. Run auto-iterate
@@ -373,7 +376,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
               ) : (
                 <Wand2 className="h-3.5 w-3.5" />
               )}
-              Revise article
+              {t("review.reviseArticle")}
             </Button>
           </div>
         )}

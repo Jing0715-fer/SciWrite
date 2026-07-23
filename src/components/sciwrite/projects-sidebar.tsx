@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { ProjectImportExport } from "./project-import-export";
+import { useI18n } from "@/lib/i18n";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -57,6 +58,7 @@ interface Props {
 }
 
 export function ProjectsSidebar({ projects, activeId, onSelect }: Props) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [createOpen, setCreateOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -78,7 +80,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect }: Props) {
           <div className="h-6 w-6 rounded-md bg-primary/10 flex items-center justify-center">
             <FlaskConical className="h-3.5 w-3.5 text-primary" />
           </div>
-          <span className="text-xs font-semibold tracking-tight">Projects</span>
+          <span className="text-xs font-semibold tracking-tight">{t("projects.title")}</span>
         </div>
         <div className="flex items-center gap-0.5">
           <ProjectImportExport
@@ -94,7 +96,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect }: Props) {
             onClick={() => setCreateOpen(true)}
           >
             <Plus className="h-3.5 w-3.5" />
-            New
+            {t("projects.new")}
           </Button>
         </div>
       </div>
@@ -104,9 +106,9 @@ export function ProjectsSidebar({ projects, activeId, onSelect }: Props) {
           {projects.length === 0 && (
             <div className="text-center py-10 px-3 text-muted-foreground">
               <FolderOpen className="h-8 w-8 mx-auto opacity-40 mb-2" />
-              <p className="text-xs">No projects yet.</p>
+              <p className="text-xs">{t("projects.empty")}</p>
               <p className="text-[10px] mt-1">
-                Click “New” to start a research project.
+                {t("projects.emptyHint")}
               </p>
             </div>
           )}
@@ -287,6 +289,7 @@ function CreateProjectDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [title, setTitle] = React.useState("");
   const [topic, setTopic] = React.useState("");
@@ -316,16 +319,15 @@ function CreateProjectDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <FlaskConical className="h-4 w-4 text-primary" />
-            New Research Project
+            {t("projects.newProject")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Define your research topic and field. The AI will use this as the
-            scope for literature search and writing.
+            {t("projects.newDesc")}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label className="text-xs">Project title</Label>
+            <Label className="text-xs">{t("projects.titleLabel")}</Label>
             <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -334,7 +336,7 @@ function CreateProjectDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Research topic / direction</Label>
+            <Label className="text-xs">{t("projects.topicLabel")}</Label>
             <Textarea
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
@@ -343,7 +345,7 @@ function CreateProjectDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Field</Label>
+            <Label className="text-xs">{t("projects.fieldLabel")}</Label>
             <Select value={field} onValueChange={setField}>
               <SelectTrigger className="text-sm h-9">
                 <SelectValue />
@@ -358,7 +360,7 @@ function CreateProjectDialog({
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Notes (optional)</Label>
+            <Label className="text-xs">{t("projects.notesLabel")}</Label>
             <Input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -378,7 +380,7 @@ function CreateProjectDialog({
             ) : (
               <Plus className="h-4 w-4" />
             )}
-            Create project
+            {t("projects.create")}
           </Button>
         </DialogFooter>
       </DialogContent>

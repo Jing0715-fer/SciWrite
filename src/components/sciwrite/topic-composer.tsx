@@ -39,6 +39,7 @@ import {
   PARAGRAPH_SCENARIOS,
 } from "@/lib/constants";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useI18n } from "@/lib/i18n";
 import { MarkdownCitations } from "./markdown-citations";
 
 interface Props {
@@ -60,10 +61,12 @@ export function TopicComposer({
   references,
   dataSources,
 }: Props) {
+  const { t } = useI18n();
   const [topic, setTopic] = React.useState(projectTopic || "");
   const [focus, setFocus] = React.useState("");
   const [format, setFormat] = React.useState<string>("background");
   const [scenario, setScenario] = React.useState<string>("literature-review");
+  const [outputLang, setOutputLang] = React.useState<string>("English");
   const [selectedRefs, setSelectedRefs] = React.useState<string[]>([]);
   const [selectedSources, setSelectedSources] = React.useState<string[]>([]);
   const [searchQ, setSearchQ] = React.useState("");
@@ -106,6 +109,7 @@ export function TopicComposer({
         scenario: scenario as any,
         projectId,
         field: projectField || undefined,
+        language: outputLang,
         referenceIds: selectedRefs,
         dataSourceIds: selectedSources,
         searchQueries,
@@ -147,18 +151,17 @@ export function TopicComposer({
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60">
           <DialogTitle className="flex items-center gap-2 text-base">
             <Sparkles className="h-4 w-4 text-primary" />
-            AI Research Writer
+            {t("topic.title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Provide a topic and focus. The AI searches databases &amp; the web, then
-            drafts a citation-backed scholarly paragraph.
+            {t("topic.desc")}
           </DialogDescription>
         </DialogHeader>
 
         <ScrollArea className="flex-1 min-h-0 scroll-academic">
           <div className="px-6 py-4 space-y-4">
             <div className="space-y-1.5">
-              <Label className="text-xs">Research topic</Label>
+              <Label className="text-xs">{t("topic.topicLabel")}</Label>
               <Textarea
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
@@ -167,7 +170,7 @@ export function TopicComposer({
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Specific focus / angle (optional)</Label>
+              <Label className="text-xs">{t("topic.focusLabel")}</Label>
               <Input
                 value={focus}
                 onChange={(e) => setFocus(e.target.value)}
@@ -209,16 +212,31 @@ export function TopicComposer({
               </div>
             </div>
 
+            {/* Output language selector */}
+            <div className="space-y-1.5">
+              <Label className="text-xs">{t("topic.languageLabel")}</Label>
+              <Select value={outputLang} onValueChange={setOutputLang}>
+                <SelectTrigger className="text-xs h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="English" className="text-xs">{t("topic.langEnglish")}</SelectItem>
+                  <SelectItem value="中文" className="text-xs">{t("topic.langChinese")}</SelectItem>
+                  <SelectItem value="both" className="text-xs">{t("topic.langBoth")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             {/* Sources selectors */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs flex items-center gap-1.5">
-                  <DatabaseIcon className="h-3 w-3" /> Data sources ({selectedSources.length})
+                  <DatabaseIcon className="h-3 w-3" /> {t("topic.dataSourcesLabel")} ({selectedSources.length})
                 </Label>
                 <div className="rounded-md border border-border/60 max-h-32 overflow-y-auto scroll-academic divide-y divide-border/40">
                   {dataSources.length === 0 && (
                     <p className="text-[10px] text-muted-foreground p-2">
-                      No saved data sources yet. Query a database first.
+                      {t("topic.noSources")}
                     </p>
                   )}
                   {dataSources.map((d) => (
@@ -247,12 +265,12 @@ export function TopicComposer({
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs flex items-center gap-1.5">
-                  <BookOpen className="h-3 w-3" /> References ({selectedRefs.length})
+                  <BookOpen className="h-3 w-3" /> {t("topic.refsLabel")} ({selectedRefs.length})
                 </Label>
                 <div className="rounded-md border border-border/60 max-h-32 overflow-y-auto scroll-academic divide-y divide-border/40">
                   {references.length === 0 && (
                     <p className="text-[10px] text-muted-foreground p-2">
-                      No references yet. Save some from the database panel.
+                      {t("topic.noRefs")}
                     </p>
                   )}
                   {references.map((r) => (
@@ -284,7 +302,7 @@ export function TopicComposer({
 
             <div className="space-y-1.5">
               <Label className="text-xs flex items-center gap-1.5">
-                <Globe className="h-3 w-3" /> Live web search queries (optional, one per line)
+                <Globe className="h-3 w-3" /> {t("topic.searchLabel")}
               </Label>
               <Textarea
                 value={searchQ}
@@ -336,7 +354,7 @@ export function TopicComposer({
               <div className="rounded-lg border border-primary/30 bg-primary/[0.02] p-4 acad-fade-in">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[10px] uppercase tracking-wider text-primary font-semibold flex items-center gap-1">
-                    <Wand2 className="h-3 w-3" /> Generated draft
+                    <Wand2 className="h-3 w-3" /> {t("topic.generated")}
                   </span>
                   <button
                     onClick={() => {
@@ -372,7 +390,7 @@ export function TopicComposer({
               ) : (
                 <Sparkles className="h-4 w-4" />
               )}
-              {writeMut.isPending ? "Researching & writing…" : "Generate paragraph"}
+              {writeMut.isPending ? t("topic.researching") : t("topic.generate")}
             </Button>
           ) : (
             <>
@@ -383,7 +401,7 @@ export function TopicComposer({
                 className="gap-2"
               >
                 <Sparkles className="h-4 w-4" />
-                Regenerate
+                {t("topic.regenerate")}
               </Button>
               <Button
                 onClick={() => saveMut.mutate()}
@@ -393,7 +411,7 @@ export function TopicComposer({
                 {saveMut.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : null}
-                Save to workspace
+                {t("topic.saveWorkspace")}
               </Button>
             </>
           )}

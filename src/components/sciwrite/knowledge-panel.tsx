@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AddReferenceDialog } from "./add-reference-dialog";
+import { useI18n } from "@/lib/i18n";
 import {
   Tabs,
   TabsContent,
@@ -54,6 +55,7 @@ export function KnowledgePanel({
   articles: (Article & { _count?: any })[];
   onOpenArticle: (a: Article) => void;
 }) {
+  const { t } = useI18n();
   const [addRefOpen, setAddRefOpen] = React.useState(false);
   return (
     <>
@@ -61,21 +63,21 @@ export function KnowledgePanel({
       <TabsList className="grid grid-cols-3 mx-3 mt-3 h-8 shrink-0">
         <TabsTrigger value="sources" className="text-[11px] gap-1">
           <DatabaseIcon className="h-3 w-3" />
-          Sources
+          {t("knowledge.sources")}
           {dataSources.length > 0 && (
             <span className="text-[9px] opacity-70">{dataSources.length}</span>
           )}
         </TabsTrigger>
         <TabsTrigger value="refs" className="text-[11px] gap-1">
           <BookOpen className="h-3 w-3" />
-          Refs
+          {t("knowledge.refs")}
           {references.length > 0 && (
             <span className="text-[9px] opacity-70">{references.length}</span>
           )}
         </TabsTrigger>
         <TabsTrigger value="articles" className="text-[11px] gap-1">
           <Layers className="h-3 w-3" />
-          Articles
+          {t("knowledge.articles")}
           {articles.length > 0 && (
             <span className="text-[9px] opacity-70">{articles.length}</span>
           )}
@@ -111,6 +113,7 @@ function SourcesList({
   projectId: string | null;
   items: DataSource[];
 }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const togglePin = useMutation({
     mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) =>
@@ -142,8 +145,8 @@ function SourcesList({
         {items.length === 0 && (
           <EmptyState
             icon={<DatabaseIcon className="h-7 w-7" />}
-            title="No saved sources"
-            hint="Query a database and click “+ Source” to pin records here."
+            title={t("knowledge.noSources")}
+            hint={t("knowledge.noSourcesHint")}
           />
         )}
         {items.map((d) => (
@@ -245,7 +248,7 @@ function SourcesList({
             )}
             {d.pinned && (
               <span className="inline-flex items-center gap-0.5 text-[8px] text-amber-600 font-medium">
-                <Pin className="h-2 w-2" /> pinned
+                <Pin className="h-2 w-2" /> {t("knowledge.pinned")}
               </span>
             )}
           </div>
@@ -264,6 +267,7 @@ function ReferencesList({
   items: Reference[];
   onAdd?: () => void;
 }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const del = useMutation({
     mutationFn: (id: string) => api.deleteReference(id),
@@ -285,14 +289,14 @@ function ReferencesList({
             onClick={onAdd}
           >
             <Plus className="h-3 w-3" />
-            Add reference (PMID / DOI / manual)
+            {t("knowledge.addReference")}
           </Button>
         )}
         {items.length === 0 && !onAdd && (
           <EmptyState
             icon={<BookOpen className="h-7 w-7" />}
-            title="No references yet"
-            hint="Save references from database results or add manually."
+            title={t("knowledge.noRefs")}
+            hint={t("knowledge.noRefsHint")}
           />
         )}
         {items.map((r, i) => (
@@ -351,6 +355,7 @@ function ArticlesList({
   onOpen: (a: Article) => void;
   projectId: string | null;
 }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const del = useMutation({
     mutationFn: (id: string) => api.deleteArticle(id),
@@ -367,8 +372,8 @@ function ArticlesList({
         {items.length === 0 && (
           <EmptyState
             icon={<Layers className="h-7 w-7" />}
-            title="No composed articles"
-            hint="Select paragraphs and use “Compose” to generate a deeper article."
+            title={t("knowledge.noArticles")}
+            hint={t("knowledge.noArticlesHint")}
           />
         )}
         {items.map((a) => (
