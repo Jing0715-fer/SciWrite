@@ -731,7 +731,15 @@ function WritingWorkspace({
             {latestArticle ? (
               <div>
                 <h3 className="text-sm font-semibold mb-3 font-serif-text">{latestArticle.title}</h3>
-                <MarkdownCitations content={latestArticle.content} className="text-[13.5px]" />
+                <MarkdownCitations content={latestArticle.content} references={references} onCitationClick={(ref, idx) => {
+                  // Scroll to the reference in the right panel
+                  const refEl = document.getElementById(`ref-${idx}`);
+                  if (refEl) {
+                    refEl.scrollIntoView({ behavior: "smooth", block: "center" });
+                    refEl.classList.add("ring-2", "ring-primary", "ring-offset-1");
+                    setTimeout(() => refEl.classList.remove("ring-2", "ring-primary", "ring-offset-1"), 2000);
+                  }
+                }} className="text-[13.5px]" />
               </div>
             ) : (
               <div className="text-center py-16">
@@ -862,6 +870,21 @@ function RelationshipWorkspace({ projectId }: { projectId: string }) {
       setLoading(false);
     }
   }, [projectId]);
+
+  // Auto-analyze when there are data sources
+  const [autoTriggered, setAutoTriggered] = React.useState(false);
+  React.useEffect(() => {
+    if (!autoTriggered && !relData && !loading) {
+      // Check if project has data sources
+      fetch(`/api/projects/${projectId}`).then(r => r.json()).then(data => {
+        const ds = data?.project?.dataSources || [];
+        if (ds.length >= 2) {
+          setAutoTriggered(true);
+          analyze();
+        }
+      }).catch(() => {});
+    }
+  }, [autoTriggered, relData, loading, projectId, analyze]);
 
   return (
     <ScrollArea className="flex-1 min-h-0 scroll-academic">

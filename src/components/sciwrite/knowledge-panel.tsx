@@ -350,7 +350,8 @@ function ReferencesList({
         {items.map((r, i) => (
           <div
             key={r.id}
-            className="rounded-lg border border-border/60 bg-card p-2.5 space-y-1"
+            id={`ref-${i}`}
+            className="rounded-lg border border-border/60 bg-card p-2.5 space-y-1 transition-all"
           >
             <div className="flex items-start gap-1.5">
               <span className="text-[10px] font-mono text-muted-foreground mt-0.5">

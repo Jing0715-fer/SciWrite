@@ -318,7 +318,7 @@ SCENARIO: ${section.scenario}
 FOCUS: ${section.focus}
 TARGET WORDS: ${section.targetWords}
 
-REFERENCE LIST (use ONLY these — cite as [n] where n is the 1-based index):
+REFERENCE LIST (use ONLY these — cite as [n] where n is the 1-based index, 1 to ${savedReferences.length}):
 ${refContext}
 
 DATABASE RECORDS (structural/sequence data — reference the associated publication, not the PDB/UniProt ID):
@@ -331,13 +331,36 @@ agreements and contradictions, synthesize findings across studies.
 CITATION FORMAT (MANDATORY):
 - Use ONLY numeric [n] citations in the body text (e.g. [1], [2], [3]).
 - Number citations starting from [1] for THIS section. Each [n] refers to the n-th entry
-  in the REFERENCE LIST above (which starts at [1]).
+  in the REFERENCE LIST above (which has ${savedReferences.length} entries, numbered [1] to [${savedReferences.length}]).
+- You MUST NOT use citation numbers greater than ${savedReferences.length}. If you need a source
+  not in the list, use [$REF] as a placeholder instead.
 - Do NOT use [SOURCE:ID] format (no [PDB:xxx], [PMID:xxx], [UniProt:xxx] in body).
 - Do NOT write empty brackets [] — always include a number.
-- Do NOT output a "### Citations" block — just write the paragraph text with [n] markers.
-- If you cannot support a claim with a provided source, write [$REF] as a placeholder.`;
+- Do NOT output a "### Citations" block — just write the paragraph text with [n] markers.`;
 
-          const content = await chat(prompt, { system, temperature: 0.65 });
+          let content = await chat(prompt, { system, temperature: 0.65 });
+
+          // Sanitize citations: replace any [n] where n > savedReferences.length with [$REF]
+          const maxRefNum = savedReferences.length;
+          content = content.replace(
+            /\[(\d+(?:[,\-–\s]\d+)*)\]/g,
+            (match, inner: string) => {
+              const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
+                const rm = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+                if (rm) {
+                  const arr: number[] = [];
+                  for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) arr.push(n);
+                  return arr;
+                }
+                const n = parseInt(s);
+                return isNaN(n) ? [] : [n];
+              });
+              const validNums = nums.filter((n: number) => n >= 1 && n <= maxRefNum);
+              if (validNums.length === 0) return "[$REF]";
+              if (validNums.length < nums.length) return `[${validNums.join(",")}]`;
+              return match;
+            }
+          );
 
           const paragraph = await db.paragraph.create({
             data: {
@@ -352,21 +375,21 @@ CITATION FORMAT (MANDATORY):
             },
           });
 
-          // Link ALL saved references to THIS paragraph (each paragraph has its own copy
-          // of the full reference list, numbered from [1] to [N])
+          // Link ALL saved references to THIS paragraph.
+          // Each paragraph gets its own copy of the full reference list.
           for (const ref of savedReferences) {
-            // Check if this ref is already linked to this paragraph
+            // Check if a copy already exists for this paragraph
             const existing = await db.reference.findFirst({
               where: {
                 externalId: ref.externalId,
-                type: ref.type,
                 paragraphId: paragraph.id,
               },
             });
             if (!existing) {
+              // Create a copy linked to this paragraph
               await db.reference.create({
                 data: {
-                  type: ref.type,
+                  type: ref.type || "pubmed",
                   externalId: ref.externalId,
                   title: ref.title,
                   authors: ref.authors,
