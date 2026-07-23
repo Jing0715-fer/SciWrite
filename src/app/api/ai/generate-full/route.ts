@@ -330,9 +330,11 @@ agreements and contradictions, synthesize findings across studies.
 
 CITATION FORMAT (MANDATORY):
 - Use ONLY numeric [n] citations in the body text (e.g. [1], [2], [3]).
+- Number citations starting from [1] for THIS section. Each [n] refers to the n-th entry
+  in the REFERENCE LIST above (which starts at [1]).
 - Do NOT use [SOURCE:ID] format (no [PDB:xxx], [PMID:xxx], [UniProt:xxx] in body).
 - Do NOT write empty brackets [] — always include a number.
-- Each [n] must correspond to the n-th entry in the REFERENCE LIST above.
+- Do NOT output a "### Citations" block — just write the paragraph text with [n] markers.
 - If you cannot support a claim with a provided source, write [$REF] as a placeholder.`;
 
           const content = await chat(prompt, { system, temperature: 0.65 });
@@ -350,16 +352,18 @@ CITATION FORMAT (MANDATORY):
             },
           });
 
-          // Link ALL saved references to this paragraph (references can be shared across paragraphs)
-          // Use createMany on a junction — but since we don't have a junction table, we duplicate
-          // reference records for each paragraph that uses them (simpler approach for SQLite)
+          // Link ALL saved references to THIS paragraph (each paragraph has its own copy
+          // of the full reference list, numbered from [1] to [N])
           for (const ref of savedReferences) {
-            // Check if this reference is already linked to THIS paragraph
+            // Check if this ref is already linked to this paragraph
             const existing = await db.reference.findFirst({
-              where: { id: ref.id, paragraphId: paragraph.id },
+              where: {
+                externalId: ref.externalId,
+                type: ref.type,
+                paragraphId: paragraph.id,
+              },
             });
             if (!existing) {
-              // Create a copy linked to this paragraph (keep original for other paragraphs)
               await db.reference.create({
                 data: {
                   type: ref.type,
@@ -400,20 +404,104 @@ CITATION FORMAT (MANDATORY):
         // ============ STEP 5: Compose the final article ============
         send("step", { step: "compose", status: "started", message: "Composing final article..." });
 
+        // Fetch all paragraph contents for composition, along with their references
+        const allParagraphData = await Promise.all(
+          generatedParagraphs.map(async (p) => {
+            const para = await db.paragraph.findUnique({
+              where: { id: p.id },
+              include: { references: true },
+            });
+            const content = para?.content || "";
+            const citIdx = content.indexOf("### Citations");
+            const cleanContent = citIdx >= 0 ? content.slice(0, citIdx).trim() : content.trim();
+            // Build paragraph-local reference map: [1] -> reference record
+            const refs = para?.references || [];
+            return { content: cleanContent, refs };
+          })
+        );
+
+        // Renumber citations globally: walk through all paragraphs in order,
+        // map each paragraph-local [n] to a global number, deduplicating references
+        const globalRefMap = new Map<string, number>(); // key: type+externalId -> global number
+        const globalRefs: any[] = []; // ordered list of unique references
+
+        const renumberedContents = allParagraphData.map(({ content, refs }) => {
+          // Build paragraph-local ref index: local number [1] = refs[0], etc.
+          // But refs are not ordered by citation number — they're in DB order.
+          // The AI cites [1] through [N] where N = refs.length, so [1] = refs[0].
+          let result = content;
+          // For each local citation [n] in this paragraph, map to global number
+          const citeRe = /\[(\d+(?:[,\-–\s]\d+)*)\]/g;
+          result = result.replace(citeRe, (match, inner: string) => {
+            const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
+              const rangeMatch = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+              if (rangeMatch) {
+                const arr = [];
+                for (let n = parseInt(rangeMatch[1]); n <= parseInt(rangeMatch[2]); n++) arr.push(n);
+                return arr;
+              }
+              const n = parseInt(s);
+              return isNaN(n) ? [] : [n];
+            });
+
+            const globalNums = nums.map((localNum: number) => {
+              if (localNum < 1 || localNum > refs.length) return null;
+              const ref = refs[localNum - 1];
+              if (!ref) return null;
+              const key = `${ref.type}:${ref.externalId || ref.title}`;
+              if (!globalRefMap.has(key)) {
+                const globalNum = globalRefs.length + 1;
+                globalRefMap.set(key, globalNum);
+                globalRefs.push(ref);
+              }
+              return globalRefMap.get(key)!;
+            }).filter(Boolean);
+
+            if (globalNums.length === 0) return match; // keep original if we can't resolve
+            return `[${globalNums.join(",")}]`;
+          });
+          return result;
+        });
+
         const composePrompt = `Compose a coherent, deeply-synthesized review article titled "${project.topic}".
-Source sections (in order, citations already renumbered globally):
-${generatedParagraphs.map((p, i) => `\n--- Section ${i + 1}: ${p.title} ---\n`).join("\n")}
+
+Source sections (in order, with [n] citations already renumbered globally):
+${renumberedContents.map((c, i) => `\n## Section ${i + 1}\n\n${c}`).join("\n\n")}
 
 Instructions:
 - Produce a unified article with section headings (## Introduction, ## Background, etc.).
 - Deepen the analysis with full synthesis, contrast, and forward-looking discussion.
-- Preserve ALL inline citations [n] exactly.
-- After the article body, output a "## References" section with every cited source as a numbered list.
+- Preserve ALL inline citations [n] exactly as they appear — do NOT change any numbers.
+- Do NOT add a "## References" section — references are handled separately.
 - Output in Markdown.`;
 
         const composeSystem =
           "You are a senior scientific editor who composes coherent, deeply-synthesized research articles.";
-        const articleContent = await chat(composePrompt, { system: composeSystem, temperature: 0.55 });
+        const articleBody = await chat(composePrompt, { system: composeSystem, temperature: 0.55 });
+
+        // Build the references list from globally renumbered, deduplicated references
+        const refList = globalRefs
+          .map((r, i) => {
+            const auth = r.authors || "Anonymous";
+            const yr = r.year ? ` (${r.year})` : "";
+            const jour = r.journal ? `, ${r.journal}` : "";
+            const url = r.url ? ` — ${r.url}` : "";
+            return `[${i + 1}] ${auth}${yr}${jour}. ${r.title}.${url}`;
+          })
+          .join("\n");
+
+        // Strip any AI-generated references section from the body
+        let cleanBody = articleBody.trim();
+        const refIdx = cleanBody.indexOf("## References");
+        if (refIdx >= 0) {
+          cleanBody = cleanBody.slice(0, refIdx).trim();
+        }
+        const citIdx2 = cleanBody.indexOf("### Citations");
+        if (citIdx2 >= 0) {
+          cleanBody = cleanBody.slice(0, citIdx2).trim();
+        }
+
+        const articleContent = cleanBody + "\n\n## References\n\n" + refList;
 
         const article = await db.article.create({
           data: {

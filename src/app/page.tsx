@@ -215,6 +215,7 @@ export default function Home() {
         onOpenInsights={() => setInsightsOpen(true)}
         onOpenOutline={() => setOutlineOpen(true)}
         onOpenOneClick={() => setOneClickOpen(true)}
+        onOpenLLMConfig={() => setLlmConfigOpen(true)}
         paragraphCount={paragraphs.length}
         articleCount={articles.length}
       />
@@ -442,6 +443,7 @@ function Header({
   onOpenInsights,
   onOpenOutline,
   onOpenOneClick,
+  onOpenLLMConfig,
   paragraphCount,
   articleCount,
 }: {
@@ -452,6 +454,7 @@ function Header({
   onOpenInsights: () => void;
   onOpenOutline: () => void;
   onOpenOneClick: () => void;
+  onOpenLLMConfig: () => void;
   paragraphCount: number;
   articleCount: number;
 }) {
@@ -556,7 +559,7 @@ function Header({
           variant="ghost"
           size="icon"
           className="h-8 w-8 rounded-full"
-          onClick={() => setLlmConfigOpen(true)}
+          onClick={() => onOpenLLMConfig()}
           title="LLM Configuration"
         >
           <Cpu className="h-4 w-4" />

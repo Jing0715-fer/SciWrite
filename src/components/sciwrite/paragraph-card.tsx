@@ -566,9 +566,23 @@ function SelectionToolbar({
             <span className="text-[10px] uppercase tracking-wider text-primary font-semibold flex items-center gap-1">
               <MessageSquare className="h-3 w-3" /> Annotate selection
             </span>
-            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onClose}>
-              <X className="h-3 w-3" />
-            </Button>
+            <div className="flex items-center gap-0.5">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5"
+                onClick={() => {
+                  navigator.clipboard.writeText(text).then(() => toast.success("Copied to clipboard."));
+                  onClose();
+                }}
+                title="Copy selected text"
+              >
+                <Copy className="h-3 w-3" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onClose}>
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
           </div>
           <p className="text-[10px] italic text-muted-foreground line-clamp-2 border-l-2 border-primary/40 pl-2">
             “{text.slice(0, 100)}{text.length > 100 ? "…" : ""}”
