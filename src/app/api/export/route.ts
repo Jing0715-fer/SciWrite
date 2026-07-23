@@ -129,10 +129,13 @@ export async function POST(req: NextRequest) {
       annotations = a.articleParagraph.flatMap((ap) => ap.paragraph.annotations);
     }
 
-    // Strip the AI's "### Citations" block from content (we'll build our own refs list)
+    // Strip AI-generated reference/citation sections from content (we build our own)
     const citeHeaderIdx = content.indexOf("### Citations");
-    const cleanContent =
-      citeHeaderIdx >= 0 ? content.slice(0, citeHeaderIdx).trim() : content.trim();
+    const refHeaderIdx = content.indexOf("## References");
+    let cleanEnd = content.length;
+    if (citeHeaderIdx >= 0) cleanEnd = Math.min(cleanEnd, citeHeaderIdx);
+    if (refHeaderIdx >= 0) cleanEnd = Math.min(cleanEnd, refHeaderIdx);
+    const cleanContent = content.slice(0, cleanEnd).trim();
 
     // Build reference list text — apply journal template format if specified
     const journalTemplate = body.journalTemplate;

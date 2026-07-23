@@ -115,6 +115,10 @@ function SourcesList({
 }) {
   const { t } = useI18n();
   const qc = useQueryClient();
+  const [filterType, setFilterType] = React.useState<string>("all");
+  const filteredItems = filterType === "all" ? items : items.filter((d) => d.source === filterType);
+  const sourceTypes = [...new Set(items.map((d) => d.source))];
+
   const togglePin = useMutation({
     mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) =>
       api.updateDataSource(id, { pinned }),
@@ -142,6 +146,33 @@ function SourcesList({
   return (
     <ScrollArea className="h-full scroll-academic">
       <div className="px-3 py-2 space-y-2">
+        {/* Source type filter */}
+        {items.length > 0 && sourceTypes.length > 1 && (
+          <div className="flex items-center gap-1 flex-wrap">
+            <button
+              onClick={() => setFilterType("all")}
+              className={`text-[9px] px-1.5 py-0.5 rounded font-semibold uppercase transition-colors ${
+                filterType === "all" ? "bg-primary/10 text-primary" : "bg-muted/40 text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              All ({items.length})
+            </button>
+            {sourceTypes.map((st) => {
+              const count = items.filter((d) => d.source === st).length;
+              return (
+                <button
+                  key={st}
+                  onClick={() => setFilterType(st)}
+                  className={`text-[9px] px-1.5 py-0.5 rounded font-semibold uppercase transition-colors ${
+                    filterType === st ? `${TYPE_BADGE[st] || "badge-slate"}` : "bg-muted/40 text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  {st} ({count})
+                </button>
+              );
+            })}
+          </div>
+        )}
         {items.length === 0 && (
           <EmptyState
             icon={<DatabaseIcon className="h-7 w-7" />}
@@ -149,7 +180,7 @@ function SourcesList({
             hint={t("knowledge.noSourcesHint")}
           />
         )}
-        {items.map((d) => (
+        {filteredItems.map((d) => (
           <div
             key={d.id}
             className="rounded-lg border border-border/60 bg-card p-2.5 space-y-1"

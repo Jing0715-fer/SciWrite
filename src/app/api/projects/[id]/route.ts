@@ -27,6 +27,21 @@ export async function GET(
   if (!project) {
     return NextResponse.json({ error: "Not found." }, { status: 404 });
   }
+
+  // Deduplicate references across paragraphs (same type+externalId = same reference)
+  const seenRefs = new Set<string>();
+  for (const p of project.paragraphs) {
+    const uniqueRefs = [];
+    for (const r of p.references) {
+      const key = `${r.type}:${r.externalId || r.title}`;
+      if (!seenRefs.has(key)) {
+        seenRefs.add(key);
+        uniqueRefs.push(r);
+      }
+    }
+    (p as any).references = uniqueRefs;
+  }
+
   return NextResponse.json({ project });
 }
 
