@@ -146,13 +146,66 @@ export const api = {
     rounds?: number;
   }) => jfetch<any>(`/api/ai/review`, { method: "POST", body: JSON.stringify(input) }),
 
-  /* AI generate full article (gather → plan → generate chapter by chapter) */
-  aiGenerateFull: (input: {
-    projectId: string;
-    journalTemplate?: string;
-    language?: string;
-    targetWords?: number;
-  }) => jfetch<any>(`/api/ai/generate-full`, { method: "POST", body: JSON.stringify(input) }),
+  /* AI generate full article (streaming SSE — gather → plan → generate → compose) */
+  aiGenerateFullStream: (
+    input: {
+      projectId: string;
+      journalTemplate?: string;
+      language?: string;
+      targetWords?: number;
+    },
+    onEvent: (event: string, data: any) => void
+  ): Promise<any> => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const res = await fetch(`/api/ai/generate-full`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        });
+
+        if (!res.ok) {
+          const t = await res.text();
+          throw new Error(t || `Generation failed (${res.status})`);
+        }
+
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error("No response body");
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalResult: any = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              onEvent(data.event, data);
+              if (data.event === "complete") {
+                finalResult = data;
+              }
+              if (data.event === "error") {
+                reject(new Error(data.error));
+                return;
+              }
+            } catch {}
+          }
+        }
+
+        resolve(finalResult);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  },
 
   /* Export */
   exportDoc: (input: {

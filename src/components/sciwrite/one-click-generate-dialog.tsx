@@ -11,6 +11,7 @@ import {
   PenLine,
   FileStack,
   AlertCircle,
+  Network,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -44,6 +45,7 @@ interface Props {
 
 const STEPS = [
   { id: "gather", label: "Gathering data sources", icon: Database },
+  { id: "relationships", label: "Analyzing source relationships", icon: Network },
   { id: "plan", label: "Planning article sections", icon: ListTree },
   { id: "generate", label: "Generating chapters", icon: PenLine },
   { id: "compose", label: "Composing final article", icon: FileStack },
@@ -64,27 +66,33 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
     }
   }, [open]);
 
+  const [streamLog, setStreamLog] = React.useState<any[]>([]);
+
   const generateMut = useMutation({
     mutationFn: async () => {
-      // Simulate step progression for UX
       setCurrentStep(0);
-      const stepInterval = setInterval(() => {
-        setCurrentStep((s) => Math.min(s + 1, STEPS.length - 1));
-      }, 15000);
-      try {
-        const data = await api.aiGenerateFull({
-          projectId,
-          journalTemplate,
-          language,
-          targetWords,
-        });
-        clearInterval(stepInterval);
-        setCurrentStep(STEPS.length);
-        return data;
-      } catch (e) {
-        clearInterval(stepInterval);
-        throw e;
-      }
+      setStreamLog([]);
+      const data = await api.aiGenerateFullStream(
+        { projectId, journalTemplate, language, targetWords },
+        (event, data) => {
+          // Map SSE events to step indices
+          const stepMap: Record<string, number> = {
+            gather: 0,
+            relationships: 1,
+            plan: 2,
+            generate: 3,
+            compose: 4,
+          };
+          if (stepMap[event] !== undefined && data.status === "started") {
+            setCurrentStep(stepMap[event]);
+          }
+          if (data.message) {
+            setStreamLog((prev) => [...prev, { event, ...data }]);
+          }
+        }
+      );
+      setCurrentStep(STEPS.length);
+      return data;
     },
     onSuccess: (data) => {
       setResult(data);
@@ -228,6 +236,12 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
                         >
                           {step.label}
                         </p>
+                        {/* Show latest log message for active step */}
+                        {isActive && streamLog.length > 0 && (
+                          <p className="text-[9px] text-muted-foreground mt-0.5">
+                            {streamLog[streamLog.length - 1]?.message}
+                          </p>
+                        )}
                       </div>
                       {isDone && (
                         <span className="text-[9px] text-emerald-600 font-semibold">✓ Done</span>
@@ -235,8 +249,20 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
                     </div>
                   );
                 })}
+
+                {/* Live log */}
+                {streamLog.length > 0 && (
+                  <div className="rounded-md border border-border/40 bg-muted/20 p-2 max-h-32 overflow-y-auto scroll-academic space-y-0.5">
+                    {streamLog.slice(-8).map((log, i) => (
+                      <p key={i} className="text-[9px] text-muted-foreground font-mono">
+                        <span className="text-primary">[{log.event}]</span> {log.message}
+                      </p>
+                    ))}
+                  </div>
+                )}
+
                 <p className="text-[10px] text-muted-foreground text-center">
-                  This may take several minutes. Please keep this dialog open.
+                  Streaming generation — no timeout. This may take several minutes.
                 </p>
               </div>
             )}

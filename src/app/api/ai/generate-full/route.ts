@@ -1,48 +1,62 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { chat } from "@/lib/ai";
 import { queryDatabase } from "@/lib/databases";
-import { writingSystemPrompt, countWords, summarizeDataSource } from "@/lib/writing";
+import { writingSystemPrompt, countWords } from "@/lib/writing";
 import type { ParagraphFormat, ParagraphScenario } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 900; // 15 minutes for full generation with deep analysis
+export const maxDuration = 1800; // 30 minutes — streaming keeps connection alive
 
 interface GenerateFullBody {
   projectId: string;
   journalTemplate?: string;
   language?: string;
-  targetWords?: number; // total target word count for the article
+  targetWords?: number;
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    const body = (await req.json()) as GenerateFullBody;
-    if (!body.projectId) {
-      return NextResponse.json({ error: "Missing 'projectId'." }, { status: 400 });
-    }
+  const body = (await req.json()) as GenerateFullBody;
+  const projectId = body.projectId;
 
-    const project = await db.project.findUnique({ where: { id: body.projectId } });
-    if (!project) {
-      return NextResponse.json({ error: "Project not found." }, { status: 404 });
-    }
+  if (!projectId) {
+    return Response.json({ error: "Missing 'projectId'." }, { status: 400 });
+  }
 
-    const language = body.language || "English";
-    const targetWords = body.targetWords || 2000;
-    const journalTemplate = body.journalTemplate || "generic";
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: string, data: any) => {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({ event, ...data })}\n\n`)
+        );
+      };
 
-    // ============ STEP 1: Gather data sources ============
-    // Generate search queries based on the topic, then execute them
-    const gatherSystem =
-      "You are a research data strategist. Given a research topic, design 6-10 multi-database " +
-      "search queries to gather the most relevant primary sources. Distribute across PubMed, " +
-      "UniProt, RCSB PDB, and NCBI based on the topic.";
+      try {
+        const project = await db.project.findUnique({ where: { id: projectId } });
+        if (!project) {
+          send("error", { error: "Project not found." });
+          controller.close();
+          return;
+        }
 
-    const gatherPrompt = `RESEARCH TOPIC: ${project.topic}
+        const language = body.language || "English";
+        const targetWords = body.targetWords || 3000;
+        const journalTemplate = body.journalTemplate || "generic";
+
+        // ============ STEP 1: Gather data sources ============
+        send("step", { step: "gather", status: "started", message: "Generating search queries..." });
+
+        const gatherSystem =
+          "You are a research data strategist. Given a research topic, design 8-12 multi-database " +
+          "search queries to gather the most relevant primary sources. Distribute across PubMed, " +
+          "UniProt, RCSB PDB, and NCBI based on the topic.";
+
+        const gatherPrompt = `RESEARCH TOPIC: ${project.topic}
 FIELD: ${project.field || "life sciences"}
 PURPOSE: Write a comprehensive review article (~${targetWords} words).
 
-Design a search plan with 6-10 queries. Respond as STRICT JSON:
+Design a search plan with 8-12 queries. Respond as STRICT JSON:
 {
   "queries": [
     { "database": "pubmed", "query": "concrete search string" },
@@ -52,109 +66,120 @@ Design a search plan with 6-10 queries. Respond as STRICT JSON:
 }
 Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON only.`;
 
-    const gatherRaw = await chat(gatherPrompt, { system: gatherSystem, temperature: 0.4 });
-    const gatherParsed = safeParseJSON(gatherRaw, { queries: [] });
-    const queries = (gatherParsed.queries || []).filter(
-      (q: any) => q.database && q.query && ["pubmed", "uniprot", "rcsb", "ncbi", "blast"].includes(q.database)
-    );
+        const gatherRaw = await chat(gatherPrompt, { system: gatherSystem, temperature: 0.4 });
+        const gatherParsed = safeParseJSON(gatherRaw, { queries: [] });
+        const queries = (gatherParsed.queries || []).filter(
+          (q: any) => q.database && q.query && ["pubmed", "uniprot", "rcsb", "ncbi", "blast"].includes(q.database)
+        );
 
-    // Execute all queries in parallel and collect results (limit to 5 queries for speed)
-    const queryResults = await Promise.allSettled(
-      queries.slice(0, 5).map((q: any) =>
-        queryDatabase(q.database as any, q.query).then((r) => ({ ...r, rationale: q.query }))
-      )
-    );
+        send("step", { step: "gather", status: "progress", message: `Executing ${queries.length} database queries...`, queries: queries.length });
 
-    // Collect all items as data sources + references (limit to top 5 per query for speed)
-    const allItems: any[] = [];
-    for (const r of queryResults) {
-      if (r.status === "fulfilled") {
-        for (const item of (r.value.items || []).slice(0, 5)) {
-          allItems.push({
-            ...item,
-            queryUsed: r.value.query,
-          });
+        // Execute ALL queries in parallel — no limit on count
+        const queryResults = await Promise.allSettled(
+          queries.map((q: any) =>
+            queryDatabase(q.database as any, q.query).then((r) => ({ ...r, rationale: q.query }))
+          )
+        );
+
+        // Collect ALL items — no limit on per-query items
+        const allItems: any[] = [];
+        for (const r of queryResults) {
+          if (r.status === "fulfilled") {
+            for (const item of r.value.items || []) {
+              allItems.push({
+                ...item,
+                queryUsed: r.value.query,
+              });
+            }
+          }
         }
-      }
-    }
 
-    // Save data sources + references to DB
-    const savedDataSources: any[] = [];
-    const savedReferences: any[] = [];
-    for (const item of allItems) {
-      // Save as data source
-      const ds = await db.dataSource.create({
-        data: {
-          projectId: body.projectId,
-          source: item.source,
-          query: item.queryUsed || item.title,
-          rawJson: JSON.stringify({ items: [item] }),
-          title: item.title,
-          externalId: item.externalId,
-          url: item.url,
-          authors: item.authors || null,
-          journal: item.journal || null,
-          year: item.year || null,
-          doi: item.doi || null,
-          abstract: item.abstract || null,
-          extra: item.extra ? JSON.stringify(item.extra) : null,
-          pinned: true,
-        },
-      });
-      savedDataSources.push(ds);
-
-      // Save as reference ONLY for PubMed sources (PDB/UniProt/NCBI are data sources, not references)
-      // For PDB entries with associated publications, we save the publication info as a reference
-      // ONLY if it has a real PMID or DOI (meaning it's a citable publication, not just a structure)
-      const isPubMed = item.source === "pubmed";
-      const isRcsbWithPub = item.source === "rcsb" && item.extra?.hasPublication;
-      const isCitable = isPubMed || isRcsbWithPub;
-
-      if (isCitable) {
-        const ref = await db.reference.create({
-          data: {
-            type: "pubmed", // Always treat as pubmed reference type for citation purposes
-            externalId: item.externalId || null,
-            title: item.title,
-            authors: item.authors || null,
-            journal: item.journal || null,
-            year: item.year || null,
-            url: item.url || null,
-            doi: item.doi || null,
-            abstract: item.abstract || null,
-            projectId: body.projectId,
-          },
+        send("step", {
+          step: "gather",
+          status: "progress",
+          message: `Saving ${allItems.length} data sources with full metadata...`,
+          itemsFound: allItems.length,
         });
-        savedReferences.push(ref);
-      }
-    }
 
-    if (savedReferences.length === 0 && savedDataSources.length === 0) {
-      return NextResponse.json({
-        error: "No data sources could be gathered. Please try again or add sources manually.",
-        queriesAttempted: queries.length,
-      }, { status: 422 });
-    }
+        // Save ALL data sources + references with FULL metadata
+        const savedDataSources: any[] = [];
+        const savedReferences: any[] = [];
+        for (const item of allItems) {
+          const ds = await db.dataSource.create({
+            data: {
+              projectId,
+              source: item.source,
+              query: item.queryUsed || item.title,
+              rawJson: JSON.stringify({ items: [item] }),
+              title: item.title,
+              externalId: item.externalId,
+              url: item.url,
+              authors: item.authors || null,
+              journal: item.journal || null,
+              year: item.year || null,
+              doi: item.doi || null,
+              abstract: item.abstract || null,
+              extra: item.extra ? JSON.stringify(item.extra) : null,
+              pinned: true,
+            },
+          });
+          savedDataSources.push(ds);
 
-    // ============ STEP 1.5: Analyze source relationships ============
-    // Use LLM to understand how sources relate, identify themes, contradictions
-    let relationshipContext = "";
-    let relationshipSummary = "";
-    try {
-      const sourceList = savedDataSources.map((s, i) => {
-        const parts = [`[S${i + 1}] (${s.source}) ${s.title || s.query}`];
-        if (s.authors) parts.push(`Authors: ${s.authors}`);
-        if (s.journal) parts.push(`Journal: ${s.journal}`);
-        if (s.year) parts.push(`Year: ${s.year}`);
-        if (s.abstract) parts.push(`Abstract: ${s.abstract.slice(0, 150)}`);
-        return parts.join("\n");
-      }).join("\n\n");
+          // Save as reference ONLY for PubMed or RCSB-with-publication
+          const isPubMed = item.source === "pubmed";
+          const isRcsbWithPub = item.source === "rcsb" && item.extra?.hasPublication;
+          if (isPubMed || isRcsbWithPub) {
+            const ref = await db.reference.create({
+              data: {
+                type: "pubmed",
+                externalId: item.externalId || null,
+                title: item.title,
+                authors: item.authors || null,
+                journal: item.journal || null,
+                year: item.year || null,
+                url: item.url || null,
+                doi: item.doi || null,
+                abstract: item.abstract || null,
+                projectId,
+              },
+            });
+            savedReferences.push(ref);
+          }
+        }
 
-      const relSystem =
-        "You are a scientific knowledge graph analyst. Analyze relationships between data sources " +
-        "and produce a thematic summary for deep article writing.";
+        send("step", {
+          step: "gather",
+          status: "done",
+          sourcesGathered: savedDataSources.length,
+          referencesSaved: savedReferences.length,
+        });
 
-      const relPrompt = `RESEARCH TOPIC: ${project.topic}
+        if (savedReferences.length === 0 && savedDataSources.length === 0) {
+          send("error", { error: "No data sources could be gathered." });
+          controller.close();
+          return;
+        }
+
+        // ============ STEP 1.5: Analyze source relationships ============
+        send("step", { step: "relationships", status: "started", message: "Analyzing source relationships..." });
+
+        let relationshipContext = "";
+        let relationshipSummary = "";
+        try {
+          const sourceList = savedDataSources.map((s, i) => {
+            const parts = [`[S${i + 1}] (${s.source}) ${s.title || s.query}`];
+            if (s.authors) parts.push(`Authors: ${s.authors}`);
+            if (s.journal) parts.push(`Journal: ${s.journal}`);
+            if (s.year) parts.push(`Year: ${s.year}`);
+            if (s.abstract) parts.push(`Abstract: ${s.abstract.slice(0, 200)}`);
+            return parts.join("\n");
+          }).join("\n\n");
+
+          const relSystem =
+            "You are a scientific knowledge graph analyst. Analyze relationships between data sources " +
+            "and produce a thematic summary for deep article writing.";
+
+          const relPrompt = `RESEARCH TOPIC: ${project.topic}
 
 DATA SOURCES:
 ${sourceList}
@@ -166,25 +191,36 @@ Analyze how these sources relate. Respond as STRICT JSON:
   "keyConnections": ["connection 1", "connection 2"],
   "contradictions": [{"sourceLabels": ["S2","S7"], "description": "what they disagree on"}]
 }`;
-      const relRaw = await chat(relPrompt, { system: relSystem, temperature: 0.4 });
-      const relParsed = safeParseJSON(relRaw, { summary: "", themes: [], keyConnections: [], contradictions: [] });
-      relationshipSummary = relParsed.summary || "";
-      relationshipContext = `\nSOURCE RELATIONSHIP ANALYSIS (use to write deeper, more connected discussion):\n${relParsed.summary || ""}\n\nKey connections between sources:\n${(relParsed.keyConnections || []).map((k: string, i: number) => `${i + 1}. ${k}`).join("\n")}\n\nThematic clusters:\n${(relParsed.themes || []).map((t: any) => `- ${t.name}: ${t.description}`).join("\n")}\n${(relParsed.contradictions || []).length ? `\nContradictions to discuss:\n${(relParsed.contradictions || []).map((c: any) => `- ${c.sourceLabels.join(" vs ")}: ${c.description}`).join("\n")}` : ""}`;
-    } catch {
-      // Relationship analysis is optional — continue without it
-    }
 
-    // ============ STEP 2: Plan article sections ============
-    // Based on the gathered sources, plan the article structure with target word counts
-    const planSystem =
-      "You are a senior research advisor who designs publication-ready article outlines. " +
-      "Given a research topic, purpose, field, and the number of available references, " +
-      "produce a detailed section plan with target word counts that sum to the total target.";
+          const relRaw = await chat(relPrompt, { system: relSystem, temperature: 0.4 });
+          const relParsed = safeParseJSON(relRaw, { summary: "", themes: [], keyConnections: [], contradictions: [] });
+          relationshipSummary = relParsed.summary || "";
+          relationshipContext = `\nSOURCE RELATIONSHIP ANALYSIS (use to write deeper, more connected discussion):\n${relParsed.summary || ""}\n\nKey connections between sources:\n${(relParsed.keyConnections || []).map((k: string, i: number) => `${i + 1}. ${k}`).join("\n")}\n\nThematic clusters:\n${(relParsed.themes || []).map((t: any) => `- ${t.name}: ${t.description}`).join("\n")}\n${(relParsed.contradictions || []).length ? `\nContradictions to discuss:\n${(relParsed.contradictions || []).map((c: any) => `- ${c.sourceLabels.join(" vs ")}: ${c.description}`).join("\n")}` : ""}`;
 
-    const planPrompt = `RESEARCH TOPIC: ${project.topic}
+          send("step", {
+            step: "relationships",
+            status: "done",
+            summary: relationshipSummary,
+            themes: relParsed.themes?.length || 0,
+            connections: relParsed.keyConnections?.length || 0,
+            contradictions: relParsed.contradictions?.length || 0,
+          });
+        } catch {
+          send("step", { step: "relationships", status: "skipped", message: "Relationship analysis skipped." });
+        }
+
+        // ============ STEP 2: Plan article sections ============
+        send("step", { step: "plan", status: "started", message: "Planning article sections..." });
+
+        const planSystem =
+          "You are a senior research advisor who designs publication-ready article outlines. " +
+          "Given a research topic, purpose, field, and the number of available references, " +
+          "produce a detailed section plan with target word counts that sum to the total target.";
+
+        const planPrompt = `RESEARCH TOPIC: ${project.topic}
 FIELD: ${project.field || "life sciences"}
 TARGET TOTAL WORDS: ${targetWords}
-AVAILABLE REFERENCES: ${savedReferences.length} sources gathered from PubMed, RCSB, UniProt, NCBI.
+AVAILABLE REFERENCES: ${savedReferences.length} citable references + ${savedDataSources.length} data sources.
 
 Plan a review article with 5-8 sections. Each section gets a target word count.
 The sum of all section word counts should be approximately ${targetWords}.
@@ -195,66 +231,87 @@ Respond as STRICT JSON:
     {
       "format": "intro|background|methods|results|discussion|conclusion|abstract",
       "scenario": "literature-review|protein-structure|sequence-analysis|mechanism|comparative|clinical|custom",
-      "title": "A descriptive section title (not truncated)",
+      "title": "A descriptive section title",
       "focus": "What this section should cover",
       "targetWords": 300
     }
   ]
 }
-Output JSON only. Distribute word counts proportionally to content depth.`;
+Output JSON only.`;
 
-    const planRaw = await chat(planPrompt, { system: planSystem, temperature: 0.5 });
-    const planParsed = safeParseJSON(planRaw, { sections: [] });
-    const sections = (planParsed.sections || []).filter(
-      (s: any) => s.format && s.scenario && s.title
-    );
+        const planRaw = await chat(planPrompt, { system: planSystem, temperature: 0.5 });
+        const planParsed = safeParseJSON(planRaw, { sections: [] });
+        const sections = (planParsed.sections || []).filter(
+          (s: any) => s.format && s.scenario && s.title
+        );
 
-    if (sections.length === 0) {
-      return NextResponse.json({
-        error: "Could not plan article sections. Please try again.",
-      }, { status: 422 });
-    }
+        if (sections.length === 0) {
+          send("error", { error: "Could not plan article sections." });
+          controller.close();
+          return;
+        }
 
-    // ============ STEP 3: Allocate sources to sections ============
-    // Build the reference context string from all saved references
-    const refContext = savedReferences
-      .map((r, i) => {
-        const auth = r.authors || "Anon";
-        const yr = r.year ? ` (${r.year})` : "";
-        const jour = r.journal ? `, *${r.journal}*` : "";
-        const ext = r.externalId ? ` [${r.type.toUpperCase()}:${r.externalId}]` : "";
-        const url = r.url ? ` — ${r.url}` : "";
-        const abs = r.abstract ? `\nAbstract: ${r.abstract.slice(0, 200)}` : "";
-        return `[${i + 1}] ${auth}${yr}${jour}. ${r.title}.${ext}${url}${abs}`;
-      })
-      .join("\n");
+        send("step", {
+          step: "plan",
+          status: "done",
+          sections: sections.map((s: any) => ({ title: s.title, format: s.format, targetWords: s.targetWords })),
+          sectionCount: sections.length,
+        });
 
-    // Build data source context with enhanced metadata
-    const dsContext = savedDataSources
-      .map((d, i) => {
-        const parts = [`[DS:${i + 1}] (${d.source}) ${d.title || d.query}`];
-        if (d.authors) parts.push(`Authors: ${d.authors}`);
-        if (d.journal) parts.push(`Journal: ${d.journal}`);
-        if (d.year) parts.push(`Year: ${d.year}`);
-        if (d.abstract) parts.push(`Abstract: ${d.abstract.slice(0, 300)}`);
-        return parts.join("\n");
-      })
-      .join("\n\n");
+        // ============ STEP 3: Build context strings ============
+        const refContext = savedReferences
+          .map((r, i) => {
+            const auth = r.authors || "Anon";
+            const yr = r.year ? ` (${r.year})` : "";
+            const jour = r.journal ? `, *${r.journal}*` : "";
+            const url = r.url ? ` — ${r.url}` : "";
+            const abs = r.abstract ? `\nAbstract: ${r.abstract.slice(0, 200)}` : "";
+            return `[${i + 1}] ${auth}${yr}${jour}. ${r.title}.${url}${abs}`;
+          })
+          .join("\n");
 
-    // ============ STEP 4: Generate each section ============
-    const generatedParagraphs: any[] = [];
-    for (let i = 0; i < sections.length; i++) {
-      const section = sections[i];
-      const sectionNum = i + 1;
+        const dsContext = savedDataSources
+          .map((d, i) => {
+            const parts = [`[DS:${i + 1}] (${d.source}) ${d.title || d.query}`];
+            if (d.authors) parts.push(`Authors: ${d.authors}`);
+            if (d.journal) parts.push(`Journal: ${d.journal}`);
+            if (d.year) parts.push(`Year: ${d.year}`);
+            if (d.abstract) parts.push(`Abstract: ${d.abstract.slice(0, 300)}`);
+            if (d.extra) {
+              try {
+                const extra = JSON.parse(d.extra);
+                if (extra.resolution) parts.push(`Resolution: ${extra.resolution}Å`);
+                if (extra.method) parts.push(`Method: ${extra.method}`);
+                if (extra.organism) parts.push(`Organism: ${extra.organism}`);
+              } catch {}
+            }
+            return parts.join("\n");
+          })
+          .join("\n\n");
 
-      const system = writingSystemPrompt({
-        format: section.format as ParagraphFormat,
-        scenario: section.scenario as ParagraphScenario,
-        field: project.field || undefined,
-        language,
-      });
+        // ============ STEP 4: Generate each section ============
+        const generatedParagraphs: any[] = [];
+        for (let i = 0; i < sections.length; i++) {
+          const section = sections[i];
+          const sectionNum = i + 1;
 
-      const prompt = `RESEARCH TOPIC: ${project.topic}
+          send("step", {
+            step: "generate",
+            status: "started",
+            section: sectionNum,
+            total: sections.length,
+            title: section.title,
+            message: `Generating section ${sectionNum}/${sections.length}: ${section.title}`,
+          });
+
+          const system = writingSystemPrompt({
+            format: section.format as ParagraphFormat,
+            scenario: section.scenario as ParagraphScenario,
+            field: project.field || undefined,
+            language,
+          });
+
+          const prompt = `RESEARCH TOPIC: ${project.topic}
 SECTION ${sectionNum} of ${sections.length}: ${section.title}
 FORMAT: ${section.format}
 SCENARIO: ${section.scenario}
@@ -273,93 +330,142 @@ agreements and contradictions, synthesize findings across studies. Every citatio
 reference one of the sources above (use [n] for references, NOT [SOURCE:ID] in the body text).
 If you cannot support a claim with a provided source, write [$REF] as a placeholder.`;
 
-      const content = await chat(prompt, { system, temperature: 0.65 });
+          const content = await chat(prompt, { system, temperature: 0.65 });
 
-      // Create the paragraph
-      const paragraph = await db.paragraph.create({
-        data: {
-          projectId: body.projectId,
-          title: section.title,
-          content,
-          format: section.format,
-          scenario: section.scenario,
-          status: "draft",
-          order: i,
-          wordCount: countWords(content),
-        },
-      });
+          const paragraph = await db.paragraph.create({
+            data: {
+              projectId,
+              title: section.title,
+              content,
+              format: section.format,
+              scenario: section.scenario,
+              status: "draft",
+              order: i,
+              wordCount: countWords(content),
+            },
+          });
 
-      // Link all saved references to this paragraph
-      await db.reference.updateMany({
-        where: { projectId: body.projectId, paragraphId: null },
-        data: { paragraphId: paragraph.id },
-      });
+          // Link ALL saved references to this paragraph (references can be shared across paragraphs)
+          // Use createMany on a junction — but since we don't have a junction table, we duplicate
+          // reference records for each paragraph that uses them (simpler approach for SQLite)
+          for (const ref of savedReferences) {
+            // Check if this reference is already linked to THIS paragraph
+            const existing = await db.reference.findFirst({
+              where: { id: ref.id, paragraphId: paragraph.id },
+            });
+            if (!existing) {
+              // Create a copy linked to this paragraph (keep original for other paragraphs)
+              await db.reference.create({
+                data: {
+                  type: ref.type,
+                  externalId: ref.externalId,
+                  title: ref.title,
+                  authors: ref.authors,
+                  journal: ref.journal,
+                  year: ref.year,
+                  url: ref.url,
+                  doi: ref.doi,
+                  abstract: ref.abstract,
+                  projectId,
+                  paragraphId: paragraph.id,
+                },
+              });
+            }
+          }
 
-      generatedParagraphs.push({
-        id: paragraph.id,
-        title: section.title,
-        format: section.format,
-        wordCount: paragraph.wordCount,
-        contentLength: content.length,
-      });
-    }
+          generatedParagraphs.push({
+            id: paragraph.id,
+            title: section.title,
+            format: section.format,
+            wordCount: paragraph.wordCount,
+            contentLength: content.length,
+          });
 
-    // ============ STEP 5: Compose the final article ============
-    const composePrompt = `Compose a coherent, deeply-synthesized review article titled "${project.topic}".
+          send("step", {
+            step: "generate",
+            status: "done",
+            section: sectionNum,
+            total: sections.length,
+            title: section.title,
+            wordCount: paragraph.wordCount,
+            message: `Section ${sectionNum} complete: ${paragraph.wordCount} words`,
+          });
+        }
+
+        // ============ STEP 5: Compose the final article ============
+        send("step", { step: "compose", status: "started", message: "Composing final article..." });
+
+        const composePrompt = `Compose a coherent, deeply-synthesized review article titled "${project.topic}".
 Source sections (in order, citations already renumbered globally):
-${generatedParagraphs
-  .map((p, i) => `\n--- Section ${i + 1}: ${p.title} ---\n`)
-  .join("\n")}
+${generatedParagraphs.map((p, i) => `\n--- Section ${i + 1}: ${p.title} ---\n`).join("\n")}
 
 Instructions:
 - Produce a unified article with section headings (## Introduction, ## Background, etc.).
 - Deepen the analysis with full synthesis, contrast, and forward-looking discussion.
-- Preserve ALL inline citations [n] and [SOURCE:ID] markers exactly.
+- Preserve ALL inline citations [n] exactly.
 - After the article body, output a "## References" section with every cited source as a numbered list.
 - Output in Markdown.`;
 
-    const composeSystem =
-      "You are a senior scientific editor who composes coherent, deeply-synthesized research articles.";
-    const articleContent = await chat(composePrompt, { system: composeSystem, temperature: 0.55 });
+        const composeSystem =
+          "You are a senior scientific editor who composes coherent, deeply-synthesized research articles.";
+        const articleContent = await chat(composePrompt, { system: composeSystem, temperature: 0.55 });
 
-    const article = await db.article.create({
-      data: {
-        projectId: body.projectId,
-        title: project.topic,
-        content: articleContent,
-        journalTemplate,
-        articleParagraph: {
-          create: generatedParagraphs.map((p, i) => ({
-            paragraphId: p.id,
-            order: i,
-            section: p.format,
-          })),
-        },
-      },
-    });
+        const article = await db.article.create({
+          data: {
+            projectId,
+            title: project.topic,
+            content: articleContent,
+            journalTemplate,
+            articleParagraph: {
+              create: generatedParagraphs.map((p, i) => ({
+                paragraphId: p.id,
+                order: i,
+                section: p.format,
+              })),
+            },
+          },
+        });
 
-    return NextResponse.json({
-      success: true,
-      article,
-      relationshipSummary,
-      stats: {
-        sourcesGathered: savedDataSources.length,
-        referencesSaved: savedReferences.length,
-        sectionsPlanned: sections.length,
-        paragraphsGenerated: generatedParagraphs.length,
-        totalWords: generatedParagraphs.reduce((s, p) => s + p.wordCount, 0),
-        articleWordCount: countWords(articleContent),
-      },
-      sections: generatedParagraphs,
-      queriesExecuted: queries.length,
-    });
-  } catch (err: any) {
-    console.error("[/api/ai/generate-full] error:", err);
-    return NextResponse.json(
-      { error: err?.message || "Full article generation failed." },
-      { status: 500 }
-    );
-  }
+        send("step", {
+          step: "compose",
+          status: "done",
+          articleId: article.id,
+          articleWordCount: countWords(articleContent),
+          message: `Article composed: ${countWords(articleContent)} words`,
+        });
+
+        // ============ FINAL RESULT ============
+        send("complete", {
+          success: true,
+          articleId: article.id,
+          relationshipSummary,
+          stats: {
+            sourcesGathered: savedDataSources.length,
+            referencesSaved: savedReferences.length,
+            sectionsPlanned: sections.length,
+            paragraphsGenerated: generatedParagraphs.length,
+            totalWords: generatedParagraphs.reduce((s, p) => s + p.wordCount, 0),
+            articleWordCount: countWords(articleContent),
+          },
+          sections: generatedParagraphs,
+          queriesExecuted: queries.length,
+        });
+      } catch (err: any) {
+        console.error("[/api/ai/generate-full] error:", err);
+        send("error", { error: err?.message || "Generation failed." });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 }
 
 function safeParseJSON(raw: string, fallback: any): any {
