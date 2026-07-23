@@ -17,6 +17,7 @@ import {
   Copy,
   X,
   Undo2,
+  GitCompare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -57,6 +58,7 @@ import type { Annotation, Paragraph } from "@/lib/types";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { MarkdownCitations } from "./markdown-citations";
 import { ExportMenu } from "./export-menu";
+import { DiffView } from "./diff-view";
 import { Icon } from "./icon";
 
 interface Props {
@@ -73,6 +75,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
   const [activeAnnotation, setActiveAnnotation] = React.useState<Annotation | null>(null);
   const [selection, setSelection] = React.useState<{ text: string; rect: DOMRect } | null>(null);
   const [undoSnapshot, setUndoSnapshot] = React.useState<string | null>(null);
+  const [diffOpen, setDiffOpen] = React.useState(false);
   const bodyRef = React.useRef<HTMLDivElement>(null);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["project", projectId] });
@@ -427,21 +430,33 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
           }
         />
         {undoSnapshot && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-[11px] gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30"
-            onClick={() => undoReviseMut.mutate()}
-            disabled={undoReviseMut.isPending}
-            title="Undo last AI revision"
-          >
-            {undoReviseMut.isPending ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Undo2 className="h-3 w-3" />
-            )}
-            Undo
-          </Button>
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px] gap-1.5 text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950/30"
+              onClick={() => setDiffOpen(true)}
+              title="Compare before/after revision"
+            >
+              <GitCompare className="h-3 w-3" />
+              Compare
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px] gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+              onClick={() => undoReviseMut.mutate()}
+              disabled={undoReviseMut.isPending}
+              title="Undo last AI revision"
+            >
+              {undoReviseMut.isPending ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Undo2 className="h-3 w-3" />
+              )}
+              Undo
+            </Button>
+          </>
         )}
         <ExportMenu
           type="paragraph"
@@ -458,6 +473,16 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
           {editing ? "Preview" : "Edit"}
         </Button>
       </div>
+
+      {undoSnapshot && (
+        <DiffView
+          open={diffOpen}
+          onOpenChange={setDiffOpen}
+          before={undoSnapshot}
+          after={paragraph.content}
+          title={paragraph.title}
+        />
+      )}
     </div>
   );
 }

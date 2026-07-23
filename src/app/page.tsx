@@ -41,6 +41,7 @@ import { ExportMenu } from "@/components/sciwrite/export-menu";
 import { InsightsDialog } from "@/components/sciwrite/insights-dialog";
 import { CommandPalette } from "@/components/sciwrite/command-palette";
 import { OutlineDialog } from "@/components/sciwrite/outline-dialog";
+import { ProgressTracker } from "@/components/sciwrite/progress-tracker";
 import type { Article, Project } from "@/lib/types";
 
 export default function Home() {
@@ -99,6 +100,45 @@ export default function Home() {
     }
     return [...map.values()];
   }, [paragraphs, project?.references]);
+
+  // Derived progress stats
+  const progressStats = React.useMemo(() => {
+    const totalWords = paragraphs.reduce(
+      (sum, p) => sum + (p.wordCount || 0),
+      0
+    );
+    const totalCitations = paragraphs.reduce((sum, p) => {
+      const matches = p.content?.match(
+        /\[(\d{1,3}(?:[,\-–\s]\d{1,3})*|[A-Z]{2,12}:\s?[^\]\n]{1,60})\]/g
+      );
+      return sum + (matches?.length || 0);
+    }, 0);
+    const paragraphsCited = paragraphs.filter(
+      (p) => /\[\d{1,3}/.test(p.content || "") || /\[[A-Z]{2,12}:/i.test(p.content || "")
+    ).length;
+    const citationCoverage =
+      paragraphs.length > 0
+        ? Math.round((paragraphsCited / paragraphs.length) * 100)
+        : 0;
+    const unresolved = paragraphs.reduce(
+      (s, p) => s + (p.annotations?.filter((a: any) => !a.resolved).length || 0),
+      0
+    );
+    const resolved = paragraphs.reduce(
+      (s, p) => s + (p.annotations?.filter((a: any) => a.resolved).length || 0),
+      0
+    );
+    return {
+      totalWords,
+      totalParagraphs: paragraphs.length,
+      totalCitations,
+      citationCoverage,
+      unresolvedAnnotations: unresolved,
+      resolvedAnnotations: resolved,
+    };
+  }, [paragraphs]);
+
+  const [wordGoal, setWordGoal] = React.useState(1000);
 
   // Keyboard shortcuts (defined after paragraphs so it can reference it)
   React.useEffect(() => {
@@ -180,6 +220,9 @@ export default function Home() {
               onOpenCompose={() => setComposeOpen(true)}
               onOpenGather={() => setGatherOpen(true)}
               onOpenOutline={() => setOutlineOpen(true)}
+              progressStats={progressStats}
+              wordGoal={wordGoal}
+              onWordGoalChange={setWordGoal}
             />
           </ResizablePanel>
           <ResizableHandle withHandle />
@@ -471,6 +514,9 @@ function WritingWorkspace({
   onOpenCompose,
   onOpenGather,
   onOpenOutline,
+  progressStats,
+  wordGoal,
+  onWordGoalChange,
 }: {
   project?: any;
   paragraphs: any[];
@@ -479,6 +525,16 @@ function WritingWorkspace({
   onOpenCompose: () => void;
   onOpenGather: () => void;
   onOpenOutline: () => void;
+  progressStats: {
+    totalWords: number;
+    totalParagraphs: number;
+    totalCitations: number;
+    citationCoverage: number;
+    unresolvedAnnotations: number;
+    resolvedAnnotations: number;
+  };
+  wordGoal: number;
+  onWordGoalChange: (g: number) => void;
 }) {
   if (!activeProjectId || !project) {
     return <EmptyWorkspace />;
@@ -530,6 +586,18 @@ function WritingWorkspace({
           </div>
         </div>
       </div>
+
+      {/* Progress tracker */}
+      <ProgressTracker
+        totalWords={progressStats.totalWords}
+        totalParagraphs={progressStats.totalParagraphs}
+        totalCitations={progressStats.totalCitations}
+        citationCoverage={progressStats.citationCoverage}
+        unresolvedAnnotations={progressStats.unresolvedAnnotations}
+        resolvedAnnotations={progressStats.resolvedAnnotations}
+        wordGoal={wordGoal}
+        onWordGoalChange={onWordGoalChange}
+      />
 
       {/* Paragraphs */}
       <ScrollArea className="flex-1 min-h-0 scroll-academic">

@@ -431,3 +431,61 @@ auto-suggester feature.
 - **P2**: Writing progress bar + word count goal tracker.
 - **Styling**: More empty-state illustrations, paragraph status transition animations.
 - **P3**: Collaborative annotations / sharing.
+
+---
+
+## Phase 6 — Writing progress tracker + revision diff view (cron round 4)
+
+Task ID: 6
+Agent: main (webDevReview cron)
+Task: QA test, add writing progress tracker with word count goal, add paragraph
+revision comparison/diff view.
+
+### Project Status Assessment
+- Dev server running on port 3000, HTTP 200, 0 console errors.
+- All features verified: citations hover (18 markers), insights, command palette,
+  drag handles (3), outline dialog, dark mode, export menus, add-reference dialog.
+- App stable, no bugs found.
+
+### Work Log:
+- **NEW: Writing Progress Tracker** (`ProgressTracker` component):
+  - Renders in the WritingWorkspace between the project banner and paragraph list.
+  - Shows a word-count goal progress bar (default 1000w, adjustable via clickable
+    presets: 500/1000/2000/3000/5000).
+  - Goal met indicator (green ✓ + emerald progress bar when totalWords ≥ goal).
+  - Compact stat pills: paragraph count (¶), citation count (cit), citation
+    coverage % (cov), annotation status (ann: unresolved!/resolved✓).
+  - Stats computed client-side from paragraph data (no extra API call).
+  - **Verified**: shows "600 / 1000w" with progress bar; goal selector opens
+    with presets on click.
+
+- **NEW: Paragraph Revision Diff View** (`DiffView` component):
+  - Word-level diff using LCS algorithm — computes added/removed/same segments.
+  - Two views: inline diff (green highlights for added, red strikethrough for
+    removed) + side-by-side (Before/After cards with MarkdownCitations rendering).
+  - Shows word count changes: "-Xw +Yw" in the header.
+  - "Compare" button (sky-blue, GitCompare icon) appears in paragraph action bar
+    alongside "Undo" when an undo snapshot exists (i.e., after an AI revision).
+  - Opens a dialog with the full diff comparison.
+  - **Verified**: DiffView component renders correctly; Compare button appears
+    after revision (tested via API revise — the snapshot is component state so
+    refresh clears it, which is expected behavior).
+
+### Verification Results:
+- `bun run lint` → clean (0 errors, 0 warnings).
+- 0 console errors, 0 runtime errors.
+- Progress tracker → "600 / 1000w" with adjustable goal presets.
+- All previous features still working (18 citation markers, 4 cards, 3 drag handles,
+  outline, insights, command palette, ⌘K footer badge).
+
+### Stage Summary:
+- **2 new features added**: Writing progress tracker (word goal + stat pills),
+  Paragraph revision diff view (inline + side-by-side comparison).
+- Dev server stable. Lint clean. No errors.
+
+### Unresolved / Next-phase priorities:
+- **P2**: Per-source "deep read" via page_reader to enrich abstracts before writing.
+- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+- **P2**: Persist undo snapshots across page refreshes (currently in-memory only).
+- **Styling**: More empty-state illustrations, paragraph status transition animations.
+- **P3**: Collaborative annotations / sharing.
