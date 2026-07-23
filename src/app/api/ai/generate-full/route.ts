@@ -326,9 +326,14 @@ ${dsContext}
 ${relationshipContext}
 
 Now compose this section. Write DEEPLY — discuss connections between sources, highlight
-agreements and contradictions, synthesize findings across studies. Every citation MUST
-reference one of the sources above (use [n] for references, NOT [SOURCE:ID] in the body text).
-If you cannot support a claim with a provided source, write [$REF] as a placeholder.`;
+agreements and contradictions, synthesize findings across studies.
+
+CITATION FORMAT (MANDATORY):
+- Use ONLY numeric [n] citations in the body text (e.g. [1], [2], [3]).
+- Do NOT use [SOURCE:ID] format (no [PDB:xxx], [PMID:xxx], [UniProt:xxx] in body).
+- Do NOT write empty brackets [] — always include a number.
+- Each [n] must correspond to the n-th entry in the REFERENCE LIST above.
+- If you cannot support a claim with a provided source, write [$REF] as a placeholder.`;
 
           const content = await chat(prompt, { system, temperature: 0.65 });
 

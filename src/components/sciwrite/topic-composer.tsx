@@ -10,6 +10,8 @@ import {
   BookOpen,
   Database as DatabaseIcon,
   Globe,
+  PenLine,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +42,7 @@ import {
 } from "@/lib/constants";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useI18n } from "@/lib/i18n";
+import { JOURNAL_TEMPLATES } from "@/lib/journal-templates";
 import { MarkdownCitations } from "./markdown-citations";
 
 interface Props {
@@ -67,6 +70,9 @@ export function TopicComposer({
   const [format, setFormat] = React.useState<string>("background");
   const [scenario, setScenario] = React.useState<string>("literature-review");
   const [outputLang, setOutputLang] = React.useState<string>("English");
+  const [genMode, setGenMode] = React.useState<"single" | "full">("single");
+  const [targetWords, setTargetWords] = React.useState(3000);
+  const [journalTemplate, setJournalTemplate] = React.useState("generic");
   const [selectedRefs, setSelectedRefs] = React.useState<string[]>([]);
   const [selectedSources, setSelectedSources] = React.useState<string[]>([]);
   const [searchQ, setSearchQ] = React.useState("");
@@ -98,6 +104,20 @@ export function TopicComposer({
 
   const writeMut = useMutation({
     mutationFn: async () => {
+      if (genMode === "full") {
+        // Full article mode: use streaming generate-full
+        setGenerated("__STREAMING__");
+        const result = await api.aiGenerateFullStream(
+          { projectId, journalTemplate, language: outputLang, targetWords },
+          (event, data) => {
+            if (data.message) {
+              setStreamText((prev) => prev + (prev ? "\n" : "") + `[${event}] ${data.message}`);
+            }
+          }
+        );
+        return { content: "Full article generated. Check the Article tab in the workspace.", __full: true, result };
+      }
+      // Single paragraph mode
       const searchQueries = searchQ
         .split(/[\n;]+/)
         .map((s) => s.trim())
@@ -116,8 +136,14 @@ export function TopicComposer({
       });
     },
     onSuccess: (data) => {
-      setGenerated(data.content);
-      toast.success("Paragraph drafted with citations.");
+      if (data.__full) {
+        toast.success("Full article generated! Check the Article tab.");
+        qc.invalidateQueries({ queryKey: ["project", projectId] });
+        onOpenChange(false);
+      } else {
+        setGenerated(data.content);
+        toast.success("Paragraph drafted with citations.");
+      }
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -160,6 +186,54 @@ export function TopicComposer({
 
         <ScrollArea className="flex-1 min-h-0 scroll-academic">
           <div className="px-6 py-4 space-y-4">
+            {/* Generation mode selector */}
+            <div className="flex gap-1 p-0.5 rounded-md bg-muted/50">
+              <button
+                onClick={() => setGenMode("single")}
+                className={`flex-1 text-xs py-1.5 rounded transition-colors ${
+                  genMode === "single" ? "bg-card shadow-sm font-medium text-primary" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <PenLine className="h-3 w-3 inline mr-1" />
+                {t("topic.langEnglish") === "English" ? "Single Paragraph" : "单段生成"}
+              </button>
+              <button
+                onClick={() => setGenMode("full")}
+                className={`flex-1 text-xs py-1.5 rounded transition-colors ${
+                  genMode === "full" ? "bg-card shadow-sm font-medium text-primary" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Zap className="h-3 w-3 inline mr-1" />
+                {t("topic.langEnglish") === "English" ? "Full Article (auto-gather)" : "全文生成（自动收集）"}
+              </button>
+            </div>
+
+            {/* Full article mode: show target words + journal template */}
+            {genMode === "full" && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("topic.langEnglish") === "English" ? "Target words" : "目标字数"}: {targetWords}</Label>
+                  <input
+                    type="range" min={1500} max={10000} step={500}
+                    value={targetWords}
+                    onChange={(e) => setTargetWords(Number(e.target.value))}
+                    className="w-full h-2"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">{t("topic.langEnglish") === "English" ? "Journal template" : "期刊模板"}</Label>
+                  <Select value={journalTemplate} onValueChange={setJournalTemplate}>
+                    <SelectTrigger className="text-xs h-9"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {JOURNAL_TEMPLATES.map((jt) => (
+                        <SelectItem key={jt.id} value={jt.id} className="text-xs">{jt.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-1.5">
               <Label className="text-xs">{t("topic.topicLabel")}</Label>
               <Textarea
@@ -379,19 +453,32 @@ export function TopicComposer({
         </ScrollArea>
 
         <DialogFooter className="px-6 py-3 border-t border-border/60 gap-2">
-          {!generated ? (
-            <Button
-              onClick={() => writeMut.mutate()}
-              disabled={writeMut.isPending || !topic.trim()}
-              className="gap-2"
-            >
-              {writeMut.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
+          {!generated || generated === "__STREAMING__" ? (
+            <>
+              {generated === "__STREAMING__" && streamText && (
+                <div className="flex-1 max-h-24 overflow-y-auto scroll-academic rounded-md border border-border/40 bg-muted/20 p-2 space-y-0.5">
+                  {streamText.split("\n").slice(-6).map((line, i) => (
+                    <p key={i} className="text-[9px] text-muted-foreground font-mono">{line}</p>
+                  ))}
+                </div>
               )}
-              {writeMut.isPending ? t("topic.researching") : t("topic.generate")}
-            </Button>
+              <Button
+                onClick={() => writeMut.mutate()}
+                disabled={writeMut.isPending || !topic.trim()}
+                className="gap-2"
+              >
+                {writeMut.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : genMode === "full" ? (
+                  <Zap className="h-4 w-4" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+                {writeMut.isPending
+                  ? (genMode === "full" ? (t("topic.langEnglish") === "English" ? "Generating full article..." : "正在生成全文...") : t("topic.researching"))
+                  : (genMode === "full" ? (t("topic.langEnglish") === "English" ? "Generate full article" : "生成全文") : t("topic.generate"))}
+              </Button>
+            </>
           ) : (
             <>
               <Button

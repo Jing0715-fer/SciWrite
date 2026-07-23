@@ -73,17 +73,15 @@ STRICT REQUIREMENTS:
 1. ${langInstruction}
 2. Length: 180–320 words per language version. One cohesive paragraph (no headings, no markdown headers in the body).
 3. Every factual claim MUST be supported by an inline citation in the form [n], where n is the
-   1-based index into the REFERENCE LIST you provide at the end. If a fact comes from a structural /
-   sequence database record, cite it as [SOURCE:ID] (e.g. [PDB:1A3N], [UniProt:P04637], [PMID:12345678]).
+   1-based index into the REFERENCE LIST you provide at the end. Use ONLY numeric [n] format —
+   do NOT use [SOURCE:ID] format (e.g. do NOT write [PDB:1A3N] or [PMID:12345] in the body).
+   Each reference in the REFERENCE LIST already contains the source:ID info, so just cite by number.
+   NEVER write empty brackets [] — always include a number inside.
 4. CRITICAL — ABSOLUTELY NO FABRICATED CITATIONS:
-   - Only cite sources that are EXPLICITLY provided in the REFERENCE LIST, STRUCTURAL/SEQUENCE RECORDS,
-     or WEB SEARCH CONTEXT sections below.
-   - If a fact cannot be supported by a provided source, do NOT cite it — instead write "[$REF]" as a
-     placeholder where a citation is needed, or rephrase to avoid making an unsupported claim.
+   - Only cite sources that are EXPLICITLY provided in the REFERENCE LIST.
+   - If a fact cannot be supported by a provided source, write [$REF] as a placeholder.
    - Do NOT invent PMIDs, PDB IDs, DOIs, or author names.
-   - Do NOT cite a source that "should exist" but was not provided.
-   - If the provided material is insufficient, state the limitation plainly and write a shorter paragraph
-     rather than padding it with fabricated citations.
+   - If the provided material is insufficient, write a shorter paragraph rather than padding with fabricated citations.
 5. Use domain-correct terminology; explain jargon only if the scenario is "clinical".
 6. End with a single transition sentence that motivates the next paragraph where appropriate.
 

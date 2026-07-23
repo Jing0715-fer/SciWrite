@@ -60,7 +60,7 @@ export function KnowledgePanel({
   return (
     <>
     <Tabs defaultValue="sources" className="flex flex-col h-full overflow-hidden">
-      <TabsList className="grid grid-cols-3 mx-3 mt-3 h-8 shrink-0">
+      <TabsList className="grid grid-cols-2 mx-3 mt-3 h-8 shrink-0">
         <TabsTrigger value="sources" className="text-[11px] gap-1">
           <DatabaseIcon className="h-3 w-3" />
           {t("knowledge.sources")}
@@ -75,13 +75,6 @@ export function KnowledgePanel({
             <span className="text-[9px] opacity-70">{references.length}</span>
           )}
         </TabsTrigger>
-        <TabsTrigger value="articles" className="text-[11px] gap-1">
-          <Layers className="h-3 w-3" />
-          {t("knowledge.articles")}
-          {articles.length > 0 && (
-            <span className="text-[9px] opacity-70">{articles.length}</span>
-          )}
-        </TabsTrigger>
       </TabsList>
       <TabsContent value="sources" className="flex-1 mt-0 min-h-0 overflow-hidden">
         <SourcesList projectId={projectId} items={dataSources} />
@@ -92,9 +85,6 @@ export function KnowledgePanel({
           items={references}
           onAdd={() => setAddRefOpen(true)}
         />
-      </TabsContent>
-      <TabsContent value="articles" className="flex-1 mt-0 min-h-0 overflow-hidden">
-        <ArticlesList items={articles} onOpen={onOpenArticle} projectId={projectId} />
       </TabsContent>
     </Tabs>
     <AddReferenceDialog

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   FlaskConical,
@@ -22,6 +22,7 @@ import {
   Zap,
   Gavel,
   Network,
+  Cpu,
   CheckCircle2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,7 @@ import {
 import { api } from "@/lib/api-client";
 import { ThemeToggle } from "@/components/sciwrite/theme-toggle";
 import { LanguageToggle } from "@/components/sciwrite/language-toggle";
+import { LLMConfigDialog } from "@/components/sciwrite/llm-config-dialog";
 import { ProjectsSidebar } from "@/components/sciwrite/projects-sidebar";
 import { DatabaseQueryPanel } from "@/components/sciwrite/database-query-panel";
 import { KnowledgePanel } from "@/components/sciwrite/knowledge-panel";
@@ -69,6 +71,7 @@ export default function Home() {
   const [outlineOpen, setOutlineOpen] = React.useState(false);
   const [userDataOpen, setUserDataOpen] = React.useState(false);
   const [oneClickOpen, setOneClickOpen] = React.useState(false);
+  const [llmConfigOpen, setLlmConfigOpen] = React.useState(false);
 
   const projectsQ = useQuery({
     queryKey: ["projects"],
@@ -353,6 +356,10 @@ export default function Home() {
           topic={project.topic}
         />
       )}
+      <LLMConfigDialog
+        open={llmConfigOpen}
+        onOpenChange={setLlmConfigOpen}
+      />
       <CommandPalette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
@@ -537,15 +544,6 @@ function Header({
             </Button>
             <Button
               size="sm"
-              className="h-8 text-xs gap-1.5 bg-gradient-to-r from-primary to-teal-600 hover:opacity-90"
-              onClick={onOpenOneClick}
-              title="One-click: gather sources → plan → generate full article"
-            >
-              <Zap className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Generate</span>
-            </Button>
-            <Button
-              size="sm"
               className="h-8 text-xs gap-1.5"
               onClick={onOpenWrite}
             >
@@ -554,6 +552,15 @@ function Header({
             </Button>
           </>
         )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 rounded-full"
+          onClick={() => setLlmConfigOpen(true)}
+          title="LLM Configuration"
+        >
+          <Cpu className="h-4 w-4" />
+        </Button>
         <LanguageToggle />
         <ThemeToggle />
       </div>

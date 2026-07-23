@@ -28,14 +28,15 @@ export async function GET(
     return NextResponse.json({ error: "Not found." }, { status: 404 });
   }
 
-  // Deduplicate references across paragraphs (same type+externalId = same reference)
-  const seenRefs = new Set<string>();
+  // Deduplicate references WITHIN each paragraph (same type+externalId = same ref)
+  // but allow the same reference to appear in multiple paragraphs
   for (const p of project.paragraphs) {
+    const seenInPara = new Set<string>();
     const uniqueRefs = [];
     for (const r of p.references) {
       const key = `${r.type}:${r.externalId || r.title}`;
-      if (!seenRefs.has(key)) {
-        seenRefs.add(key);
+      if (!seenInPara.has(key)) {
+        seenInPara.add(key);
         uniqueRefs.push(r);
       }
     }
