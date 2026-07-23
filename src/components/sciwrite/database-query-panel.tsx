@@ -228,7 +228,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
         )}
       </div>
 
-      <ScrollArea className="flex-1 scroll-academic">
+      <ScrollArea className="flex-1 min-h-0 scroll-academic">
         <div className="px-4 py-3 space-y-2.5">
           {error && (
             <div className="text-xs text-destructive bg-destructive/5 border border-destructive/20 rounded-md p-2.5">

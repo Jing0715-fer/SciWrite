@@ -55,6 +55,7 @@ import {
 import type { Annotation, Paragraph } from "@/lib/types";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { MarkdownCitations } from "./markdown-citations";
+import { ExportMenu } from "./export-menu";
 import { Icon } from "./icon";
 
 interface Props {
@@ -284,6 +285,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
           <MarkdownCitations
             content={paragraph.content}
             annotations={paragraph.annotations}
+            references={paragraph.references || []}
             onAnnotationClick={(a) => setActiveAnnotation(a)}
           />
         )}
@@ -399,6 +401,11 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
           onRevise={(mode, instructions) =>
             reviseMut.mutate({ mode, instructions })
           }
+        />
+        <ExportMenu
+          type="paragraph"
+          id={paragraph.id}
+          hasAnnotations={paragraph.annotations.length > 0}
         />
         <Button
           variant="ghost"

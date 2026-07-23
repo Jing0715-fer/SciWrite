@@ -13,6 +13,7 @@ import {
   Library,
   Lightbulb,
   ArrowRight,
+  Radar,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +31,8 @@ import { KnowledgePanel } from "@/components/sciwrite/knowledge-panel";
 import { ParagraphCard } from "@/components/sciwrite/paragraph-card";
 import { TopicComposer } from "@/components/sciwrite/topic-composer";
 import { ArticleComposer, ArticleViewer } from "@/components/sciwrite/article-composer";
+import { DataGatheringDialog } from "@/components/sciwrite/data-gathering-dialog";
+import { ExportMenu } from "@/components/sciwrite/export-menu";
 import type { Article, Project } from "@/lib/types";
 
 export default function Home() {
@@ -38,6 +41,7 @@ export default function Home() {
   const [writeOpen, setWriteOpen] = React.useState(false);
   const [composeOpen, setComposeOpen] = React.useState(false);
   const [viewArticle, setViewArticle] = React.useState<Article | null>(null);
+  const [gatherOpen, setGatherOpen] = React.useState(false);
 
   const projectsQ = useQuery({
     queryKey: ["projects"],
@@ -91,6 +95,7 @@ export default function Home() {
         project={project}
         onOpenWrite={() => setWriteOpen(true)}
         onOpenCompose={() => setComposeOpen(true)}
+        onOpenGather={() => setGatherOpen(true)}
         paragraphCount={paragraphs.length}
         articleCount={articles.length}
       />
@@ -114,7 +119,8 @@ export default function Home() {
               paragraphs={paragraphs}
               activeProjectId={activeProjectId}
               onOpenWrite={() => setWriteOpen(true)}
-              onOpenCompose={() => setComposeOpen(false)}
+              onOpenCompose={() => setComposeOpen(true)}
+              onOpenGather={() => setGatherOpen(true)}
             />
           </ResizablePanel>
           <ResizableHandle withHandle />
@@ -174,6 +180,16 @@ export default function Home() {
       {viewArticle && (
         <ArticleViewer article={viewArticle} onClose={() => setViewArticle(null)} />
       )}
+      {activeProjectId && project && (
+        <DataGatheringDialog
+          open={gatherOpen}
+          onOpenChange={setGatherOpen}
+          projectId={activeProjectId}
+          topic={project.topic}
+          field={project.field}
+          onProceedToWrite={() => setWriteOpen(true)}
+        />
+      )}
     </div>
   );
 }
@@ -182,12 +198,14 @@ function Header({
   project,
   onOpenWrite,
   onOpenCompose,
+  onOpenGather,
   paragraphCount,
   articleCount,
 }: {
   project?: any;
   onOpenWrite: () => void;
   onOpenCompose: () => void;
+  onOpenGather: () => void;
   paragraphCount: number;
   articleCount: number;
 }) {
@@ -240,6 +258,16 @@ function Header({
               variant="outline"
               size="sm"
               className="h-8 text-xs gap-1.5"
+              onClick={onOpenGather}
+              title="AI gathers & organizes sources with adversarial check"
+            >
+              <Radar className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Gather</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs gap-1.5"
               onClick={onOpenCompose}
               disabled={paragraphCount < 2}
               title={paragraphCount < 2 ? "Need ≥2 paragraphs" : "Compose article"}
@@ -269,12 +297,14 @@ function WritingWorkspace({
   activeProjectId,
   onOpenWrite,
   onOpenCompose,
+  onOpenGather,
 }: {
   project?: any;
   paragraphs: any[];
   activeProjectId: string | null;
   onOpenWrite: () => void;
   onOpenCompose: () => void;
+  onOpenGather: () => void;
 }) {
   if (!activeProjectId || !project) {
     return <EmptyWorkspace />;
@@ -300,6 +330,15 @@ function WritingWorkspace({
             </p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs gap-1.5"
+              onClick={onOpenGather}
+            >
+              <Radar className="h-3.5 w-3.5" />
+              <span className="hidden lg:inline">Gather sources</span>
+            </Button>
             <Button size="sm" className="h-8 text-xs gap-1.5" onClick={onOpenWrite}>
               <Sparkles className="h-3.5 w-3.5" />
               AI Write
@@ -309,7 +348,7 @@ function WritingWorkspace({
       </div>
 
       {/* Paragraphs */}
-      <ScrollArea className="flex-1 scroll-academic">
+      <ScrollArea className="flex-1 min-h-0 scroll-academic">
         <div className="px-5 py-4 max-w-3xl mx-auto space-y-3">
           {paragraphs.length === 0 ? (
             <div className="text-center py-16">

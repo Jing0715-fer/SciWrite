@@ -74,13 +74,13 @@ export function KnowledgePanel({
           )}
         </TabsTrigger>
       </TabsList>
-      <TabsContent value="sources" className="flex-1 mt-0 min-h-0">
+      <TabsContent value="sources" className="flex-1 mt-0 min-h-0 overflow-hidden">
         <SourcesList projectId={projectId} items={dataSources} />
       </TabsContent>
-      <TabsContent value="refs" className="flex-1 mt-0 min-h-0">
+      <TabsContent value="refs" className="flex-1 mt-0 min-h-0 overflow-hidden">
         <ReferencesList projectId={projectId} items={references} />
       </TabsContent>
-      <TabsContent value="articles" className="flex-1 mt-0 min-h-0">
+      <TabsContent value="articles" className="flex-1 mt-0 min-h-0 overflow-hidden">
         <ArticlesList items={articles} onOpen={onOpenArticle} projectId={projectId} />
       </TabsContent>
     </Tabs>
@@ -292,10 +292,18 @@ function ArticlesList({
           />
         )}
         {items.map((a) => (
-          <button
+          <div
             key={a.id}
+            role="button"
+            tabIndex={0}
             onClick={() => onOpen(a)}
-            className="w-full text-left rounded-lg border border-border/60 bg-card p-2.5 hover:border-primary/40 hover:shadow-sm transition-all space-y-1"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onOpen(a);
+              }
+            }}
+            className="w-full text-left rounded-lg border border-border/60 bg-card p-2.5 hover:border-primary/40 hover:shadow-sm transition-all space-y-1 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40"
           >
             <div className="flex items-center gap-1.5">
               <FileText className="h-3 w-3 text-primary" />
@@ -330,7 +338,7 @@ function ArticlesList({
                 <Trash2 className="h-2.5 w-2.5" />
               </Button>
             </div>
-          </button>
+          </div>
         ))}
       </div>
     </ScrollArea>

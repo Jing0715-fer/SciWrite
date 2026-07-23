@@ -155,7 +155,7 @@ export function TopicComposer({
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 scroll-academic">
+        <ScrollArea className="flex-1 min-h-0 scroll-academic">
           <div className="px-6 py-4 space-y-4">
             <div className="space-y-1.5">
               <Label className="text-xs">Research topic</Label>

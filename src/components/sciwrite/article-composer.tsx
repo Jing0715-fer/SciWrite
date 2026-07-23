@@ -35,6 +35,7 @@ import {
 import { api } from "@/lib/api-client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { MarkdownCitations } from "./markdown-citations";
+import { ExportMenu } from "./export-menu";
 import type { Paragraph } from "@/lib/types";
 
 interface Props {
@@ -114,7 +115,7 @@ export function ArticleComposer({
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 scroll-academic">
+        <ScrollArea className="flex-1 min-h-0 scroll-academic">
           <div className="px-6 py-4 space-y-4">
             <div className="space-y-1.5">
               <Label className="text-xs">Article title</Label>
@@ -244,11 +245,14 @@ export function ArticleViewer({
             </DialogDescription>
           )}
         </DialogHeader>
-        <ScrollArea className="flex-1 scroll-academic">
+        <ScrollArea className="flex-1 min-h-0 scroll-academic">
           <div className="px-8 py-5">
             <MarkdownCitations content={article.content} className="text-[13.5px]" />
           </div>
         </ScrollArea>
+        <div className="px-6 py-3 border-t border-border/60 flex items-center justify-end gap-2">
+          <ExportMenu type="article" id={article.id} variant="outline" />
+        </div>
       </DialogContent>
     </Dialog>
   );

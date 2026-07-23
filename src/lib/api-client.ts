@@ -102,6 +102,29 @@ export const api = {
       { method: "POST", body: JSON.stringify(input) }
     ),
 
+  /* AI gather sources (clarify / organize / critique) */
+  aiGather: (input: any) =>
+    jfetch<any>(`/api/ai/gather`, { method: "POST", body: JSON.stringify(input) }),
+
+  /* Export */
+  exportDoc: (input: {
+    type: "paragraph" | "article";
+    id: string;
+    format: "docx" | "pdf" | "markdown";
+    includeAnnotations?: boolean;
+  }) =>
+    fetch(`/api/export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }).then(async (res) => {
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || `Export failed (${res.status})`);
+      }
+      return res.blob();
+    }),
+
   /* Database queries */
   queryDatabase: (input: {
     source: string;

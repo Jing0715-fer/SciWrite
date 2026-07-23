@@ -59,16 +59,25 @@ Your task is to compose a single, publication-quality ${fLabel} paragraph in the
 
 STRICT REQUIREMENTS:
 1. Write in ${lang}, using formal, precise academic prose (third person, past tense for results/methods).
-2. Length: 180–320 words. One cohesive paragraph (no headings, no markdown headers).
+2. Length: 180–320 words. One cohesive paragraph (no headings, no markdown headers in the body).
 3. Every factual claim MUST be supported by an inline citation in the form [n], where n is the
-   1-based index into the provided REFERENCE LIST. If a fact comes from a structural / sequence
-   database record, cite it as [SOURCE:ID] (e.g. [PDB:1A3N], [UniProt:P04637], [PMID:12345678]).
+   1-based index into the REFERENCE LIST you provide at the end. If a fact comes from a structural /
+   sequence database record, cite it as [SOURCE:ID] (e.g. [PDB:1A3N], [UniProt:P04637], [PMID:12345678]).
 4. Do NOT invent references. Only cite from the provided material. If material is insufficient,
    state the limitation plainly and avoid fabricating a citation.
 5. Use domain-correct terminology; explain jargon only if the scenario is "clinical".
 6. End with a single transition sentence that motivates the next paragraph where appropriate.
-7. Output ONLY the paragraph text (optionally followed by a blank line and "### Citations" with the
-   numbered list you actually used). No preamble, no commentary.`;
+
+OUTPUT FORMAT (MANDATORY):
+- First, the paragraph text (no markdown headers, no preamble).
+- Then a blank line.
+- Then exactly "### Citations" on its own line.
+- Then a numbered list of EVERY source you cited, one per line, in this exact format:
+  [1] Authors (Year) Journal. Title. [SOURCE:ID] — URL
+  [2] Authors (Year) Journal. Title. [SOURCE:ID] — URL
+  ...
+If you used a web search result that has no DOI/PMID, use [WEB:n] as the marker and list it.
+Do NOT output anything after the citations list. No commentary, no preamble.`;
 }
 
 export function buildWritePrompt(opts: {

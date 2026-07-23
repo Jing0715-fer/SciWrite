@@ -90,7 +90,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect }: Props) {
         </Button>
       </div>
 
-      <ScrollArea className="flex-1 scroll-academic">
+      <ScrollArea className="flex-1 min-h-0 scroll-academic">
         <div className="px-2 py-2 space-y-1">
           {projects.length === 0 && (
             <div className="text-center py-10 px-3 text-muted-foreground">
