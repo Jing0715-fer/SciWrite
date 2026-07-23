@@ -149,9 +149,7 @@ export async function POST(req: NextRequest) {
       const count = await db.paragraph.count({
         where: { projectId: body.projectId },
       });
-      const title = body.focus
-        ? `${body.focus.slice(0, 50)}`
-        : `${body.topic.slice(0, 50)}`;
+      const title = body.focus || body.topic;
       paragraph = await db.paragraph.create({
         data: {
           projectId: body.projectId,

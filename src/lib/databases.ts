@@ -190,24 +190,50 @@ export async function searchRcsb(
       const res = meta?.rcsb_entry_info?.resolution_combined?.[0];
       const org = meta?.rcsb_entry_info?.organism_scientific_name?.join(", ");
       const date = meta?.rcsb_accession_info?.initial_release_date;
+
+      // Fetch associated publication via RCSB API
+      let pubTitle = title || id;
+      let pubAuthors = org;
+      let pubJournal = method ? `PDB · ${method}` : "RCSB PDB";
+      let pubYear = date?.slice(0, 4);
+      let pubDoi = meta?.rcsb_entry_container_identifiers?.doi;
+      let pubAbstract = [
+        method ? `Method: ${method}` : "",
+        res ? `Resolution: ${res} Å` : "",
+        org ? `Organism: ${org}` : "",
+      ].filter(Boolean).join(" · ");
+
+      try {
+        const pubData = await fetchJson(`https://data.rcsb.org/rest/v1/core/pubmed/${id}`);
+        if (pubData) {
+          // Use the publication info as the primary reference
+          pubTitle = pubData?.title || pubTitle;
+          pubAuthors = pubData?.authors?.map((a: any) => a.name).join(", ") || pubAuthors;
+          pubJournal = pubData?.journal_abbreviation || pubData?.journal || pubJournal;
+          pubYear = pubData?.pub_date?.slice(0, 4) || pubYear;
+          pubDoi = pubData?.doi || pubDoi;
+          pubAbstract = pubData?.abstract || pubAbstract;
+        }
+      } catch {
+        // No associated publication — use structure metadata only
+      }
+
       items.push({
         source: "rcsb",
         externalId: id,
-        title: title || id,
-        authors: meta?.rcsb_entry_container_identifiers?.entity_ids?.join(", ") || org,
-        journal: method ? `PDB · ${method}` : "RCSB PDB",
-        year: date?.slice(0, 4),
+        title: pubTitle || id,
+        authors: pubAuthors,
+        journal: pubJournal,
+        year: pubYear,
         url: `https://www.rcsb.org/structure/${id}`,
-        doi: meta?.rcsb_entry_container_identifiers?.doi,
-        abstract: [
-          method ? `Method: ${method}` : "",
-          res ? `Resolution: ${res} Å` : "",
-          org ? `Organism: ${org}` : "",
-        ].filter(Boolean).join(" · "),
+        doi: pubDoi,
+        abstract: pubAbstract,
         extra: {
           method: method || "",
           resolution: res ? String(res) : "",
           organism: org || "",
+          pdbId: id,
+          hasPublication: pubTitle !== (title || id),
         },
       });
     } catch {

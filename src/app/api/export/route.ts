@@ -149,23 +149,28 @@ export async function POST(req: NextRequest) {
           const n = i + 1;
           const authors = r.authors || "Anonymous";
           const year = r.year || "n.d.";
-          const journal = r.journal || "";
+          // For export: strip PDB-specific info from journal name (keep only the publication journal)
+          const rawJournal = r.journal || "";
+          const journal = rawJournal.replace(/\s*\(PDB:\s*[^)]+\)/g, "").trim();
           const doi = r.doi || "";
           const url = r.url || "";
-          const extId = r.externalId ? ` [${r.type.toUpperCase()}:${r.externalId}]` : "";
+          // For export: do NOT include [RCSB:xxx] or [PDB:xxx] source tags — only show publication info
+          const extId = (r.type !== "rcsb" && r.type !== "pdb" && r.externalId)
+            ? ` [${r.type.toUpperCase()}:${r.externalId}]`
+            : "";
 
           // Apply journal-specific formatting
           if (journalTemplate === "nature") {
-            return `${n}. ${authors} ${r.title}. ${journal ? journal + " " : ""}${year ? `(${year})` : ""}.${extId}${url ? ` ${url}` : ""}`;
+            return `${n}. ${authors} ${r.title}. ${journal ? journal + " " : ""}${year ? `(${year})` : ""}.${extId}${url && !doi ? ` ${url}` : ""}`;
           } else if (journalTemplate === "cell") {
-            return `${authors} (${year}). ${r.title}. ${journal}.${extId}${url ? ` ${url}` : ""}`;
+            return `${authors} (${year}). ${r.title}. ${journal}.${extId}${url && !doi ? ` ${url}` : ""}`;
           } else if (journalTemplate === "ieee") {
-            return `[${n}] ${authors}, "${r.title}," ${journal || ""}, ${year}.${extId}${url ? ` ${url}` : ""}`;
+            return `[${n}] ${authors}, "${r.title}," ${journal || ""}, ${year}.${extId}${url && !doi ? ` ${url}` : ""}`;
           } else if (journalTemplate === "plos") {
-            return `${n}. ${authors} ${r.title}. ${journal}. ${year};${extId}${url ? ` ${url}` : ""}`;
+            return `${n}. ${authors} ${r.title}. ${journal}. ${year};${extId}${url && !doi ? ` ${url}` : ""}`;
           } else {
             // Generic format
-            return `[${n}] ${authors}${year ? ` (${year})` : ""}${journal ? `, ${journal}` : ""}. ${r.title}.${extId}${url ? ` ${url}` : ""}`;
+            return `[${n}] ${authors}${year ? ` (${year})` : ""}${journal ? `, ${journal}` : ""}. ${r.title}.${extId}${url && !doi ? ` ${url}` : ""}`;
           }
         })
       : [];

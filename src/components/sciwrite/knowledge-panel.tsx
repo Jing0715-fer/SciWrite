@@ -208,6 +208,33 @@ function SourcesList({
             <p className="text-[11px] font-medium leading-snug line-clamp-2">
               {d.title || d.query}
             </p>
+            {/* Show PDB structure association for RCSB sources */}
+            {d.source === "rcsb" && d.externalId && (() => {
+              let extra: any = null;
+              try { extra = d.extra ? JSON.parse(d.extra) : null; } catch {}
+              return extra ? (
+                <div className="flex flex-wrap gap-1 mt-0.5">
+                  <span className="badge-amber px-1 py-0.5 rounded text-[8px] font-semibold uppercase">
+                    PDB:{d.externalId}
+                  </span>
+                  {extra.resolution && (
+                    <span className="text-[8px] text-muted-foreground">
+                      {extra.resolution}Å
+                    </span>
+                  )}
+                  {extra.method && (
+                    <span className="text-[8px] text-muted-foreground">
+                      {extra.method}
+                    </span>
+                  )}
+                  {extra.hasPublication && (
+                    <span className="text-[8px] text-emerald-600 font-medium">
+                      ↳ linked publication
+                    </span>
+                  )}
+                </div>
+              ) : null;
+            })()}
             <p className="text-[9px] text-muted-foreground font-mono truncate">
               query: {d.query}
             </p>

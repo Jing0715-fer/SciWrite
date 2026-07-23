@@ -19,6 +19,7 @@ import {
   Moon,
   ListTree,
   DatabaseZap,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +45,7 @@ import { InsightsDialog } from "@/components/sciwrite/insights-dialog";
 import { CommandPalette } from "@/components/sciwrite/command-palette";
 import { OutlineDialog } from "@/components/sciwrite/outline-dialog";
 import { UserDataDialog } from "@/components/sciwrite/user-data-dialog";
+import { OneClickGenerateDialog } from "@/components/sciwrite/one-click-generate-dialog";
 import { ProgressTracker } from "@/components/sciwrite/progress-tracker";
 import { WritingTipsPanel } from "@/components/sciwrite/writing-tips-panel";
 import { useI18n } from "@/lib/i18n";
@@ -61,6 +63,7 @@ export default function Home() {
   const [paletteOpen, setPaletteOpen] = React.useState(false);
   const [outlineOpen, setOutlineOpen] = React.useState(false);
   const [userDataOpen, setUserDataOpen] = React.useState(false);
+  const [oneClickOpen, setOneClickOpen] = React.useState(false);
 
   const projectsQ = useQuery({
     queryKey: ["projects"],
@@ -201,6 +204,7 @@ export default function Home() {
         onOpenGather={() => setGatherOpen(true)}
         onOpenInsights={() => setInsightsOpen(true)}
         onOpenOutline={() => setOutlineOpen(true)}
+        onOpenOneClick={() => setOneClickOpen(true)}
         paragraphCount={paragraphs.length}
         articleCount={articles.length}
       />
@@ -328,6 +332,14 @@ export default function Home() {
           projectId={activeProjectId}
         />
       )}
+      {activeProjectId && project && (
+        <OneClickGenerateDialog
+          open={oneClickOpen}
+          onOpenChange={setOneClickOpen}
+          projectId={activeProjectId}
+          topic={project.topic}
+        />
+      )}
       <CommandPalette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
@@ -409,6 +421,7 @@ function Header({
   onOpenGather,
   onOpenInsights,
   onOpenOutline,
+  onOpenOneClick,
   paragraphCount,
   articleCount,
 }: {
@@ -418,6 +431,7 @@ function Header({
   onOpenGather: () => void;
   onOpenInsights: () => void;
   onOpenOutline: () => void;
+  onOpenOneClick: () => void;
   paragraphCount: number;
   articleCount: number;
 }) {
@@ -507,6 +521,15 @@ function Header({
             >
               <Layers className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">{t("app.compose")}</span>
+            </Button>
+            <Button
+              size="sm"
+              className="h-8 text-xs gap-1.5 bg-gradient-to-r from-primary to-teal-600 hover:opacity-90"
+              onClick={onOpenOneClick}
+              title="One-click: gather sources → plan → generate full article"
+            >
+              <Zap className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Generate</span>
             </Button>
             <Button
               size="sm"

@@ -146,6 +146,14 @@ export const api = {
     rounds?: number;
   }) => jfetch<any>(`/api/ai/review`, { method: "POST", body: JSON.stringify(input) }),
 
+  /* AI generate full article (gather → plan → generate chapter by chapter) */
+  aiGenerateFull: (input: {
+    projectId: string;
+    journalTemplate?: string;
+    language?: string;
+    targetWords?: number;
+  }) => jfetch<any>(`/api/ai/generate-full`, { method: "POST", body: JSON.stringify(input) }),
+
   /* Export */
   exportDoc: (input: {
     type: "paragraph" | "article";
