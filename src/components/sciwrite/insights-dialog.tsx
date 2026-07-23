@@ -13,11 +13,13 @@ import {
   Loader2,
   Quote,
   Type,
+  ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { BatchValidationDialog } from "./batch-validation-dialog";
 import {
   Dialog,
   DialogContent,
@@ -53,6 +55,7 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
+  const [batchValidateOpen, setBatchValidateOpen] = React.useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ["insights", projectId],
     queryFn: () => api.getInsights(projectId),
@@ -60,6 +63,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
   });
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[88vh] flex flex-col gap-0 p-0">
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60">
@@ -279,8 +283,29 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
             )}
           </div>
         </ScrollArea>
+        {/* Footer with batch citation audit */}
+        <div className="px-6 py-3 border-t border-border/60 flex items-center justify-between gap-2 shrink-0">
+          <span className="text-[10px] text-muted-foreground">
+            Validate all citations across the project
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-xs"
+            onClick={() => setBatchValidateOpen(true)}
+          >
+            <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+            Audit all citations
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
+    <BatchValidationDialog
+      open={batchValidateOpen}
+      onOpenChange={setBatchValidateOpen}
+      projectId={projectId}
+    />
+    </>
   );
 }
 

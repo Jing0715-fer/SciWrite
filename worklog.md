@@ -726,3 +726,66 @@ marker in a paragraph resolves to a saved reference or AI-generated citation.
 - **Styling**: More empty-state illustrations, paragraph status transition animations.
 - **P3**: Collaborative annotations / sharing.
 - **P3**: Batch citation validation across all paragraphs in a project.
+
+---
+
+## Phase 11 — Batch citation validation (cron round 9)
+
+Task ID: 11
+Agent: main (webDevReview cron)
+Task: QA test, add batch citation validation that audits all paragraphs in a
+project at once, with an aggregate report and per-paragraph breakdown.
+
+### Project Status Assessment
+- Dev server running on port 3000, HTTP 200, 0 console errors after fresh reload.
+- All features verified: 18 citation markers, 4 paragraph cards, progress tracker
+  "599 / 1000w", tips/backup/outline buttons, ⌘K badge, drag handles.
+- App stable, no bugs found.
+
+### Work Log:
+- **NEW: Batch citation validation** (`/api/projects/[id]/validate-citations` +
+  `BatchValidationDialog` component):
+  - **API route** (`GET /api/projects/{id}/validate-citations`):
+    - Iterates all paragraphs in the project, runs the same validation logic as
+      the single-paragraph endpoint (extract markers, parse AI citations block,
+      resolve numeric + SOURCE:ID markers against saved references + AI block).
+    - Returns an `aggregate` (totalParagraphs, totalMarkers, totalValid,
+      totalMissing, paragraphsClean, paragraphsIssues) + a `paragraphs` array
+      with per-paragraph reports (title, format, status, totalMarkers,
+      validCount, missingCount, missing markers list, hasCitationsBlock,
+      savedReferenceCount).
+  - **Dialog component** (`BatchValidationDialog`):
+    - Aggregate banner: green if all clean, amber if issues — with 4 stat boxes
+      (Paragraphs / Total markers / Valid / Missing).
+    - Per-paragraph breakdown: each paragraph as a card with §-number, status
+      icon (green check / amber X), title, format badge, and inline stats
+      (markers / valid / missing / refs / AI-block indicator).
+    - Missing markers shown as red code chips (up to 8, then "+N more").
+  - **UI integration**: "Audit all citations" button (ShieldCheck icon) added to
+    the InsightsDialog footer. Opens the BatchValidationDialog on top of the
+    Insights dialog.
+  - **Verified via API**: 3 paragraphs, 18 total markers, 10 valid, 10 missing,
+    2 paragraphs clean, 1 with issues.
+  - **Verified in browser**: Insights dialog shows "Audit all citations" button;
+    batch dialog opens with "Project Citation Audit" title, correct aggregate
+    stats (3 paragraphs, 18 markers, 10 valid, 10 missing).
+
+### Verification Results:
+- `bun run lint` → clean (0 errors, 0 warnings).
+- 0 console errors, 0 runtime errors.
+- Batch validation API → correct aggregate + per-paragraph counts.
+- Batch dialog → opens with aggregate banner, stat boxes, per-paragraph breakdown.
+- All previous features still working.
+
+### Stage Summary:
+- **1 new feature added**: Batch citation validation across all paragraphs in a
+  project, accessible from the Insights dialog footer, with aggregate + per-
+  paragraph reporting and missing-marker highlighting.
+- Dev server stable on port 3000. Lint clean. No errors.
+
+### Unresolved / Next-phase priorities:
+- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+- **P2**: Persist undo snapshots across page refreshes.
+- **Styling**: More empty-state illustrations, paragraph status transition animations.
+- **P3**: Collaborative annotations / sharing.
+- **P3**: Auto-fix missing citations (AI suggests references for unresolved markers).

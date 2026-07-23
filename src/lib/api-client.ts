@@ -105,6 +105,10 @@ export const api = {
   validateCitations: (id: string) =>
     jfetch<any>(`/api/paragraphs/${id}/validate-citations`),
 
+  /* Batch citation validation (project-level) */
+  validateProjectCitations: (projectId: string) =>
+    jfetch<any>(`/api/projects/${projectId}/validate-citations`),
+
   /* AI write */
   aiWrite: (input: WriteRequest) =>
     jfetch<{ paragraph: Paragraph | null; content: string }>(`/api/ai/write`, {
