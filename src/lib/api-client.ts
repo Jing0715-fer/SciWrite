@@ -106,6 +106,13 @@ export const api = {
   aiGather: (input: any) =>
     jfetch<any>(`/api/ai/gather`, { method: "POST", body: JSON.stringify(input) }),
 
+  /* AI generate outline */
+  aiOutline: (input: { projectId: string; purpose?: string }) =>
+    jfetch<{ summary: string; outline: any[] }>(`/api/ai/outline`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
   /* Export */
   exportDoc: (input: {
     type: "paragraph" | "article";

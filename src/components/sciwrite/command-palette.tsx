@@ -95,6 +95,7 @@ export function CommandPalette({ open, onOpenChange, actions }: Props) {
           <div className="px-2 py-1.5 grid grid-cols-2 gap-1.5 text-[10px] text-muted-foreground">
             <ShortcutRow keys="⌘K" desc="Open command palette" />
             <ShortcutRow keys="N" desc="New paragraph (AI Write)" />
+            <ShortcutRow keys="O" desc="Generate research outline" />
             <ShortcutRow keys="G" desc="Gather sources" />
             <ShortcutRow keys="I" desc="Project insights" />
             <ShortcutRow keys="C" desc="Compose article" />

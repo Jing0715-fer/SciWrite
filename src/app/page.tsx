@@ -17,6 +17,7 @@ import {
   BarChart3,
   Sun,
   Moon,
+  ListTree,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +40,7 @@ import { DataGatheringDialog } from "@/components/sciwrite/data-gathering-dialog
 import { ExportMenu } from "@/components/sciwrite/export-menu";
 import { InsightsDialog } from "@/components/sciwrite/insights-dialog";
 import { CommandPalette } from "@/components/sciwrite/command-palette";
+import { OutlineDialog } from "@/components/sciwrite/outline-dialog";
 import type { Article, Project } from "@/lib/types";
 
 export default function Home() {
@@ -50,6 +52,7 @@ export default function Home() {
   const [gatherOpen, setGatherOpen] = React.useState(false);
   const [insightsOpen, setInsightsOpen] = React.useState(false);
   const [paletteOpen, setPaletteOpen] = React.useState(false);
+  const [outlineOpen, setOutlineOpen] = React.useState(false);
 
   const projectsQ = useQuery({
     queryKey: ["projects"],
@@ -123,6 +126,9 @@ export default function Home() {
       } else if (k === "i") {
         e.preventDefault();
         setInsightsOpen(true);
+      } else if (k === "o") {
+        e.preventDefault();
+        setOutlineOpen(true);
       } else if (k === "c" && paragraphs.length >= 2) {
         e.preventDefault();
         setComposeOpen(true);
@@ -147,6 +153,7 @@ export default function Home() {
         onOpenCompose={() => setComposeOpen(true)}
         onOpenGather={() => setGatherOpen(true)}
         onOpenInsights={() => setInsightsOpen(true)}
+        onOpenOutline={() => setOutlineOpen(true)}
         paragraphCount={paragraphs.length}
         articleCount={articles.length}
       />
@@ -172,6 +179,7 @@ export default function Home() {
               onOpenWrite={() => setWriteOpen(true)}
               onOpenCompose={() => setComposeOpen(true)}
               onOpenGather={() => setGatherOpen(true)}
+              onOpenOutline={() => setOutlineOpen(true)}
             />
           </ResizablePanel>
           <ResizableHandle withHandle />
@@ -248,6 +256,18 @@ export default function Home() {
           projectId={activeProjectId}
         />
       )}
+      {activeProjectId && project && (
+        <OutlineDialog
+          open={outlineOpen}
+          onOpenChange={setOutlineOpen}
+          projectId={activeProjectId}
+          topic={project.topic}
+          onUseParagraph={() => {
+            setOutlineOpen(false);
+            setWriteOpen(true);
+          }}
+        />
+      )}
       <CommandPalette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
@@ -293,6 +313,16 @@ export default function Home() {
             disabled: !activeProjectId,
           },
           {
+            id: "outline",
+            label: "Generate research outline",
+            hint: "AI-suggested paragraph plan with queries",
+            icon: <ListTree className="h-3.5 w-3.5" />,
+            shortcut: "O",
+            onSelect: () => setOutlineOpen(true),
+            group: "Writing",
+            disabled: !activeProjectId,
+          },
+          {
             id: "dark",
             label: "Toggle dark mode",
             icon: <Moon className="h-3.5 w-3.5" />,
@@ -318,6 +348,7 @@ function Header({
   onOpenCompose,
   onOpenGather,
   onOpenInsights,
+  onOpenOutline,
   paragraphCount,
   articleCount,
 }: {
@@ -326,6 +357,7 @@ function Header({
   onOpenCompose: () => void;
   onOpenGather: () => void;
   onOpenInsights: () => void;
+  onOpenOutline: () => void;
   paragraphCount: number;
   articleCount: number;
 }) {
@@ -385,6 +417,16 @@ function Header({
               <span className="hidden lg:inline">Insights</span>
             </Button>
             <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs gap-1.5"
+              onClick={onOpenOutline}
+              title="Generate AI research outline"
+            >
+              <ListTree className="h-3.5 w-3.5" />
+              <span className="hidden xl:inline">Outline</span>
+            </Button>
+            <Button
               variant="outline"
               size="sm"
               className="h-8 text-xs gap-1.5"
@@ -428,6 +470,7 @@ function WritingWorkspace({
   onOpenWrite,
   onOpenCompose,
   onOpenGather,
+  onOpenOutline,
 }: {
   project?: any;
   paragraphs: any[];
@@ -435,6 +478,7 @@ function WritingWorkspace({
   onOpenWrite: () => void;
   onOpenCompose: () => void;
   onOpenGather: () => void;
+  onOpenOutline: () => void;
 }) {
   if (!activeProjectId || !project) {
     return <EmptyWorkspace />;
@@ -460,6 +504,16 @@ function WritingWorkspace({
             </p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs gap-1.5"
+              onClick={onOpenOutline}
+              title="Generate AI research outline"
+            >
+              <ListTree className="h-3.5 w-3.5" />
+              <span className="hidden xl:inline">Outline</span>
+            </Button>
             <Button
               variant="outline"
               size="sm"
