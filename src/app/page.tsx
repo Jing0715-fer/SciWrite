@@ -18,6 +18,7 @@ import {
   Sun,
   Moon,
   ListTree,
+  DatabaseZap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +43,7 @@ import { ExportMenu } from "@/components/sciwrite/export-menu";
 import { InsightsDialog } from "@/components/sciwrite/insights-dialog";
 import { CommandPalette } from "@/components/sciwrite/command-palette";
 import { OutlineDialog } from "@/components/sciwrite/outline-dialog";
+import { UserDataDialog } from "@/components/sciwrite/user-data-dialog";
 import { ProgressTracker } from "@/components/sciwrite/progress-tracker";
 import { WritingTipsPanel } from "@/components/sciwrite/writing-tips-panel";
 import { useI18n } from "@/lib/i18n";
@@ -58,6 +60,7 @@ export default function Home() {
   const [insightsOpen, setInsightsOpen] = React.useState(false);
   const [paletteOpen, setPaletteOpen] = React.useState(false);
   const [outlineOpen, setOutlineOpen] = React.useState(false);
+  const [userDataOpen, setUserDataOpen] = React.useState(false);
 
   const projectsQ = useQuery({
     queryKey: ["projects"],
@@ -229,6 +232,7 @@ export default function Home() {
               onWordGoalChange={setWordGoal}
               tipsOpen={tipsOpen}
               onTipsOpenChange={setTipsOpen}
+              onOpenUserData={() => setUserDataOpen(true)}
             />
           </ResizablePanel>
           <ResizableHandle withHandle />
@@ -315,6 +319,13 @@ export default function Home() {
             setOutlineOpen(false);
             setWriteOpen(true);
           }}
+        />
+      )}
+      {activeProjectId && (
+        <UserDataDialog
+          open={userDataOpen}
+          onOpenChange={setUserDataOpen}
+          projectId={activeProjectId}
         />
       )}
       <CommandPalette
@@ -527,6 +538,7 @@ function WritingWorkspace({
   onWordGoalChange,
   tipsOpen,
   onTipsOpenChange,
+  onOpenUserData,
 }: {
   project?: any;
   paragraphs: any[];
@@ -547,6 +559,7 @@ function WritingWorkspace({
   onWordGoalChange: (g: number) => void;
   tipsOpen: boolean;
   onTipsOpenChange: (v: boolean) => void;
+  onOpenUserData: () => void;
 }) {
   if (!activeProjectId || !project) {
     return <EmptyWorkspace />;
@@ -580,35 +593,22 @@ function WritingWorkspace({
             <Button
               variant="ghost"
               size="sm"
+              className="h-8 text-xs gap-1.5"
+              onClick={onOpenUserData}
+              title="Upload experiment data (images, tables, text)"
+            >
+              <DatabaseZap className="h-3.5 w-3.5" />
+              <span className="hidden xl:inline">Data</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               className={`h-8 text-xs gap-1.5 ${tipsOpen ? "bg-amber-100/60 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400" : ""}`}
               onClick={() => onTipsOpenChange(!tipsOpen)}
               title="Toggle writing tips panel"
             >
               <Lightbulb className="h-3.5 w-3.5" />
               <span className="hidden xl:inline">Tips</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 text-xs gap-1.5"
-              onClick={onOpenOutline}
-              title="Generate AI research outline"
-            >
-              <ListTree className="h-3.5 w-3.5" />
-              <span className="hidden xl:inline">Outline</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs gap-1.5"
-              onClick={onOpenGather}
-            >
-              <Radar className="h-3.5 w-3.5" />
-              <span className="hidden lg:inline">Gather sources</span>
-            </Button>
-            <Button size="sm" className="h-8 text-xs gap-1.5" onClick={onOpenWrite}>
-              <Sparkles className="h-3.5 w-3.5" />
-              AI Write
             </Button>
           </div>
         </div>
