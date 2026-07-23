@@ -30,6 +30,34 @@ export async function POST(req: NextRequest) {
       ? await db.dataSource.findMany({ where: { id: { in: body.dataSourceIds } } })
       : [];
 
+    // Gather user-provided data (images, tables, text descriptions)
+    const userData = body.userDataIds?.length
+      ? await db.userData.findMany({ where: { id: { in: body.userDataIds } } })
+      : [];
+
+    const userDataContext = userData.length
+      ? "USER-PROVIDED DATA (use these to describe Results — figures, tables, observations):\n" +
+        userData
+          .map((u, i) => {
+            const parts = [`[DATA:${i + 1}] (${u.type}) ${u.title}`];
+            if (u.description) parts.push(`Description: ${u.description}`);
+            if (u.type === "table" && u.data) {
+              try {
+                const tableData = JSON.parse(u.data);
+                if (tableData.headers && tableData.rows) {
+                  parts.push(`Table headers: ${tableData.headers.join(" | ")}`);
+                  parts.push(`Rows: ${tableData.rows.length} data rows`);
+                  if (tableData.rows.length > 0) {
+                    parts.push(`Sample row: ${tableData.rows[0].join(" | ")}`);
+                  }
+                }
+              } catch {}
+            }
+            return parts.join("\n");
+          })
+          .join("\n\n")
+      : "";
+
     // Optionally run web search to enrich context
     let searchItems: { title: string; snippet: string; url: string; host_name?: string }[] = [];
     if (body.searchQueries && body.searchQueries.length) {
@@ -69,13 +97,21 @@ export async function POST(req: NextRequest) {
                 source: d.source,
                 externalId: it.externalId || d.externalId || "",
                 title: it.title || d.title || d.query,
-                authors: it.authors,
-                journal: it.journal,
-                year: it.year,
+                authors: it.authors || d.authors,
+                journal: it.journal || d.journal,
+                year: it.year || d.year,
                 url: it.url || d.url || "",
               }))
             );
-            return `## ${d.source.toUpperCase()} — query: ${d.query}\n${sub || d.summary || ""}`;
+            // Include enhanced metadata from the DataSource record
+            const metaParts: string[] = [];
+            if (d.authors) metaParts.push(`Authors: ${d.authors}`);
+            if (d.journal) metaParts.push(`Journal: ${d.journal}`);
+            if (d.year) metaParts.push(`Year: ${d.year}`);
+            if (d.doi) metaParts.push(`DOI: ${d.doi}`);
+            if (d.abstract) metaParts.push(`Abstract: ${d.abstract.slice(0, 300)}`);
+            const extraMeta = metaParts.length ? `\nMetadata: ${metaParts.join(" | ")}` : "";
+            return `## ${d.source.toUpperCase()} — query: ${d.query}\n${sub || d.summary || ""}${extraMeta}`;
           })
           .join("\n\n")
       : "";
@@ -102,7 +138,7 @@ export async function POST(req: NextRequest) {
       format: body.format,
       scenario: body.scenario,
       referencesContext,
-      searchContext: [dsContext, searchContext].filter(Boolean).join("\n\n"),
+      searchContext: [dsContext, searchContext, userDataContext].filter(Boolean).join("\n\n"),
     });
 
     const content = await chat(prompt, { system, temperature: 0.65 });

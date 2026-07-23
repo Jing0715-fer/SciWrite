@@ -86,9 +86,11 @@ export interface WriteRequest {
   focus?: string;
   referenceIds?: string[];
   dataSourceIds?: string[];
+  userDataIds?: string[];
   searchQueries?: string[];
   field?: string;
   language?: string;
+  journalTemplate?: string;
 }
 
 export interface ReviseRequest {

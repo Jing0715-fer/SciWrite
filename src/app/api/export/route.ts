@@ -15,10 +15,12 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 interface ExportBody {
-  type: "paragraph" | "article";
+  type: "paragraph" | "article" | "project-merge";
   id: string;
   format: "docx" | "pdf" | "markdown";
   includeAnnotations?: boolean;
+  journalTemplate?: string;
+  mergeExport?: boolean;
 }
 
 export async function POST(req: NextRequest) {
@@ -37,6 +39,7 @@ export async function POST(req: NextRequest) {
     let abstract = "";
     let references: (Reference & { _count?: any })[] = [];
     let annotations: Annotation[] = [];
+    let allUserData: any[] = [];
 
     if (body.type === "paragraph") {
       const p = await db.paragraph.findUnique({
@@ -48,12 +51,82 @@ export async function POST(req: NextRequest) {
       content = p.content;
       references = p.references;
       annotations = p.annotations;
+    } else if (body.type === "project-merge") {
+      // Merge export: fetch all paragraphs + articles + references + userData for the project
+      const project = await db.project.findUnique({
+        where: { id: body.id },
+        include: {
+          paragraphs: {
+            orderBy: { order: "asc" },
+            include: { references: true, annotations: true },
+          },
+          articles: { orderBy: { updatedAt: "desc" }, take: 1 },
+          references: { where: { paragraphId: null } },
+          userData: true,
+        },
+      });
+      if (!project) return NextResponse.json({ error: "Not found." }, { status: 404 });
+      title = project.title;
+      abstract = project.description || "";
+      allUserData = project.userData;
+
+      // Build merged content: all paragraphs as sections + latest article if exists
+      const sections: string[] = [];
+      for (const p of project.paragraphs) {
+        const citeHeaderIdx = p.content.indexOf("### Citations");
+        const cleanContent = citeHeaderIdx >= 0 ? p.content.slice(0, citeHeaderIdx).trim() : p.content.trim();
+        sections.push(`## ${p.title}\n\n${cleanContent}`);
+      }
+      // If there's an article, use its content as the main body
+      if (project.articles.length > 0) {
+        const article = project.articles[0];
+        const aCiteIdx = article.content.indexOf("### Citations");
+        const aClean = aCiteIdx >= 0 ? article.content.slice(0, aCiteIdx).trim() : article.content.trim();
+        content = aClean;
+        if (article.abstract) abstract = article.abstract;
+      } else {
+        content = sections.join("\n\n");
+      }
+
+      // Merge all references (project-level + all paragraph-level), dedupe by externalId
+      const refMap = new Map<string, Reference>();
+      for (const r of project.references) {
+        const key = `${r.type}:${r.externalId || r.title}`;
+        if (!refMap.has(key)) refMap.set(key, r);
+      }
+      for (const p of project.paragraphs) {
+        for (const r of p.references) {
+          const key = `${r.type}:${r.externalId || r.title}`;
+          if (!refMap.has(key)) refMap.set(key, r);
+        }
+      }
+      references = [...refMap.values()];
+
+      // Merge all annotations
+      annotations = project.paragraphs.flatMap((p) => p.annotations);
     } else {
-      const a = await db.article.findUnique({ where: { id: body.id } });
+      const a = await db.article.findUnique({
+        where: { id: body.id },
+        include: {
+          articleParagraph: {
+            include: { paragraph: { include: { references: true, annotations: true } } },
+          },
+        },
+      });
       if (!a) return NextResponse.json({ error: "Not found." }, { status: 404 });
       title = a.title;
       content = a.content;
       abstract = a.abstract || "";
+      // Merge references from all paragraphs linked to this article
+      const refMap = new Map<string, Reference>();
+      for (const ap of a.articleParagraph) {
+        for (const r of ap.paragraph.references) {
+          const key = `${r.type}:${r.externalId || r.title}`;
+          if (!refMap.has(key)) refMap.set(key, r);
+        }
+      }
+      references = [...refMap.values()];
+      annotations = a.articleParagraph.flatMap((ap) => ap.paragraph.annotations);
     }
 
     // Strip the AI's "### Citations" block from content (we'll build our own refs list)
@@ -61,20 +134,69 @@ export async function POST(req: NextRequest) {
     const cleanContent =
       citeHeaderIdx >= 0 ? content.slice(0, citeHeaderIdx).trim() : content.trim();
 
-    // Build reference list text
+    // Build reference list text — apply journal template format if specified
+    const journalTemplate = body.journalTemplate;
+    const refLabel = journalTemplate === "nature" ? "References" :
+                     journalTemplate === "cell" ? "References" :
+                     journalTemplate === "science" ? "References" :
+                     journalTemplate === "jbc" ? "References" :
+                     journalTemplate === "plos" ? "References" :
+                     journalTemplate === "ieee" ? "References" :
+                     "References";
+
     const refLines = references.length
-      ? references.map(
-          (r, i) =>
-            `[${i + 1}] ${r.authors || "Anonymous"}${r.year ? ` (${r.year})` : ""}${
-              r.journal ? `, ${r.journal}` : ""
-            }. ${r.title}.${r.externalId ? ` [${r.type.toUpperCase()}:${r.externalId}]` : ""}${
-              r.url ? ` ${r.url}` : ""
-            }`
-        )
+      ? references.map((r, i) => {
+          const n = i + 1;
+          const authors = r.authors || "Anonymous";
+          const year = r.year || "n.d.";
+          const journal = r.journal || "";
+          const doi = r.doi || "";
+          const url = r.url || "";
+          const extId = r.externalId ? ` [${r.type.toUpperCase()}:${r.externalId}]` : "";
+
+          // Apply journal-specific formatting
+          if (journalTemplate === "nature") {
+            return `${n}. ${authors} ${r.title}. ${journal ? journal + " " : ""}${year ? `(${year})` : ""}.${extId}${url ? ` ${url}` : ""}`;
+          } else if (journalTemplate === "cell") {
+            return `${authors} (${year}). ${r.title}. ${journal}.${extId}${url ? ` ${url}` : ""}`;
+          } else if (journalTemplate === "ieee") {
+            return `[${n}] ${authors}, "${r.title}," ${journal || ""}, ${year}.${extId}${url ? ` ${url}` : ""}`;
+          } else if (journalTemplate === "plos") {
+            return `${n}. ${authors} ${r.title}. ${journal}. ${year};${extId}${url ? ` ${url}` : ""}`;
+          } else {
+            // Generic format
+            return `[${n}] ${authors}${year ? ` (${year})` : ""}${journal ? `, ${journal}` : ""}. ${r.title}.${extId}${url ? ` ${url}` : ""}`;
+          }
+        })
       : [];
 
+    // If mergeExport, append user data as appendix
+    const appendixContent = allUserData.length
+      ? "\n\n## Appendix: User Data\n\n" +
+        allUserData
+          .map((u, i) => {
+            const parts = [`### ${u.title} (${u.type})`];
+            if (u.description) parts.push(u.description);
+            if (u.type === "table" && u.data) {
+              try {
+                const td = JSON.parse(u.data);
+                if (td.headers && td.rows) {
+                  parts.push(`| ${td.headers.join(" | ")} |`);
+                  parts.push(`| ${td.headers.map(() => "---").join(" | ")} |`);
+                  for (const row of td.rows.slice(0, 20)) {
+                    parts.push(`| ${row.join(" | ")} |`);
+                  }
+                }
+              } catch {}
+            }
+            return parts.join("\n");
+          })
+          .join("\n\n")
+      : "";
+
     if (body.format === "markdown") {
-      const md = buildMarkdown(title, abstract, cleanContent, refLines, body.includeAnnotations ? annotations : undefined);
+      const fullContent = appendixContent ? cleanContent + appendixContent : cleanContent;
+      const md = buildMarkdown(title, abstract, fullContent, refLines, body.includeAnnotations ? annotations : undefined);
       return new NextResponse(md, {
         headers: {
           "Content-Type": "text/markdown; charset=utf-8",

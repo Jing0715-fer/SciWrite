@@ -16,11 +16,13 @@ model Project {
   topic       String
   description String?
   field       String? // research field, e.g. structural-biology, genomics
+  journalTemplate String? // e.g. nature, cell, science, jbc, plos, ieee
   status      String      @default("active") // active, archived
   paragraphs  Paragraph[]
   articles    Article[]
   dataSources DataSource[]
   references  Reference[]
+  userData    UserData[]
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 }
@@ -88,7 +90,7 @@ model DataSource {
   id         String   @id @default(cuid())
   projectId  String?
   project    Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  source     String   // rcsb, uniprot, pubmed, ncbi, blast, web
+  source     String   // rcsb, uniprot, pubmed, ncbi, blast, web, manual
   query      String
   rawJson    String
   summary    String?
@@ -96,6 +98,14 @@ model DataSource {
   externalId String?
   url        String?
   pinned     Boolean  @default(false)
+  // Enhanced metadata
+  authors    String?
+  journal    String?
+  year       String?
+  doi        String?
+  abstract   String?
+  keywords   String?  // JSON array
+  extra      String?  // JSON object for source-specific fields (e.g. resolution, method, gene)
   createdAt  DateTime @default(now())
 
   @@index([projectId])
@@ -108,6 +118,7 @@ model Article {
   title            String
   abstract         String?
   content          String
+  journalTemplate String?
   articleParagraph ArticleParagraph[]
   reviews          Review[]
   createdAt        DateTime            @default(now())
@@ -151,4 +162,19 @@ model Review {
   createdAt   DateTime @default(now())
 
   @@index([articleId])
+}
+
+// User-provided data: images, tables, text descriptions used in Results writing
+model UserData {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type        String   // image, table, text
+  title       String
+  description String?  // user-provided caption/description
+  filePath    String?  // for uploaded images (relative path under /upload)
+  data        String?  // JSON: for tables (rows/cols) or structured data
+  createdAt   DateTime @default(now())
+
+  @@index([projectId])
 }

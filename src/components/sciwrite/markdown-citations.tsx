@@ -206,12 +206,14 @@ export function MarkdownCitations({
   annotations = [],
   references = [],
   onAnnotationClick,
+  onCitationClick,
   className = "",
 }: {
   content: string;
   annotations?: Annotation[];
   references?: CitationRef[];
   onAnnotationClick?: (a: Annotation) => void;
+  onCitationClick?: (ref: CitationRef, index: number) => void;
   className?: string;
 }) {
   const { bodySegments, citationsBlock, citedRefs, allRefs } = React.useMemo(() => {
@@ -325,7 +327,22 @@ export function MarkdownCitations({
             return (
               <HoverCard key={idx} openDelay={120} closeDelay={120}>
                 <HoverCardTrigger asChild>
-                  <span className="cite-marker cursor-help" tabIndex={0}>
+                  <span
+                    className="cite-marker cursor-pointer"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (firstRef && onCitationClick) {
+                        const refIndex = allRefs.findIndex(
+                          (r) =>
+                            (r.externalId === firstRef.externalId &&
+                              r.type === firstRef.type) ||
+                            r.title === firstRef.title
+                        );
+                        onCitationClick(firstRef, refIndex);
+                      }
+                    }}
+                  >
                     {inner}
                   </span>
                 </HoverCardTrigger>
@@ -351,6 +368,11 @@ export function MarkdownCitations({
                               <span className="italic"> {r.journal}</span>
                             )}
                           </p>
+                          {r.abstract && (
+                            <p className="text-[9px] text-muted-foreground/80 leading-relaxed line-clamp-3 italic">
+                              {r.abstract.slice(0, 200)}{r.abstract.length > 200 ? "…" : ""}
+                            </p>
+                          )}
                           <div className="flex flex-wrap items-center gap-1">
                             {r.type && r.externalId && (
                               <span className="badge-slate px-1 py-0.5 rounded text-[8px] font-semibold uppercase">
