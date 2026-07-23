@@ -42,6 +42,7 @@ import { InsightsDialog } from "@/components/sciwrite/insights-dialog";
 import { CommandPalette } from "@/components/sciwrite/command-palette";
 import { OutlineDialog } from "@/components/sciwrite/outline-dialog";
 import { ProgressTracker } from "@/components/sciwrite/progress-tracker";
+import { WritingTipsPanel } from "@/components/sciwrite/writing-tips-panel";
 import type { Article, Project } from "@/lib/types";
 
 export default function Home() {
@@ -49,6 +50,7 @@ export default function Home() {
   const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
   const [writeOpen, setWriteOpen] = React.useState(false);
   const [composeOpen, setComposeOpen] = React.useState(false);
+  const [tipsOpen, setTipsOpen] = React.useState(false);
   const [viewArticle, setViewArticle] = React.useState<Article | null>(null);
   const [gatherOpen, setGatherOpen] = React.useState(false);
   const [insightsOpen, setInsightsOpen] = React.useState(false);
@@ -223,6 +225,8 @@ export default function Home() {
               progressStats={progressStats}
               wordGoal={wordGoal}
               onWordGoalChange={setWordGoal}
+              tipsOpen={tipsOpen}
+              onTipsOpenChange={setTipsOpen}
             />
           </ResizablePanel>
           <ResizableHandle withHandle />
@@ -517,6 +521,8 @@ function WritingWorkspace({
   progressStats,
   wordGoal,
   onWordGoalChange,
+  tipsOpen,
+  onTipsOpenChange,
 }: {
   project?: any;
   paragraphs: any[];
@@ -535,12 +541,19 @@ function WritingWorkspace({
   };
   wordGoal: number;
   onWordGoalChange: (g: number) => void;
+  tipsOpen: boolean;
+  onTipsOpenChange: (v: boolean) => void;
 }) {
   if (!activeProjectId || !project) {
     return <EmptyWorkspace />;
   }
+  // Determine the most common format/scenario for tips context
+  const lastParagraph = paragraphs[paragraphs.length - 1];
+  const tipsFormat = lastParagraph?.format;
+  const tipsScenario = lastParagraph?.scenario;
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative">
       {/* Project banner */}
       <div className="px-5 py-3 border-b border-border/60 bg-gradient-to-r from-primary/[0.04] to-transparent">
         <div className="flex items-start justify-between gap-3">
@@ -560,6 +573,16 @@ function WritingWorkspace({
             </p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              className={`h-8 text-xs gap-1.5 ${tipsOpen ? "bg-amber-100/60 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400" : ""}`}
+              onClick={() => onTipsOpenChange(!tipsOpen)}
+              title="Toggle writing tips panel"
+            >
+              <Lightbulb className="h-3.5 w-3.5" />
+              <span className="hidden xl:inline">Tips</span>
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -647,6 +670,14 @@ function WritingWorkspace({
           )}
         </div>
       </ScrollArea>
+
+      {/* Writing tips panel (slide-in) */}
+      <WritingTipsPanel
+        format={tipsFormat}
+        scenario={tipsScenario}
+        open={tipsOpen}
+        onOpenChange={onTipsOpenChange}
+      />
     </div>
   );
 }

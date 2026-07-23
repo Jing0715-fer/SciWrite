@@ -605,3 +605,62 @@ structured summary) to enrich data source abstracts before writing.
 - **P3**: Collaborative annotations / sharing.
 - **Note**: Some database URLs (PubMed, UniProt) may block page_reader extraction;
   consider adding fallback to use the stored abstract/metadata instead.
+
+---
+
+## Phase 9 — Writing tips contextual help panel (cron round 7)
+
+Task ID: 9
+Agent: main (webDevReview cron)
+Task: QA test, add writing tips/contextual help panel with scientific writing
+best practices that adapt to the current paragraph format & scenario.
+
+### Project Status Assessment
+- Dev server running on port 3000, HTTP 200, 0 console errors after fresh reload.
+- All features verified: 18 citation markers, 4 paragraph cards, progress tracker
+  "599 / 1000w", backup/outline/insights buttons, ⌘K badge, drag handles, deep-read.
+- App stable, no bugs found.
+
+### Work Log:
+- **NEW: Writing Tips contextual help panel** (`WritingTipsPanel` component):
+  - Slide-in side panel (288px / w-72) that overlays the right edge of the
+    WritingWorkspace when toggled. Card-style with backdrop blur + shadow.
+  - **Context-aware**: Shows "Current context" card with the active paragraph's
+    format & scenario, then provides format-specific and scenario-specific tips.
+  - **Tip sections** (collapsible with accordion behavior):
+    1. Format tips (e.g. "Background tips", "Introduction tips") — 4 tips each,
+       covering structure, citation style, tense, and common pitfalls for each
+       of the 7 formats (abstract/intro/background/methods/results/discussion/
+       conclusion).
+    2. Scenario tips (e.g. "Protein structure", "Literature review") — 3 tips
+       each for the 7 scenarios, covering domain-specific guidance (PDB IDs,
+       UniProt accessions, comparison frameworks, etc.).
+    3. General best practices — 5 universal tips (one idea per paragraph, every
+       claim needs a citation, third person past tense, avoid hedging, read aloud).
+    4. Citation format reference — 5 entries explaining [n], [PMID:xxx], [PDB:xxx],
+       [UniProt:xxx], and the auto-generated ### Citations block.
+    5. Word count guidance — 6 entries with recommended word ranges per format.
+  - **Toggle**: "Tips" ghost button in the WritingWorkspace banner (Lightbulb icon,
+    amber-tinted when active). Panel can be closed via X button in the panel header.
+  - Footer note: "Tips adapt to your current format & scenario".
+  - **Verified**: Panel opens with 5 sections, shows "Current context" with the
+    last paragraph's format/scenario, accordion expand/collapse works.
+
+### Verification Results:
+- `bun run lint` → clean (0 errors, 0 warnings).
+- 0 console errors, 0 runtime errors.
+- Tips panel → opens with 5 contextual sections (Background tips, Protein structure,
+  General best practices, Citation format, Word count guidance).
+- All previous features still working.
+
+### Stage Summary:
+- **1 new feature added**: Writing tips contextual help panel with format/scenario-
+  adaptive best practices, citation format reference, and word count guidance.
+- Dev server stable. Lint clean. No errors.
+
+### Unresolved / Next-phase priorities:
+- **P2**: Citation validation check (verify cited sources exist in references).
+- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+- **P2**: Persist undo snapshots across page refreshes.
+- **Styling**: More empty-state illustrations, paragraph status transition animations.
+- **P3**: Collaborative annotations / sharing.
