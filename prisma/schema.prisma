@@ -109,6 +109,7 @@ model Article {
   abstract         String?
   content          String
   articleParagraph ArticleParagraph[]
+  reviews          Review[]
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
 
@@ -123,6 +124,31 @@ model ArticleParagraph {
   paragraph   Paragraph @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
   order       Int
   section     String?
+
+  @@index([articleId])
+}
+
+model Review {
+  id          String   @id @default(cuid())
+  articleId   String
+  article     Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  round       Int      @default(1)
+  // Structured scores (0-10 each)
+  scoreNovelty      Float?
+  scoreSignificance Float?
+  scoreClarity      Float?
+  scoreMethodology  Float?
+  scoreCitations     Float?
+  scoreOverall      Float?
+  // Qualitative verdict
+  verdict     String   // accept | minor-revision | major-revision | reject
+  summary     String   // AI-generated review summary
+  strengths   String   // JSON array of strengths
+  weaknesses  String   // JSON array of weaknesses
+  suggestions String   // JSON array of revision suggestions
+  // Iteration tracking
+  revisedContent String? // the revised content after acting on this review
+  createdAt   DateTime @default(now())
 
   @@index([articleId])
 }

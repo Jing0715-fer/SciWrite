@@ -308,8 +308,8 @@ export function DataGatheringDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col gap-0 p-0">
-        <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60">
+      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
+        <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">
             <Sparkles className="h-4 w-4 text-primary" />
             AI Data Source Gathering
@@ -356,8 +356,8 @@ export function DataGatheringDialog({
           </div>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 min-h-0 scroll-academic">
-          <div className="px-6 py-4 min-h-[300px]">
+        <ScrollArea className="flex-1 min-h-0 scroll-academic overflow-hidden">
+          <div className="px-6 py-4">
             {/* STEP 1: Clarify */}
             {step === "clarify" && (
               <div className="space-y-4">
@@ -578,7 +578,7 @@ export function DataGatheringDialog({
         </ScrollArea>
 
         {/* Footer */}
-        <div className="px-6 py-3 border-t border-border/60 flex items-center justify-between gap-2">
+        <div className="px-6 py-3 border-t border-border/60 flex items-center justify-between gap-2 shrink-0 bg-card">
           <div className="text-[10px] text-muted-foreground">
             {step === "clarify" && purpose && "✓ Purpose ready"}
             {step === "critique" && critique && `Iteration ${iteration + 1} complete`}

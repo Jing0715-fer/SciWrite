@@ -9,6 +9,7 @@ import {
   ArrowDown,
   FileStack,
   Sparkles,
+  Gavel,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +37,7 @@ import { api } from "@/lib/api-client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { MarkdownCitations } from "./markdown-citations";
 import { ExportMenu } from "./export-menu";
+import { ReviewDialog } from "./review-dialog";
 import type { Paragraph } from "@/lib/types";
 
 interface Props {
@@ -232,7 +234,9 @@ export function ArticleViewer({
   article: { id: string; title: string; abstract?: string | null; content: string };
   onClose: () => void;
 }) {
+  const [reviewOpen, setReviewOpen] = React.useState(false);
   return (
+    <>
     <Dialog open={true} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-3xl max-h-[88vh] flex flex-col gap-0 p-0">
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60">
@@ -251,9 +255,25 @@ export function ArticleViewer({
           </div>
         </ScrollArea>
         <div className="px-6 py-3 border-t border-border/60 flex items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-xs"
+            onClick={() => setReviewOpen(true)}
+          >
+            <Gavel className="h-3.5 w-3.5" />
+            AI Review
+          </Button>
           <ExportMenu type="article" id={article.id} variant="outline" />
         </div>
       </DialogContent>
     </Dialog>
+    <ReviewDialog
+      open={reviewOpen}
+      onOpenChange={setReviewOpen}
+      articleId={article.id}
+      articleTitle={article.title}
+    />
+    </>
   );
 }

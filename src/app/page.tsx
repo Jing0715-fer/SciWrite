@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/resizable";
 import { api } from "@/lib/api-client";
 import { ThemeToggle } from "@/components/sciwrite/theme-toggle";
+import { LanguageToggle } from "@/components/sciwrite/language-toggle";
 import { ProjectsSidebar } from "@/components/sciwrite/projects-sidebar";
 import { DatabaseQueryPanel } from "@/components/sciwrite/database-query-panel";
 import { KnowledgePanel } from "@/components/sciwrite/knowledge-panel";
@@ -43,6 +44,7 @@ import { CommandPalette } from "@/components/sciwrite/command-palette";
 import { OutlineDialog } from "@/components/sciwrite/outline-dialog";
 import { ProgressTracker } from "@/components/sciwrite/progress-tracker";
 import { WritingTipsPanel } from "@/components/sciwrite/writing-tips-panel";
+import { useI18n } from "@/lib/i18n";
 import type { Article, Project } from "@/lib/types";
 
 export default function Home() {
@@ -408,6 +410,7 @@ function Header({
   paragraphCount: number;
   articleCount: number;
 }) {
+  const { t } = useI18n();
   return (
     <header className="shrink-0 px-4 py-2.5 border-b border-border/60 bg-card/80 backdrop-blur flex items-center gap-3">
       <div className="flex items-center gap-2">
@@ -416,12 +419,12 @@ function Header({
         </div>
         <div className="leading-none">
           <h1 className="text-sm font-bold tracking-tight">
-            SciWrite
+            {t("app.title")}
             <span className="text-primary">·</span>
-            <span className="text-muted-foreground font-normal"> AI Research Writer</span>
+            <span className="text-muted-foreground font-normal"> {t("app.subtitle")}</span>
           </h1>
           <p className="text-[10px] text-muted-foreground mt-0.5">
-            RCSB · UniProt · PubMed · NCBI · BLAST — citation-grade drafting
+            {t("app.tagline")}
           </p>
         </div>
       </div>
@@ -438,7 +441,7 @@ function Header({
             </span>
           </div>
         ) : (
-          <span className="text-xs text-muted-foreground">No project selected</span>
+          <span className="text-xs text-muted-foreground">{t("app.noProject")}</span>
         )}
       </div>
 
@@ -461,7 +464,7 @@ function Header({
               title="Project insights & analytics"
             >
               <BarChart3 className="h-3.5 w-3.5" />
-              <span className="hidden lg:inline">Insights</span>
+              <span className="hidden lg:inline">{t("app.insights")}</span>
             </Button>
             <Button
               variant="ghost"
@@ -471,7 +474,7 @@ function Header({
               title="Generate AI research outline"
             >
               <ListTree className="h-3.5 w-3.5" />
-              <span className="hidden xl:inline">Outline</span>
+              <span className="hidden xl:inline">{t("app.outline")}</span>
             </Button>
             <Button
               variant="outline"
@@ -481,7 +484,7 @@ function Header({
               title="AI gathers & organizes sources with adversarial check"
             >
               <Radar className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Gather</span>
+              <span className="hidden md:inline">{t("app.gather")}</span>
             </Button>
             <Button
               variant="outline"
@@ -492,7 +495,7 @@ function Header({
               title={paragraphCount < 2 ? "Need ≥2 paragraphs" : "Compose article"}
             >
               <Layers className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Compose</span>
+              <span className="hidden sm:inline">{t("app.compose")}</span>
             </Button>
             <Button
               size="sm"
@@ -500,10 +503,11 @@ function Header({
               onClick={onOpenWrite}
             >
               <Sparkles className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">AI Write</span>
+              <span className="hidden sm:inline">{t("app.aiWrite")}</span>
             </Button>
           </>
         )}
+        <LanguageToggle />
         <ThemeToggle />
       </div>
     </header>
@@ -721,16 +725,17 @@ function EmptyWorkspace() {
 }
 
 function Footer({ onOpenPalette }: { onOpenPalette?: () => void }) {
+  const { t } = useI18n();
   return (
     <footer className="shrink-0 px-4 py-1.5 border-t border-border/60 bg-card/60 backdrop-blur flex items-center justify-between text-[10px] text-muted-foreground">
       <div className="flex items-center gap-2">
         <span className="inline-flex items-center gap-1">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          AI-powered · citation-grade
+          {t("footer.aiPowered")}
         </span>
         <span className="hidden sm:inline">·</span>
         <span className="hidden sm:inline">
-          Inline citations <code className="font-mono text-[9px]">[n]</code> / <code className="font-mono text-[9px]">[SOURCE:ID]</code>
+          {t("footer.citations")} <code className="font-mono text-[9px]">[n]</code> / <code className="font-mono text-[9px]">[SOURCE:ID]</code>
         </span>
       </div>
       <div className="flex items-center gap-2">
@@ -741,12 +746,12 @@ function Footer({ onOpenPalette }: { onOpenPalette?: () => void }) {
             title="Open command palette"
           >
             <kbd className="font-mono text-[9px] font-semibold">⌘K</kbd>
-            <span className="text-muted-foreground">commands</span>
+            <span className="text-muted-foreground">{t("footer.commands")}</span>
           </button>
         )}
         <span className="hidden md:inline">RCSB · UniProt · PubMed · NCBI · BLAST</span>
         <span>·</span>
-        <span>SciWrite</span>
+        <span>{t("app.title")}</span>
       </div>
     </footer>
   );

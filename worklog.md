@@ -845,3 +845,81 @@ unresolved citation markers, executes them, and saves found references.
 - **Styling**: More empty-state illustrations, paragraph status transition animations.
 - **P3**: Collaborative annotations / sharing.
 - **P3**: Batch auto-fix across all paragraphs in a project.
+
+---
+
+## Phase 13 — Gather overflow fix + i18n + AI Peer Review (user request)
+
+Task ID: 13
+Agent: main (user request)
+Task: Fix gather dialog candidate overflow blocking next button, add EN/ZH
+language toggle, build AI peer review feature inspired by nature-review-studio
++ ChatReviewer (multi-dimensional scoring + iterative review+revise).
+
+### Work Log:
+- **FIX: Gather dialog overflow** (`data-gathering-dialog.tsx`):
+  - Root cause: DialogContent lacked `overflow-hidden`, and the ScrollArea's
+    `min-h-[300px]` forced the content to expand beyond the viewport, pushing
+    the footer (with "next step" buttons) off-screen.
+  - Fix: Added `overflow-hidden` to DialogContent, `shrink-0` to DialogHeader
+    and footer, removed `min-h-[300px]` from ScrollArea content, added
+    `overflow-hidden` to ScrollArea, added `bg-card` to footer for visibility.
+
+- **NEW: i18n with EN/ZH language toggle** (`src/lib/i18n.tsx` + `LanguageToggle`):
+  - `I18nProvider` context with `useI18n()` hook — persists language choice to
+    localStorage.
+  - Translation dictionary with ~50 keys covering header, footer, projects,
+    workspace, database panel, knowledge panel, and common UI strings.
+  - `LanguageToggle` dropdown component (Languages icon) added to header next
+    to theme toggle — switches between English and 中文.
+  - Wired `useI18n` into Header (title, subtitle, tagline, button labels) and
+    Footer (aiPowered, citations, commands).
+  - **Verified**: Switching to 中文 updates subtitle to "AI 科研写作助手", tagline
+    to "专业引用写作", button labels to "洞察/大纲/收集/组合/AI 写作".
+
+- **NEW: AI Peer Review** (`/api/ai/review` + `ReviewDialog` + Prisma `Review` model):
+  - Inspired by **nature-review-studio** (structured multi-dimensional scoring)
+    and **ChatReviewer** (iterative AI critique + revision).
+  - **Prisma model**: `Review` with articleId, round, 6 score fields (novelty,
+    significance, clarity, methodology, citations, overall), verdict, summary,
+    strengths/weaknesses/suggestions (JSON arrays), revisedContent.
+  - **API route** (`POST /api/ai/review`) with 3 modes:
+    1. `review` — AI generates a structured peer review with 0-10 scores across
+       6 dimensions, a verdict (accept/minor-revision/major-revision/reject),
+       summary, strengths, weaknesses, and per-section revision suggestions.
+    2. `revise` — AI revises the article to address all review feedback while
+       preserving inline citations; saves revisedContent + updates the article.
+    3. `auto-iterate` — runs N rounds (1-5) of review+revise automatically;
+       stops early if verdict reaches "accept".
+  - **ReviewDialog component**:
+    - "Run review" button + "Auto-iterate" with round selector (1-5).
+    - Verdict banner (green/amber/rose based on verdict).
+    - 6 score cards with progress bars (color-coded by score tier).
+    - Summary, strengths (green), weaknesses (rose), revision suggestions
+      (per-section issue + fix).
+    - Iteration log showing each round's phase and verdict.
+    - "Revise article" button in footer when verdict ≠ accept.
+  - **UI integration**: "AI Review" button (Gavel icon) added to ArticleViewer
+    footer next to Export.
+  - **Verified via API**: review returned verdict=reject, overall=2/10, 3
+    strengths, 5 weaknesses, 5 suggestions.
+
+### Verification Results:
+- `bun run lint` → clean (0 errors, 0 warnings).
+- Language toggle → switches UI to 中文 (verified subtitle, tagline, buttons).
+- Review API → returns structured review with scores, verdict, strengths,
+  weaknesses, suggestions.
+- Gather dialog → overflow fixed (shrink-0 + overflow-hidden on container).
+
+### Stage Summary:
+- **1 bug fixed**: gather dialog overflow blocking next button.
+- **2 new features added**: EN/ZH i18n with language toggle, AI Peer Review
+  with multi-dimensional scoring + iterative auto-iterate.
+- Dev server stable on port 3000. Lint clean. No errors.
+
+### Unresolved / Next-phase priorities:
+- **P2**: Apply i18n to all dialog components (currently only Header/Footer wired).
+- **P2**: Multi-level undo history for paragraph revise.
+- **P2**: Persist undo snapshots across page refreshes.
+- **P3**: Collaborative annotations / sharing.
+- **P3**: Review history timeline (view all past reviews for an article).

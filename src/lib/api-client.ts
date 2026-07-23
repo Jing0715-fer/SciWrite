@@ -138,6 +138,14 @@ export const api = {
       body: JSON.stringify(input),
     }),
 
+  /* AI review (review / revise / auto-iterate) */
+  aiReview: (input: {
+    mode: "review" | "revise" | "auto-iterate";
+    articleId: string;
+    reviewId?: string;
+    rounds?: number;
+  }) => jfetch<any>(`/api/ai/review`, { method: "POST", body: JSON.stringify(input) }),
+
   /* Export */
   exportDoc: (input: {
     type: "paragraph" | "article";
