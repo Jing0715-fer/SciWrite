@@ -50,5 +50,11 @@ test
 prompt
 
 server.log
-# Skills directory
-/skills/*.pid
+*.pid
+
+# Skills directory (external AI skill definitions, not project source)
+/skills/
+
+# QA preview screenshots
+preview-*.png
+*.preview.png
