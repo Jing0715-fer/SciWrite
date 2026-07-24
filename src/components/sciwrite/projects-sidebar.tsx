@@ -76,13 +76,13 @@ export function ProjectsSidebar({ projects, activeId, onSelect }: Props) {
   return (
     <div className="flex flex-col h-full">
       <div className="px-3 pt-3 pb-2 border-b border-border/60 flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          <div className="h-6 w-6 rounded-md bg-primary/10 flex items-center justify-center">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <div className="h-6 w-6 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
             <FlaskConical className="h-3.5 w-3.5 text-primary" />
           </div>
-          <span className="text-xs font-semibold tracking-tight">{t("projects.title")}</span>
+          <span className="text-xs font-semibold tracking-tight truncate">{t("projects.title")}</span>
         </div>
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-1 shrink-0">
           <ProjectImportExport
             projectId={activeId}
             variant="ghost"
@@ -96,7 +96,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect }: Props) {
             onClick={() => setCreateOpen(true)}
           >
             <Plus className="h-3.5 w-3.5" />
-            {t("projects.new")}
+            <span className="hidden xs:inline">{t("projects.new")}</span>
           </Button>
         </div>
       </div>

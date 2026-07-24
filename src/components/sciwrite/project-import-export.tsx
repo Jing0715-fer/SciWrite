@@ -106,9 +106,8 @@ export function ProjectImportExport({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant={variant} size={size} className="gap-1.5 text-[11px]">
+          <Button variant={variant} size={size} className="gap-1.5 text-[11px] h-7 w-7 p-0">
             <FileJson className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{t("backup.label")}</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-52">
