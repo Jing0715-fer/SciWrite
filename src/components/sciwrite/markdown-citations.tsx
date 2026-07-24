@@ -220,7 +220,7 @@ export function MarkdownCitations({
   onCitationClick?: (ref: CitationRef, index: number) => void;
   className?: string;
 }) {
-  const { bodySegments, citationsBlock, citedRefs, allRefs } = React.useMemo(() => {
+  const { bodySegments, citationsBlock, contentRefText, citedRefs, allRefs, hasContentRefs } = React.useMemo(() => {
     const highlights = buildHighlightRanges(content, annotations);
     const citeRe = new RegExp(CITE_RE_SOURCE, "g");
     const segments: Segment[] = [];
@@ -230,11 +230,21 @@ export function MarkdownCitations({
     // Pre-parse the AI "### Citations" block (if any) to build a fallback
     // reference list for hover tooltips + the bottom reference list.
     const citeHeaderIdx = content.indexOf("### Citations");
+    // Also check for "## References" header (articles have this)
+    const refHeaderIdx = content.indexOf("## References");
+    // Also check for bare "REFERENCES" header
+    const bareRefIdx = content.indexOf("\nREFERENCES\n");
+
+    // The earliest reference/citations section header
+    const refSectionIdx = Math.min(
+      ...[citeHeaderIdx, refHeaderIdx, bareRefIdx].filter((i) => i >= 0),
+      content.length
+    );
+
     const aiCitationsText =
       citeHeaderIdx >= 0 ? content.slice(citeHeaderIdx) : "";
     const parsedAiRefs = aiCitationsText ? parseCitationsBlock(aiCitationsText) : [];
     // Merge: saved references take priority (by index), then AI-parsed refs fill gaps.
-    // parsedAiRefs is now a sparse array where index 0 = ref [1], index 8 = ref [9] (or null)
     const merged: CitationRef[] = [];
     const maxLen = Math.max(references.length, parsedAiRefs.length);
     for (let k = 0; k < maxLen; k++) {
@@ -291,9 +301,12 @@ export function MarkdownCitations({
       i = nextStop;
     }
 
-    const citeHeaderIdx2 = content.indexOf("### Citations");
-    if (citeHeaderIdx2 === -1) {
-      return { bodySegments: segments, citationsBlock: null, citedRefs: citedList, allRefs: merged };
+    // Split body from reference/citations section at the earliest header found.
+    // The content may have "### Citations" (paragraph) or "## References" (article)
+    // or bare "REFERENCES" (AI-generated). We split at the earliest one.
+    if (refSectionIdx >= content.length) {
+      // No reference section header found — entire content is body
+      return { bodySegments: segments, citationsBlock: null, citedRefs: citedList, allRefs: merged, hasContentRefs: false };
     }
     let acc = 0;
     const body: Segment[] = [];
@@ -301,19 +314,29 @@ export function MarkdownCitations({
     for (const s of segments) {
       const segStart = acc;
       const segEnd = acc + s.text.length;
-      if (segEnd <= citeHeaderIdx2) {
+      if (segEnd <= refSectionIdx) {
         body.push(s);
-      } else if (segStart >= citeHeaderIdx2) {
+      } else if (segStart >= refSectionIdx) {
         rest.push(s);
       } else {
-        const splitAt = citeHeaderIdx2 - segStart;
+        const splitAt = refSectionIdx - segStart;
         body.push({ ...s, text: s.text.slice(0, splitAt) });
         rest.push({ ...s, text: s.text.slice(splitAt) });
       }
       acc = segEnd;
     }
     const citText = rest.map((s) => s.text).join("");
-    return { bodySegments: body, citationsBlock: citText, citedRefs: citedList, allRefs: merged };
+    // Only treat as citationsBlock (for fallback rendering) if it's a "### Citations" block.
+    // For "## References" or "REFERENCES", we render the text as-is via contentRefText.
+    const isCitationsBlock = citeHeaderIdx >= 0 && citeHeaderIdx === refSectionIdx;
+    return {
+      bodySegments: body,
+      citationsBlock: isCitationsBlock ? citText : null,
+      contentRefText: !isCitationsBlock ? citText : null,
+      citedRefs: citedList,
+      allRefs: merged,
+      hasContentRefs: !isCitationsBlock,
+    };
   }, [content, annotations, references]);
 
   return (
@@ -448,11 +471,19 @@ export function MarkdownCitations({
         </div>
       )}
 
-      {/* Complete reference list — only CITED references, in appearance order.
-          Since references are now stored with citationOrder matching [n] numbering,
-          the references array IS the cited list in order. allRefs is the same as
-          the references prop (all cited, in [n] order). */}
-      {allRefs.length > 0 && (
+      {/* Article's own reference section (from "## References" or "REFERENCES" in content).
+          Rendered as literal text — no duplicate component-generated list is added. */}
+      {contentRefText && (
+        <div className="mt-4 pt-3 border-t border-border/70">
+          <div className="text-[11px] leading-snug font-sans text-foreground/85 whitespace-pre-wrap">
+            {contentRefText}
+          </div>
+        </div>
+      )}
+
+      {/* Component-generated reference list — only shown if the content does NOT
+          already have its own reference section (avoids duplicates for articles). */}
+      {!hasContentRefs && allRefs.length > 0 && (
         <div className="mt-4 pt-3 border-t border-border/70">
           <p className="divider-academic mb-2">
             <span>References</span>

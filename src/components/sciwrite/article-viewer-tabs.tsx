@@ -34,39 +34,12 @@ import { MarkdownCitations } from "./markdown-citations";
 import { api } from "@/lib/api-client";
 import { useI18n } from "@/lib/i18n";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { cleanArticleContent } from "@/lib/writing";
 
 interface Props {
   article: { id: string; title: string; abstract?: string | null; content: string };
   projectId: string;
   onClose: () => void;
-}
-
-/**
- * Clean article content by removing duplicate/inconsistent reference sections.
- * Existing articles (composed before the fix) may contain BOTH an AI-generated
- * "REFERENCES" section AND the code-generated "## References" section. This
- * function keeps only the LAST reference-like section (the canonical one) and
- * strips any duplicates before it.
- */
-function cleanArticleContent(content: string): string {
-  // Match reference-like section headers (## References, REFERENCES, ### Citations, etc.)
-  const refHeaderRe =
-    /^#{0,6}\s*\*{0,2}(References|REFERENCES|Citations|Bibliography|文献|参考文献)\*{0,2}\s*:?\s*$/gm;
-  const matches: { index: number; text: string }[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = refHeaderRe.exec(content))) {
-    matches.push({ index: m.index, text: m[0] });
-  }
-  // No duplicates — return as-is
-  if (matches.length <= 1) return content;
-
-  // Keep only the LAST reference section (the code-generated canonical one).
-  // Strip everything from the FIRST reference header to just before the LAST one.
-  const firstIdx = matches[0].index;
-  const lastIdx = matches[matches.length - 1].index;
-  const before = content.slice(0, firstIdx);
-  const after = content.slice(lastIdx);
-  return before.trimEnd() + "\n\n" + after.trim();
 }
 
 export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {

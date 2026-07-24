@@ -46,6 +46,7 @@ import { SortableParagraphs } from "@/components/sciwrite/sortable-paragraphs";
 import { TopicComposer } from "@/components/sciwrite/topic-composer";
 import { ArticleComposer } from "@/components/sciwrite/article-composer";
 import { ArticleViewerWithTabs } from "@/components/sciwrite/article-viewer-tabs";
+import { cleanArticleContent } from "@/lib/writing";
 import { DataGatheringDialog } from "@/components/sciwrite/data-gathering-dialog";
 import { ExportMenu } from "@/components/sciwrite/export-menu";
 import { MarkdownCitations } from "@/components/sciwrite/markdown-citations";
@@ -737,7 +738,7 @@ function WritingWorkspace({
             {latestArticle ? (
               <div>
                 <h3 className="text-sm font-semibold mb-3 font-serif-text">{latestArticle.title}</h3>
-                <MarkdownCitations content={latestArticle.content} references={references} onCitationClick={(ref, idx) => {
+                <MarkdownCitations content={cleanArticleContent(latestArticle.content)} references={references} onCitationClick={(ref, idx) => {
                   // Scroll to the reference in the right panel
                   const refEl = document.getElementById(`ref-${idx}`);
                   if (refEl) {
