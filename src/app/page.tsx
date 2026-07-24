@@ -24,6 +24,7 @@ import {
   Network,
   Cpu,
   CheckCircle2,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -238,6 +239,7 @@ export default function Home() {
               project={project}
               paragraphs={paragraphs}
               articles={articles}
+              references={references}
               activeProjectId={activeProjectId}
               onOpenWrite={() => setWriteOpen(true)}
               onOpenCompose={() => setComposeOpen(true)}
@@ -575,6 +577,7 @@ function WritingWorkspace({
   project,
   paragraphs,
   articles,
+  references,
   activeProjectId,
   onOpenWrite,
   onOpenCompose,
@@ -591,6 +594,7 @@ function WritingWorkspace({
   project?: any;
   paragraphs: any[];
   articles: any[];
+  references: any[];
   activeProjectId: string | null;
   onOpenWrite: () => void;
   onOpenCompose: () => void;
@@ -775,10 +779,20 @@ function WritingWorkspace({
 
 
 function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { articleId?: string; articleTitle?: string; projectId: string }) {
-  const [reviewData, setReviewData] = React.useState<any>(null);
+  const qc = useQueryClient();
+  const { data: reviewData, isLoading: loading } = useQuery({
+    queryKey: ["article-review", articleId],
+    queryFn: () => api.aiReview({ mode: "review", articleId: articleId! }),
+    enabled: false, // Only fetch on manual trigger
+    staleTime: Infinity,
+  });
+
   const reviewMut = useMutation({
     mutationFn: () => articleId ? api.aiReview({ mode: "review", articleId }) : Promise.reject(new Error("No article")),
-    onSuccess: (data) => { setReviewData(data); toast.success("Review completed."); },
+    onSuccess: (data) => {
+      qc.setQueryData(["article-review", articleId], data);
+      toast.success("Review completed.");
+    },
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -802,7 +816,7 @@ function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { artic
         {reviewMut.isPending && (
           <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
         )}
-        {reviewData && (
+        {reviewData && !reviewMut.isPending && (
           <div className="space-y-3">
             {reviewData.verdict && (
               <div className={`rounded-lg border p-3 ${reviewData.verdict === "accept" ? "border-emerald-200/60 bg-emerald-50/50" : "border-amber-200/60 bg-amber-50/50"}`}>
@@ -851,62 +865,55 @@ function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { artic
 }
 
 function RelationshipWorkspace({ projectId }: { projectId: string }) {
-  const [relData, setRelData] = React.useState<any>(null);
-  const [loading, setLoading] = React.useState(false);
-
-  const analyze = React.useCallback(async () => {
-    setLoading(true);
-    try {
+  const { data: relData, isLoading: loading, error: relError, refetch } = useQuery({
+    queryKey: ["source-relationships", projectId],
+    queryFn: async () => {
+      const projRes = await fetch(`/api/projects/${projectId}`);
+      if (!projRes.ok) throw new Error("Failed to load project");
+      const projData = await projRes.json();
+      const ds = projData?.project?.dataSources || [];
+      if (ds.length < 2) {
+        return { skipped: true, message: "Need at least 2 data sources to analyze relationships." };
+      }
       const res = await fetch("/api/ai/source-relationships", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId }),
       });
-      const data = await res.json();
-      setRelData(data);
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId]);
-
-  // Auto-analyze when there are data sources
-  const [autoTriggered, setAutoTriggered] = React.useState(false);
-  React.useEffect(() => {
-    if (!autoTriggered && !relData && !loading) {
-      // Check if project has data sources
-      fetch(`/api/projects/${projectId}`).then(r => r.json()).then(data => {
-        const ds = data?.project?.dataSources || [];
-        if (ds.length >= 2) {
-          setAutoTriggered(true);
-          analyze();
-        }
-      }).catch(() => {});
-    }
-  }, [autoTriggered, relData, loading, projectId, analyze]);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text.slice(0, 200) || `Analysis failed (${res.status})`);
+      }
+      return res.json();
+    },
+    enabled: !!projectId,
+    staleTime: Infinity,
+  });
 
   return (
     <ScrollArea className="flex-1 min-h-0 scroll-academic">
       <div className="px-5 py-4 max-w-2xl mx-auto">
-        {!relData && !loading && (
+        {loading && (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          </div>
+        )}
+        {relError && (
           <div className="text-center py-12">
-            <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
-              <Network className="h-7 w-7 text-primary" />
-            </div>
-            <h3 className="text-sm font-semibold">Source Relationship Analysis</h3>
-            <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto mb-4">
-              Analyze how your data sources relate — themes, connections, contradictions.
-            </p>
-            <Button size="sm" className="gap-1.5 text-xs" onClick={analyze}>
-              <Network className="h-3.5 w-3.5" /> Analyze relationships
+            <Network className="h-10 w-10 mx-auto opacity-40 mb-3" />
+            <p className="text-xs text-destructive mb-3">{(relError as Error).message}</p>
+            <Button size="sm" className="gap-1.5 text-xs" onClick={() => refetch()}>
+              <Network className="h-3.5 w-3.5" /> Retry
             </Button>
           </div>
         )}
-        {loading && (
-          <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        {!loading && !relError && relData?.skipped && (
+          <div className="text-center py-12">
+            <Network className="h-10 w-10 mx-auto opacity-40 mb-3" />
+            <p className="text-xs text-muted-foreground">{relData.message}</p>
+          </div>
         )}
-        {relData && !loading && (
+        {!loading && !relError && relData && !relData.skipped && (
           <div className="space-y-3">
             {relData.summary && (
               <div className="rounded-lg border border-primary/20 bg-primary/[0.03] p-3">
@@ -950,7 +957,21 @@ function RelationshipWorkspace({ projectId }: { projectId: string }) {
                 ))}
               </div>
             )}
-            <Button size="sm" variant="outline" className="gap-1.5 text-xs w-full" onClick={analyze}>
+            {relData.contradictions?.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold">Contradictions</p>
+                {relData.contradictions.map((c: any, i: number) => (
+                  <div key={i} className="rounded-md border border-rose-200/50 bg-rose-50/30 p-2">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <AlertTriangle className="h-3 w-3 text-rose-600" />
+                      <Badge variant="outline" className="text-[8px] h-3.5">{c.sourceLabels?.join(" vs ") || ""}</Badge>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">{c.description}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <Button size="sm" variant="outline" className="gap-1.5 text-xs w-full" onClick={() => refetch()}>
               <Network className="h-3.5 w-3.5" /> Re-analyze
             </Button>
           </div>
@@ -959,7 +980,6 @@ function RelationshipWorkspace({ projectId }: { projectId: string }) {
     </ScrollArea>
   );
 }
-
 function safeParseArr(raw: string): any[] {
   if (!raw) return [];
   try { const p = JSON.parse(raw); return Array.isArray(p) ? p : []; } catch { return []; }
