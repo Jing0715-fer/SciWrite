@@ -1291,3 +1291,64 @@ User feedback:
 ### Commits pushed:
 - c6d239e: Tab-based KnowledgePanel + copy references on AI Write
 - 573659f: Fix duplicate reference lists in articles + paragraph cards
+
+
+---
+
+## Phase 17 — Full article auto-gen redesign: force re-gather, multi-method, 50k words, chunked generation
+
+Task ID: 17
+Agent: main
+Task: Redesign full article auto-generation — no format selection, force re-gather sources via multiple methods, 50000 word limit, outline planning from source content, chunked generation to avoid max token, optimize UI.
+
+### Work Log:
+
+- **API: generate-full route completely rewritten**:
+  - **Force re-gather**: Deletes ALL existing data sources + paragraph-level references before collecting fresh data.
+  - **Multi-method gathering**:
+    - Strategy 1: LLM designs 15-25 multi-database queries (PubMed, RCSB, UniProt, NCBI, BLAST) — executed in parallel.
+    - Strategy 2: LLM generates 5-8 web search queries — executed in parallel via webSearch.
+    - Dedup by source+externalId, saves ALL with full metadata.
+  - **LLM curation**: New "curate" step — LLM selects the most relevant references (max ~targetWords/200) from the gathered set, prioritizing recent/seminal/review papers.
+  - **No format selection**: LLM plans outline from source content (titles, themes, abstracts). Section format auto-inferred from title (intro/background/methods/results/discussion/conclusion).
+  - **Chunked generation**: Sections >1200 words split into sub-chunks (1000 words each) to avoid max token. Each chunk gets continuity context from previous chunk.
+  - **Large article assembly**: Articles >8000 words assembled directly (no LLM re-composition) to avoid token limits — sections already coherent.
+  - **Target words up to 50,000** (was 10,000 max).
+
+- **UI: OneClickGenerateDialog completely redesigned**:
+  - **Gradient header** with icon badge.
+  - **Feature chips** (4 colored cards): Force re-gather, Multi-method, No format selection, Chunked generation.
+  - **Word count slider**: 2,000-50,000 range with gradient fill, tier indicator (Short/Medium/Long/Comprehensive).
+  - **6-step progress timeline** (was 5): gather → curate → relationships → plan → generate → compose.
+  - **Color-coded steps**: Each step has unique color (emerald/teal/sky/amber/violet/rose).
+  - **Overall progress bar** with percentage.
+  - **Live step messages** showing current operation.
+  - **Result stats**: 4 color-coded metrics (sources/curated refs/sections/words).
+  - **Scrollable sections list** in results.
+
+- **Header button**: Added "Full Article" button (with Zap icon) to header, next to "AI Write".
+
+- **i18n**: Added new keys for curate step, feature descriptions, fullGenerate button (en + zh).
+
+### Verification Results:
+- `bun run lint` → clean (0 errors, 0 warnings).
+- Dev server stable, 0 console errors.
+- Full Article dialog opens with all features visible:
+  - Research topic card
+  - 4 feature chips
+  - Journal template + language selects
+  - Word count slider (2,000-50,000, step 1,000, value 5,000)
+  - Tier indicator (Short)
+  - Warning notice
+  - Generate button
+- All changes committed and pushed to GitHub (commit d34bd56).
+
+### Stage Summary:
+- Full article auto-generation completely redesigned per user requirements.
+- No format selection needed (AI plans outline).
+- Force re-gather ensures fresh data every run.
+- Multi-method gathering (database + web search) maximizes source coverage.
+- LLM curation keeps context manageable and article focused.
+- Chunked generation prevents max token issues for large articles.
+- 50,000 word limit (5x increase).
+- UI optimized with better visual hierarchy and progress indicators.
