@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { chat } from "@/lib/ai";
+import { chatWithSession } from "@/lib/llm-session";
 import { buildComposePrompt, countWords } from "@/lib/writing";
 import type { ComposeRequest } from "@/lib/types";
 
@@ -47,7 +47,12 @@ export async function POST(req: NextRequest) {
       })),
     });
 
-    const content = await chat(prompt, { system, temperature: 0.55 });
+    const content = await chatWithSession(body.projectId, prompt, {
+      system,
+      temperature: 0.55,
+      taskType: "compose",
+      metadata: { paragraphCount: ordered.length, depth: body.depth },
+    });
 
     const article = await db.article.create({
       data: {

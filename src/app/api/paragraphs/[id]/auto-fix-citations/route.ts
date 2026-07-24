@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { chat } from "@/lib/ai";
+import { chatWithSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
 
 export const runtime = "nodejs";
@@ -130,7 +130,12 @@ Respond as STRICT JSON:
 }
 Output JSON only.`;
 
-    const raw = await chat(prompt, { system, temperature: 0.4 });
+    const raw = await chatWithSession(paragraph.projectId, prompt, {
+      system,
+      temperature: 0.4,
+      taskType: "auto-fix",
+      metadata: { paragraphId: id, missingCount: missing.length },
+    });
     const parsed = safeParseJSON(raw, { suggestions: [] });
     const suggestions = Array.isArray(parsed.suggestions)
       ? parsed.suggestions.filter((s: any) => s.database && s.query)

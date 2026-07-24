@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { chat } from "@/lib/ai";
+import { chatWithSession } from "@/lib/llm-session";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -32,11 +32,11 @@ export async function POST(req: NextRequest) {
     }
     if (mode === "revise") {
       const reviewId = body.reviewId as string;
-      return NextResponse.json(await runRevise(articleId, reviewId));
+      return NextResponse.json(await runRevise(article, reviewId));
     }
     if (mode === "auto-iterate") {
       const rounds = Math.min(Math.max(body.rounds || 2, 1), 5);
-      return NextResponse.json(await runAutoIterate(articleId, rounds));
+      return NextResponse.json(await runAutoIterate(article, rounds));
     }
     return NextResponse.json({ error: "Unknown mode." }, { status: 400 });
   } catch (err: any) {
@@ -82,7 +82,12 @@ Respond as STRICT JSON:
 Be demanding but fair. Focus on scientific rigor, citation completeness, and clarity.
 Output JSON only.`;
 
-  const raw = await chat(prompt, { system, temperature: 0.4 });
+  const raw = await chatWithSession(article.projectId, prompt, {
+    system,
+    temperature: 0.4,
+    taskType: "review",
+    metadata: { mode: "review", articleId: article.id, title: article.title },
+  });
   const parsed = safeParseJSON(raw, {
     scores: { overall: 5 },
     verdict: "major-revision",
@@ -114,8 +119,7 @@ Output JSON only.`;
   return { review, scores: parsed.scores, verdict: parsed.verdict };
 }
 
-async function runRevise(articleId: string, reviewId: string) {
-  const article = await db.article.findUnique({ where: { id: articleId } });
+async function runRevise(article: any, reviewId: string) {
   const review = await db.review.findUnique({ where: { id: reviewId } });
   if (!article || !review) {
     return { error: "Article or review not found." };
@@ -154,7 +158,12 @@ Revise the article to address ALL weaknesses and suggestions. Preserve:
 
 Output the revised article in Markdown. Do NOT add commentary — output only the revised article.`;
 
-  const revised = await chat(prompt, { system, temperature: 0.5 });
+  const revised = await chatWithSession(article.projectId, prompt, {
+    system,
+    temperature: 0.5,
+    taskType: "revise",
+    metadata: { mode: "revise", articleId: article.id, round: review.round },
+  });
 
   // Save revised content on the review record + update the article
   await db.review.update({
@@ -162,34 +171,29 @@ Output the revised article in Markdown. Do NOT add commentary — output only th
     data: { revisedContent: revised },
   });
   const updated = await db.article.update({
-    where: { id: articleId },
+    where: { id: article.id },
     data: { content: revised },
   });
 
   return { article: updated, revised, reviewId };
 }
 
-async function runAutoIterate(articleId: string, rounds: number) {
+async function runAutoIterate(article: any, rounds: number) {
   const results: any[] = [];
   for (let i = 0; i < rounds; i++) {
     // 1. Review
-    const article = await db.article.findUnique({
-      where: { id: articleId },
-      include: { reviews: { orderBy: { round: "desc" } } },
-    });
-    if (!article) break;
     const reviewResult = await runReview(article);
     results.push({ round: i + 1, phase: "review", ...reviewResult });
 
     // 2. If not accepted, revise
     if (reviewResult.verdict !== "accept") {
-      const reviseResult = await runRevise(articleId, reviewResult.review.id);
+      const reviseResult = await runRevise(article, reviewResult.review.id);
       results.push({ round: i + 1, phase: "revise", ...reviseResult });
     } else {
       break; // accepted, stop iterating
     }
   }
-  const finalArticle = await db.article.findUnique({ where: { id: articleId } });
+  const finalArticle = await db.article.findUnique({ where: { id: article.id } });
   return { rounds: results.length, results, finalArticle };
 }
 

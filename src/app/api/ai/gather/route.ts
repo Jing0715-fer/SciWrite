@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { chat } from "@/lib/ai";
+import { chatWithSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
 import type { DatabaseSource } from "@/lib/types";
 
@@ -17,6 +17,7 @@ interface GatherBody {
   topic: string;
   field?: string;
   purpose?: string;
+  projectId?: string;
   history?: { question: string; answer: string }[];
   queries?: GatherQuery[];
   sources?: {
@@ -95,7 +96,14 @@ Respond as STRICT JSON:
 }
 When ready=true, questions should be empty and purpose should be a 2-3 sentence purpose statement. Output JSON only.`;
 
-  const raw = await chat(prompt, { system, temperature: 0.4 });
+  const raw = body.projectId
+    ? await chatWithSession(body.projectId, prompt, {
+        system,
+        temperature: 0.4,
+        taskType: "gather",
+        metadata: { mode: "clarify" },
+      })
+    : await chatFallback(prompt, { system, temperature: 0.4 });
   const parsed = safeParseJSON(raw, {
     questions: [],
     ready: true,
@@ -133,7 +141,14 @@ Respond as STRICT JSON:
 }
 Output JSON only. Use lowercase database names.`;
 
-  const raw = await chat(prompt, { system, temperature: 0.5 });
+  const raw = body.projectId
+    ? await chatWithSession(body.projectId, prompt, {
+        system,
+        temperature: 0.5,
+        taskType: "gather",
+        metadata: { mode: "organize" },
+      })
+    : await chatFallback(prompt, { system, temperature: 0.5 });
   const parsed = safeParseJSON(raw, { plan: "", queries: [] });
   const queries: GatherQuery[] = (Array.isArray(parsed.queries) ? parsed.queries : [])
     .filter(
@@ -214,7 +229,14 @@ Perform an adversarial critique. Respond as STRICT JSON:
 }
 Output JSON only. 'index' in remove suggestions is 1-based into the gathered sources list.`;
 
-  const raw = await chat(prompt, { system, temperature: 0.5 });
+  const raw = body.projectId
+    ? await chatWithSession(body.projectId, prompt, {
+        system,
+        temperature: 0.5,
+        taskType: "gather",
+        metadata: { mode: "critique", sourceCount: body.sources?.length },
+      })
+    : await chatFallback(prompt, { system, temperature: 0.5 });
   const parsed = safeParseJSON(raw, {
     gaps: [],
     biases: [],
@@ -260,4 +282,10 @@ function safeParseJSON(raw: string, fallback: any): any {
   } catch {
     return fallback;
   }
+}
+
+// Fallback for when projectId is not available (no session context)
+import { chat as _chat } from "@/lib/ai";
+async function chatFallback(prompt: string, opts: { system?: string; temperature?: number }): Promise<string> {
+  return _chat(prompt, opts);
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { chat } from "@/lib/ai";
+import { chatWithSession } from "@/lib/llm-session";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -113,7 +113,12 @@ Analyze the relationships between these sources. Respond as STRICT JSON:
 }
 Output JSON only. Focus on scientific substance, not metadata similarity.`;
 
-    const raw = await chat(prompt, { system, temperature: 0.4 });
+    const raw = await chatWithSession(projectId, prompt, {
+      system,
+      temperature: 0.4,
+      taskType: "relationships",
+      metadata: { sourceCount: sources.length },
+    });
     const parsed = safeParseJSON(raw, {
       summary: "Could not analyze relationships.",
       themes: [],

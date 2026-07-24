@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { chat, webSearch } from "@/lib/ai";
+import { webSearch } from "@/lib/ai";
+import { chatWithSession, clearSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
 import { countWords, renumberByAppearance } from "@/lib/writing";
 
@@ -98,7 +99,15 @@ Respond as STRICT JSON:
 }
 Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON only.`;
 
-        const gatherRaw = await chat(gatherPrompt, { system: gatherSystem, temperature: 0.4 });
+        // Clear prior session for this pipeline (fresh full-article generation)
+        await clearSession(projectId);
+
+        const gatherRaw = await chatWithSession(projectId, gatherPrompt, {
+          system: gatherSystem,
+          temperature: 0.4,
+          taskType: "gather",
+          metadata: { step: "gather" },
+        });
         const gatherParsed = safeParseJSON(gatherRaw, { queries: [] });
         const dbQueries = (gatherParsed.queries || []).filter(
           (q: any) => q.database && q.query && ["pubmed", "uniprot", "rcsb", "ncbi", "blast"].includes(q.database)
@@ -135,7 +144,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         });
 
         // Strategy 2: Web search for additional sources (5-10 queries)
-        const webSearchQueries = await generateWebSearchQueries(project.topic, project.field || "life sciences", targetWords);
+        const webSearchQueries = await generateWebSearchQueries(projectId, project.topic, project.field || "life sciences", targetWords);
         send("step", {
           step: "gather",
           status: "progress",
@@ -253,7 +262,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         // For large source sets, have the LLM select the most relevant subset
         // to keep the context window manageable and the article focused.
         const maxCitableRefs = Math.min(savedReferences.length, Math.max(20, Math.floor(targetWords / 200)));
-        const curatedRefs = await curateReferences(savedReferences, project.topic, project.field || "life sciences", maxCitableRefs);
+        const curatedRefs = await curateReferences(projectId, savedReferences, project.topic, project.field || "life sciences", maxCitableRefs);
 
         send("step", {
           step: "curate",
@@ -293,7 +302,12 @@ Analyze how these sources relate. Respond as STRICT JSON:
   "contradictions": [{"sourceLabels": ["S2","S7"], "description": "what they disagree on"}]
 }`;
 
-          const relRaw = await chat(relPrompt, { system: relSystem, temperature: 0.4 });
+          const relRaw = await chatWithSession(projectId, relPrompt, {
+            system: relSystem,
+            temperature: 0.4,
+            taskType: "relationships",
+            metadata: { step: "relationships", sourceCount: curatedRefs.length },
+          });
           const relParsed = safeParseJSON(relRaw, { summary: "", themes: [], keyConnections: [], contradictions: [] });
           relationshipSummary = relParsed.summary || "";
           relationshipContext = `\nSOURCE RELATIONSHIP ANALYSIS (use to write deeper, more connected discussion):\n${relParsed.summary || ""}\n\nKey connections between sources:\n${(relParsed.keyConnections || []).map((k: string, i: number) => `${i + 1}. ${k}`).join("\n")}\n\nThematic clusters:\n${(relParsed.themes || []).map((t: any) => `- ${t.name}: ${t.description}`).join("\n")}\n${(relParsed.contradictions || []).length ? `\nContradictions to discuss:\n${(relParsed.contradictions || []).map((c: any) => `- ${c.sourceLabels.join(" vs ")}: ${c.description}`).join("\n")}` : ""}`;
@@ -347,7 +361,12 @@ Respond as STRICT JSON:
 }
 Output JSON only.`;
 
-        const planRaw = await chat(planPrompt, { system: planSystem, temperature: 0.5 });
+        const planRaw = await chatWithSession(projectId, planPrompt, {
+          system: planSystem,
+          temperature: 0.5,
+          taskType: "plan",
+          metadata: { step: "plan", targetWords, refCount: curatedRefs.length },
+        });
         const planParsed = safeParseJSON(planRaw, { sections: [] });
         const sections = (planParsed.sections || []).filter(
           (s: any) => s.title && s.targetWords
@@ -466,7 +485,18 @@ CITATION FORMAT (MANDATORY):
 Write in ${language}, using formal, precise academic prose (third person, past tense for results/methods).
 Compose ONE cohesive section without markdown headers.`;
 
-            let chunkContent = await chat(prompt, { system, temperature: 0.65 });
+            let chunkContent = await chatWithSession(projectId, prompt, {
+              system,
+              temperature: 0.65,
+              taskType: "generate",
+              metadata: {
+                step: "generate",
+                section: sectionNum,
+                sectionTitle: section.title,
+                chunk: chunkCount > 1 ? `${chunkNum}/${chunkCount}` : undefined,
+                targetWords: chunkWords,
+              },
+            });
 
             // Sanitize citations
             const maxRefNum = curatedRefs.length;
@@ -645,7 +675,12 @@ Instructions:
 
           const composeSystem =
             "You are a senior scientific editor who composes coherent, deeply-synthesized research articles.";
-          articleBody = await chat(composePrompt, { system: composeSystem, temperature: 0.55 });
+          articleBody = await chatWithSession(projectId, composePrompt, {
+            system: composeSystem,
+            temperature: 0.55,
+            taskType: "compose",
+            metadata: { step: "compose", sectionCount: renumberedContents.length },
+          });
         }
 
         // Build the references list from globally renumbered, deduplicated references
@@ -738,7 +773,7 @@ Instructions:
 /**
  * Generate web search queries to supplement database queries.
  */
-async function generateWebSearchQueries(topic: string, field: string, targetWords: number): Promise<string[]> {
+async function generateWebSearchQueries(projectId: string, topic: string, field: string, targetWords: number): Promise<string[]> {
   try {
     const system = "You are a research strategist who designs web search queries to find supplementary sources.";
     const prompt = `RESEARCH TOPIC: ${topic}
@@ -751,7 +786,12 @@ and mechanism-specific queries.
 
 Respond as STRICT JSON: { "queries": ["query 1", "query 2", ...] }`;
 
-    const raw = await chat(prompt, { system, temperature: 0.4 });
+    const raw = await chatWithSession(projectId, prompt, {
+      system,
+      temperature: 0.4,
+      taskType: "gather",
+      metadata: { step: "web-search-queries" },
+    });
     const parsed = safeParseJSON(raw, { queries: [] });
     return (parsed.queries || []).slice(0, 8);
   } catch {
@@ -764,6 +804,7 @@ Respond as STRICT JSON: { "queries": ["query 1", "query 2", ...] }`;
  * This reduces the reference set to a manageable size and ensures focus.
  */
 async function curateReferences(
+  projectId: string,
   references: any[],
   topic: string,
   field: string,
@@ -795,14 +836,18 @@ Select the most relevant, recent, and authoritative references. Prioritize:
 Respond as STRICT JSON: { "indices": [1, 3, 5, 7, ...] }
 Use 1-based indices. Select exactly ${maxCount} references.`;
 
-    const raw = await chat(prompt, { system, temperature: 0.3 });
+    const raw = await chatWithSession(projectId, prompt, {
+      system,
+      temperature: 0.3,
+      taskType: "curate",
+      metadata: { step: "curate", total: references.length, maxCount },
+    });
     const parsed = safeParseJSON(raw, { indices: [] });
     const indices = (parsed.indices || [])
       .filter((n: number) => n >= 1 && n <= references.length)
       .slice(0, maxCount);
 
     if (indices.length === 0) {
-      // Fallback: take the first maxCount
       return references.slice(0, maxCount);
     }
 

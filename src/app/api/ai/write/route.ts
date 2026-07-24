@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chat, webSearch } from "@/lib/ai";
+import { chatWithSession } from "@/lib/llm-session";
 import {
   buildCitationContext,
   buildWritePrompt,
@@ -142,7 +143,14 @@ export async function POST(req: NextRequest) {
       searchContext: [dsContext, searchContext, userDataContext].filter(Boolean).join("\n\n"),
     });
 
-    let content = await chat(prompt, { system, temperature: 0.65 });
+    let content = body.projectId
+      ? await chatWithSession(body.projectId, prompt, {
+          system,
+          temperature: 0.65,
+          taskType: "write",
+          metadata: { format: body.format, scenario: body.scenario },
+        })
+      : await chat(prompt, { system, temperature: 0.65 });
 
     // Renumber citations by order of first appearance so [1] = first cited ref,
     // [2] = second cited ref, etc. This eliminates orphan references.

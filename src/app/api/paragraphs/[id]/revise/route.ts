@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { chat } from "@/lib/ai";
+import { chatWithSession } from "@/lib/llm-session";
 import { buildRevisePrompt, countWords } from "@/lib/writing";
 import type { Annotation } from "@/lib/types";
 
@@ -45,7 +45,12 @@ export async function POST(
 
     const system =
       "You are an expert scientific editor. Revise the paragraph to address reviewer feedback while preserving scientific accuracy and inline citations. Keep the academic register.";
-    const revised = await chat(prompt, { system, temperature: 0.5 });
+    const revised = await chatWithSession(paragraph.projectId, prompt, {
+      system,
+      temperature: 0.5,
+      taskType: "revise",
+      metadata: { mode, paragraphId: id, annotationCount: unresolved.length },
+    });
 
     const updated = await db.paragraph.update({
       where: { id },

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { chat } from "@/lib/ai";
+import { chatWithSession } from "@/lib/llm-session";
 import type { ParagraphFormat, ParagraphScenario } from "@/lib/types";
 import { formatLabel, scenarioLabel } from "@/lib/writing";
 
@@ -78,7 +78,12 @@ Respond as STRICT JSON:
 }
 Output JSON only. Ensure each paragraph builds logically on the previous.`;
 
-    const raw = await chat(prompt, { system, temperature: 0.5 });
+    const raw = await chatWithSession(projectId, prompt, {
+      system,
+      temperature: 0.5,
+      taskType: "outline",
+      metadata: { topic: project.topic },
+    });
     const parsed = safeParseJSON(raw, { summary: "", outline: [] });
 
     const outline: OutlineItem[] = (Array.isArray(parsed.outline) ? parsed.outline : [])

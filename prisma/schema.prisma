@@ -24,6 +24,7 @@ model Project {
   references  Reference[]
   userData    UserData[]
   relationships RelationshipAnalysis[]
+  conversations ConversationSession[]
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 }
@@ -195,4 +196,21 @@ model RelationshipAnalysis {
   createdAt   DateTime @default(now())
 
   @@index([projectId])
+}
+
+// LLM conversation session — maintains context across multiple AI tasks within a project
+// so that gather → curate → plan → generate → compose → review can share context
+model ConversationSession {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  taskType    String   // gather, curate, relationships, plan, generate, compose, review, write, outline, revise
+  role        String   // system | user | assistant
+  content     String   // the message content
+  metadata    String?  // JSON: { sectionTitle, wordCount, temperature, etc. }
+  tokenEstimate Int   @default(0) // rough token estimate for context window management
+  createdAt   DateTime @default(now())
+
+  @@index([projectId])
+  @@index([projectId, taskType])
 }
