@@ -15,6 +15,7 @@ export const translations = {
     "app.gather": "Gather",
     "app.compose": "Compose",
     "app.aiWrite": "AI Write",
+    "app.fullGenerate": "Full Article",
     "app.tips": "Tips",
     "app.noProject": "No project selected",
     "app.dark": "Switch to dark",
@@ -644,6 +645,13 @@ export const translations = {
     "oneClick.generateBtn": "Generate full article",
     "oneClick.generating": "Generating…",
     "oneClick.doneBtn": "Done",
+    "oneClick.stepCurate": "Curating sources",
+    "oneClick.curatedRefs": "Curated references",
+    "oneClick.maxWords": "Max 50,000 words",
+    "oneClick.noFormatSelect": "No format selection needed — AI plans the outline automatically",
+    "oneClick.forceRegather": "Force re-gather: clears existing sources and collects fresh data",
+    "oneClick.multiMethod": "Multi-method gathering: database queries + web search",
+    "oneClick.chunkedGen": "Chunked generation: large sections split to avoid token limits",
 
     // User data dialog
     "userData.title": "Experiment Data",
@@ -759,6 +767,7 @@ export const translations = {
     "app.gather": "收集",
     "app.compose": "组合",
     "app.aiWrite": "AI 写作",
+    "app.fullGenerate": "全文生成",
     "app.tips": "技巧",
     "app.noProject": "未选择项目",
     "app.dark": "切换深色",
@@ -1388,6 +1397,13 @@ export const translations = {
     "oneClick.generateBtn": "生成全文",
     "oneClick.generating": "正在生成…",
     "oneClick.doneBtn": "完成",
+    "oneClick.stepCurate": "正在精选数据源",
+    "oneClick.curatedRefs": "已精选引用",
+    "oneClick.maxWords": "最多 50,000 字",
+    "oneClick.noFormatSelect": "无需选择段落格式 — AI 自动规划大纲",
+    "oneClick.forceRegather": "强制重新收集：清除现有数据源并收集新数据",
+    "oneClick.multiMethod": "多种收集方式：数据库查询 + 网络搜索",
+    "oneClick.chunkedGen": "分块生成：大章节拆分以避免 token 限制",
 
     // User data dialog
     "userData.title": "实验数据",

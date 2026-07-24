@@ -1,9 +1,8 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { chat } from "@/lib/ai";
+import { chat, webSearch } from "@/lib/ai";
 import { queryDatabase } from "@/lib/databases";
-import { writingSystemPrompt, countWords, renumberByAppearance } from "@/lib/writing";
-import type { ParagraphFormat, ParagraphScenario } from "@/lib/types";
+import { countWords, renumberByAppearance } from "@/lib/writing";
 
 export const runtime = "nodejs";
 export const maxDuration = 1800; // 30 minutes — streaming keeps connection alive
@@ -15,6 +14,17 @@ interface GenerateFullBody {
   targetWords?: number;
 }
 
+/**
+ * Full article auto-generation pipeline:
+ *  1. FORCE re-gather data sources via MULTIPLE methods (database queries + web search)
+ *  2. LLM curates the most relevant sources for the article
+ *  3. LLM plans article outline (sections) based on source content
+ *  4. Generate each section in CHUNKS (to avoid max token) with citations
+ *  5. Compose final article with global citation renumbering
+ *
+ * No paragraph format/scenario selection — the LLM decides the outline.
+ * Target word count up to 50,000 words.
+ */
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as GenerateFullBody;
   const projectId = body.projectId;
@@ -41,26 +51,48 @@ export async function POST(req: NextRequest) {
         }
 
         const language = body.language || "English";
-        const targetWords = body.targetWords || 3000;
+        const targetWords = Math.min(body.targetWords || 5000, 50000);
         const journalTemplate = body.journalTemplate || "generic";
 
-        // ============ STEP 1: Gather data sources ============
-        send("step", { step: "gather", status: "started", message: "Generating search queries..." });
+        // ============ STEP 1: FORCE re-gather data sources ============
+        // Delete ALL existing data sources for this project first (fresh start)
+        send("step", {
+          step: "gather",
+          status: "started",
+          message: "Clearing existing data sources and re-gathering fresh sources...",
+        });
+
+        await db.dataSource.deleteMany({ where: { projectId } });
+        // Also clear paragraph-level references (keep project-level ones for now)
+        await db.reference.deleteMany({
+          where: { projectId, NOT: { paragraphId: null } },
+        });
+
+        // Strategy 1: LLM-designed multi-database queries (15-20 queries)
+        send("step", {
+          step: "gather",
+          status: "progress",
+          message: "Designing multi-database search queries (PubMed, RCSB, UniProt, NCBI)...",
+        });
 
         const gatherSystem =
-          "You are a research data strategist. Given a research topic, design 8-12 multi-database " +
-          "search queries to gather the most relevant primary sources. Distribute across PubMed, " +
-          "UniProt, RCSB PDB, and NCBI based on the topic.";
+          "You are a research data strategist. Given a research topic and target word count, " +
+          "design a COMPREHENSIVE multi-database search plan to gather as many relevant primary " +
+          "sources as possible. Distribute queries across databases based on the topic.";
 
         const gatherPrompt = `RESEARCH TOPIC: ${project.topic}
 FIELD: ${project.field || "life sciences"}
 PURPOSE: Write a comprehensive review article (~${targetWords} words).
 
-Design a search plan with 8-12 queries. Respond as STRICT JSON:
+Design a search plan with 15-25 queries covering multiple aspects of the topic.
+Distribute across databases: PubMed (papers), RCSB (structures), UniProt (proteins), NCBI (genes), BLAST (sequences).
+Include both broad and specific queries, recent and foundational works.
+
+Respond as STRICT JSON:
 {
   "queries": [
-    { "database": "pubmed", "query": "concrete search string" },
-    { "database": "rcsb", "query": "concrete search string" },
+    { "database": "pubmed", "query": "concrete search string", "rationale": "why this query" },
+    { "database": "rcsb", "query": "concrete search string", "rationale": "why this query" },
     ...
   ]
 }
@@ -68,28 +100,29 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
 
         const gatherRaw = await chat(gatherPrompt, { system: gatherSystem, temperature: 0.4 });
         const gatherParsed = safeParseJSON(gatherRaw, { queries: [] });
-        const queries = (gatherParsed.queries || []).filter(
+        const dbQueries = (gatherParsed.queries || []).filter(
           (q: any) => q.database && q.query && ["pubmed", "uniprot", "rcsb", "ncbi", "blast"].includes(q.database)
         );
 
-        send("step", { step: "gather", status: "progress", message: `Executing ${queries.length} database queries...`, queries: queries.length });
+        send("step", {
+          step: "gather",
+          status: "progress",
+          message: `Executing ${dbQueries.length} database queries in parallel...`,
+          queries: dbQueries.length,
+        });
 
-        // Execute ALL queries in parallel — no limit on count
-        const queryResults = await Promise.allSettled(
-          queries.map((q: any) =>
+        // Strategy 1: Execute ALL database queries in parallel
+        const dbQueryResults = await Promise.allSettled(
+          dbQueries.map((q: any) =>
             queryDatabase(q.database as any, q.query).then((r) => ({ ...r, rationale: q.query }))
           )
         );
 
-        // Collect ALL items — no limit on per-query items
-        const allItems: any[] = [];
-        for (const r of queryResults) {
+        const dbItems: any[] = [];
+        for (const r of dbQueryResults) {
           if (r.status === "fulfilled") {
             for (const item of r.value.items || []) {
-              allItems.push({
-                ...item,
-                queryUsed: r.value.query,
-              });
+              dbItems.push({ ...item, queryUsed: r.value.query, gatherMethod: "database" });
             }
           }
         }
@@ -97,14 +130,62 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         send("step", {
           step: "gather",
           status: "progress",
-          message: `Saving ${allItems.length} data sources with full metadata...`,
+          message: `Database queries returned ${dbItems.length} items. Now running web searches for additional sources...`,
+          itemsFound: dbItems.length,
+        });
+
+        // Strategy 2: Web search for additional sources (5-10 queries)
+        const webSearchQueries = await generateWebSearchQueries(project.topic, project.field || "life sciences", targetWords);
+        send("step", {
+          step: "gather",
+          status: "progress",
+          message: `Running ${webSearchQueries.length} web searches for supplementary sources...`,
+        });
+
+        const webSearchResults = await Promise.allSettled(
+          webSearchQueries.map((q: string) => webSearch(q, 10))
+        );
+
+        const webItems: any[] = [];
+        for (const r of webSearchResults) {
+          if (r.status === "fulfilled") {
+            for (const item of r.value) {
+              webItems.push({
+                source: "web",
+                externalId: item.url,
+                title: item.name || item.url,
+                authors: item.host_name || undefined,
+                journal: undefined,
+                year: item.date?.slice(0, 4) || undefined,
+                url: item.url,
+                doi: undefined,
+                abstract: item.snippet,
+                extra: { host: item.host_name, rank: item.rank },
+                queryUsed: "web_search",
+                gatherMethod: "web",
+              });
+            }
+          }
+        }
+
+        const allItems = [...dbItems, ...webItems];
+        send("step", {
+          step: "gather",
+          status: "progress",
+          message: `Total gathered: ${allItems.length} sources (${dbItems.length} from databases + ${webItems.length} from web). Saving...`,
           itemsFound: allItems.length,
         });
 
-        // Save ALL data sources + references with FULL metadata
+        // Save ALL data sources with FULL metadata
         const savedDataSources: any[] = [];
         const savedReferences: any[] = [];
+        const seenExternalIds = new Set<string>(); // Dedup by externalId+source
+
         for (const item of allItems) {
+          const dedupKey = `${item.source}:${item.externalId || item.url}`;
+          if (seenExternalIds.has(dedupKey)) continue;
+          seenExternalIds.add(dedupKey);
+
           const ds = await db.dataSource.create({
             data: {
               projectId,
@@ -125,14 +206,15 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           });
           savedDataSources.push(ds);
 
-          // Save as reference ONLY for PubMed or RCSB-with-publication
+          // Save as reference for PubMed, RCSB-with-publication, or web sources with URLs
           const isPubMed = item.source === "pubmed";
           const isRcsbWithPub = item.source === "rcsb" && item.extra?.hasPublication;
-          if (isPubMed || isRcsbWithPub) {
+          const isWebWithUrl = item.source === "web" && item.url;
+          if (isPubMed || isRcsbWithPub || isWebWithUrl) {
             const ref = await db.reference.create({
               data: {
-                type: "pubmed",
-                externalId: item.externalId || null,
+                type: isPubMed ? "pubmed" : isRcsbWithPub ? "pubmed" : "web",
+                externalId: item.externalId || item.url,
                 title: item.title,
                 authors: item.authors || null,
                 journal: item.journal || null,
@@ -152,6 +234,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           status: "done",
           sourcesGathered: savedDataSources.length,
           referencesSaved: savedReferences.length,
+          message: `Gathered ${savedDataSources.length} unique sources (${savedReferences.length} citable references).`,
         });
 
         if (savedReferences.length === 0 && savedDataSources.length === 0) {
@@ -160,18 +243,36 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           return;
         }
 
-        // ============ STEP 1.5: Analyze source relationships ============
+        // ============ STEP 2: LLM curates the most relevant sources ============
+        send("step", {
+          step: "curate",
+          status: "started",
+          message: `LLM curating ${savedReferences.length} references for a ${targetWords}-word article...`,
+        });
+
+        // For large source sets, have the LLM select the most relevant subset
+        // to keep the context window manageable and the article focused.
+        const maxCitableRefs = Math.min(savedReferences.length, Math.max(20, Math.floor(targetWords / 200)));
+        const curatedRefs = await curateReferences(savedReferences, project.topic, project.field || "life sciences", maxCitableRefs);
+
+        send("step", {
+          step: "curate",
+          status: "done",
+          curatedCount: curatedRefs.length,
+          totalAvailable: savedReferences.length,
+          message: `Curated ${curatedRefs.length} most relevant references from ${savedReferences.length} total.`,
+        });
+
+        // ============ STEP 3: Analyze source relationships ============
         send("step", { step: "relationships", status: "started", message: "Analyzing source relationships..." });
 
         let relationshipContext = "";
         let relationshipSummary = "";
         try {
-          const sourceList = savedDataSources.map((s, i) => {
-            const parts = [`[S${i + 1}] (${s.source}) ${s.title || s.query}`];
-            if (s.authors) parts.push(`Authors: ${s.authors}`);
-            if (s.journal) parts.push(`Journal: ${s.journal}`);
-            if (s.year) parts.push(`Year: ${s.year}`);
-            if (s.abstract) parts.push(`Abstract: ${s.abstract.slice(0, 200)}`);
+          const sourceList = curatedRefs.slice(0, 40).map((r: any, i: number) => {
+            const parts = [`[S${i + 1}] ${r.authors || "Anon"} (${r.year || "n.d."}) — ${r.title?.slice(0, 100) || "Untitled"}`];
+            if (r.journal) parts.push(`Journal: ${r.journal}`);
+            if (r.abstract) parts.push(`Abstract: ${r.abstract.slice(0, 150)}`);
             return parts.join("\n");
           }).join("\n\n");
 
@@ -181,7 +282,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
 
           const relPrompt = `RESEARCH TOPIC: ${project.topic}
 
-DATA SOURCES:
+TOP ${curatedRefs.length} CURATED SOURCES:
 ${sourceList}
 
 Analyze how these sources relate. Respond as STRICT JSON:
@@ -209,31 +310,38 @@ Analyze how these sources relate. Respond as STRICT JSON:
           send("step", { step: "relationships", status: "skipped", message: "Relationship analysis skipped." });
         }
 
-        // ============ STEP 2: Plan article sections ============
-        send("step", { step: "plan", status: "started", message: "Planning article sections..." });
+        // ============ STEP 4: Plan article outline from source content ============
+        send("step", { step: "plan", status: "started", message: "Planning article outline based on source content..." });
 
         const planSystem =
           "You are a senior research advisor who designs publication-ready article outlines. " +
-          "Given a research topic, purpose, field, and the number of available references, " +
-          "produce a detailed section plan with target word counts that sum to the total target.";
+          "Given a research topic, curated references, and a target word count, produce a detailed " +
+          "section plan with target word counts that sum to the total target. " +
+          "For large articles, plan MORE sections with SMALLER word counts to avoid exceeding " +
+          "the LLM's max token limit per section.";
 
         const planPrompt = `RESEARCH TOPIC: ${project.topic}
 FIELD: ${project.field || "life sciences"}
 TARGET TOTAL WORDS: ${targetWords}
-AVAILABLE REFERENCES: ${savedReferences.length} citable references + ${savedDataSources.length} data sources.
+CURATED REFERENCES: ${curatedRefs.length} citable references + ${savedDataSources.length} data sources.
 
-Plan a review article with 5-8 sections. Each section gets a target word count.
+KEY SOURCES BY THEME:
+${curatedRefs.slice(0, 30).map((r: any, i: number) =>
+  `[${i + 1}] ${r.authors || "Anon"} (${r.year || "n.d."}) ${r.title?.slice(0, 80) || ""}`
+).join("\n")}
+
+Plan a comprehensive review article. For ${targetWords} words, use ${Math.max(5, Math.ceil(targetWords / 800))}-${Math.max(8, Math.ceil(targetWords / 600))} sections.
+Each section should be 400-1500 words (keep sections SMALL to avoid max token issues).
 The sum of all section word counts should be approximately ${targetWords}.
 
 Respond as STRICT JSON:
 {
   "sections": [
     {
-      "format": "intro|background|methods|results|discussion|conclusion|abstract",
-      "scenario": "literature-review|protein-structure|sequence-analysis|mechanism|comparative|clinical|custom",
       "title": "A descriptive section title",
-      "focus": "What this section should cover",
-      "targetWords": 300
+      "focus": "What this section should cover, which source themes to draw from",
+      "targetWords": 600,
+      "suggestedRefIndices": [1, 3, 5]
     }
   ]
 }
@@ -242,7 +350,7 @@ Output JSON only.`;
         const planRaw = await chat(planPrompt, { system: planSystem, temperature: 0.5 });
         const planParsed = safeParseJSON(planRaw, { sections: [] });
         const sections = (planParsed.sections || []).filter(
-          (s: any) => s.format && s.scenario && s.title
+          (s: any) => s.title && s.targetWords
         );
 
         if (sections.length === 0) {
@@ -254,16 +362,17 @@ Output JSON only.`;
         send("step", {
           step: "plan",
           status: "done",
-          sections: sections.map((s: any) => ({ title: s.title, format: s.format, targetWords: s.targetWords })),
+          sections: sections.map((s: any) => ({ title: s.title, targetWords: s.targetWords })),
           sectionCount: sections.length,
+          message: `Planned ${sections.length} sections totaling ~${sections.reduce((s: number, sec: any) => s + (sec.targetWords || 0), 0)} words.`,
         });
 
-        // ============ STEP 3: Build context strings ============
-        const refContext = savedReferences
-          .map((r, i) => {
+        // ============ STEP 5: Build context strings ============
+        const refContext = curatedRefs
+          .map((r: any, i: number) => {
             const auth = r.authors || "Anon";
             const yr = r.year ? ` (${r.year})` : "";
-            const jour = r.journal ? `, *${r.journal}*` : "";
+            const jour = r.journal ? `, ${r.journal}` : "";
             const url = r.url ? ` — ${r.url}` : "";
             const abs = r.abstract ? `\nAbstract: ${r.abstract.slice(0, 200)}` : "";
             return `[${i + 1}] ${auth}${yr}${jour}. ${r.title}.${url}${abs}`;
@@ -271,25 +380,18 @@ Output JSON only.`;
           .join("\n");
 
         const dsContext = savedDataSources
-          .map((d, i) => {
+          .slice(0, 60) // Limit data source context to avoid token overflow
+          .map((d: any, i: number) => {
             const parts = [`[DS:${i + 1}] (${d.source}) ${d.title || d.query}`];
             if (d.authors) parts.push(`Authors: ${d.authors}`);
             if (d.journal) parts.push(`Journal: ${d.journal}`);
             if (d.year) parts.push(`Year: ${d.year}`);
-            if (d.abstract) parts.push(`Abstract: ${d.abstract.slice(0, 300)}`);
-            if (d.extra) {
-              try {
-                const extra = JSON.parse(d.extra);
-                if (extra.resolution) parts.push(`Resolution: ${extra.resolution}Å`);
-                if (extra.method) parts.push(`Method: ${extra.method}`);
-                if (extra.organism) parts.push(`Organism: ${extra.organism}`);
-              } catch {}
-            }
+            if (d.abstract) parts.push(`Abstract: ${d.abstract.slice(0, 200)}`);
             return parts.join("\n");
           })
           .join("\n\n");
 
-        // ============ STEP 4: Generate each section ============
+        // ============ STEP 6: Generate each section (chunked) ============
         const generatedParagraphs: any[] = [];
         for (let i = 0; i < sections.length; i++) {
           const section = sections[i];
@@ -301,104 +403,120 @@ Output JSON only.`;
             section: sectionNum,
             total: sections.length,
             title: section.title,
-            message: `Generating section ${sectionNum}/${sections.length}: ${section.title}`,
+            message: `Generating section ${sectionNum}/${sections.length}: ${section.title} (~${section.targetWords} words)`,
           });
 
-          const system = writingSystemPrompt({
-            format: section.format as ParagraphFormat,
-            scenario: section.scenario as ParagraphScenario,
-            field: project.field || undefined,
-            language,
-          });
+          // For sections with high target words, generate in sub-chunks
+          const sectionTargetWords = section.targetWords || 600;
+          const needsChunking = sectionTargetWords > 1200;
+          const chunkCount = needsChunking ? Math.ceil(sectionTargetWords / 1000) : 1;
 
-          const prompt = `RESEARCH TOPIC: ${project.topic}
+          let fullSectionContent = "";
+
+          for (let chunk = 0; chunk < chunkCount; chunk++) {
+            const chunkNum = chunk + 1;
+            if (chunkCount > 1) {
+              send("step", {
+                step: "generate",
+                status: "progress",
+                section: sectionNum,
+                total: sections.length,
+                chunk: chunkNum,
+                totalChunks: chunkCount,
+                message: `Section ${sectionNum} chunk ${chunkNum}/${chunkCount}...`,
+              });
+            }
+
+            const chunkFocus = chunkCount > 1
+              ? `${section.focus} (Part ${chunkNum} of ${chunkCount} — focus on ${chunk === 0 ? "introduction and background" : chunk === chunkCount - 1 ? "synthesis and conclusion" : "detailed analysis"})`
+              : section.focus;
+
+            const chunkWords = Math.ceil(sectionTargetWords / chunkCount);
+
+            const prompt = `RESEARCH TOPIC: ${project.topic}
 SECTION ${sectionNum} of ${sections.length}: ${section.title}
-FORMAT: ${section.format}
-SCENARIO: ${section.scenario}
-FOCUS: ${section.focus}
-TARGET WORDS: ${section.targetWords}
+${chunkCount > 1 ? `PART ${chunkNum} of ${chunkCount}` : ""}
+FOCUS: ${chunkFocus}
+TARGET WORDS: ${chunkWords}
+LANGUAGE: ${language}
 
-REFERENCE LIST (use ONLY these — cite as [n] where n is the 1-based index, 1 to ${savedReferences.length}):
+REFERENCE LIST (cite as [n], 1-based index into this list of ${curatedRefs.length} refs):
 ${refContext}
 
-DATABASE RECORDS (structural/sequence data — reference the associated publication, not the PDB/UniProt ID):
+DATABASE RECORDS (structural/sequence data — cite the associated publication):
 ${dsContext}
 ${relationshipContext}
 
-Now compose this section. Write DEEPLY — discuss connections between sources, highlight
-agreements and contradictions, synthesize findings across studies.
+${chunk > 0 ? `PREVIOUS PART OF THIS SECTION (for continuity, do NOT repeat):\n${fullSectionContent.slice(-800)}` : ""}
+
+Now compose ${chunkCount > 1 ? `part ${chunkNum}` : "this section"}. Write DEEPLY — discuss connections between sources,
+highlight agreements and contradictions, synthesize findings across studies.
 
 CITATION FORMAT (MANDATORY):
-- Use ONLY numeric [n] citations in the body text (e.g. [1], [2], [3]).
+- Use ONLY numeric [n] citations (e.g. [1], [2], [3]).
 - Number citations starting from [1] for THIS section. Each [n] refers to the n-th entry
-  in the REFERENCE LIST above (which has ${savedReferences.length} entries, numbered [1] to [${savedReferences.length}]).
-- You MUST cite AT LEAST 5 different references in this section. A paragraph with fewer than 5
-  distinct citations is unacceptable — every factual claim needs a citation, and you should
-  reference multiple sources to show synthesis.
-- You MUST NOT use citation numbers greater than ${savedReferences.length}. If you need a source
-  not in the list, use [$REF] as a placeholder instead.
-- Do NOT use [SOURCE:ID] format (no [PDB:xxx], [PMID:xxx], [UniProt:xxx] in body).
-- Do NOT write empty brackets [] — always include a number.
-- Do NOT output a "### Citations" block — just write the paragraph text with [n] markers.`;
+  in the REFERENCE LIST above (${curatedRefs.length} entries, [1] to [${curatedRefs.length}]).
+- Cite AT LEAST 3 different references per ~500 words.
+- Do NOT use numbers greater than ${curatedRefs.length}. Use [$REF] as placeholder if needed.
+- Do NOT use [SOURCE:ID] format in body.
+- Do NOT write empty brackets [].
+- Do NOT output a "### Citations" block — just write the text with [n] markers.`;
 
-          let content = await chat(prompt, { system, temperature: 0.65 });
+            const system = `You are a senior scientific research writer and domain expert (${project.field || "life sciences"}).
+Write in ${language}, using formal, precise academic prose (third person, past tense for results/methods).
+Compose ONE cohesive section without markdown headers.`;
 
-          // Sanitize citations: replace any [n] where n > savedReferences.length with [$REF]
-          const maxRefNum = savedReferences.length;
-          content = content.replace(
-            /\[(\d+(?:[,\-–]\s*\d+)*)\]/g,
-            (match, inner: string) => {
-              const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
-                const rm = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
-                if (rm) {
-                  const arr: number[] = [];
-                  for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) arr.push(n);
-                  return arr;
-                }
-                const n = parseInt(s);
-                return isNaN(n) ? [] : [n];
-              });
-              const validNums = nums.filter((n: number) => n >= 1 && n <= maxRefNum);
-              if (validNums.length === 0) return "[$REF]";
-              if (validNums.length < nums.length) return `[${validNums.join(",")}]`;
-              return match;
-            }
-          );
+            let chunkContent = await chat(prompt, { system, temperature: 0.65 });
 
-          // Renumber citations by order of first appearance so [1] = first cited
-          // ref, [2] = second cited ref, etc. Only cited refs are linked — no orphans.
+            // Sanitize citations
+            const maxRefNum = curatedRefs.length;
+            chunkContent = chunkContent.replace(
+              /\[(\d+(?:[,\-–]\s*\d+)*)\]/g,
+              (match, inner: string) => {
+                const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
+                  const rm = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+                  if (rm) {
+                    const arr: number[] = [];
+                    for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) arr.push(n);
+                    return arr;
+                  }
+                  const n = parseInt(s);
+                  return isNaN(n) ? [] : [n];
+                });
+                const validNums = nums.filter((n: number) => n >= 1 && n <= maxRefNum);
+                if (validNums.length === 0) return "[$REF]";
+                if (validNums.length < nums.length) return `[${validNums.join(",")}]`;
+                return match;
+              }
+            );
+
+            fullSectionContent += (chunk > 0 ? "\n\n" : "") + chunkContent;
+          }
+
+          // Renumber citations by order of first appearance within this section
           const { content: renumberedContent, references: citedRefs } =
-            renumberByAppearance(content, savedReferences);
-          content = renumberedContent;
+            renumberByAppearance(fullSectionContent, curatedRefs);
 
           const paragraph = await db.paragraph.create({
             data: {
               projectId,
               title: section.title,
-              content,
-              format: section.format,
-              scenario: section.scenario,
+              content: renumberedContent,
+              format: inferFormat(section.title, i, sections.length),
+              scenario: "literature-review",
               status: "draft",
               order: i,
-              wordCount: countWords(content),
+              wordCount: countWords(renumberedContent),
             },
           });
 
-          // Link ONLY the CITED references (in appearance order) to THIS paragraph.
-          // Each cited reference gets its own copy linked to this paragraph.
-          // Uncited references are NOT linked — no orphans.
-          // Set citationOrder to match the [n] numbering (0-based).
+          // Link ONLY cited references (copies, not move)
           for (let idx = 0; idx < citedRefs.length; idx++) {
-            const ref = citedRefs[idx];
-            // Check if a copy already exists for this paragraph
+            const ref = citedRefs[idx] as any;
             const existing = await db.reference.findFirst({
-              where: {
-                externalId: ref.externalId,
-                paragraphId: paragraph.id,
-              },
+              where: { externalId: ref.externalId, paragraphId: paragraph.id },
             });
             if (!existing) {
-              // Create a copy linked to this paragraph
               await db.reference.create({
                 data: {
                   type: ref.type || "pubmed",
@@ -416,7 +534,6 @@ CITATION FORMAT (MANDATORY):
                 },
               });
             } else {
-              // Update citationOrder if copy already exists
               await db.reference.update({
                 where: { id: existing.id },
                 data: { citationOrder: idx },
@@ -427,9 +544,8 @@ CITATION FORMAT (MANDATORY):
           generatedParagraphs.push({
             id: paragraph.id,
             title: section.title,
-            format: section.format,
             wordCount: paragraph.wordCount,
-            contentLength: content.length,
+            contentLength: renumberedContent.length,
           });
 
           send("step", {
@@ -443,36 +559,29 @@ CITATION FORMAT (MANDATORY):
           });
         }
 
-        // ============ STEP 5: Compose the final article ============
-        send("step", { step: "compose", status: "started", message: "Composing final article..." });
+        // ============ STEP 7: Compose the final article ============
+        send("step", { step: "compose", status: "started", message: "Composing final article with global citation renumbering..." });
 
-        // Fetch all paragraph contents for composition, along with their references
         const allParagraphData = await Promise.all(
           generatedParagraphs.map(async (p) => {
             const para = await db.paragraph.findUnique({
               where: { id: p.id },
-              include: { references: true },
+              include: { references: { orderBy: { citationOrder: "asc" } } },
             });
             const content = para?.content || "";
             const citIdx = content.indexOf("### Citations");
             const cleanContent = citIdx >= 0 ? content.slice(0, citIdx).trim() : content.trim();
-            // Build paragraph-local reference map: [1] -> reference record
             const refs = para?.references || [];
             return { content: cleanContent, refs };
           })
         );
 
-        // Renumber citations globally: walk through all paragraphs in order,
-        // map each paragraph-local [n] to a global number, deduplicating references
-        const globalRefMap = new Map<string, number>(); // key: type+externalId -> global number
-        const globalRefs: any[] = []; // ordered list of unique references
+        // Global citation renumbering
+        const globalRefMap = new Map<string, number>();
+        const globalRefs: any[] = [];
 
         const renumberedContents = allParagraphData.map(({ content, refs }) => {
-          // Build paragraph-local ref index: local number [1] = refs[0], etc.
-          // But refs are not ordered by citation number — they're in DB order.
-          // The AI cites [1] through [N] where N = refs.length, so [1] = refs[0].
           let result = content;
-          // For each local citation [n] in this paragraph, map to global number
           const citeRe = /\[(\d+(?:[,\-–]\s*\d+)*)\]/g;
           result = result.replace(citeRe, (match, inner: string) => {
             const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
@@ -499,29 +608,45 @@ CITATION FORMAT (MANDATORY):
               return globalRefMap.get(key)!;
             }).filter(Boolean);
 
-            if (globalNums.length === 0) return match; // keep original if we can't resolve
+            if (globalNums.length === 0) return match;
             return `[${globalNums.join(",")}]`;
           });
           return result;
         });
 
-        const composePrompt = `Compose a coherent, deeply-synthesized review article titled "${project.topic}".
+        // For very large articles, compose without LLM (just concatenate with headings)
+        // to avoid max token issues. The LLM already generated coherent sections.
+        const isLargeArticle = generatedParagraphs.reduce((s, p) => s + p.wordCount, 0) > 8000;
+
+        let articleBody: string;
+        if (isLargeArticle) {
+          // Direct assembly — no LLM composition (sections already coherent)
+          articleBody = renumberedContents
+            .map((c, i) => `## ${sections[i].title}\n\n${c}`)
+            .join("\n\n");
+          send("step", {
+            step: "compose",
+            status: "progress",
+            message: `Large article (${generatedParagraphs.reduce((s, p) => s + p.wordCount, 0)} words) — assembling sections directly (no LLM re-composition to avoid token limits).`,
+          });
+        } else {
+          // LLM composition for smaller articles
+          const composePrompt = `Compose a coherent, deeply-synthesized review article titled "${project.topic}".
 
 Source sections (in order, with [n] citations already renumbered globally):
 ${renumberedContents.map((c, i) => `\n## Section ${i + 1}\n\n${c}`).join("\n\n")}
 
 Instructions:
-- Produce a unified article with section headings (## Introduction, ## Background, etc.).
-- Deepen the analysis with full synthesis, contrast, and forward-looking discussion.
+- Produce a unified article with section headings.
+- Deepen the analysis with synthesis, contrast, and forward-looking discussion.
 - Preserve ALL inline citations [n] exactly as they appear — do NOT change any numbers.
-- Do NOT include ANY references, citations list, bibliography, or "## References" / "REFERENCES"
-  section at the end. The reference list is generated separately by the system.
-- Do NOT include a "### Citations" block either.
+- Do NOT include ANY references, citations list, bibliography, or "## References" section.
 - Output ONLY the article body in Markdown.`;
 
-        const composeSystem =
-          "You are a senior scientific editor who composes coherent, deeply-synthesized research articles.";
-        const articleBody = await chat(composePrompt, { system: composeSystem, temperature: 0.55 });
+          const composeSystem =
+            "You are a senior scientific editor who composes coherent, deeply-synthesized research articles.";
+          articleBody = await chat(composePrompt, { system: composeSystem, temperature: 0.55 });
+        }
 
         // Build the references list from globally renumbered, deduplicated references
         const refList = globalRefs
@@ -534,10 +659,7 @@ Instructions:
           })
           .join("\n");
 
-        // Strip ANY AI-generated references/citations section from the body.
-        // The AI may output headers like "## References", "### Citations",
-        // "REFERENCES", "## REFERENCES", "# References", "**References**", etc.
-        // We strip from the FIRST match to the end, then append our own canonical list.
+        // Strip any AI-generated references section
         let cleanBody = articleBody.trim();
         const refSectionRe =
           /^#{0,6}\s*\*{0,2}(References|REFERENCES|Citations|Bibliography|文献|参考文献)\*{0,2}\s*:?\s*$/m;
@@ -545,7 +667,6 @@ Instructions:
         if (refMatch && refMatch.index !== undefined) {
           cleanBody = cleanBody.slice(0, refMatch.index).trim();
         }
-        // Also strip a bare "REFERENCES:" or "References:" line (no markdown header)
         const bareRefRe = /^\s*(REFERENCES|References)\s*:?\s*$/m;
         const bareMatch = cleanBody.match(bareRefRe);
         if (bareMatch && bareMatch.index !== undefined) {
@@ -564,7 +685,7 @@ Instructions:
               create: generatedParagraphs.map((p, i) => ({
                 paragraphId: p.id,
                 order: i,
-                section: p.format,
+                section: inferFormat(sections[i].title, i, sections.length),
               })),
             },
           },
@@ -575,7 +696,7 @@ Instructions:
           status: "done",
           articleId: article.id,
           articleWordCount: countWords(articleContent),
-          message: `Article composed: ${countWords(articleContent)} words`,
+          message: `Article composed: ${countWords(articleContent)} words, ${globalRefs.length} references.`,
         });
 
         // ============ FINAL RESULT ============
@@ -586,13 +707,15 @@ Instructions:
           stats: {
             sourcesGathered: savedDataSources.length,
             referencesSaved: savedReferences.length,
+            curatedReferences: curatedRefs.length,
             sectionsPlanned: sections.length,
             paragraphsGenerated: generatedParagraphs.length,
             totalWords: generatedParagraphs.reduce((s, p) => s + p.wordCount, 0),
             articleWordCount: countWords(articleContent),
+            globalReferenceCount: globalRefs.length,
           },
           sections: generatedParagraphs,
-          queriesExecuted: queries.length,
+          queriesExecuted: dbQueries.length + webSearchQueries.length,
         });
       } catch (err: any) {
         console.error("[/api/ai/generate-full] error:", err);
@@ -610,6 +733,98 @@ Instructions:
       Connection: "keep-alive",
     },
   });
+}
+
+/**
+ * Generate web search queries to supplement database queries.
+ */
+async function generateWebSearchQueries(topic: string, field: string, targetWords: number): Promise<string[]> {
+  try {
+    const system = "You are a research strategist who designs web search queries to find supplementary sources.";
+    const prompt = `RESEARCH TOPIC: ${topic}
+FIELD: ${field}
+TARGET: ${targetWords}-word comprehensive review article.
+
+Design 5-8 web search queries to find recent reviews, preprints, news articles, and
+supplementary sources not available in PubMed/RCSB/UniProt. Include review-specific
+and mechanism-specific queries.
+
+Respond as STRICT JSON: { "queries": ["query 1", "query 2", ...] }`;
+
+    const raw = await chat(prompt, { system, temperature: 0.4 });
+    const parsed = safeParseJSON(raw, { queries: [] });
+    return (parsed.queries || []).slice(0, 8);
+  } catch {
+    return [`${topic} review`, `${topic} mechanism`, `${topic} recent advances`];
+  }
+}
+
+/**
+ * Have the LLM curate the most relevant references for the article.
+ * This reduces the reference set to a manageable size and ensures focus.
+ */
+async function curateReferences(
+  references: any[],
+  topic: string,
+  field: string,
+  maxCount: number
+): Promise<any[]> {
+  if (references.length <= maxCount) return references;
+
+  try {
+    const system = "You are a research curator who selects the most relevant references for a review article.";
+    const refList = references.map((r, i) => {
+      const auth = r.authors || "Anon";
+      const yr = r.year ? ` (${r.year})` : "";
+      return `[${i + 1}] ${auth}${yr} ${r.title?.slice(0, 80) || ""}`;
+    }).join("\n");
+
+    const prompt = `RESEARCH TOPIC: ${topic}
+FIELD: ${field}
+TARGET: Select the ${maxCount} MOST relevant references for a comprehensive review.
+
+AVAILABLE REFERENCES (${references.length} total):
+${refList}
+
+Select the most relevant, recent, and authoritative references. Prioritize:
+1. Recent publications (last 5 years)
+2. Seminal/foundational papers
+3. Review articles covering the topic
+4. Primary research with key findings
+
+Respond as STRICT JSON: { "indices": [1, 3, 5, 7, ...] }
+Use 1-based indices. Select exactly ${maxCount} references.`;
+
+    const raw = await chat(prompt, { system, temperature: 0.3 });
+    const parsed = safeParseJSON(raw, { indices: [] });
+    const indices = (parsed.indices || [])
+      .filter((n: number) => n >= 1 && n <= references.length)
+      .slice(0, maxCount);
+
+    if (indices.length === 0) {
+      // Fallback: take the first maxCount
+      return references.slice(0, maxCount);
+    }
+
+    return indices.map((n: number) => references[n - 1]);
+  } catch {
+    return references.slice(0, maxCount);
+  }
+}
+
+/**
+ * Infer paragraph format from section title and position.
+ */
+function inferFormat(title: string, index: number, total: number): string {
+  const lower = title.toLowerCase();
+  if (index === 0) return "abstract";
+  if (lower.includes("introduc")) return "intro";
+  if (lower.includes("background")) return "background";
+  if (lower.includes("method")) return "methods";
+  if (lower.includes("result")) return "results";
+  if (lower.includes("discussion")) return "discussion";
+  if (lower.includes("conclusion") || lower.includes("future") || index === total - 1) return "conclusion";
+  return "background";
 }
 
 function safeParseJSON(raw: string, fallback: any): any {

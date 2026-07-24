@@ -557,6 +557,16 @@ function Header({
               <Sparkles className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">{t("app.aiWrite")}</span>
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs gap-1.5 bg-gradient-to-r from-primary/10 to-primary/5 border-primary/30 hover:from-primary/15 hover:to-primary/10"
+              onClick={onOpenOneClick}
+              title={t("oneClick.title")}
+            >
+              <Zap className="h-3.5 w-3.5 text-primary" />
+              <span className="hidden md:inline">{t("app.fullGenerate")}</span>
+            </Button>
           </>
         )}
         <Button
