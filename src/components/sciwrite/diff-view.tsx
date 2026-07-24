@@ -12,6 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { GitCompare, ArrowRight, Check } from "lucide-react";
 import { MarkdownCitations } from "./markdown-citations";
+import { useI18n } from "@/lib/i18n";
 
 interface Props {
   open: boolean;
@@ -90,6 +91,7 @@ function computeDiff(before: string, after: string): DiffSegment[] {
 }
 
 export function DiffView({ open, onOpenChange, before, after, title }: Props) {
+  const { t } = useI18n();
   const diff = React.useMemo(() => computeDiff(before, after), [before, after]);
   const addedCount = diff
     .filter((s) => s.type === "added")
@@ -104,10 +106,10 @@ export function DiffView({ open, onOpenChange, before, after, title }: Props) {
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60">
           <DialogTitle className="flex items-center gap-2 text-base">
             <GitCompare className="h-4 w-4 text-primary" />
-            Revision Comparison
+            {t("diff.title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            {title || "Before vs. after AI revision"}
+            {title || t("diff.beforeAfter")}
             <span className="ml-2 inline-flex items-center gap-2">
               <span className="text-rose-600">-{removedCount}w</span>
               <span className="text-emerald-600">+{addedCount}w</span>
@@ -149,7 +151,7 @@ export function DiffView({ open, onOpenChange, before, after, title }: Props) {
               <div className="rounded-lg border border-rose-200/60 dark:border-rose-900/40 overflow-hidden">
                 <div className="px-3 py-1.5 bg-rose-50/50 dark:bg-rose-950/20 border-b border-rose-200/60 dark:border-rose-900/40">
                   <span className="text-[10px] uppercase tracking-wider text-rose-700 dark:text-rose-400 font-semibold">
-                    Before
+                    {t("diff.before")}
                   </span>
                 </div>
                 <div className="p-3 max-h-64 overflow-y-auto scroll-academic">
@@ -159,7 +161,7 @@ export function DiffView({ open, onOpenChange, before, after, title }: Props) {
               <div className="rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 overflow-hidden">
                 <div className="px-3 py-1.5 bg-emerald-50/50 dark:bg-emerald-950/20 border-b border-emerald-200/60 dark:border-emerald-900/40">
                   <span className="text-[10px] uppercase tracking-wider text-emerald-700 dark:text-emerald-400 font-semibold">
-                    After
+                    {t("diff.after")}
                   </span>
                 </div>
                 <div className="p-3 max-h-64 overflow-y-auto scroll-academic">

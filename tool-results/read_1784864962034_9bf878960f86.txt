@@ -1,0 +1,1091 @@
+     1→"use client";
+     2→
+     3→import * as React from "react";
+     4→import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+     5→import { toast } from "sonner";
+     6→import {
+     7→  FlaskConical,
+     8→  Sparkles,
+     9→  Layers,
+    10→  PenLine,
+    11→  Loader2,
+    12→  BookOpenText,
+    13→  Library,
+    14→  Lightbulb,
+    15→  ArrowRight,
+    16→  Radar,
+    17→  BarChart3,
+    18→  Sun,
+    19→  Moon,
+    20→  ListTree,
+    21→  DatabaseZap,
+    22→  Zap,
+    23→  Gavel,
+    24→  Network,
+    25→  Cpu,
+    26→  CheckCircle2,
+    27→  AlertTriangle,
+    28→} from "lucide-react";
+    29→import { Button } from "@/components/ui/button";
+    30→import { Badge } from "@/components/ui/badge";
+    31→import { ScrollArea } from "@/components/ui/scroll-area";
+    32→import {
+    33→  ResizablePanelGroup,
+    34→  ResizablePanel,
+    35→  ResizableHandle,
+    36→} from "@/components/ui/resizable";
+    37→import { api } from "@/lib/api-client";
+    38→import { ThemeToggle } from "@/components/sciwrite/theme-toggle";
+    39→import { LanguageToggle } from "@/components/sciwrite/language-toggle";
+    40→import { LLMConfigDialog } from "@/components/sciwrite/llm-config-dialog";
+    41→import { ProjectsSidebar } from "@/components/sciwrite/projects-sidebar";
+    42→import { DatabaseQueryPanel } from "@/components/sciwrite/database-query-panel";
+    43→import { KnowledgePanel } from "@/components/sciwrite/knowledge-panel";
+    44→import { ParagraphCard } from "@/components/sciwrite/paragraph-card";
+    45→import { SortableParagraphs } from "@/components/sciwrite/sortable-paragraphs";
+    46→import { TopicComposer } from "@/components/sciwrite/topic-composer";
+    47→import { ArticleComposer } from "@/components/sciwrite/article-composer";
+    48→import { ArticleViewerWithTabs } from "@/components/sciwrite/article-viewer-tabs";
+    49→import { DataGatheringDialog } from "@/components/sciwrite/data-gathering-dialog";
+    50→import { ExportMenu } from "@/components/sciwrite/export-menu";
+    51→import { MarkdownCitations } from "@/components/sciwrite/markdown-citations";
+    52→import { InsightsDialog } from "@/components/sciwrite/insights-dialog";
+    53→import { CommandPalette } from "@/components/sciwrite/command-palette";
+    54→import { OutlineDialog } from "@/components/sciwrite/outline-dialog";
+    55→import { UserDataDialog } from "@/components/sciwrite/user-data-dialog";
+    56→import { OneClickGenerateDialog } from "@/components/sciwrite/one-click-generate-dialog";
+    57→import { ProgressTracker } from "@/components/sciwrite/progress-tracker";
+    58→import { WritingTipsPanel } from "@/components/sciwrite/writing-tips-panel";
+    59→import { useI18n } from "@/lib/i18n";
+    60→import type { Article, Project } from "@/lib/types";
+    61→
+    62→export default function Home() {
+    63→  const qc = useQueryClient();
+    64→  const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
+    65→  const [writeOpen, setWriteOpen] = React.useState(false);
+    66→  const [composeOpen, setComposeOpen] = React.useState(false);
+    67→  const [tipsOpen, setTipsOpen] = React.useState(false);
+    68→  const [viewArticle, setViewArticle] = React.useState<Article | null>(null);
+    69→  const [gatherOpen, setGatherOpen] = React.useState(false);
+    70→  const [insightsOpen, setInsightsOpen] = React.useState(false);
+    71→  const [paletteOpen, setPaletteOpen] = React.useState(false);
+    72→  const [outlineOpen, setOutlineOpen] = React.useState(false);
+    73→  const [userDataOpen, setUserDataOpen] = React.useState(false);
+    74→  const [oneClickOpen, setOneClickOpen] = React.useState(false);
+    75→  const [llmConfigOpen, setLlmConfigOpen] = React.useState(false);
+    76→
+    77→  const projectsQ = useQuery({
+    78→    queryKey: ["projects"],
+    79→    queryFn: () => api.listProjects(),
+    80→  });
+    81→
+    82→  const projectQ = useQuery({
+    83→    queryKey: ["project", activeProjectId],
+    84→    queryFn: () => api.getProject(activeProjectId!),
+    85→    enabled: !!activeProjectId,
+    86→  });
+    87→
+    88→  // listen for project-created event
+    89→  React.useEffect(() => {
+    90→    const handler = (e: Event) => {
+    91→      const id = (e as CustomEvent).detail as string;
+    92→      setActiveProjectId(id);
+    93→    };
+    94→    window.addEventListener("sciwrite:select-project", handler);
+    95→    return () => window.removeEventListener("sciwrite:select-project", handler);
+    96→  }, []);
+    97→
+    98→  // auto-select first project
+    99→  React.useEffect(() => {
+   100→    if (!activeProjectId && projectsQ.data?.projects.length) {
+   101→      setActiveProjectId(projectsQ.data.projects[0].id);
+   102→    }
+   103→  }, [projectsQ.data, activeProjectId]);
+   104→
+   105→  const projects = projectsQ.data?.projects ?? [];
+   106→  const project = projectQ.data?.project;
+   107→  const paragraphs = (project?.paragraphs ?? []) as any[];
+   108→  const dataSources = project?.dataSources ?? [];
+   109→  const articles = (project?.articles ?? []) as any[];
+   110→  const references = React.useMemo(() => {
+   111→    const map = new Map<string, any>();
+   112→    for (const r of project?.references ?? []) {
+   113→      const key = `${r.type}:${r.externalId || r.title}`;
+   114→      if (!map.has(key)) map.set(key, r);
+   115→    }
+   116→    for (const p of paragraphs) {
+   117→      for (const r of p.references || []) {
+   118→        const key = `${r.type}:${r.externalId || r.title}`;
+   119→        if (!map.has(key)) map.set(key, r);
+   120→      }
+   121→    }
+   122→    return [...map.values()];
+   123→  }, [paragraphs, project?.references]);
+   124→
+   125→  // Derived progress stats
+   126→  const progressStats = React.useMemo(() => {
+   127→    const totalWords = paragraphs.reduce(
+   128→      (sum, p) => sum + (p.wordCount || 0),
+   129→      0
+   130→    );
+   131→    const totalCitations = paragraphs.reduce((sum, p) => {
+   132→      const matches = p.content?.match(
+   133→        /\[(\d{1,3}(?:[,\-–\s]\d{1,3})*|[A-Z]{2,12}:\s?[^\]\n]{1,60})\]/g
+   134→      );
+   135→      return sum + (matches?.length || 0);
+   136→    }, 0);
+   137→    const paragraphsCited = paragraphs.filter(
+   138→      (p) => /\[\d{1,3}/.test(p.content || "") || /\[[A-Z]{2,12}:/i.test(p.content || "")
+   139→    ).length;
+   140→    const citationCoverage =
+   141→      paragraphs.length > 0
+   142→        ? Math.round((paragraphsCited / paragraphs.length) * 100)
+   143→        : 0;
+   144→    const unresolved = paragraphs.reduce(
+   145→      (s, p) => s + (p.annotations?.filter((a: any) => !a.resolved).length || 0),
+   146→      0
+   147→    );
+   148→    const resolved = paragraphs.reduce(
+   149→      (s, p) => s + (p.annotations?.filter((a: any) => a.resolved).length || 0),
+   150→      0
+   151→    );
+   152→    return {
+   153→      totalWords,
+   154→      totalParagraphs: paragraphs.length,
+   155→      totalCitations,
+   156→      citationCoverage,
+   157→      unresolvedAnnotations: unresolved,
+   158→      resolvedAnnotations: resolved,
+   159→    };
+   160→  }, [paragraphs]);
+   161→
+   162→  const [wordGoal, setWordGoal] = React.useState(1000);
+   163→
+   164→  // Keyboard shortcuts (defined after paragraphs so it can reference it)
+   165→  React.useEffect(() => {
+   166→    const handler = (e: KeyboardEvent) => {
+   167→      const meta = e.metaKey || e.ctrlKey;
+   168→      const tag = (e.target as HTMLElement)?.tagName;
+   169→      const isTyping =
+   170→        tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable;
+   171→      // Cmd/Ctrl+K always opens palette
+   172→      if (meta && e.key.toLowerCase() === "k") {
+   173→        e.preventDefault();
+   174→        setPaletteOpen((v) => !v);
+   175→        return;
+   176→      }
+   177→      // Single-key shortcuts only when not typing and no modifier (except Shift)
+   178→      if (isTyping || meta || e.altKey) return;
+   179→      if (!activeProjectId) return;
+   180→      const k = e.key.toLowerCase();
+   181→      if (k === "n") {
+   182→        e.preventDefault();
+   183→        setWriteOpen(true);
+   184→      } else if (k === "g") {
+   185→        e.preventDefault();
+   186→        setGatherOpen(true);
+   187→      } else if (k === "i") {
+   188→        e.preventDefault();
+   189→        setInsightsOpen(true);
+   190→      } else if (k === "o") {
+   191→        e.preventDefault();
+   192→        setOutlineOpen(true);
+   193→      } else if (k === "c" && paragraphs.length >= 2) {
+   194→        e.preventDefault();
+   195→        setComposeOpen(true);
+   196→      } else if (k === "d") {
+   197→        e.preventDefault();
+   198→        const isDark = document.documentElement.classList.contains("dark");
+   199→        document.documentElement.classList.toggle("dark", !isDark);
+   200→        try {
+   201→          localStorage.setItem("theme", isDark ? "light" : "dark");
+   202→        } catch {}
+   203→      }
+   204→    };
+   205→    window.addEventListener("keydown", handler);
+   206→    return () => window.removeEventListener("keydown", handler);
+   207→  }, [activeProjectId, paragraphs.length]);
+   208→
+   209→  return (
+   210→    <div className="h-screen flex flex-col bg-background overflow-hidden">
+   211→      <Header
+   212→        project={project}
+   213→        onOpenWrite={() => setWriteOpen(true)}
+   214→        onOpenCompose={() => setComposeOpen(true)}
+   215→        onOpenGather={() => setGatherOpen(true)}
+   216→        onOpenInsights={() => setInsightsOpen(true)}
+   217→        onOpenOutline={() => setOutlineOpen(true)}
+   218→        onOpenOneClick={() => setOneClickOpen(true)}
+   219→        onOpenLLMConfig={() => setLlmConfigOpen(true)}
+   220→        paragraphCount={paragraphs.length}
+   221→        articleCount={articles.length}
+   222→      />
+   223→
+   224→      <main className="flex-1 min-h-0 px-3 pb-2">
+   225→        <ResizablePanelGroup direction="horizontal" className="rounded-xl border border-border/60 bg-card overflow-hidden h-full">
+   226→          {/* Left: projects */}
+   227→          <ResizablePanel defaultSize={18} minSize={15} maxSize={28} className="bg-sidebar/50">
+   228→            <ProjectsSidebar
+   229→              projects={projects}
+   230→              activeId={activeProjectId}
+   231→              onSelect={setActiveProjectId}
+   232→            />
+   233→          </ResizablePanel>
+   234→          <ResizableHandle withHandle />
+   235→
+   236→          {/* Center: writing workspace */}
+   237→          <ResizablePanel defaultSize={52} minSize={35} className="min-w-0">
+   238→            <WritingWorkspace
+   239→              project={project}
+   240→              paragraphs={paragraphs}
+   241→              articles={articles}
+   242→              references={references}
+   243→              activeProjectId={activeProjectId}
+   244→              onOpenWrite={() => setWriteOpen(true)}
+   245→              onOpenCompose={() => setComposeOpen(true)}
+   246→              onOpenGather={() => setGatherOpen(true)}
+   247→              onOpenOutline={() => setOutlineOpen(true)}
+   248→              progressStats={progressStats}
+   249→              wordGoal={wordGoal}
+   250→              onWordGoalChange={setWordGoal}
+   251→              tipsOpen={tipsOpen}
+   252→              onTipsOpenChange={setTipsOpen}
+   253→              onOpenUserData={() => setUserDataOpen(true)}
+   254→              onOpenArticle={(a) => setViewArticle(a as Article)}
+   255→            />
+   256→          </ResizablePanel>
+   257→          <ResizableHandle withHandle />
+   258→
+   259→          {/* Right: databases + knowledge */}
+   260→          <ResizablePanel defaultSize={30} minSize={24} maxSize={42} className="bg-sidebar/30">
+   261→            <div className="flex flex-col h-full overflow-hidden">
+   262→              <div className="h-[44%] min-h-0 border-b border-border/60 overflow-hidden">
+   263→                <DatabaseQueryPanel projectId={activeProjectId} />
+   264→              </div>
+   265→              <div className="flex-1 min-h-0 overflow-hidden">
+   266→                <KnowledgePanel
+   267→                  projectId={activeProjectId}
+   268→                  dataSources={dataSources}
+   269→                  references={references}
+   270→                  articles={articles}
+   271→                  onOpenArticle={(a) => setViewArticle(a as Article)}
+   272→                />
+   273→              </div>
+   274→            </div>
+   275→          </ResizablePanel>
+   276→        </ResizablePanelGroup>
+   277→      </main>
+   278→
+   279→      <Footer onOpenPalette={() => setPaletteOpen(true)} />
+   280→
+   281→      {/* Modals */}
+   282→      {activeProjectId && project && (
+   283→        <TopicComposer
+   284→          open={writeOpen}
+   285→          onOpenChange={setWriteOpen}
+   286→          projectId={activeProjectId}
+   287→          projectTopic={project.topic}
+   288→          projectField={project.field}
+   289→          references={references.map((r) => ({
+   290→            id: r.id,
+   291→            title: r.title,
+   292→            type: r.type,
+   293→            externalId: r.externalId,
+   294→          }))}
+   295→          dataSources={dataSources.map((d) => ({
+   296→            id: d.id,
+   297→            source: d.source,
+   298→            title: d.title,
+   299→            query: d.query,
+   300→          }))}
+   301→        />
+   302→      )}
+   303→      {activeProjectId && (
+   304→        <ArticleComposer
+   305→          open={composeOpen}
+   306→          onOpenChange={setComposeOpen}
+   307→          projectId={activeProjectId}
+   308→          paragraphs={paragraphs}
+   309→        />
+   310→      )}
+   311→      {viewArticle && (
+   312→        <ArticleViewerWithTabs
+   313→          article={viewArticle}
+   314→          projectId={activeProjectId!}
+   315→          onClose={() => setViewArticle(null)}
+   316→        />
+   317→      )}
+   318→      {activeProjectId && project && (
+   319→        <DataGatheringDialog
+   320→          open={gatherOpen}
+   321→          onOpenChange={setGatherOpen}
+   322→          projectId={activeProjectId}
+   323→          topic={project.topic}
+   324→          field={project.field}
+   325→          onProceedToWrite={() => setWriteOpen(true)}
+   326→        />
+   327→      )}
+   328→      {activeProjectId && (
+   329→        <InsightsDialog
+   330→          open={insightsOpen}
+   331→          onOpenChange={setInsightsOpen}
+   332→          projectId={activeProjectId}
+   333→        />
+   334→      )}
+   335→      {activeProjectId && project && (
+   336→        <OutlineDialog
+   337→          open={outlineOpen}
+   338→          onOpenChange={setOutlineOpen}
+   339→          projectId={activeProjectId}
+   340→          topic={project.topic}
+   341→          onUseParagraph={() => {
+   342→            setOutlineOpen(false);
+   343→            setWriteOpen(true);
+   344→          }}
+   345→        />
+   346→      )}
+   347→      {activeProjectId && (
+   348→        <UserDataDialog
+   349→          open={userDataOpen}
+   350→          onOpenChange={setUserDataOpen}
+   351→          projectId={activeProjectId}
+   352→        />
+   353→      )}
+   354→      {activeProjectId && project && (
+   355→        <OneClickGenerateDialog
+   356→          open={oneClickOpen}
+   357→          onOpenChange={setOneClickOpen}
+   358→          projectId={activeProjectId}
+   359→          topic={project.topic}
+   360→        />
+   361→      )}
+   362→      <LLMConfigDialog
+   363→        open={llmConfigOpen}
+   364→        onOpenChange={setLlmConfigOpen}
+   365→      />
+   366→      <CommandPalette
+   367→        open={paletteOpen}
+   368→        onOpenChange={setPaletteOpen}
+   369→        actions={[
+   370→          {
+   371→            id: "write",
+   372→            label: "AI Write paragraph",
+   373→            hint: "Draft a citation-backed paragraph",
+   374→            icon: <Sparkles className="h-3.5 w-3.5" />,
+   375→            shortcut: "N",
+   376→            onSelect: () => setWriteOpen(true),
+   377→            group: "Writing",
+   378→            disabled: !activeProjectId,
+   379→          },
+   380→          {
+   381→            id: "gather",
+   382→            label: "Gather sources (AI)",
+   383→            hint: "Clarify → organize → adversarial critique",
+   384→            icon: <Radar className="h-3.5 w-3.5" />,
+   385→            shortcut: "G",
+   386→            onSelect: () => setGatherOpen(true),
+   387→            group: "Writing",
+   388→            disabled: !activeProjectId,
+   389→          },
+   390→          {
+   391→            id: "compose",
+   392→            label: "Compose article",
+   393→            hint: "Stitch paragraphs into a deeper article",
+   394→            icon: <Layers className="h-3.5 w-3.5" />,
+   395→            shortcut: "C",
+   396→            onSelect: () => setComposeOpen(true),
+   397→            group: "Writing",
+   398→            disabled: paragraphs.length < 2,
+   399→          },
+   400→          {
+   401→            id: "insights",
+   402→            label: "Project insights",
+   403→            hint: "Word count, citation coverage, distributions",
+   404→            icon: <BarChart3 className="h-3.5 w-3.5" />,
+   405→            shortcut: "I",
+   406→            onSelect: () => setInsightsOpen(true),
+   407→            group: "Project",
+   408→            disabled: !activeProjectId,
+   409→          },
+   410→          {
+   411→            id: "outline",
+   412→            label: "Generate research outline",
+   413→            hint: "AI-suggested paragraph plan with queries",
+   414→            icon: <ListTree className="h-3.5 w-3.5" />,
+   415→            shortcut: "O",
+   416→            onSelect: () => setOutlineOpen(true),
+   417→            group: "Writing",
+   418→            disabled: !activeProjectId,
+   419→          },
+   420→          {
+   421→            id: "dark",
+   422→            label: "Toggle dark mode",
+   423→            icon: <Moon className="h-3.5 w-3.5" />,
+   424→            shortcut: "D",
+   425→            onSelect: () => {
+   426→              const isDark = document.documentElement.classList.contains("dark");
+   427→              document.documentElement.classList.toggle("dark", !isDark);
+   428→              try {
+   429→                localStorage.setItem("theme", isDark ? "light" : "dark");
+   430→              } catch {}
+   431→            },
+   432→            group: "Project",
+   433→          },
+   434→        ]}
+   435→      />
+   436→    </div>
+   437→  );
+   438→}
+   439→
+   440→function Header({
+   441→  project,
+   442→  onOpenWrite,
+   443→  onOpenCompose,
+   444→  onOpenGather,
+   445→  onOpenInsights,
+   446→  onOpenOutline,
+   447→  onOpenOneClick,
+   448→  onOpenLLMConfig,
+   449→  paragraphCount,
+   450→  articleCount,
+   451→}: {
+   452→  project?: any;
+   453→  onOpenWrite: () => void;
+   454→  onOpenCompose: () => void;
+   455→  onOpenGather: () => void;
+   456→  onOpenInsights: () => void;
+   457→  onOpenOutline: () => void;
+   458→  onOpenOneClick: () => void;
+   459→  onOpenLLMConfig: () => void;
+   460→  paragraphCount: number;
+   461→  articleCount: number;
+   462→}) {
+   463→  const { t } = useI18n();
+   464→  return (
+   465→    <header className="shrink-0 px-4 py-2.5 border-b border-border/60 bg-card/80 backdrop-blur flex items-center gap-3">
+   466→      <div className="flex items-center gap-2">
+   467→        <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-primary to-teal-600 flex items-center justify-center shadow-sm">
+   468→          <FlaskConical className="h-4.5 w-4.5 text-primary-foreground" />
+   469→        </div>
+   470→        <div className="leading-none">
+   471→          <h1 className="text-sm font-bold tracking-tight">
+   472→            {t("app.title")}
+   473→            <span className="text-primary">·</span>
+   474→            <span className="text-muted-foreground font-normal"> {t("app.subtitle")}</span>
+   475→          </h1>
+   476→          <p className="text-[10px] text-muted-foreground mt-0.5">
+   477→            {t("app.tagline")}
+   478→          </p>
+   479→        </div>
+   480→      </div>
+   481→
+   482→      <div className="h-6 w-px bg-border mx-1 hidden sm:block" />
+   483→
+   484→      <div className="flex-1 min-w-0 hidden sm:block">
+   485→        {project ? (
+   486→          <div className="flex items-center gap-2 min-w-0">
+   487→            <BookOpenText className="h-3.5 w-3.5 text-primary shrink-0" />
+   488→            <span className="text-xs font-medium truncate">{project.title}</span>
+   489→            <span className="text-[10px] text-muted-foreground truncate hidden md:inline">
+   490→              — {project.topic}
+   491→            </span>
+   492→          </div>
+   493→        ) : (
+   494→          <span className="text-xs text-muted-foreground">{t("app.noProject")}</span>
+   495→        )}
+   496→      </div>
+   497→
+   498→      <div className="flex items-center gap-1.5">
+   499→        {project && (
+   500→          <>
+   501→            <Badge variant="outline" className="text-[9px] h-5 gap-1">
+   502→              <PenLine className="h-2.5 w-2.5" />
+   503→              {paragraphCount}
+   504→            </Badge>
+   505→            <Badge variant="outline" className="text-[9px] h-5 gap-1">
+   506→              <Layers className="h-2.5 w-2.5" />
+   507→              {articleCount}
+   508→            </Badge>
+   509→            <Button
+   510→              variant="ghost"
+   511→              size="sm"
+   512→              className="h-8 text-xs gap-1.5"
+   513→              onClick={onOpenInsights}
+   514→              title="Project insights & analytics"
+   515→            >
+   516→              <BarChart3 className="h-3.5 w-3.5" />
+   517→              <span className="hidden lg:inline">{t("app.insights")}</span>
+   518→            </Button>
+   519→            <Button
+   520→              variant="ghost"
+   521→              size="sm"
+   522→              className="h-8 text-xs gap-1.5"
+   523→              onClick={onOpenOutline}
+   524→              title="Generate AI research outline"
+   525→            >
+   526→              <ListTree className="h-3.5 w-3.5" />
+   527→              <span className="hidden xl:inline">{t("app.outline")}</span>
+   528→            </Button>
+   529→            <Button
+   530→              variant="outline"
+   531→              size="sm"
+   532→              className="h-8 text-xs gap-1.5"
+   533→              onClick={onOpenGather}
+   534→              title="AI gathers & organizes sources with adversarial check"
+   535→            >
+   536→              <Radar className="h-3.5 w-3.5" />
+   537→              <span className="hidden md:inline">{t("app.gather")}</span>
+   538→            </Button>
+   539→            <Button
+   540→              variant="outline"
+   541→              size="sm"
+   542→              className="h-8 text-xs gap-1.5"
+   543→              onClick={onOpenCompose}
+   544→              disabled={paragraphCount < 2}
+   545→              title={paragraphCount < 2 ? "Need ≥2 paragraphs" : "Compose article"}
+   546→            >
+   547→              <Layers className="h-3.5 w-3.5" />
+   548→              <span className="hidden sm:inline">{t("app.compose")}</span>
+   549→            </Button>
+   550→            <Button
+   551→              size="sm"
+   552→              className="h-8 text-xs gap-1.5"
+   553→              onClick={onOpenWrite}
+   554→            >
+   555→              <Sparkles className="h-3.5 w-3.5" />
+   556→              <span className="hidden sm:inline">{t("app.aiWrite")}</span>
+   557→            </Button>
+   558→          </>
+   559→        )}
+   560→        <Button
+   561→          variant="ghost"
+   562→          size="icon"
+   563→          className="h-8 w-8 rounded-full"
+   564→          onClick={() => onOpenLLMConfig()}
+   565→          title="LLM Configuration"
+   566→        >
+   567→          <Cpu className="h-4 w-4" />
+   568→        </Button>
+   569→        <LanguageToggle />
+   570→        <ThemeToggle />
+   571→      </div>
+   572→    </header>
+   573→  );
+   574→}
+   575→
+   576→function WritingWorkspace({
+   577→  project,
+   578→  paragraphs,
+   579→  articles,
+   580→  references,
+   581→  activeProjectId,
+   582→  onOpenWrite,
+   583→  onOpenCompose,
+   584→  onOpenGather,
+   585→  onOpenOutline,
+   586→  progressStats,
+   587→  wordGoal,
+   588→  onWordGoalChange,
+   589→  tipsOpen,
+   590→  onTipsOpenChange,
+   591→  onOpenUserData,
+   592→  onOpenArticle,
+   593→}: {
+   594→  project?: any;
+   595→  paragraphs: any[];
+   596→  articles: any[];
+   597→  references: any[];
+   598→  activeProjectId: string | null;
+   599→  onOpenWrite: () => void;
+   600→  onOpenCompose: () => void;
+   601→  onOpenGather: () => void;
+   602→  onOpenOutline: () => void;
+   603→  progressStats: {
+   604→    totalWords: number;
+   605→    totalParagraphs: number;
+   606→    totalCitations: number;
+   607→    citationCoverage: number;
+   608→    unresolvedAnnotations: number;
+   609→    resolvedAnnotations: number;
+   610→  };
+   611→  wordGoal: number;
+   612→  onWordGoalChange: (g: number) => void;
+   613→  tipsOpen: boolean;
+   614→  onTipsOpenChange: (v: boolean) => void;
+   615→  onOpenUserData: () => void;
+   616→  onOpenArticle: (a: any) => void;
+   617→}) {
+   618→  const [workspaceTab, setWorkspaceTab] = React.useState("paragraphs");
+   619→
+   620→  if (!activeProjectId || !project) {
+   621→    return <EmptyWorkspace />;
+   622→  }
+   623→  const lastParagraph = paragraphs[paragraphs.length - 1];
+   624→  const tipsFormat = lastParagraph?.format;
+   625→  const tipsScenario = lastParagraph?.scenario;
+   626→  const latestArticle = articles[0];
+   627→
+   628→  return (
+   629→    <div className="flex flex-col h-full relative">
+   630→      <div className="px-5 py-3 border-b border-border/60 bg-gradient-to-r from-primary/[0.04] to-transparent shrink-0">
+   631→        <div className="flex items-start justify-between gap-3">
+   632→          <div className="min-w-0">
+   633→            <div className="flex items-center gap-2 mb-0.5">
+   634→              <h2 className="text-base font-semibold tracking-tight truncate font-serif-text">
+   635→                {project.title}
+   636→              </h2>
+   637→              {project.field && (
+   638→                <span className="badge-teal px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide shrink-0">
+   639→                  {String(project.field).replace("-", " ")}
+   640→                </span>
+   641→              )}
+   642→            </div>
+   643→            <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+   644→              {project.topic}
+   645→            </p>
+   646→          </div>
+   647→          <div className="flex items-center gap-1.5 shrink-0">
+   648→            <Button variant="ghost" size="sm" className="h-8 text-xs gap-1.5" onClick={onOpenUserData} title="Upload experiment data">
+   649→              <DatabaseZap className="h-3.5 w-3.5" />
+   650→              <span className="hidden xl:inline">Data</span>
+   651→            </Button>
+   652→            <Button variant="ghost" size="sm" className={`h-8 text-xs gap-1.5 ${tipsOpen ? "bg-amber-100/60 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400" : ""}`} onClick={() => onTipsOpenChange(!tipsOpen)} title="Writing tips">
+   653→              <Lightbulb className="h-3.5 w-3.5" />
+   654→              <span className="hidden xl:inline">Tips</span>
+   655→            </Button>
+   656→          </div>
+   657→        </div>
+   658→      </div>
+   659→
+   660→      <ProgressTracker
+   661→        totalWords={progressStats.totalWords}
+   662→        totalParagraphs={progressStats.totalParagraphs}
+   663→        totalCitations={progressStats.totalCitations}
+   664→        citationCoverage={progressStats.citationCoverage}
+   665→        unresolvedAnnotations={progressStats.unresolvedAnnotations}
+   666→        resolvedAnnotations={progressStats.resolvedAnnotations}
+   667→        wordGoal={wordGoal}
+   668→        onWordGoalChange={onWordGoalChange}
+   669→      />
+   670→
+   671→      {/* Workspace tabs */}
+   672→      <div className="flex items-center gap-1 px-5 py-1.5 border-b border-border/60 shrink-0 bg-muted/20 overflow-x-auto">
+   673→        <button onClick={() => setWorkspaceTab("paragraphs")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${workspaceTab === "paragraphs" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}>
+   674→          <PenLine className="h-3 w-3 inline mr-1" />Paragraphs ({paragraphs.length})
+   675→        </button>
+   676→        <button onClick={() => setWorkspaceTab("article")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${workspaceTab === "article" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}>
+   677→          <Layers className="h-3 w-3 inline mr-1" />Article {latestArticle ? `(${articles.length})` : ""}
+   678→        </button>
+   679→        <button onClick={() => setWorkspaceTab("review")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${workspaceTab === "review" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}>
+   680→          <Gavel className="h-3 w-3 inline mr-1" />Review
+   681→        </button>
+   682→        <button onClick={() => setWorkspaceTab("relationships")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${workspaceTab === "relationships" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}>
+   683→          <Network className="h-3 w-3 inline mr-1" />Relationships
+   684→        </button>
+   685→        {latestArticle && (
+   686→          <div className="ml-auto shrink-0">
+   687→            <ExportMenu type="article" id={latestArticle.id} variant="outline" />
+   688→          </div>
+   689→        )}
+   690→      </div>
+   691→
+   692→      {/* Paragraphs tab */}
+   693→      {workspaceTab === "paragraphs" && (
+   694→        <ScrollArea className="flex-1 min-h-0 scroll-academic">
+   695→          <div className="px-5 py-4 max-w-3xl mx-auto space-y-3">
+   696→            {paragraphs.length === 0 ? (
+   697→              <div className="text-center py-16">
+   698→                <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
+   699→                  <Lightbulb className="h-7 w-7 text-primary" />
+   700→                </div>
+   701→                <h3 className="text-sm font-semibold">Start writing</h3>
+   702→                <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+   703→                  Use "AI Write" to draft your first citation-backed paragraph.
+   704→                </p>
+   705→                <Button size="sm" className="mt-4 gap-1.5" onClick={onOpenWrite}>
+   706→                  <Sparkles className="h-3.5 w-3.5" />
+   707→                  Draft first paragraph
+   708→                  <ArrowRight className="h-3.5 w-3.5" />
+   709→                </Button>
+   710→              </div>
+   711→            ) : (
+   712→              <>
+   713→                <div className="divider-academic mb-1">
+   714→                  <Library className="h-3 w-3" />
+   715→                  Paragraphs ({paragraphs.length})
+   716→                  <span className="text-[9px] text-muted-foreground/70 normal-case tracking-normal ml-2">drag ⠿ to reorder</span>
+   717→                </div>
+   718→                <SortableParagraphs paragraphs={paragraphs} projectId={activeProjectId} />
+   719→                <div className="pt-2">
+   720→                  <Button variant="outline" size="sm" className="w-full h-9 text-xs gap-1.5 border-dashed" onClick={onOpenWrite}>
+   721→                    <Sparkles className="h-3.5 w-3.5" />
+   722→                    Draft another paragraph
+   723→                  </Button>
+   724→                </div>
+   725→              </>
+   726→            )}
+   727→          </div>
+   728→        </ScrollArea>
+   729→      )}
+   730→
+   731→      {/* Article tab */}
+   732→      {workspaceTab === "article" && (
+   733→        <ScrollArea className="flex-1 min-h-0 scroll-academic">
+   734→          <div className="px-5 py-4 max-w-3xl mx-auto">
+   735→            {latestArticle ? (
+   736→              <div>
+   737→                <h3 className="text-sm font-semibold mb-3 font-serif-text">{latestArticle.title}</h3>
+   738→                <MarkdownCitations content={latestArticle.content} references={references} onCitationClick={(ref, idx) => {
+   739→                  // Scroll to the reference in the right panel
+   740→                  const refEl = document.getElementById(`ref-${idx}`);
+   741→                  if (refEl) {
+   742→                    refEl.scrollIntoView({ behavior: "smooth", block: "center" });
+   743→                    refEl.classList.add("ring-2", "ring-primary", "ring-offset-1");
+   744→                    setTimeout(() => refEl.classList.remove("ring-2", "ring-primary", "ring-offset-1"), 2000);
+   745→                  }
+   746→                }} className="text-[13.5px]" />
+   747→              </div>
+   748→            ) : (
+   749→              <div className="text-center py-16">
+   750→                <Layers className="h-10 w-10 mx-auto opacity-40 mb-3" />
+   751→                <h3 className="text-sm font-semibold">No composed article yet</h3>
+   752→                <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto mb-4">
+   753→                  Use "Compose" or "Generate" to create a full article.
+   754→                </p>
+   755→                <Button size="sm" className="gap-1.5" onClick={onOpenCompose} disabled={paragraphs.length < 2}>
+   756→                  <Layers className="h-3.5 w-3.5" />
+   757→                  Compose article
+   758→                </Button>
+   759→              </div>
+   760→            )}
+   761→          </div>
+   762→        </ScrollArea>
+   763→      )}
+   764→
+   765→      {/* Review tab */}
+   766→      {workspaceTab === "review" && (
+   767→        <EmbeddedReviewWorkspace articleId={latestArticle?.id} articleTitle={latestArticle?.title} projectId={activeProjectId} />
+   768→      )}
+   769→
+   770→      {/* Relationships tab */}
+   771→      {workspaceTab === "relationships" && (
+   772→        <RelationshipWorkspace projectId={activeProjectId} />
+   773→      )}
+   774→
+   775→      <WritingTipsPanel format={tipsFormat} scenario={tipsScenario} open={tipsOpen} onOpenChange={onTipsOpenChange} />
+   776→    </div>
+   777→  );
+   778→}
+   779→
+   780→
+   781→function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { articleId?: string; articleTitle?: string; projectId: string }) {
+   782→  const qc = useQueryClient();
+   783→  // Load saved review from DB on mount
+   784→  const { data: savedReview } = useQuery({
+   785→    queryKey: ["saved-review", articleId],
+   786→    queryFn: () => articleId ? api.getSavedReview(articleId) : Promise.resolve({ notFound: true }),
+   787→    enabled: !!articleId,
+   788→    staleTime: Infinity,
+   789→  });
+   790→  const { data: reviewData } = useQuery({
+   791→    queryKey: ["article-review", articleId],
+   792→    queryFn: () => api.aiReview({ mode: "review", articleId: articleId! }),
+   793→    enabled: false,
+   794→    staleTime: Infinity,
+   795→  });
+   796→
+   797→  const reviewMut = useMutation({
+   798→    mutationFn: () => articleId ? api.aiReview({ mode: "review", articleId }) : Promise.reject(new Error("No article")),
+   799→    onSuccess: (data) => {
+   800→      qc.setQueryData(["article-review", articleId], data);
+   801→      qc.invalidateQueries({ queryKey: ["saved-review", articleId] });
+   802→      toast.success("Review completed.");
+   803→    },
+   804→    onError: (e: Error) => toast.error(e.message),
+   805→  });
+   806→
+   807→  // Use freshly-run review if available, else saved from DB
+   808→  const displayData = reviewData || (savedReview && !savedReview.notFound ? savedReview : null);
+   809→
+   810→  return (
+   811→    <ScrollArea className="flex-1 min-h-0 scroll-academic">
+   812→      <div className="px-5 py-4 max-w-2xl mx-auto">
+   813→        {!displayData && !reviewMut.isPending && (
+   814→          <div className="text-center py-12">
+   815→            <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
+   816→              <Gavel className="h-7 w-7 text-primary" />
+   817→            </div>
+   818→            <h3 className="text-sm font-semibold">AI Peer Review</h3>
+   819→            <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto mb-4">
+   820→              Run a structured peer review with multi-dimensional scoring.
+   821→            </p>
+   822→            <Button size="sm" className="gap-1.5 text-xs" onClick={() => reviewMut.mutate()} disabled={!articleId}>
+   823→              <Gavel className="h-3.5 w-3.5" /> Run review
+   824→            </Button>
+   825→          </div>
+   826→        )}
+   827→        {reviewMut.isPending && !displayData && (
+   828→          <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+   829→        )}
+   830→        {displayData && !reviewMut.isPending && (
+   831→          <div className="space-y-3">
+   832→            {displayData.verdict && (
+   833→              <div className={`rounded-lg border p-3 ${displayData.verdict === "accept" ? "border-emerald-200/60 bg-emerald-50/50" : "border-amber-200/60 bg-amber-50/50"}`}>
+   834→                <span className={`text-sm font-semibold ${displayData.verdict === "accept" ? "text-emerald-700" : "text-amber-700"}`}>
+   835→                  {displayData.verdict === "accept" ? "✓ Accept" : `⚠ ${displayData.verdict}`}
+   836→                </span>
+   837→              </div>
+   838→            )}
+   839→            {displayData.scores && (
+   840→              <div className="grid grid-cols-3 gap-2">
+   841→                {Object.entries(displayData.scores).map(([key, val]: [string, any]) => (
+   842→                  <div key={key} className="rounded-md border border-border/50 p-2 text-center">
+   843→                    <p className="text-sm font-bold">{val}/10</p>
+   844→                    <p className="text-[9px] uppercase text-muted-foreground">{key}</p>
+   845→                  </div>
+   846→                ))}
+   847→              </div>
+   848→            )}
+   849→            {displayData.review?.summary && (
+   850→              <div className="rounded-md border border-border/50 p-2.5">
+   851→                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">Summary</p>
+   852→                <p className="text-xs leading-relaxed">{displayData.review.summary}</p>
+   853→              </div>
+   854→            )}
+   855→            {displayData.review && (
+   856→              <div className="grid grid-cols-2 gap-2">
+   857→                <div className="rounded-md border border-emerald-200/50 bg-emerald-50/30 p-2">
+   858→                  <p className="text-[10px] uppercase font-semibold text-emerald-700 mb-1">Strengths</p>
+   859→                  {safeParseArr(displayData.review.strengths).map((s: string, i: number) => <p key={i} className="text-[10px] mb-1">• {s}</p>)}
+   860→                </div>
+   861→                <div className="rounded-md border border-rose-200/50 bg-rose-50/30 p-2">
+   862→                  <p className="text-[10px] uppercase font-semibold text-rose-700 mb-1">Weaknesses</p>
+   863→                  {safeParseArr(displayData.review.weaknesses).map((w: string, i: number) => <p key={i} className="text-[10px] mb-1">• {w}</p>)}
+   864→                </div>
+   865→              </div>
+   866→            )}
+   867→            <Button size="sm" variant="outline" className="gap-1.5 text-xs w-full" onClick={() => reviewMut.mutate()} disabled={reviewMut.isPending}>
+   868→              {reviewMut.isPending && !displayData && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+   869→              Re-run review
+   870→            </Button>
+   871→          </div>
+   872→        )}
+   873→      </div>
+   874→    </ScrollArea>
+   875→  );
+   876→}
+   877→
+   878→function RelationshipWorkspace({ projectId }: { projectId: string }) {
+   879→  const qc = useQueryClient();
+   880→  // First try to load saved analysis from DB
+   881→  const { data: savedRel } = useQuery({
+   882→    queryKey: ["saved-relationships", projectId],
+   883→    queryFn: () => api.getSavedRelationships(projectId),
+   884→    enabled: !!projectId,
+   885→    staleTime: Infinity,
+   886→  });
+   887→  const { data: freshRel, isLoading: loading, error: relError } = useQuery({
+   888→    queryKey: ["source-relationships", projectId],
+   889→    queryFn: async () => {
+   890→      const res = await fetch("/api/ai/source-relationships", {
+   891→        method: "POST",
+   892→        headers: { "Content-Type": "application/json" },
+   893→        body: JSON.stringify({ projectId }),
+   894→      });
+   895→      if (!res.ok) {
+   896→        const text = await res.text();
+   897→        throw new Error(text.slice(0, 200) || `Analysis failed (${res.status})`);
+   898→      }
+   899→      const data = await res.json();
+   900→      qc.invalidateQueries({ queryKey: ["saved-relationships", projectId] });
+   901→      return data;
+   902→    },
+   903→    enabled: false, // Only on manual trigger
+   904→  });
+   905→  const relMut = useMutation({
+   906→    mutationFn: () =>
+   907→      fetch("/api/ai/source-relationships", {
+   908→        method: "POST",
+   909→        headers: { "Content-Type": "application/json" },
+   910→        body: JSON.stringify({ projectId }),
+   911→      }).then(async (res) => {
+   912→        if (!res.ok) {
+   913→          const text = await res.text();
+   914→          throw new Error(text.slice(0, 200) || `Analysis failed (${res.status})`);
+   915→        }
+   916→        return res.json();
+   917→      }),
+   918→    onSuccess: () => {
+   919→      qc.invalidateQueries({ queryKey: ["saved-relationships", projectId] });
+   920→      toast.success("Relationship analysis complete.");
+   921→    },
+   922→    onError: (e: Error) => toast.error(e.message),
+   923→  });
+   924→
+   925→  const relData = freshRel || (savedRel && !savedRel.notFound ? savedRel : null);
+   926→
+   927→  return (
+   928→    <ScrollArea className="flex-1 min-h-0 scroll-academic">
+   929→      <div className="px-5 py-4 max-w-2xl mx-auto">
+   930→        {relMut.isPending && (
+   931→          <div className="flex items-center justify-center py-12">
+   932→            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+   933→          </div>
+   934→        )}
+   935→        {relError && (
+   936→          <div className="text-center py-12">
+   937→            <Network className="h-10 w-10 mx-auto opacity-40 mb-3" />
+   938→            <p className="text-xs text-destructive mb-3">{(relError as Error).message}</p>
+   939→            <Button size="sm" className="gap-1.5 text-xs" onClick={() => relMut.mutate()}>
+   940→              <Network className="h-3.5 w-3.5" /> Retry
+   941→            </Button>
+   942→          </div>
+   943→        )}
+   944→        {!relMut.isPending && !relError && relData?.skipped && (
+   945→          <div className="text-center py-12">
+   946→            <Network className="h-10 w-10 mx-auto opacity-40 mb-3" />
+   947→            <p className="text-xs text-muted-foreground">{relData.message}</p>
+   948→          </div>
+   949→        )}
+   950→        {!relMut.isPending && !relError && relData && !relData.skipped && (
+   951→          <div className="space-y-3">
+   952→            {relData.summary && (
+   953→              <div className="rounded-lg border border-primary/20 bg-primary/[0.03] p-3">
+   954→                <p className="text-[10px] uppercase tracking-wider text-primary font-semibold mb-1">Summary</p>
+   955→                <p className="text-xs leading-relaxed">{relData.summary}</p>
+   956→              </div>
+   957→            )}
+   958→            <div className="grid grid-cols-3 gap-2">
+   959→              <div className="rounded-md border border-border/50 p-2 text-center">
+   960→                <p className="text-lg font-bold">{relData.nodes?.length || 0}</p>
+   961→                <p className="text-[9px] uppercase text-muted-foreground">Sources</p>
+   962→              </div>
+   963→              <div className="rounded-md border border-border/50 p-2 text-center">
+   964→                <p className="text-lg font-bold">{relData.edges?.length || 0}</p>
+   965→                <p className="text-[9px] uppercase text-muted-foreground">Connections</p>
+   966→              </div>
+   967→              <div className="rounded-md border border-border/50 p-2 text-center">
+   968→                <p className="text-lg font-bold">{relData.themes?.length || 0}</p>
+   969→                <p className="text-[9px] uppercase text-muted-foreground">Themes</p>
+   970→              </div>
+   971→            </div>
+   972→            {relData.themes?.length > 0 && (
+   973→              <div className="space-y-2">
+   974→                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Thematic Clusters</p>
+   975→                {relData.themes.map((t: any, i: number) => (
+   976→                  <div key={i} className="rounded-md border border-border/50 p-2.5">
+   977→                    <span className="text-xs font-semibold">{t.name}</span>
+   978→                    <p className="text-[10px] text-muted-foreground mt-0.5">{t.description}</p>
+   979→                  </div>
+   980→                ))}
+   981→              </div>
+   982→            )}
+   983→            {relData.keyInsights?.length > 0 && (
+   984→              <div className="space-y-1.5">
+   985→                <p className="text-[10px] uppercase tracking-wider text-primary font-semibold">Key Insights</p>
+   986→                {relData.keyInsights.map((insight: string, i: number) => (
+   987→                  <div key={i} className="flex items-start gap-1.5 text-[11px]">
+   988→                    <CheckCircle2 className="h-3 w-3 text-primary mt-0.5 shrink-0" />
+   989→                    <span>{insight}</span>
+   990→                  </div>
+   991→                ))}
+   992→              </div>
+   993→            )}
+   994→            {relData.contradictions?.length > 0 && (
+   995→              <div className="space-y-1.5">
+   996→                <p className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold">Contradictions</p>
+   997→                {relData.contradictions.map((c: any, i: number) => (
+   998→                  <div key={i} className="rounded-md border border-rose-200/50 bg-rose-50/30 p-2">
+   999→                    <div className="flex items-center gap-1.5 mb-0.5">
+  1000→                      <AlertTriangle className="h-3 w-3 text-rose-600" />
+  1001→                      <Badge variant="outline" className="text-[8px] h-3.5">{c.sourceLabels?.join(" vs ") || ""}</Badge>
+  1002→                    </div>
+  1003→                    <p className="text-[10px] text-muted-foreground">{c.description}</p>
+  1004→                  </div>
+  1005→                ))}
+  1006→              </div>
+  1007→            )}
+  1008→            <Button size="sm" variant="outline" className="gap-1.5 text-xs w-full" onClick={() => relMut.mutate()}>
+  1009→              <Network className="h-3.5 w-3.5" /> Re-analyze
+  1010→            </Button>
+  1011→          </div>
+  1012→        )}
+  1013→      </div>
+  1014→    </ScrollArea>
+  1015→  );
+  1016→}
+  1017→function safeParseArr(raw: string): any[] {
+  1018→  if (!raw) return [];
+  1019→  try { const p = JSON.parse(raw); return Array.isArray(p) ? p : []; } catch { return []; }
+  1020→}
+  1021→function EmptyWorkspace() {
+  1022→  return (
+  1023→    <div className="flex flex-col items-center justify-center h-full text-center px-6">
+  1024→      <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary/15 to-teal-500/15 flex items-center justify-center mb-4 ring-academic">
+  1025→        <FlaskConical className="h-8 w-8 text-primary" />
+  1026→      </div>
+  1027→      <h2 className="text-xl font-semibold font-serif-text">
+  1028→        Scientific Literature Writing Assistant
+  1029→      </h2>
+  1030→      <p className="text-sm text-muted-foreground mt-2 max-w-md leading-relaxed">
+  1031→        Query RCSB, UniProt, PubMed, NCBI and BLAST. Let AI draft
+  1032→        citation-backed scholarly paragraphs, annotate and revise them, then
+  1033→        compose deeper research articles.
+  1034→      </p>
+  1035→      <div className="mt-6 grid grid-cols-3 gap-2 max-w-lg text-[11px]">
+  1036→        {[
+  1037→          ["1", "Create a project", "Define your research topic & field"],
+  1038→          ["2", "Query databases", "Fetch papers, structures, sequences, genes"],
+  1039→          ["3", "Draft & revise", "AI writes; you annotate; AI revises"],
+  1040→        ].map(([n, t, d]) => (
+  1041→          <div key={n} className="rounded-lg border border-border/60 p-2.5 text-left">
+  1042→            <div className="flex items-center gap-1 mb-1">
+  1043→              <span className="h-4 w-4 rounded-full bg-primary/15 text-primary text-[9px] font-bold flex items-center justify-center">
+  1044→                {n}
+  1045→              </span>
+  1046→              <span className="font-semibold text-[11px]">{t}</span>
+  1047→            </div>
+  1048→            <p className="text-[10px] text-muted-foreground leading-snug">{d}</p>
+  1049→          </div>
+  1050→        ))}
+  1051→      </div>
+  1052→      <p className="text-[10px] text-muted-foreground mt-6">
+  1053→        Create a project from the left panel to begin.
+  1054→      </p>
+  1055→    </div>
+  1056→  );
+  1057→}
+  1058→
+  1059→function Footer({ onOpenPalette }: { onOpenPalette?: () => void }) {
+  1060→  const { t } = useI18n();
+  1061→  return (
+  1062→    <footer className="shrink-0 px-4 py-1.5 border-t border-border/60 bg-card/60 backdrop-blur flex items-center justify-between text-[10px] text-muted-foreground">
+  1063→      <div className="flex items-center gap-2">
+  1064→        <span className="inline-flex items-center gap-1">
+  1065→          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+  1066→          {t("footer.aiPowered")}
+  1067→        </span>
+  1068→        <span className="hidden sm:inline">·</span>
+  1069→        <span className="hidden sm:inline">
+  1070→          {t("footer.citations")} <code className="font-mono text-[9px]">[n]</code> / <code className="font-mono text-[9px]">[SOURCE:ID]</code>
+  1071→        </span>
+  1072→      </div>
+  1073→      <div className="flex items-center gap-2">
+  1074→        {onOpenPalette && (
+  1075→          <button
+  1076→            onClick={onOpenPalette}
+  1077→            className="hidden md:inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 hover:bg-muted/60 transition-colors"
+  1078→            title="Open command palette"
+  1079→          >
+  1080→            <kbd className="font-mono text-[9px] font-semibold">⌘K</kbd>
+  1081→            <span className="text-muted-foreground">{t("footer.commands")}</span>
+  1082→          </button>
+  1083→        )}
+  1084→        <span className="hidden md:inline">RCSB · UniProt · PubMed · NCBI · BLAST</span>
+  1085→        <span>·</span>
+  1086→        <span>{t("app.title")}</span>
+  1087→      </div>
+  1088→    </footer>
+  1089→  );
+  1090→}
+  1091→

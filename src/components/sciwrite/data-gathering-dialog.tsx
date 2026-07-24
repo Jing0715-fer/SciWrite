@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dialog";
 import { api } from "@/lib/api-client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useI18n } from "@/lib/i18n";
 import type { DatabaseResultItem } from "@/lib/types";
 
 interface Props {
@@ -50,10 +51,10 @@ interface Props {
 type Step = "clarify" | "organize" | "critique" | "confirm";
 
 const STEPS: { id: Step; label: string; icon: string }[] = [
-  { id: "clarify", label: "Clarify", icon: "MessagesSquare" },
-  { id: "organize", label: "Organize", icon: "Search" },
-  { id: "critique", label: "Adversarial Check", icon: "ShieldAlert" },
-  { id: "confirm", label: "Confirm Sources", icon: "CheckCircle2" },
+  { id: "clarify", label: "gather.clarify", icon: "MessagesSquare" },
+  { id: "organize", label: "gather.organize", icon: "Search" },
+  { id: "critique", label: "gather.critique", icon: "ShieldAlert" },
+  { id: "confirm", label: "gather.confirm", icon: "CheckCircle2" },
 ];
 
 const SOURCE_BADGE: Record<string, string> = {
@@ -79,6 +80,7 @@ export function DataGatheringDialog({
   field,
   onProceedToWrite,
 }: Props) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [step, setStep] = React.useState<Step>("clarify");
   const [history, setHistory] = React.useState<{ question: string; answer: string }[]>([]);
@@ -192,7 +194,7 @@ export function DataGatheringDialog({
       return results;
     },
     onSuccess: (results) => {
-      toast.success(`Saved ${results.length} sources & references.`);
+      toast.success(t("toast.savedSources", { n: results.length }));
       qc.invalidateQueries({ queryKey: ["project", projectId] });
       onOpenChange(false);
       if (onProceedToWrite) {
@@ -312,11 +314,10 @@ export function DataGatheringDialog({
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">
             <Sparkles className="h-4 w-4 text-primary" />
-            AI Data Source Gathering
+            {t("gather.title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Clarify your purpose → AI organizes multi-database searches → adversarial
-            critique → you filter &amp; confirm → start writing.
+            {t("gather.desc")}
           </DialogDescription>
           {/* Step indicator */}
           <div className="flex items-center gap-1 mt-3">
@@ -346,7 +347,7 @@ export function DataGatheringDialog({
                   ) : (
                     <span className="h-1.5 w-1.5 rounded-full bg-current opacity-40" />
                   )}
-                  {s.label}
+                  {t(s.label as any)}
                 </div>
                 {i < STEPS.length - 1 && (
                   <div className="h-px w-3 bg-border" />
@@ -362,7 +363,7 @@ export function DataGatheringDialog({
             {step === "clarify" && (
               <div className="space-y-4">
                 <div className="rounded-lg bg-primary/[0.04] border border-primary/20 p-3">
-                  <p className="text-[11px] text-muted-foreground mb-0.5">Research topic</p>
+                  <p className="text-[11px] text-muted-foreground mb-0.5">{t("gather.researchTopic")}</p>
                   <p className="text-sm font-medium">{topic}</p>
                 </div>
                 {clarifyMut.isPending && questions.length === 0 && (
@@ -382,7 +383,7 @@ export function DataGatheringDialog({
                       onChange={(e) =>
                         setAnswers((prev) => ({ ...prev, [q]: e.target.value }))
                       }
-                      placeholder="Type your answer…"
+                      placeholder={t("gather.answerPlaceholder")}
                       className="text-xs min-h-[48px]"
                     />
                   </div>
@@ -392,7 +393,7 @@ export function DataGatheringDialog({
                     <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
                       <CheckCircle2 className="h-3.5 w-3.5" />
                       <span className="text-xs font-semibold">
-                        Purpose clarified
+                        {t("gather.purposeClarified")}
                       </span>
                     </div>
                     <p className="text-xs leading-relaxed text-foreground/85">
@@ -408,12 +409,12 @@ export function DataGatheringDialog({
               <div className="space-y-3">
                 <div className="flex items-center gap-2 text-sm">
                   <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                  <span>AI is designing a multi-database search plan and executing queries…</span>
+                  <span>{t("gather.organizingDesc")}</span>
                 </div>
                 {plan && (
                   <div className="rounded-lg bg-muted/40 p-3">
                     <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
-                      Strategy
+                      {t("gather.strategy")}
                     </p>
                     <p className="text-xs leading-relaxed">{plan}</p>
                   </div>
@@ -432,7 +433,7 @@ export function DataGatheringDialog({
                 {critiqueMut.isPending && !critique && (
                   <div className="flex items-center gap-2 text-sm">
                     <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                    <span>Running adversarial critique on {candidates.length} sources…</span>
+                    <span>{t("gather.critiqueRunning", { n: candidates.length })}</span>
                   </div>
                 )}
                 {critique && (
@@ -449,10 +450,10 @@ export function DataGatheringDialog({
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-semibold flex items-center gap-1.5">
                           <ShieldAlert className="h-3.5 w-3.5" />
-                          Verdict: {critique.verdict}
+                          {t("gather.verdictLabel", { v: critique.verdict })}
                         </span>
                         <span className="text-[10px] text-muted-foreground">
-                          confidence {Math.round((critique.confidence || 0.5) * 100)}%
+                          {t("gather.confidence")} {Math.round((critique.confidence || 0.5) * 100)}%
                         </span>
                       </div>
                     </div>
@@ -460,7 +461,7 @@ export function DataGatheringDialog({
                     {critique.gaps?.length > 0 && (
                       <div className="space-y-1.5">
                         <p className="text-[10px] uppercase tracking-wider text-amber-600 font-semibold flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3" /> Coverage gaps
+                          <AlertTriangle className="h-3 w-3" /> {t("gather.coverageGaps")}
                         </p>
                         {critique.gaps.map((g: string, i: number) => (
                           <div
@@ -476,7 +477,7 @@ export function DataGatheringDialog({
                     {critique.biases?.length > 0 && (
                       <div className="space-y-1.5">
                         <p className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3" /> Biases detected
+                          <AlertTriangle className="h-3 w-3" /> {t("gather.biases")}
                         </p>
                         {critique.biases.map((b: string, i: number) => (
                           <div
@@ -492,11 +493,12 @@ export function DataGatheringDialog({
                     {critique.addedResults?.length > 0 && (
                       <div className="rounded-md border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/40 dark:bg-emerald-950/20 px-2.5 py-1.5 text-xs text-emerald-700 dark:text-emerald-400">
                         <Plus className="h-3 w-3 inline mr-1" />
-                        Added {critique.addedResults.reduce(
-                          (acc: number, r: any) => acc + (r.items?.length || 0),
-                          0
-                        )}{" "}
-                        new sources from suggestions.
+                        {t("gather.addedSourcesToast", {
+                          n: critique.addedResults.reduce(
+                            (acc: number, r: any) => acc + (r.items?.length || 0),
+                            0
+                          ),
+                        })}
                       </div>
                     )}
                   </>
@@ -509,16 +511,15 @@ export function DataGatheringDialog({
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs text-muted-foreground">
-                    Review and filter the gathered sources. Selected items will be
-                    saved as data sources &amp; references.
+                    {t("gather.reviewFilter")}
                   </p>
                   <Badge variant="outline" className="text-[10px]">
-                    {selectedCount}/{candidates.length} selected
+                    {selectedCount}/{candidates.length} {t("gather.selected")}
                   </Badge>
                 </div>
                 {candidates.length === 0 && (
                   <p className="text-xs text-muted-foreground text-center py-8">
-                    No sources gathered. Go back and run the organize step.
+                    {t("gather.noSources")}
                   </p>
                 )}
                 <div className="space-y-1.5">
@@ -580,9 +581,9 @@ export function DataGatheringDialog({
         {/* Footer */}
         <div className="px-6 py-3 border-t border-border/60 flex items-center justify-between gap-2 shrink-0 bg-card">
           <div className="text-[10px] text-muted-foreground">
-            {step === "clarify" && purpose && "✓ Purpose ready"}
-            {step === "critique" && critique && `Iteration ${iteration + 1} complete`}
-            {step === "confirm" && `${selectedCount} sources selected`}
+            {step === "clarify" && purpose && t("gather.purposeReady")}
+            {step === "critique" && critique && t("gather.iterationComplete")}
+            {step === "confirm" && t("gather.sourcesSelected", { n: selectedCount })}
           </div>
           <div className="flex items-center gap-2">
             {step === "clarify" && (
@@ -594,7 +595,7 @@ export function DataGatheringDialog({
                     ) : (
                       <ArrowRight className="h-3.5 w-3.5" />
                     )}
-                    Start gathering
+                    {t("gather.startGathering")}
                   </Button>
                 ) : (
                   <Button
@@ -607,7 +608,7 @@ export function DataGatheringDialog({
                     ) : (
                       <MessagesSquare className="h-3.5 w-3.5" />
                     )}
-                    Submit answers
+                    {t("gather.submitAnswers")}
                   </Button>
                 )}
               </>
@@ -621,14 +622,14 @@ export function DataGatheringDialog({
                   className="gap-1.5"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
-                  Re-organize
+                  {t("gather.reOrganize")}
                 </Button>
                 <Button
                   onClick={() => setStep("confirm")}
                   className="gap-1.5"
                 >
                   <CheckCircle2 className="h-3.5 w-3.5" />
-                  Review sources
+                  {t("gather.reviewSources")}
                 </Button>
               </>
             )}
@@ -644,7 +645,7 @@ export function DataGatheringDialog({
                   className="gap-1.5"
                 >
                   <ShieldAlert className="h-3.5 w-3.5" />
-                  Run critique again
+                  {t("gather.runCritiqueAgain")}
                 </Button>
                 <Button
                   onClick={() => saveMut.mutate(candidates)}
@@ -656,7 +657,7 @@ export function DataGatheringDialog({
                   ) : (
                     <Wand2 className="h-3.5 w-3.5" />
                   )}
-                  Save &amp; write
+                  {t("gather.saveWrite")}
                 </Button>
               </>
             )}

@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { chat } from "@/lib/ai";
 import { queryDatabase } from "@/lib/databases";
-import { writingSystemPrompt, countWords } from "@/lib/writing";
+import { writingSystemPrompt, countWords, renumberByAppearance } from "@/lib/writing";
 import type { ParagraphFormat, ParagraphScenario } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -365,6 +365,12 @@ CITATION FORMAT (MANDATORY):
             }
           );
 
+          // Renumber citations by order of first appearance so [1] = first cited
+          // ref, [2] = second cited ref, etc. Only cited refs are linked — no orphans.
+          const { content: renumberedContent, references: citedRefs } =
+            renumberByAppearance(content, savedReferences);
+          content = renumberedContent;
+
           const paragraph = await db.paragraph.create({
             data: {
               projectId,
@@ -378,9 +384,12 @@ CITATION FORMAT (MANDATORY):
             },
           });
 
-          // Link ALL saved references to THIS paragraph.
-          // Each paragraph gets its own copy of the full reference list.
-          for (const ref of savedReferences) {
+          // Link ONLY the CITED references (in appearance order) to THIS paragraph.
+          // Each cited reference gets its own copy linked to this paragraph.
+          // Uncited references are NOT linked — no orphans.
+          // Set citationOrder to match the [n] numbering (0-based).
+          for (let idx = 0; idx < citedRefs.length; idx++) {
+            const ref = citedRefs[idx];
             // Check if a copy already exists for this paragraph
             const existing = await db.reference.findFirst({
               where: {
@@ -403,7 +412,14 @@ CITATION FORMAT (MANDATORY):
                   abstract: ref.abstract,
                   projectId,
                   paragraphId: paragraph.id,
+                  citationOrder: idx,
                 },
+              });
+            } else {
+              // Update citationOrder if copy already exists
+              await db.reference.update({
+                where: { id: existing.id },
+                data: { citationOrder: idx },
               });
             }
           }
@@ -498,8 +514,10 @@ Instructions:
 - Produce a unified article with section headings (## Introduction, ## Background, etc.).
 - Deepen the analysis with full synthesis, contrast, and forward-looking discussion.
 - Preserve ALL inline citations [n] exactly as they appear — do NOT change any numbers.
-- Do NOT add a "## References" section — references are handled separately.
-- Output in Markdown.`;
+- Do NOT include ANY references, citations list, bibliography, or "## References" / "REFERENCES"
+  section at the end. The reference list is generated separately by the system.
+- Do NOT include a "### Citations" block either.
+- Output ONLY the article body in Markdown.`;
 
         const composeSystem =
           "You are a senior scientific editor who composes coherent, deeply-synthesized research articles.";
@@ -516,15 +534,22 @@ Instructions:
           })
           .join("\n");
 
-        // Strip any AI-generated references section from the body
+        // Strip ANY AI-generated references/citations section from the body.
+        // The AI may output headers like "## References", "### Citations",
+        // "REFERENCES", "## REFERENCES", "# References", "**References**", etc.
+        // We strip from the FIRST match to the end, then append our own canonical list.
         let cleanBody = articleBody.trim();
-        const refIdx = cleanBody.indexOf("## References");
-        if (refIdx >= 0) {
-          cleanBody = cleanBody.slice(0, refIdx).trim();
+        const refSectionRe =
+          /^#{0,6}\s*\*{0,2}(References|REFERENCES|Citations|Bibliography|文献|参考文献)\*{0,2}\s*:?\s*$/m;
+        const refMatch = cleanBody.match(refSectionRe);
+        if (refMatch && refMatch.index !== undefined) {
+          cleanBody = cleanBody.slice(0, refMatch.index).trim();
         }
-        const citIdx2 = cleanBody.indexOf("### Citations");
-        if (citIdx2 >= 0) {
-          cleanBody = cleanBody.slice(0, citIdx2).trim();
+        // Also strip a bare "REFERENCES:" or "References:" line (no markdown header)
+        const bareRefRe = /^\s*(REFERENCES|References)\s*:?\s*$/m;
+        const bareMatch = cleanBody.match(bareRefRe);
+        if (bareMatch && bareMatch.index !== undefined) {
+          cleanBody = cleanBody.slice(0, bareMatch.index).trim();
         }
 
         const articleContent = cleanBody + "\n\n## References\n\n" + refList;

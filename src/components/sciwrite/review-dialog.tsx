@@ -78,7 +78,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
     mutationFn: () => api.aiReview({ mode: "review", articleId: articleId! }),
     onSuccess: (data) => {
       setReviewData(data);
-      toast.success("Review completed.");
+      toast.success(t("toast.reviewCompleted"));
       qc.invalidateQueries({ queryKey: ["articles"] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -88,7 +88,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
     mutationFn: () =>
       api.aiReview({ mode: "revise", articleId: articleId!, reviewId: reviewData.review.id }),
     onSuccess: (data) => {
-      toast.success("Article revised based on review.");
+      toast.success(t("toast.articleRevised"));
       qc.invalidateQueries({ queryKey: ["articles"] });
       qc.invalidateQueries({ queryKey: ["project"] });
     },
@@ -101,7 +101,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
     onSuccess: (data) => {
       setIterationLog(data.results || []);
       setReviewData(data.results?.[0] || null);
-      toast.success(`Auto-iteration complete: ${data.rounds} phases run.`);
+      toast.success(t("toast.autoIterateComplete", { n: data.rounds }));
       qc.invalidateQueries({ queryKey: ["articles"] });
       qc.invalidateQueries({ queryKey: ["project"] });
     },
@@ -267,7 +267,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                 {reviewData.review?.summary && (
                   <div className="rounded-md border border-border/50 p-2.5">
                     <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
-                      Summary
+                      {t("review.summary")}
                     </p>
                     <p className="text-xs leading-relaxed">{reviewData.review.summary}</p>
                   </div>
@@ -304,14 +304,14 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                       >
                         <div className="flex items-center gap-1.5 mb-0.5">
                           <Badge variant="outline" className="text-[8px] h-3.5 uppercase">
-                            {s.section || "General"}
+                            {s.section || t("review.general")}
                           </Badge>
                         </div>
                         <p className="text-[11px] text-rose-600 dark:text-rose-400 mb-0.5">
-                          <span className="font-semibold">Issue:</span> {s.issue}
+                          <span className="font-semibold">{t("review.issue")}:</span> {s.issue}
                         </p>
                         <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
-                          <span className="font-semibold">Fix:</span> {s.fix}
+                          <span className="font-semibold">{t("review.fix")}:</span> {s.fix}
                         </p>
                       </div>
                     ))}
@@ -350,9 +350,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                 </div>
                 <h3 className="text-sm font-semibold">{t("review.title")}</h3>
                 <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
-                  Get a structured, multi-dimensional review of your article with scores,
-                  strengths, weaknesses, and actionable revision suggestions. Run auto-iterate
-                  to automatically review + revise for N rounds.
+                  {t("review.emptyDesc")}
                 </p>
               </div>
             )}
@@ -363,7 +361,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
         {reviewData && verdict !== "accept" && (
           <div className="px-6 py-3 border-t border-border/60 flex items-center justify-between gap-2 shrink-0 bg-card">
             <span className="text-[10px] text-muted-foreground">
-              Revise the article based on this review
+              {t("review.reviseDesc")}
             </span>
             <Button
               size="sm"

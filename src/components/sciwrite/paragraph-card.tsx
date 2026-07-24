@@ -62,6 +62,7 @@ import { ExportMenu } from "./export-menu";
 import { DiffView } from "./diff-view";
 import { CitationValidationDialog } from "./citation-validation-dialog";
 import { Icon } from "./icon";
+import { useI18n } from "@/lib/i18n";
 
 interface Props {
   paragraph: Paragraph & { annotations: Annotation[]; references: any[] };
@@ -70,6 +71,7 @@ interface Props {
 }
 
 export function ParagraphCard({ paragraph, projectId, index }: Props) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(paragraph.content);
@@ -80,6 +82,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
   const [diffOpen, setDiffOpen] = React.useState(false);
   const [validateOpen, setValidateOpen] = React.useState(false);
   const bodyRef = React.useRef<HTMLDivElement>(null);
+  const pendingMarkRef = React.useRef<HTMLElement | null>(null);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["project", projectId] });
 
@@ -87,7 +90,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
     mutationFn: (input: Partial<Paragraph>) =>
       api.updateParagraph(paragraph.id, input),
     onSuccess: () => {
-      toast.success("Paragraph updated.");
+      toast.success(t("toast.paragraphUpdated"));
       setEditing(false);
       invalidate();
     },
@@ -97,7 +100,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
   const deleteMut = useMutation({
     mutationFn: () => api.deleteParagraph(paragraph.id),
     onSuccess: () => {
-      toast.success("Paragraph deleted.");
+      toast.success(t("toast.paragraphDeleted"));
       invalidate();
     },
     onError: (e: Error) => toast.error(e.message),
@@ -107,8 +110,8 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
     mutationFn: (input: Partial<Annotation>) =>
       api.addAnnotation(paragraph.id, input),
     onSuccess: () => {
-      toast.success("Annotation added.");
-      setSelection(null);
+      toast.success(t("toast.annotationAdded"));
+      clearSelection();
       invalidate();
     },
     onError: (e: Error) => toast.error(e.message),
@@ -124,7 +127,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
   const deleteAnnMut = useMutation({
     mutationFn: (id: string) => api.deleteAnnotation(id),
     onSuccess: () => {
-      toast.success("Annotation removed.");
+      toast.success(t("toast.annotationRemoved"));
       invalidate();
     },
     onError: (e: Error) => toast.error(e.message),
@@ -137,7 +140,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
       return api.reviseParagraph(paragraph.id, input);
     },
     onSuccess: () => {
-      toast.success("Paragraph revised by AI. Undo available.");
+      toast.success(t("toast.paragraphRevised"));
       invalidate();
     },
     onError: (e: Error) => {
@@ -155,34 +158,82 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
       });
     },
     onSuccess: () => {
-      toast.success("Reverted to pre-revision content.");
+      toast.success(t("toast.paragraphReverted"));
       setUndoSnapshot(null);
       invalidate();
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // Unwrap any pending-selection <mark> element (restore original DOM)
+  const unwrapPendingMark = React.useCallback(() => {
+    const mark = pendingMarkRef.current;
+    if (!mark || !mark.parentNode) {
+      pendingMarkRef.current = null;
+      return;
+    }
+    const parent = mark.parentNode;
+    // Move all children out of the mark, then remove it
+    while (mark.firstChild) {
+      parent.insertBefore(mark.firstChild, mark);
+    }
+    parent.removeChild(mark);
+    // Normalize adjacent text nodes
+    try { parent.normalize(); } catch {}
+    pendingMarkRef.current = null;
+  }, []);
+
   // Capture text selection within this paragraph body
   const handleMouseUp = React.useCallback(() => {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
-      setSelection(null);
       return;
     }
     const text = sel.toString().trim();
     if (text.length < 2) {
-      setSelection(null);
       return;
     }
     const range = sel.getRangeAt(0);
     const bodyEl = bodyRef.current;
     if (!bodyEl || !bodyEl.contains(range.commonAncestorContainer)) {
-      setSelection(null);
       return;
     }
     const rect = range.getBoundingClientRect();
+
+    // Unwrap any previous pending mark
+    unwrapPendingMark();
+
+    // Wrap the selected range in a <mark class="pending-selection"> so the
+    // highlight persists even after the native selection collapses (which
+    // happens when the Popover steals focus).
+    try {
+      const contents = range.extractContents();
+      const mark = document.createElement("mark");
+      mark.className = "pending-selection";
+      mark.appendChild(contents);
+      range.insertNode(mark);
+      pendingMarkRef.current = mark;
+    } catch {
+      // If DOM manipulation fails, the selection toolbar still works —
+      // just without the persistent highlight
+    }
+
+    // Clear the native selection (it will be lost anyway when popover opens)
+    sel.removeAllRanges();
+
     setSelection({ text, rect });
-  }, []);
+  }, [unwrapPendingMark]);
+
+  // Cleanup pending mark on unmount
+  React.useEffect(() => {
+    return () => unwrapPendingMark();
+  }, [unwrapPendingMark]);
+
+  // Clear selection + unwrap the pending highlight mark
+  const clearSelection = React.useCallback(() => {
+    unwrapPendingMark();
+    setSelection(null);
+  }, [unwrapPendingMark]);
 
   const unresolvedCount = paragraph.annotations.filter((a) => !a.resolved).length;
   const status = STATUS_STYLES[paragraph.status] || STATUS_STYLES.draft;
@@ -230,7 +281,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
             </span>
             <span className="text-[9px] text-muted-foreground">·</span>
             <span className="text-[9px] text-muted-foreground">
-              {paragraph.wordCount} words
+              {t("para.wordsCount", { n: paragraph.wordCount })}
             </span>
             {unresolvedCount > 0 && (
               <span className="inline-flex items-center gap-0.5 text-[9px] text-amber-600 dark:text-amber-400 font-medium">
@@ -248,19 +299,19 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-44">
             <DropdownMenuItem onClick={() => setEditing((v) => !v)}>
-              <Pencil className="h-3.5 w-3.5" /> {editing ? "Stop editing" : "Edit content"}
+              <Pencil className="h-3.5 w-3.5" /> {editing ? t("para.stopEditing") : t("para.editContent")}
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() =>
                 navigator.clipboard.writeText(paragraph.content).then(() =>
-                  toast.success("Copied to clipboard.")
+                  toast.success(t("toast.copiedToClipboard"))
                 )
               }
             >
-              <Copy className="h-3.5 w-3.5" /> Copy text
+              <Copy className="h-3.5 w-3.5" /> {t("para.copyText")}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setValidateOpen(true)}>
-              <ShieldCheck className="h-3.5 w-3.5" /> Validate citations
+              <ShieldCheck className="h-3.5 w-3.5" /> {t("para.validateCitations")}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <FormatSelect
@@ -278,7 +329,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
               className="text-destructive focus:text-destructive"
               onClick={() => deleteMut.mutate()}
             >
-              <Trash2 className="h-3.5 w-3.5" /> Delete
+              <Trash2 className="h-3.5 w-3.5" /> {t("para.delete")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -300,7 +351,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
                 disabled={updateMut.isPending}
               >
                 {updateMut.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Save
+                {t("common.save")}
               </Button>
               <Button
                 size="sm"
@@ -310,7 +361,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
                   setEditing(false);
                 }}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
             </div>
           </div>
@@ -338,7 +389,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
                 severity,
               });
             }}
-            onClose={() => setSelection(null)}
+            onClose={() => clearSelection()}
             pending={addAnnMut.isPending}
           />
         )}
@@ -351,7 +402,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
             <CollapsibleTrigger asChild>
               <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5">
                 <MessageSquare className="h-3.5 w-3.5" />
-                Annotations ({paragraph.annotations.length})
+                {t("para.annotationsCount", { n: paragraph.annotations.length })}
                 {annOpen ? (
                   <ChevronUp className="h-3 w-3" />
                 ) : (
@@ -382,7 +433,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
                       </span>
                       {a.resolved && (
                         <span className="text-[9px] text-emerald-600 flex items-center gap-0.5">
-                          <CheckCircle2 className="h-2.5 w-2.5" /> resolved
+                          <CheckCircle2 className="h-2.5 w-2.5" /> {t("para.resolved")}
                         </span>
                       )}
                       <div className="ml-auto flex items-center gap-0.5">
@@ -393,7 +444,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
                           onClick={() =>
                             resolveAnnMut.mutate({ id: a.id, resolved: !a.resolved })
                           }
-                          title={a.resolved ? "Reopen" : "Resolve"}
+                          title={a.resolved ? t("para.reopen") : t("para.resolve")}
                         >
                           <CheckCircle2 className="h-3 w-3" />
                         </Button>
@@ -415,7 +466,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
                     <p className="text-foreground/90">{a.comment}</p>
                     {a.aiResponse && (
                       <p className="mt-1.5 text-[10px] text-primary italic border-l-2 border-primary/40 pl-2">
-                        AI: {a.aiResponse}
+                        {t("para.aiPrefix")} {a.aiResponse}
                       </p>
                     )}
                   </div>
@@ -442,10 +493,10 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
               size="sm"
               className="h-7 text-[11px] gap-1.5 text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950/30"
               onClick={() => setDiffOpen(true)}
-              title="Compare before/after revision"
+              title={t("para.compareTitle")}
             >
               <GitCompare className="h-3 w-3" />
-              Compare
+              {t("para.compare")}
             </Button>
             <Button
               variant="ghost"
@@ -453,14 +504,14 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
               className="h-7 text-[11px] gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30"
               onClick={() => undoReviseMut.mutate()}
               disabled={undoReviseMut.isPending}
-              title="Undo last AI revision"
+              title={t("para.undoTitle")}
             >
               {undoReviseMut.isPending ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
                 <Undo2 className="h-3 w-3" />
               )}
-              Undo
+              {t("para.undo")}
             </Button>
           </>
         )}
@@ -476,7 +527,7 @@ export function ParagraphCard({ paragraph, projectId, index }: Props) {
           onClick={() => setEditing((v) => !v)}
         >
           <PenLine className="h-3 w-3" />
-          {editing ? "Preview" : "Edit"}
+          {editing ? t("common.preview") : t("common.edit")}
         </Button>
       </div>
 
@@ -538,6 +589,7 @@ function SelectionToolbar({
   onClose: () => void;
   pending: boolean;
 }) {
+  const { t } = useI18n();
   const [comment, setComment] = React.useState("");
   const [type, setType] = React.useState("revise-request");
   const [severity, setSeverity] = React.useState("warning");
@@ -564,7 +616,7 @@ function SelectionToolbar({
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[10px] uppercase tracking-wider text-primary font-semibold flex items-center gap-1">
-              <MessageSquare className="h-3 w-3" /> Annotate selection
+              <MessageSquare className="h-3 w-3" /> {t("para.annotateSelection")}
             </span>
             <div className="flex items-center gap-0.5">
               <Button
@@ -572,10 +624,10 @@ function SelectionToolbar({
                 size="icon"
                 className="h-5 w-5"
                 onClick={() => {
-                  navigator.clipboard.writeText(text).then(() => toast.success("Copied to clipboard."));
+                  navigator.clipboard.writeText(text).then(() => toast.success(t("toast.copiedToClipboard")));
                   onClose();
                 }}
-                title="Copy selected text"
+                title={t("para.copySelectedText")}
               >
                 <Copy className="h-3 w-3" />
               </Button>
@@ -591,7 +643,7 @@ function SelectionToolbar({
             autoFocus
             value={comment}
             onChange={(e) => setComment(e.target.value)}
-            placeholder="Write your revision request or comment…"
+            placeholder={t("para.revisePlaceholder")}
             className="text-xs min-h-[56px]"
           />
           <div className="grid grid-cols-2 gap-1.5">
@@ -612,9 +664,9 @@ function SelectionToolbar({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="info" className="text-[10px]">Info</SelectItem>
-                <SelectItem value="warning" className="text-[10px]">Warning</SelectItem>
-                <SelectItem value="critical" className="text-[10px]">Critical</SelectItem>
+                <SelectItem value="info" className="text-[10px]">{t("para.info")}</SelectItem>
+                <SelectItem value="warning" className="text-[10px]">{t("para.warning")}</SelectItem>
+                <SelectItem value="critical" className="text-[10px]">{t("para.critical")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -625,7 +677,7 @@ function SelectionToolbar({
             onClick={() => onSubmit(comment.trim(), type, severity)}
           >
             {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-            Add annotation
+            {t("para.addAnnotation2")}
           </Button>
         </div>
       </PopoverContent>
@@ -642,6 +694,7 @@ function RevisePopover({
   isRevising: boolean;
   onRevise: (mode: string, instructions?: string) => void;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = React.useState(false);
   const [mode, setMode] = React.useState<"annotations" | "instructions" | "polish">("annotations");
   const [instructions, setInstructions] = React.useState("");
@@ -655,7 +708,7 @@ function RevisePopover({
           ) : (
             <Wand2 className="h-3 w-3" />
           )}
-          AI Revise
+          {t("para.aiRevise")}
           {unresolvedCount > 0 && (
             <span className="ml-0.5 inline-flex items-center justify-center h-3.5 min-w-3.5 px-1 rounded-full bg-amber-500 text-white text-[8px] font-bold">
               {unresolvedCount}
@@ -666,14 +719,14 @@ function RevisePopover({
       <PopoverContent className="w-80 p-3" align="start">
         <div className="space-y-2.5">
           <span className="text-[10px] uppercase tracking-wider text-primary font-semibold flex items-center gap-1">
-            <Wand2 className="h-3 w-3" /> AI revision mode
+            <Wand2 className="h-3 w-3" /> {t("para.revisionMode")}
           </span>
           <div className="grid grid-cols-3 gap-1">
             {(
               [
-                ["annotations", "Annotations", unresolvedCount > 0],
-                ["instructions", "Instructions", true],
-                ["polish", "Polish", true],
+                ["annotations", t("para.modeAnnotations"), unresolvedCount > 0],
+                ["instructions", t("para.modeInstructions"), true],
+                ["polish", t("para.modePolish"), true],
               ] as const
             ).map(([id, label, enabled]) => (
               <button
@@ -692,22 +745,20 @@ function RevisePopover({
           </div>
           {mode === "annotations" && (
             <p className="text-[10px] text-muted-foreground">
-              Will address {unresolvedCount} unresolved annotation(s). Resolved ones
-              stay addressed.
+              {t("para.willAddressAnnotations", { n: unresolvedCount })}
             </p>
           )}
           {mode === "instructions" && (
             <Textarea
               value={instructions}
               onChange={(e) => setInstructions(e.target.value)}
-              placeholder="e.g. Add a sentence comparing eukaryotic vs prokaryotic systems; cite [PMID:…]."
+              placeholder={t("para.reviseInstructionsPlaceholder")}
               className="text-xs min-h-[64px]"
             />
           )}
           {mode === "polish" && (
             <p className="text-[10px] text-muted-foreground">
-              Lightly polish for clarity, flow and academic register without
-              altering meaning.
+              {t("para.polishDesc")}
             </p>
           )}
           <Button
@@ -725,7 +776,7 @@ function RevisePopover({
             }}
           >
             {isRevising ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
-            Run revision
+            {t("para.runRevision")}
           </Button>
         </div>
       </PopoverContent>

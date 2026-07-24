@@ -66,22 +66,23 @@ model Annotation {
 }
 
 model Reference {
-  id          String     @id @default(cuid())
-  paragraphId String?
-  paragraph   Paragraph? @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
-  projectId   String?
-  project     Project?   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  type        String     // pubmed, uniprot, pdb, ncbi, blast, web, manual
-  externalId  String?
-  title       String
-  authors     String?
-  journal     String?
-  year        String?
-  url         String?
-  doi         String?
-  abstract    String?
-  citationKey String?
-  createdAt   DateTime   @default(now())
+  id            String     @id @default(cuid())
+  paragraphId   String?
+  paragraph     Paragraph? @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+  projectId     String?
+  project       Project?   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type          String     // pubmed, uniprot, pdb, ncbi, blast, web, manual
+  externalId    String?
+  title         String
+  authors       String?
+  journal       String?
+  year          String?
+  url           String?
+  doi           String?
+  abstract      String?
+  citationKey   String?
+  citationOrder Int?       // 0-based index within the paragraph, matching [n] citation order (1 = index 0)
+  createdAt     DateTime   @default(now())
 
   @@index([paragraphId])
   @@index([projectId])

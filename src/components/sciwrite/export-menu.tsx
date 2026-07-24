@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { api } from "@/lib/api-client";
 import { useMutation } from "@tanstack/react-query";
+import { useI18n } from "@/lib/i18n";
 
 interface Props {
   type: "paragraph" | "article";
@@ -39,6 +40,7 @@ export function ExportMenu({
   label,
   hasAnnotations,
 }: Props) {
+  const { t } = useI18n();
   const [includeAnn, setIncludeAnn] = React.useState(true);
 
   const exportMut = useMutation({
@@ -60,7 +62,7 @@ export function ExportMenu({
       URL.revokeObjectURL(url);
     },
     onSuccess: (_d, format) => {
-      toast.success(`Exported as ${format.toUpperCase()}.`);
+      toast.success(t("export.exportedAs", { fmt: format.toUpperCase() }));
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -70,19 +72,19 @@ export function ExportMenu({
       <DropdownMenuTrigger asChild>
         <Button variant={variant} size={size} className="gap-1.5 text-[11px]">
           <Download className="h-3.5 w-3.5" />
-          {label || "Export"}
+          {label || t("common.export")}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
         <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
-          Export format
+          {t("export.format")}
         </DropdownMenuLabel>
         <DropdownMenuItem
           onClick={() => exportMut.mutate("docx")}
           disabled={exportMut.isPending}
         >
           <FileType2 className="h-3.5 w-3.5 text-blue-600" />
-          <span className="text-xs">Word (.docx)</span>
+          <span className="text-xs">{t("export.word")}</span>
           {exportMut.isPending && (
             <Loader2 className="h-3 w-3 animate-spin ml-auto" />
           )}
@@ -92,14 +94,14 @@ export function ExportMenu({
           disabled={exportMut.isPending}
         >
           <FileText className="h-3.5 w-3.5 text-rose-600" />
-          <span className="text-xs">PDF (.pdf)</span>
+          <span className="text-xs">{t("export.pdf")}</span>
         </DropdownMenuItem>
         <DropdownMenuItem
           onClick={() => exportMut.mutate("markdown")}
           disabled={exportMut.isPending}
         >
           <FileCode2 className="h-3.5 w-3.5 text-emerald-600" />
-          <span className="text-xs">Markdown (.md)</span>
+          <span className="text-xs">{t("export.markdown")}</span>
         </DropdownMenuItem>
         {hasAnnotations && (
           <>
@@ -109,7 +111,7 @@ export function ExportMenu({
               onCheckedChange={setIncludeAnn}
               className="text-[11px]"
             >
-              Include annotations
+              {t("export.includeAnnotations")}
             </DropdownMenuCheckboxItem>
           </>
         )}

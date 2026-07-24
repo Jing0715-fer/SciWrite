@@ -12,11 +12,11 @@ import {
 import { useI18n, type Lang } from "@/lib/i18n";
 
 export function LanguageToggle() {
-  const { lang, setLang } = useI18n();
+  const { lang, setLang, t } = useI18n();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Language">
+        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title={t("app.language")}>
           <Languages className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>

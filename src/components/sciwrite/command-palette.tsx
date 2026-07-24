@@ -24,6 +24,7 @@ import {
   Plus,
   Keyboard,
 } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 
 interface CommandAction {
   id: string;
@@ -43,21 +44,22 @@ interface Props {
 }
 
 export function CommandPalette({ open, onOpenChange, actions }: Props) {
+  const { t } = useI18n();
   const grouped = React.useMemo(() => {
     const groups: Record<string, CommandAction[]> = {};
     for (const a of actions) {
-      const g = a.group || "Actions";
+      const g = a.group || t("cmd.actions");
       if (!groups[g]) groups[g] = [];
       groups[g].push(a as CommandAction);
     }
     return groups;
-  }, [actions]);
+  }, [actions, t]);
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange} className="max-w-xl">
-      <CommandInput placeholder="Type a command or search…" />
+      <CommandInput placeholder={t("cmd.placeholder")} />
       <CommandList className="max-h-[400px]">
-        <CommandEmpty>No results found.</CommandEmpty>
+        <CommandEmpty>{t("cmd.noResults")}</CommandEmpty>
         {Object.entries(grouped).map(([group, items], gi) => (
           <React.Fragment key={group}>
             {gi > 0 && <CommandSeparator />}
@@ -91,16 +93,16 @@ export function CommandPalette({ open, onOpenChange, actions }: Props) {
           </React.Fragment>
         ))}
         <CommandSeparator />
-        <CommandGroup heading="Shortcuts">
+        <CommandGroup heading={t("cmd.shortcuts")}>
           <div className="px-2 py-1.5 grid grid-cols-2 gap-1.5 text-[10px] text-muted-foreground">
-            <ShortcutRow keys="⌘K" desc="Open command palette" />
-            <ShortcutRow keys="N" desc="New paragraph (AI Write)" />
-            <ShortcutRow keys="O" desc="Generate research outline" />
-            <ShortcutRow keys="G" desc="Gather sources" />
-            <ShortcutRow keys="I" desc="Project insights" />
-            <ShortcutRow keys="C" desc="Compose article" />
-            <ShortcutRow keys="D" desc="Toggle dark mode" />
-            <ShortcutRow keys="Esc" desc="Close dialog" />
+            <ShortcutRow keys="⌘K" desc={t("cmd.openPalette")} />
+            <ShortcutRow keys="N" desc={t("cmd.newParagraph")} />
+            <ShortcutRow keys="O" desc={t("cmd.generateOutline")} />
+            <ShortcutRow keys="G" desc={t("cmd.gatherSources")} />
+            <ShortcutRow keys="I" desc={t("cmd.projectInsights")} />
+            <ShortcutRow keys="C" desc={t("cmd.composeArticle")} />
+            <ShortcutRow keys="D" desc={t("cmd.toggleDark")} />
+            <ShortcutRow keys="Esc" desc={t("cmd.closeDialog")} />
           </div>
         </CommandGroup>
       </CommandList>

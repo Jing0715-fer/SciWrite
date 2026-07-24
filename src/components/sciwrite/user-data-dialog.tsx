@@ -10,7 +10,6 @@ import {
   Image as ImageIcon,
   Table,
   FileText,
-  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +33,8 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/lib/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useI18n } from "@/lib/i18n";
+import type { TranslationKey } from "@/lib/i18n";
 
 interface Props {
   open: boolean;
@@ -41,13 +42,14 @@ interface Props {
   projectId: string | null;
 }
 
-const TYPE_META: Record<string, { label: string; icon: any; color: string }> = {
-  image: { label: "Image", icon: ImageIcon, color: "badge-violet" },
-  table: { label: "Table", icon: Table, color: "badge-amber" },
-  text: { label: "Text", icon: FileText, color: "badge-sky" },
+const TYPE_META: Record<string, { labelKey: TranslationKey; icon: any; color: string }> = {
+  image: { labelKey: "userData.typeImage", icon: ImageIcon, color: "badge-violet" },
+  table: { labelKey: "userData.typeTable", icon: Table, color: "badge-amber" },
+  text: { labelKey: "userData.typeText", icon: FileText, color: "badge-sky" },
 };
 
 export function UserDataDialog({ open, onOpenChange, projectId }: Props) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [type, setType] = React.useState<"image" | "table" | "text">("text");
   const [title, setTitle] = React.useState("");
@@ -79,14 +81,14 @@ export function UserDataDialog({ open, onOpenChange, projectId }: Props) {
         body: JSON.stringify({
           projectId,
           type,
-          title: title || `${type} data`,
+          title: title || t("userData.dataFallback"),
           description: description || undefined,
           data: type === "table" ? JSON.stringify(data) : undefined,
         }),
       }).then((r) => r.json());
     },
     onSuccess: () => {
-      toast.success("Data saved.");
+      toast.success(t("toast.dataSaved"));
       setTitle("");
       setDescription("");
       setTableHeaders("");
@@ -100,7 +102,7 @@ export function UserDataDialog({ open, onOpenChange, projectId }: Props) {
     mutationFn: (id: string) =>
       fetch(`/api/user-data/${id}`, { method: "DELETE" }).then((r) => r.json()),
     onSuccess: () => {
-      toast.success("Data removed.");
+      toast.success(t("toast.dataRemoved"));
       qc.invalidateQueries({ queryKey: ["user-data", projectId] });
     },
   });
@@ -113,10 +115,10 @@ export function UserDataDialog({ open, onOpenChange, projectId }: Props) {
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">
             <DatabaseZap className="h-4 w-4 text-primary" />
-            Experiment Data
+            {t("userData.title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Upload images, tables, or text descriptions to use in AI writing (Results sections).
+            {t("userData.desc")}
           </DialogDescription>
         </DialogHeader>
 
@@ -125,67 +127,79 @@ export function UserDataDialog({ open, onOpenChange, projectId }: Props) {
             {/* Add form */}
             <div className="rounded-lg border border-border/60 p-3 space-y-3">
               <p className="text-[10px] uppercase tracking-wider text-primary font-semibold">
-                Add new data
+                {t("userData.addNew")}
               </p>
               <div className="grid grid-cols-3 gap-1">
-                {(["text", "table", "image"] as const).map((t) => {
-                  const meta = TYPE_META[t];
+                {(["text", "table", "image"] as const).map((tp) => {
+                  const meta = TYPE_META[tp];
                   const Icon = meta.icon;
                   return (
                     <button
-                      key={t}
-                      onClick={() => setType(t)}
+                      key={tp}
+                      onClick={() => setType(tp)}
                       className={`flex flex-col items-center gap-1 py-2 rounded-md border transition-colors text-[10px] ${
-                        type === t
+                        type === tp
                           ? "border-primary bg-primary/5 text-primary font-medium"
                           : "border-border text-muted-foreground hover:bg-muted/40"
                       }`}
                     >
                       <Icon className="h-4 w-4" />
-                      {meta.label}
+                      {t(meta.labelKey)}
                     </button>
                   );
                 })}
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">Title</Label>
+                <Label className="text-xs">{t("userData.titleLabel")}</Label>
                 <Input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder={type === "image" ? "e.g. Figure 1: TMC1 cryo-EM map" : type === "table" ? "e.g. Table 1: TMC domain comparison" : "e.g. Observation notes"}
+                  placeholder={
+                    type === "image"
+                      ? t("userData.titleImagePlaceholder")
+                      : type === "table"
+                      ? t("userData.titleTablePlaceholder")
+                      : t("userData.titleTextPlaceholder")
+                  }
                   className="text-xs h-8"
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">Description / caption</Label>
+                <Label className="text-xs">{t("userData.descLabel")}</Label>
                 <Textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder={type === "image" ? "Describe the figure content and key findings..." : type === "table" ? "Describe what the table shows..." : "Enter your text description, observation, or data summary..."}
+                  placeholder={
+                    type === "image"
+                      ? t("userData.descImagePlaceholder")
+                      : type === "table"
+                      ? t("userData.descTablePlaceholder")
+                      : t("userData.descTextPlaceholder")
+                  }
                   className="text-xs min-h-[60px]"
                 />
               </div>
               {type === "table" && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Table headers (comma or tab separated)</Label>
+                  <Label className="text-xs">{t("userData.tableHeadersLabel")}</Label>
                   <Input
                     value={tableHeaders}
                     onChange={(e) => setTableHeaders(e.target.value)}
-                    placeholder="Domain, Length, Resolution, Method"
+                    placeholder={t("userData.tableHeadersPlaceholder")}
                     className="text-xs h-8 font-mono"
                   />
-                  <Label className="text-xs mt-2">Table rows (one per line, comma or tab separated)</Label>
+                  <Label className="text-xs mt-2">{t("userData.tableRowsLabel")}</Label>
                   <Textarea
                     value={tableRows}
                     onChange={(e) => setTableRows(e.target.value)}
-                    placeholder={"N-terminal, 200aa, 3.2Å, cryo-EM\nC-terminal, 150aa, 2.8Å, X-ray"}
+                    placeholder={t("userData.tableRowsPlaceholder")}
                     className="text-xs min-h-[80px] font-mono"
                   />
                 </div>
               )}
               {type === "image" && (
                 <p className="text-[10px] text-muted-foreground italic">
-                  Image upload via file path — provide the image description/caption above. The AI will use it as context for Results writing.
+                  {t("userData.imageUploadHint")}
                 </p>
               )}
               <Button
@@ -199,18 +213,18 @@ export function UserDataDialog({ open, onOpenChange, projectId }: Props) {
                 ) : (
                   <Plus className="h-3.5 w-3.5" />
                 )}
-                Save data
+                {t("userData.saveBtn")}
               </Button>
             </div>
 
             {/* Existing data list */}
             <div className="space-y-1.5">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                Saved data ({items.length})
+                {t("userData.savedData", { n: items.length })}
               </p>
               {items.length === 0 && (
                 <p className="text-[11px] text-muted-foreground text-center py-6">
-                  No experiment data saved yet.
+                  {t("userData.noData")}
                 </p>
               )}
               {items.map((item: any) => {
@@ -246,9 +260,11 @@ export function UserDataDialog({ open, onOpenChange, projectId }: Props) {
                         {(() => {
                           try {
                             const td = JSON.parse(item.data);
-                            return td.headers ? `Table: ${td.headers.length} cols × ${td.rows?.length || 0} rows` : "structured data";
+                            return td.headers
+                              ? t("userData.tableStats", { cols: td.headers.length, rows: td.rows?.length || 0 })
+                              : t("userData.structuredData");
                           } catch {
-                            return "data";
+                            return t("userData.dataFallback");
                           }
                         })()}
                       </p>

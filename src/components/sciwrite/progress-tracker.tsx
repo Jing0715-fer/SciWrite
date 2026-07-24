@@ -10,6 +10,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { useI18n } from "@/lib/i18n";
 
 interface Props {
   totalWords: number;
@@ -34,6 +35,7 @@ export function ProgressTracker({
   wordGoal = 1000,
   onWordGoalChange,
 }: Props) {
+  const { t } = useI18n();
   const [showGoalSelector, setShowGoalSelector] = React.useState(false);
   const wordProgress = wordGoal > 0 ? Math.min(100, (totalWords / wordGoal) * 100) : 0;
   const goalMet = totalWords >= wordGoal;
@@ -46,12 +48,12 @@ export function ProgressTracker({
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
               <Type className="h-3 w-3" />
-              Writing progress
+              {t("progress.writingProgress")}
             </span>
             <button
               onClick={() => setShowGoalSelector((v) => !v)}
               className="text-[10px] font-mono text-muted-foreground hover:text-primary transition-colors"
-              title="Set word count goal"
+              title={t("progress.setWordGoalTitle")}
             >
               {totalWords} / {wordGoal}w
               {goalMet && <span className="ml-1 text-emerald-600">✓</span>}
@@ -63,7 +65,7 @@ export function ProgressTracker({
           />
           {showGoalSelector && (
             <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-              <span className="text-[9px] text-muted-foreground">Goal:</span>
+              <span className="text-[9px] text-muted-foreground">{t("progress.goal")}</span>
               {WORD_GOAL_PRESETS.map((g) => (
                 <button
                   key={g}
@@ -88,26 +90,26 @@ export function ProgressTracker({
         <div className="flex items-center gap-2.5 text-[10px]">
           <StatPill
             icon={<PenLine className="h-2.5 w-2.5" />}
-            label="¶"
+            label={t("progress.paragraphsPill")}
             value={totalParagraphs}
             color="emerald"
           />
           <StatPill
             icon={<Quote className="h-2.5 w-2.5" />}
-            label="cit"
+            label={t("progress.citationsPill")}
             value={totalCitations}
             color="amber"
           />
           <StatPill
             icon={<Target className="h-2.5 w-2.5" />}
-            label="cov"
+            label={t("progress.coveragePill")}
             value={`${citationCoverage}%`}
             color="teal"
           />
           {(unresolvedAnnotations > 0 || resolvedAnnotations > 0) && (
             <StatPill
               icon={<MessageSquare className="h-2.5 w-2.5" />}
-              label="ann"
+              label={t("progress.annotationsPill")}
               value={`${unresolvedAnnotations}!/${resolvedAnnotations}✓`}
               color={unresolvedAnnotations > 0 ? "rose" : "emerald"}
             />

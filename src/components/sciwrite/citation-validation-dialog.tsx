@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { api } from "@/lib/api-client";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { useI18n } from "@/lib/i18n";
 
 interface Props {
   open: boolean;
@@ -39,6 +40,7 @@ export function CitationValidationDialog({
   paragraphId,
   paragraphTitle,
 }: Props) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["validate-citations", paragraphId],
@@ -72,10 +74,10 @@ export function CitationValidationDialog({
             ) : (
               <ShieldCheck className="h-4 w-4 text-primary" />
             )}
-            Citation Validation
+            {t("validation.title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            {paragraphTitle || "Check that every citation resolves to a reference"}
+            {paragraphTitle || t("validation.desc")}
           </DialogDescription>
         </DialogHeader>
 
@@ -111,39 +113,42 @@ export function CitationValidationDialog({
                       }`}
                     >
                       {allValid
-                        ? "All citations valid"
-                        : `${data.missingCount} missing, ${data.orphanedCount} orphaned`}
+                        ? t("validation.allValid")
+                        : t("validation.missingOrphaned", { missing: data.missingCount, orphaned: data.orphanedCount })}
                     </span>
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    {data.totalMarkers} citation markers found ·{" "}
-                    {data.validCount} resolved · {data.savedReferenceCount} saved
-                    references · {data.aiCitationCount} AI-cited
+                    {t("validation.summaryLine", {
+                      markers: data.totalMarkers,
+                      valid: data.validCount,
+                      saved: data.savedReferenceCount,
+                      aiCited: data.aiCitationCount,
+                    })}
                   </p>
                 </div>
 
                 {/* Stat row */}
                 <div className="grid grid-cols-4 gap-2">
                   <StatBox
-                    label="Markers"
+                    label={t("validation.markersLabel")}
                     value={data.totalMarkers}
                     icon={<Quote className="h-3 w-3" />}
                     color="slate"
                   />
                   <StatBox
-                    label="Valid"
+                    label={t("validation.validLabel")}
                     value={data.validCount}
                     icon={<CheckCircle2 className="h-3 w-3" />}
                     color="emerald"
                   />
                   <StatBox
-                    label="Missing"
+                    label={t("validation.missingLabel")}
                     value={data.missingCount}
                     icon={<XCircle className="h-3 w-3" />}
                     color="rose"
                   />
                   <StatBox
-                    label="Orphaned"
+                    label={t("validation.orphanedLabel")}
                     value={data.orphanedCount}
                     icon={<BookX className="h-3 w-3" />}
                     color="amber"
@@ -155,7 +160,7 @@ export function CitationValidationDialog({
                   <div className="space-y-1.5">
                     <p className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold flex items-center gap-1">
                       <XCircle className="h-3 w-3" />
-                      Missing citations ({data.missingCount})
+                      {t("validation.missingCountLabel", { n: data.missingCount })}
                     </p>
                     {data.results
                       .filter((r: any) => r.status === "missing")
@@ -190,10 +195,10 @@ export function CitationValidationDialog({
                   <div className="space-y-1.5">
                     <p className="text-[10px] uppercase tracking-wider text-amber-600 font-semibold flex items-center gap-1">
                       <BookX className="h-3 w-3" />
-                      Orphaned references ({data.orphaned.length})
+                      {t("validation.orphanedCountLabel", { n: data.orphaned.length })}
                     </p>
                     <p className="text-[10px] text-muted-foreground mb-1">
-                      These saved references are never cited in the paragraph:
+                      {t("validation.orphanedDesc")}
                     </p>
                     {data.orphaned.map((o: any, i: number) => (
                       <div
@@ -219,7 +224,7 @@ export function CitationValidationDialog({
                   <div className="space-y-1.5">
                     <p className="text-[10px] uppercase tracking-wider text-emerald-600 font-semibold flex items-center gap-1">
                       <CheckCircle2 className="h-3 w-3" />
-                      Valid citations ({data.validCount})
+                      {t("validation.validCountLabel", { n: data.validCount })}
                     </p>
                     <div className="space-y-1">
                       {data.results
@@ -234,13 +239,13 @@ export function CitationValidationDialog({
                               {r.marker}
                             </code>
                             <span className="text-foreground/70 truncate">
-                              {r.resolvedTo || "resolved"}
+                              {r.resolvedTo || t("validation.resolved")}
                             </span>
                           </div>
                         ))}
                       {data.validCount > 10 && (
                         <p className="text-[9px] text-muted-foreground italic pl-1">
-                          +{data.validCount - 10} more valid citations…
+                          {t("validation.moreValid", { n: data.validCount - 10 })}
                         </p>
                       )}
                     </div>
@@ -254,7 +259,7 @@ export function CitationValidationDialog({
         {data && data.missingCount > 0 && (
           <div className="px-6 py-3 border-t border-border/60 flex items-center justify-between gap-2 shrink-0">
             <span className="text-[10px] text-muted-foreground">
-              AI will search databases to resolve missing citations
+              {t("validation.autoFix")}
             </span>
             <Button
               size="sm"
@@ -267,7 +272,7 @@ export function CitationValidationDialog({
               ) : (
                 <Wand2 className="h-3.5 w-3.5" />
               )}
-              Auto-fix {data.missingCount} missing
+              {t("validation.autoFixBtnCount", { n: data.missingCount })}
             </Button>
           </div>
         )}

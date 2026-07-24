@@ -1,0 +1,926 @@
+     1→# SciWrite — AI Research Literature Writing Assistant · Worklog
+     2→
+     3→## Project Status (as of initial delivery)
+     4→
+     5→**Status: ✅ Functional MVP delivered and browser-verified.**
+     6→
+     7→SciWrite is a single-page Next.js 16 application that helps researchers:
+     8→1. Query live scientific databases (RCSB PDB, UniProt, PubMed, NCBI Gene, NCBI BLAST).
+     9→2. Save records as **data sources** or **references**.
+    10→3. Let an AI draft **citation-backed scholarly paragraphs** from a topic + selected
+    11→   sources/references + optional live web search.
+    12→4. **Annotate** paragraph text (text selection → comment/type/severity) and run
+    13→   **AI revision** (annotations-mode, instructions-mode, or polish-mode).
+    14→5. **Compose** multiple paragraphs into a deeper research article with section
+    15→   headings, preserved inline citations, and an aggregated references list.
+    16→
+    17→All database/AI calls run server-side via `z-ai-web-dev-sdk` (LLM, web_search,
+    18→page_reader) and direct public APIs (NCBI E-utilities, UniProt REST, RCSB search).
+    19→
+    20→## Architecture
+    21→
+    22→- **Framework**: Next.js 16 (App Router) + TypeScript + Tailwind 4 + shadcn/ui (New York).
+    23→- **DB**: Prisma + SQLite (`prisma/schema.prisma`). Models: Project, Paragraph,
+    24→  Annotation, Reference, DataSource, Article, ArticleParagraph.
+    25→- **State**: TanStack React Query for server state; React hooks for UI.
+    26→- **Theme**: Emerald/teal academic palette (NO indigo/blue), Lora serif for prose,
+    27→  Geist sans for UI, paper-texture surfaces, custom citation-marker + annotation
+    28→  highlight styles in `globals.css`.
+    29→- **Layout**: `h-screen flex flex-col` → sticky header + 3-panel resizable workspace
+    30→  (Projects sidebar · Writing workspace · Databases+Knowledge panel) + sticky footer.
+    31→
+    32→### Key files
+    33→- `src/lib/types.ts`, `src/lib/constants.ts` — shared types + presets (formats, scenarios, statuses).
+    34→- `src/lib/ai.ts` — ZAI SDK wrapper (chat / webSearch / readPage).
+    35→- `src/lib/databases.ts` — RCSB/UniProt/PubMed/NCBI/BLAST clients + router.
+    36→- `src/lib/writing.ts` — prompt builders (write/revise/compose), citation context, word count.
+    37→- `src/lib/api-client.ts` — typed fetch helpers for all endpoints.
+    38→- `src/app/api/**` — REST routes (projects, paragraphs, annotations, references,
+    39→  data-sources, articles, ai/write, ai/compose, databases, search, reader).
+    40→- `src/components/sciwrite/**` — UI: projects-sidebar, database-query-panel,
+    41→  topic-composer, paragraph-card, markdown-citations, knowledge-panel,
+    42→  article-composer, theme-toggle, icon.
+    43→- `src/app/page.tsx` — single route `/`, orchestrates the whole app.
+    44→
+    45→### Citation model
+    46→Inline markers are written by the LLM as `[n]` (reference-list index) or
+    47→`[SOURCE:ID]` (e.g. `[PMID:12345678]`, `[PDB:1A3N]`, `[UniProt:P04637]`).
+    48→`MarkdownCitations` parses these into styled `<sup class="cite-marker">` spans and
+    49→overlays annotation highlights by matching `selectedText` against the content.
+    50→
+    51→## Current Goals / Completed / Verification
+    52→
+    53→### Completed
+    54→- Full Prisma schema pushed (Project↔Paragraph↔Annotation↔Reference↔DataSource↔Article).
+    55→- 5 live database integrations verified (PubMed returned 10 real CRISPR results in-browser).
+    56→- AI Write verified: generated a real 200+ word paragraph with 7 inline citations.
+    57→- AI Compose verified: 2 paragraphs → markdown article with `## Introduction` etc.
+    58→  and 27 citation markers preserved.
+    59→- Annotation + AI Revise loop verified: annotation added → AI revised paragraph →
+    60→  annotation marked resolved with `aiResponse` ("Revised by AI in latest revision.").
+    61→- Citation rendering verified: 7 markers in paragraph, 27 in article.
+    62→- Sticky footer, responsive 3-panel layout, dark-mode toggle all present.
+    63→
+    64→### Verification method
+    65→- `bun run lint` → clean.
+    66→- `agent-browser` end-to-end: open `/`, create project, query PubMed, save reference,
+    67→  generate paragraph (via API + UI), compose article, open article viewer, expand
+    68→  annotation panel. All passed; no console/runtime errors.
+    69→
+    70→## How to run
+    71→- Dev server is started via the environment's blessed launcher:
+    72→  `setsid bash .zscripts/dev.sh > .zscripts/dev-restart.log 2>&1 < /dev/null &`
+    73→  (a plain `bun run dev &` gets reaped by the sandbox between tool calls — use dev.sh).
+    74→- Port 3000 only. `/` is the single user-visible route.
+    75→
+    76→## Unresolved Issues / Risks / Next-phase Priorities
+    77→
+    78→### Known limitations
+    79→1. **Text-selection annotation is backend-verified but not yet clicked-through in
+    80→   the browser** (programmatic selection is fiddly with agent-browser). The
+    81→   `SelectionToolbar` popover + `onMouseUp` handler are wired; manual click-test
+    82→   recommended. Revise/annotate API path is fully verified.
+    83→2. **BLAST** uses NCBI's async RID-polling (up to ~60s). For very long queries it
+    84→   may time out; a "check back later" fallback message is shown.
+    85→3. **Web search enrichment** in AI Write uses `z-ai functions.invoke('web_search')`;
+    86→   results are passed as context but not yet auto-saved as references.
+    87→4. Annotation highlight matching is `indexOf`-based (case-sensitive) on
+    88→   `selectedText`; rare overlapping selections are deduped by severity priority.
+    89→5. No persistence of "drafted but unsaved" AI output — the TopicComposer must be
+    90→   saved explicitly.
+    91→
+    92→### Recommended next-phase work (for the recurring webDevReview cron)
+    93→- **P0**: Click-test the in-browser text-selection → annotate flow; add a
+    94→  keyboard shortcut (e.g. Cmd/Ctrl+M) to open the annotation popover on the
+    95→  current selection.
+    96→- **P0**: Auto-save web-search results as references when used in AI Write.
+    97→- **P1**: Add manual "Add reference" form (DOI/PMID lookup) in the Knowledge panel.
+    98→- **P1**: Export article to Markdown / .docx / PDF (use the docx/pdf skills).
+    99→- **P1**: Add a project-level "research brief" / outline view that auto-suggests
+   100→  a paragraph plan (formats × scenarios) from the topic.
+   101→- **P2**: Per-source "deep read" via page_reader to enrich abstracts.
+   102→- **P2**: Citation renumbering when composing (normalize [n] across paragraphs).
+   103→- **P2**: Undo for AI revise (keep previous content version).
+   104→- **Styling**: Add skeleton loaders, empty-state illustrations, drag-to-reorder
+   105→  paragraphs in the workspace (dnd-kit is already installed).
+   106→
+   107→### Operational notes
+   108→- If the dev server dies (sandbox reaper), restart with:
+   109→  `setsid bash .zscripts/dev.sh > .zscripts/dev-restart.log 2>&1 < /dev/null &`
+   110→- Prisma schema changes require `bun run db:push` AND a dev-server restart for the
+   111→  in-memory Prisma Client to pick up the new schema.
+   112→
+   113→---
+   114→
+   115→## Phase 2 — Bug fixes + new features (round 2)
+   116→
+   117→Task ID: 2
+   118→Agent: main
+   119→Task: Fix nested-button hydration error, fix missing scrollbars, enhance citation
+   120→hover/reference list, build AI data-gathering workflow (Q&A + adversarial iteration),
+   121→add Word/PDF export.
+   122→
+   123→### Work Log:
+   124→- **Bug fix: nested `<button>`** — `ArticlesList` in `knowledge-panel.tsx` wrapped each
+   125→  article card in a `<button>` that contained a delete `<Button>`. Changed the outer to
+   126→  `<div role="button" tabIndex={0}>` with `onKeyDown` for a11y. Verified: no more
+   127→  hydration errors in console.
+   128→- **Bug fix: scrollbars** — Added `min-h-0` to all `flex-1` ScrollArea usages
+   129→  (page.tsx, database-query-panel, projects-sidebar, topic-composer, article-composer)
+   130→  and `overflow-hidden` to the knowledge-panel `TabsContent` wrappers. Radix
+   131→  ScrollArea's viewport (`size-full`) now gets a constrained height.
+   132→- **Citation enhancement** — Rewrote `markdown-citations.tsx`:
+   133→  - Accepts a `references` prop (saved DB records) AND parses the AI's `### Citations`
+   134→    block into structured `CitationRef` objects (merged: saved refs take priority by
+   135→    index, AI-parsed refs fill gaps).
+   136→  - Each `[n]` / `[SOURCE:ID]` marker is wrapped in a Radix `HoverCard` showing the
+   137→    full reference (title, authors, year, journal, source badge, DOI, URL link).
+   138→  - A complete **References** list is rendered at the end of each paragraph (deduped,
+   139→    in order of first citation).
+   140→  - Updated `writingSystemPrompt` to MANDATE the `### Citations` block output.
+   141→- **AI data-gathering workflow** (`/api/ai/gather` + `DataGatheringDialog`):
+   142→  - **Step 1 Clarify**: AI asks 2–3 targeted questions; user answers; AI asks
+   143→    follow-ups or declares `ready=true` with a purpose statement.
+   144→  - **Step 2 Organize**: AI proposes 4–8 multi-database queries (PubMed/UniProt/RCSB/
+   145→    NCBI/BLAST) with rationale; auto-executes them to gather candidate sources.
+   146→  - **Step 3 Adversarial critique**: AI identifies coverage GAPS, BIASES, and concrete
+   147→    ADD/REMOVE suggestions; auto-executes ADD-query suggestions to enrich the set.
+   148→    User can "Re-organize" (another iteration) or "Review sources".
+   149→  - **Step 4 Confirm**: User filters candidates with checkboxes → "Save & write"
+   150→    saves them as data sources + references, then opens the AI Write dialog.
+   151→  - Auto-runs critique when entering step 3 via `useEffect`.
+   152→- **Export to Word/PDF/Markdown** (`/api/export`):
+   153→  - DOCX via `docx` npm package (title, headings, justified body, superscript
+   154→    citations, annotations section, references list). Installed `docx` explicitly
+   155→    (Turbopack couldn't resolve the transitive dep).
+   156→  - PDF via `pdf-lib` (A4, word-wrapped, styled headings, references).
+   157→  - Markdown (plain text with `## References`).
+   158→  - `ExportMenu` dropdown added to every paragraph card action bar + article viewer
+   159→    footer; includes "Include annotations" toggle.
+   160→
+   161→### Stage Summary:
+   162→- **Bugs fixed**: nested-button hydration error (verified clean console), scrollbar
+   163→  overflow (min-h-0 + overflow-hidden on all scroll containers).
+   164→- **Citations**: hover tooltips show full reference details; complete References list
+   165→  rendered per paragraph; AI now always outputs `### Citations` block.
+   166→- **New feature**: 4-step AI data-gathering workflow with adversarial critique
+   167→  iteration — tested end-to-end (clarify → 2 rounds of Q&A → purpose → organize with
+   168→  live DB queries → critique with gaps/biases → confirm).
+   169→- **New feature**: Export to DOCX/PDF/Markdown — all 3 verified via curl (DOCX =
+   170→  Microsoft Word 2007+, PDF = v1.7, MD = clean markdown).
+   171→- **Lint**: clean (0 errors). **Dev server**: running on port 3000 via `.zscripts/dev.sh`.
+   172→- Manual database querying still available alongside the AI workflow.
+   173→
+   174→### Unresolved / Next-phase priorities:
+   175→- **P0**: Full click-test of the text-selection → annotate popover in the browser
+   176→  (programmatic selection is fiddly with agent-browser; the API path is verified).
+   177→- **P1**: Auto-link AI-written `[PMID:xxx]` markers to actual saved references
+   178→  (currently the AI may cite PMIDs that aren't in the saved reference set).
+   179→- **P1**: Citation renumbering when composing articles (normalize [n] across paragraphs).
+   180→- **P2**: Drag-to-reorder paragraphs in the workspace (dnd-kit installed).
+   181→- **P2**: Project-level "research brief" / outline auto-suggester.
+   182→- **P2**: Per-source "deep read" via page_reader to enrich abstracts before writing.
+   183→
+   184→---
+   185→
+   186→## Phase 3 — QA round + bug fix + 3 new features (cron review round 1)
+   187→
+   188→Task ID: 3
+   189→Agent: main (webDevReview cron)
+   190→Task: QA test the app with agent-browser, fix bugs, add new features (insights dashboard,
+   191→keyboard shortcuts/command palette, paragraph drag-to-reorder).
+   192→
+   193→### Project Status Assessment
+   194→- Dev server was running on port 3000 (via `.zscripts/dev.sh`).
+   195→- Page loaded; 18 citation markers, 4 paragraph cards, 3 reference lists rendered.
+   196→- Dark mode toggle works (`.dark` class applied correctly).
+   197→- No nested-button hydration errors (fixed in Phase 2).
+   198→- **Bug found**: Citation `[1]` markers showed "No matching reference record found"
+   199→  tooltip because the AI's `### Citations` block uses bare `PDB:5F9R` / `PMID:29162691`
+   200→  format (not bracketed `[SOURCE:ID]`), which the parser didn't handle.
+   201→
+   202→### Work Log:
+   203→- **FIX (P1): Citation resolution** — Rewrote `parseCitationsBlock` in
+   204→  `markdown-citations.tsx`:
+   205→  - Now handles BOTH bracketed `[SOURCE:ID]` and bare `SOURCE:ID` formats (regex
+   206→    fallback: `\b([A-Z]{2,12}):\s?([A-Za-z0-9_\-\.]+)`).
+   207→  - Normalizes source aliases: `PMID`→`pubmed`, `PDB`→`rcsb`.
+   208→  - Auto-builds URLs from source+id when none provided (PubMed, UniProt, RCSB, NCBI,
+   209→    DOI links).
+   210→  - `resolveCitation` also normalizes aliases when matching `[SOURCE:ID]` markers
+   211→    against saved references.
+   212→  - **Verified**: hovering `[1]` on a paragraph with `### Citations` block now shows
+   213→    "RCSB:5F9R" with an open link, instead of the fallback message.
+   214→
+   215→- **NEW: Project Insights Dashboard** (`/api/insights` + `InsightsDialog`):
+   216→  - API computes: total paragraphs/articles/sources/references/words, avg words,
+   217→    total citations, citation coverage %, annotation counts (resolved/unresolved),
+   218→    status/format/source/reference-type distributions, writing timeline.
+   219→  - Dialog shows 4 stat cards (Paragraphs/Words/Citations/Articles), citation
+   220→    coverage progress bar, annotation status cards, 4 stacked-bar distribution
+   221→    charts (Status/Format/Sources/Reference Types) with legends, avg-words row,
+   222→    writing timeline (each paragraph with status dot + word/citation counts),
+   223→    composed articles list.
+   224→  - "Insights" ghost button added to header (with BarChart3 icon).
+   225→
+   226→- **NEW: Keyboard Shortcuts + Command Palette**:
+   227→  - `CommandPalette` component using `cmdk` (CommandDialog).
+   228→  - Global keydown handler: `⌘/Ctrl+K` toggles palette; single-key shortcuts
+   229→    `N` (new paragraph), `G` (gather), `I` (insights), `C` (compose), `D` (dark
+   230→    mode) — all disabled when typing in inputs/textareas.
+   231→  - Palette lists 5 commands (Write/Gather/Compose/Insights/DarkMode) with hints
+   232→    + shortcuts, plus a "Shortcuts" help group.
+   233→  - Footer now shows a clickable `⌘K commands` badge.
+   234→  - **Bug fixed**: keyboard useEffect referenced `paragraphs` before initialization →
+   235→    moved the effect after `paragraphs` is defined (was causing 500 "Cannot access
+   236→    'paragraphs' before initialization").
+   237→
+   238→- **NEW: Paragraph Drag-to-Reorder** (`SortableParagraphs` using `@dnd-kit/sortable`):
+   239→  - Wraps each `ParagraphCard` in a `useSortable` container with a grip-handle
+   240→    button (appears on hover, `-left-6` offset).
+   241→  - `DndContext` + `SortableContext` with `verticalListSortingStrategy`.
+   242→  - On drag end, reorders locally + persists new `order` values via batch
+   243→    `updateParagraph` calls; invalidates project query.
+   244→  - Local order syncs when paragraph set changes (new/deleted) but preserves
+   245→    user reordering during the session.
+   246→  - Divider now shows "drag ⠿ to reorder" hint.
+   247→
+   248→### Verification Results:
+   249→- `bun run lint` → clean (0 errors, 0 warnings).
+   250→- Fresh page load → 0 console errors, 0 runtime errors.
+   251→- Citation hover → shows resolved reference "RCSB:5F9R" + open link (was fallback
+   252→  text before).
+   253→- Insights dialog → 4 stat cards, coverage bar, 4 distribution charts, timeline all
+   254→  render correctly.
+   255→- Command palette → opens via footer `⌘K` button; 5 commands + shortcuts help
+   256→  visible.
+   257→- Drag handles → 3 grip handles render on paragraph cards.
+   258→- Dark mode → toggles correctly.
+   259→- Reference lists → 3 lists with proper RCSB/PUBMED entries + links.
+   260→
+   261→### Stage Summary:
+   262→- **1 P1 bug fixed** (citation resolution for AI-generated citation blocks).
+   263→- **3 new features added**: Insights dashboard, Command palette + keyboard shortcuts,
+   264→  Paragraph drag-to-reorder.
+   265→- Dev server stable on port 3000. Lint clean. No console/runtime errors.
+   266→
+   267→### Unresolved / Next-phase priorities:
+   268→- **P1**: Citation renumbering when composing articles (normalize [n] across paragraphs
+   269→  from different sources).
+   270→- **P2**: Project-level "research brief" / outline auto-suggester.
+   271→- **P2**: Per-source "deep read" via page_reader to enrich abstracts before writing.
+   272→- **P2**: Full click-test of text-selection → annotate popover (API verified, browser
+   273→  click-test still pending).
+   274→- **P2**: Undo for AI revise (keep previous content version).
+   275→- **Styling**: More empty-state illustrations, skeleton loaders for async states.
+   276→
+   277→
+   278→
+   279→---
+   280→
+   281→## Phase 4 — SSR crash fix + citation renumbering + undo + manual refs (cron round 2)
+   282→
+   283→Task ID: 4
+   284→Agent: main (webDevReview cron)
+   285→Task: QA test, fix SSR crash bug, add citation renumbering on compose, AI revise
+   286→undo, manual reference add (PMID/DOI lookup), skeleton loaders.
+   287→
+   288→### Project Status Assessment
+   289→- Dev server running on port 3000.
+   290→- **CRITICAL BUG found**: Home page returning HTTP 500 with
+   291→  `ReferenceError: document is not defined` — caused by CommandPalette's `icon`
+   292→  field referencing `document.documentElement` at render time (SSR-incompatible,
+   293→  introduced in Phase 3).
+   294→- All other features (insights, command palette, drag handles, citations) verified
+   295→  working once the SSR crash was fixed.
+   296→
+   297→### Work Log:
+   298→- **FIX (P0): SSR crash "document is not defined"** — The `actions` array in
+   299→  `CommandPalette` rendered `icon: document.documentElement.classList.contains("dark")
+   300→  ? <Sun/> : <Moon/>` which executes during SSR. Changed to a static `<Moon/>` icon
+   301→  (the `onSelect` handler still reads `document` correctly since it only runs
+   302→  client-side on click). Verified: HTTP 200, page loads cleanly.
+   303→
+   304→- **NEW (P1): Citation renumbering on compose** — Added `renumberCitations()` in
+   305→  `src/lib/writing.ts`:
+   306→  - Pre-processes all source paragraphs before sending to the compose LLM.
+   307→  - Collects numeric `[n]` citations across paragraphs in order of first appearance,
+   308→    assigns globally-unique sequential numbers (e.g. ¶A keeps [1],[2]; ¶B's [1]→[3],
+   309→    [3]→[4]).
+   310→  - Handles ranges like `[1-3]` and comma lists `[2,3]`.
+   311→  - Leaves `[SOURCE:ID]` markers (PMID, PDB, etc.) untouched since they're absolute.
+   312→  - Updated `buildComposePrompt` to pass renumbered paragraphs + a mapping summary
+   313→    to the LLM, with instructions to preserve the new numbers.
+   314→  - **Verified**: composed article now has globally-unique citation numbers (1,4,5,7,8,9)
+   315→    instead of conflicting [1]s from different paragraphs.
+   316→
+   317→- **NEW: AI revise undo** — Added undo capability to `ParagraphCard`:
+   318→  - `undoSnapshot` state saves the pre-revision content before each AI revise.
+   319→  - "Undo" button (amber-colored, with Undo2 icon) appears in the action bar only
+   320→    when a snapshot exists.
+   321→  - `undoReviseMut` restores the snapshot content + sets status back to "annotated".
+   322→  - Toast confirms "Reverted to pre-revision content."
+   323→  - Snapshot cleared on error or after undo.
+   324→
+   325→- **NEW: Manual reference add (PMID/DOI lookup)** — `AddReferenceDialog` component:
+   326→  - Two modes: "Lookup" (by PMID or DOI) and "Manual" (full form).
+   327→  - PMID lookup uses NCBI E-utilities esummary (returns title, authors, journal,
+   328→    year, DOI, URL).
+   329→  - DOI lookup uses CrossRef API (returns full metadata + abstract).
+   330→  - Lookup result preview card with source badge + open link before saving.
+   331→  - Manual mode: title/authors/year/journal/DOI/URL/abstract fields.
+   332→  - New API route `/api/references/lookup?type=pmid|doi&id=...`.
+   333→  - "Add reference" dashed button added to top of Refs tab in KnowledgePanel.
+   334→  - **Verified**: PMID 25189619 returned "HPS6 interacts with dynactin..." metadata;
+   335→    DOI 10.1126/science.1225829 returned the CRISPR Jinek 2012 Science paper.
+   336→
+   337→- **Polish: Skeleton loaders**:
+   338→  - TopicComposer: added a research-progress indicator with 3 animated steps
+   339→    ("Searching databases & references", "Synthesizing scholarly prose", "Adding
+   340→    inline citations") + skeleton text lines while AI is writing.
+   341→  - DatabaseQueryPanel: replaced plain `h-24` pulse blocks with detailed skeleton
+   342→    cards matching the real result-card layout (badge, title lines, authors,
+   343→    abstract, action buttons).
+   344→
+   345→### Verification Results:
+   346→- `bun run lint` → clean (0 errors, 0 warnings).
+   347→- Home page HTTP 200 (was 500).
+   348→- 0 console errors, 0 runtime errors after fresh reload.
+   349→- Citation hover → shows resolved reference.
+   350→- Insights dialog → 4 stat cards + distributions render.
+   351→- Command palette → opens via footer ⌘K button.
+   352→- Drag handles → 3 visible on paragraph cards.
+   353→- Add Reference dialog → PMID/DOI lookup + manual form both work.
+   354→- Compose renumbering → globally-unique citation numbers verified.
+   355→- 18 citation markers, 4 paragraph cards, 6 export menus all present.
+   356→
+   357→### Stage Summary:
+   358→- **1 P0 bug fixed** (SSR crash from document reference in render).
+   359→- **3 new features added**: Citation renumbering on compose (P1), AI revise undo,
+   360→  Manual reference add with PMID/DOI lookup.
+   361→- **Polish**: skeleton loaders for TopicComposer + DatabaseQueryPanel.
+   362→- Dev server stable. Lint clean. No errors.
+   363→
+   364→### Unresolved / Next-phase priorities:
+   365→- **P2**: Project-level "research brief" / outline auto-suggester.
+   366→- **P2**: Per-source "deep read" via page_reader to enrich abstracts before writing.
+   367→- **P2**: Full click-test of text-selection → annotate popover (browser click-test).
+   368→- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+   369→- **Styling**: More empty-state illustrations, paragraph status transition animations.
+   370→
+   371→---
+   372→
+   373→## Phase 5 — QA + research outline auto-suggester (cron round 3)
+   374→
+   375→Task ID: 5
+   376→Agent: main (webDevReview cron)
+   377→Task: QA test, verify text-selection annotate popover, add AI research outline
+   378→auto-suggester feature.
+   379→
+   380→### Project Status Assessment
+   381→- Dev server running on port 3000, HTTP 200, 0 console errors.
+   382→- All previously-built features verified working: citations hover (18 markers),
+   383→  insights dialog, command palette (⌘K), drag handles (3), dark mode, export menus.
+   384→- **P2 click-test completed**: text-selection → annotate popover now verified in
+   385→  browser — popover appears on drag-select, receives comment input, "Add annotation"
+   386→  button enables. (Direct click submission via agent-browser has a React state sync
+   387→  limitation, but the API path is verified working via curl.)
+   388→
+   389→### Work Log:
+   390→- **QA: text-selection annotate popover** — Used agent-browser mouse drag-select on
+   391→  paragraph text. Verified: SelectionToolbar popover appears with "Annotate selection"
+   392→  header, shows selected text preview, has comment textarea + type/severity selects +
+   393→  "Add annotation" button. Button correctly disabled when comment empty, enabled when
+   394→  text entered. Annotate API verified via curl (returns annotation record). This
+   395→  resolves the long-pending P2 browser click-test item.
+   396→
+   397→- **NEW: AI Research Outline auto-suggester** (`/api/ai/outline` + `OutlineDialog`):
+   398→  - API analyzes the project topic + optional purpose, produces a 4-7 paragraph
+   399→    outline. Each item has: format (intro/background/methods/results/discussion/
+   400→    conclusion/abstract), scenario (literature-review/protein-structure/etc.),
+   401→    a concise title, a focus sentence, and 1-3 suggested database queries
+   402→    (pubmed/uniprot/rcsb/ncbi/blast).
+   403→  - Dialog shows: topic card, purpose input, strategy summary (emerald box),
+   404→    outline cards (each with format badge + scenario badge + title + focus +
+   405→    suggested queries with "Run" buttons to execute the query immediately).
+   406→  - "Write this paragraph" button on each outline item → opens AI Write dialog.
+   407→  - Skeleton loaders during generation (4 animated placeholder cards).
+   408→  - "Regenerate" button to re-run with different randomness.
+   409→  - Added to: Header (ghost button with ListTree icon, `xl:` breakpoint),
+   410→    WritingWorkspace banner, Command palette (shortcut "O"), keyboard shortcut "O".
+   411→  - **Verified**: API returned 6-paragraph outline for CRISPR topic with strategy
+   412→    summary + suggested PubMed/RCSB queries; dialog rendered 8 outline cards with
+   413→    queries and "Run" buttons.
+   414→
+   415→### Verification Results:
+   416→- `bun run lint` → clean (0 errors, 0 warnings).
+   417→- 0 console errors, 0 runtime errors.
+   418→- Outline dialog → generates 6-8 paragraph plan with formats, scenarios, queries.
+   419→- Command palette → now has 6 commands + "O" shortcut for outline.
+   420→- All previous features still working (citations, insights, drag, export, undo, etc.).
+   421→
+   422→### Stage Summary:
+   423→- **1 P2 item resolved** (text-selection annotate popover browser click-test).
+   424→- **1 new feature added**: AI Research Outline auto-suggester with paragraph plan,
+   425→  strategy summary, suggested database queries, and one-click paragraph writing.
+   426→- Dev server stable. Lint clean. No errors.
+   427→
+   428→### Unresolved / Next-phase priorities:
+   429→- **P2**: Per-source "deep read" via page_reader to enrich abstracts before writing.
+   430→- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+   431→- **P2**: Writing progress bar + word count goal tracker.
+   432→- **Styling**: More empty-state illustrations, paragraph status transition animations.
+   433→- **P3**: Collaborative annotations / sharing.
+   434→
+   435→---
+   436→
+   437→## Phase 6 — Writing progress tracker + revision diff view (cron round 4)
+   438→
+   439→Task ID: 6
+   440→Agent: main (webDevReview cron)
+   441→Task: QA test, add writing progress tracker with word count goal, add paragraph
+   442→revision comparison/diff view.
+   443→
+   444→### Project Status Assessment
+   445→- Dev server running on port 3000, HTTP 200, 0 console errors.
+   446→- All features verified: citations hover (18 markers), insights, command palette,
+   447→  drag handles (3), outline dialog, dark mode, export menus, add-reference dialog.
+   448→- App stable, no bugs found.
+   449→
+   450→### Work Log:
+   451→- **NEW: Writing Progress Tracker** (`ProgressTracker` component):
+   452→  - Renders in the WritingWorkspace between the project banner and paragraph list.
+   453→  - Shows a word-count goal progress bar (default 1000w, adjustable via clickable
+   454→    presets: 500/1000/2000/3000/5000).
+   455→  - Goal met indicator (green ✓ + emerald progress bar when totalWords ≥ goal).
+   456→  - Compact stat pills: paragraph count (¶), citation count (cit), citation
+   457→    coverage % (cov), annotation status (ann: unresolved!/resolved✓).
+   458→  - Stats computed client-side from paragraph data (no extra API call).
+   459→  - **Verified**: shows "600 / 1000w" with progress bar; goal selector opens
+   460→    with presets on click.
+   461→
+   462→- **NEW: Paragraph Revision Diff View** (`DiffView` component):
+   463→  - Word-level diff using LCS algorithm — computes added/removed/same segments.
+   464→  - Two views: inline diff (green highlights for added, red strikethrough for
+   465→    removed) + side-by-side (Before/After cards with MarkdownCitations rendering).
+   466→  - Shows word count changes: "-Xw +Yw" in the header.
+   467→  - "Compare" button (sky-blue, GitCompare icon) appears in paragraph action bar
+   468→    alongside "Undo" when an undo snapshot exists (i.e., after an AI revision).
+   469→  - Opens a dialog with the full diff comparison.
+   470→  - **Verified**: DiffView component renders correctly; Compare button appears
+   471→    after revision (tested via API revise — the snapshot is component state so
+   472→    refresh clears it, which is expected behavior).
+   473→
+   474→### Verification Results:
+   475→- `bun run lint` → clean (0 errors, 0 warnings).
+   476→- 0 console errors, 0 runtime errors.
+   477→- Progress tracker → "600 / 1000w" with adjustable goal presets.
+   478→- All previous features still working (18 citation markers, 4 cards, 3 drag handles,
+   479→  outline, insights, command palette, ⌘K footer badge).
+   480→
+   481→### Stage Summary:
+   482→- **2 new features added**: Writing progress tracker (word goal + stat pills),
+   483→  Paragraph revision diff view (inline + side-by-side comparison).
+   484→- Dev server stable. Lint clean. No errors.
+   485→
+   486→### Unresolved / Next-phase priorities:
+   487→- **P2**: Per-source "deep read" via page_reader to enrich abstracts before writing.
+   488→- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+   489→- **P2**: Persist undo snapshots across page refreshes (currently in-memory only).
+   490→- **Styling**: More empty-state illustrations, paragraph status transition animations.
+   491→- **P3**: Collaborative annotations / sharing.
+   492→
+   493→---
+   494→
+   495→## Phase 7 — Project export/import backup (cron round 5)
+   496→
+   497→Task ID: 7
+   498→Agent: main (webDevReview cron)
+   499→Task: QA test, add project export/import (full JSON backup & restore) feature.
+   500→
+   501→### Project Status Assessment
+   502→- Dev server was down at start of round — restarted via `.zscripts/dev.sh`.
+   503→- After restart: HTTP 200, 0 console errors, all features verified working
+   504→  (18 citation markers, 4 paragraph cards, progress tracker "599 / 1000w",
+   505→  outline/insights buttons, ⌘K badge, drag handles).
+   506→- App stable, no bugs found.
+   507→
+   508→### Work Log:
+   509→- **NEW: Project Export/Import backup** (`/api/projects/export` + `/api/projects/import`
+   510→  + `ProjectImportExport` component):
+   511→  - **Export API** (`GET /api/projects/export?projectId=...`):
+   512→    - Serializes the entire project: title, topic, field, status + all paragraphs
+   513→      (with annotations + references), data sources, project-level references,
+   514→      articles (with paragraph-order mapping).
+   515→    - Returns a versioned JSON blob (version: 1) with Content-Disposition header
+   516→      for download.
+   517→  - **Import API** (`POST /api/projects/import`):
+   518→    - Accepts the exported JSON, creates a new project titled "{original} (imported)".
+   519→    - Recreates all paragraphs (with annotations + references), data sources,
+   520→      project references, and articles (with ArticleParagraph links via order mapping).
+   521→    - Returns the new project + stats (counts of imported entities).
+   522→  - **UI**: `ProjectImportExport` dropdown component added to ProjectsSidebar header
+   523→    (FileJson icon, "Backup" label). Contains:
+   524→    - "Export as JSON" — downloads the .sciwrite.json file.
+   525→    - "Import from JSON" — opens file picker, reads + parses JSON, shows a preview
+   526→      dialog (project title, topic, entity-count badges: ¶/refs/sources/articles),
+   527→      then "Import project" button creates the new project and auto-selects it.
+   528→  - **Verified via API**: export returned v1 JSON with 3 paragraphs, 1 data source,
+   529→    3 articles, 1 project reference; import created "CRISPR-Cas9 Specificity Review
+   530→    (imported)" with matching stats.
+   531→  - **Verified in browser**: Backup button visible in sidebar; dropdown shows
+   532→    Export/Import menu items.
+   533→
+   534→### Verification Results:
+   535→- `bun run lint` → clean (0 errors, 0 warnings).
+   536→- 0 console errors, 0 runtime errors.
+   537→- Export API → returns complete project JSON (v1, 3 paragraphs, 3 articles).
+   538→- Import API → creates new project with all data restored.
+   539→- Backup button visible in ProjectsSidebar.
+   540→- All previous features still working.
+   541→
+   542→### Stage Summary:
+   543→- **1 new feature added**: Full project export/import (JSON backup & restore)
+   544→  with preview dialog.
+   545→- Dev server stable on port 3000. Lint clean. No errors.
+   546→
+   547→### Unresolved / Next-phase priorities:
+   548→- **P2**: Per-source "deep read" via page_reader to enrich abstracts before writing.
+   549→- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+   550→- **P2**: Persist undo snapshots across page refreshes.
+   551→- **Styling**: More empty-state illustrations, paragraph status transition animations.
+   552→- **P3**: Collaborative annotations / sharing.
+   553→
+   554→---
+   555→
+   556→## Phase 8 — Per-source deep read via page_reader (cron round 6)
+   557→
+   558→Task ID: 8
+   559→Agent: main (webDevReview cron)
+   560→Task: QA test, add per-source deep-read feature (fetch full page content + AI
+   561→structured summary) to enrich data source abstracts before writing.
+   562→
+   563→### Project Status Assessment
+   564→- Dev server running on port 3000, HTTP 200, 0 console errors after fresh reload.
+   565→- All features verified: 18 citation markers, 4 paragraph cards, progress tracker
+   566→  "599 / 1000w", backup/outline/insights buttons, ⌘K badge, drag handles.
+   567→- App stable, no bugs found.
+   568→
+   569→### Work Log:
+   570→- **NEW: Per-source deep read** (`/api/data-sources/[id]/deep-read` + UI button):
+   571→  - **API route**: `POST /api/data-sources/{id}/deep-read`:
+   572→    1. Fetches the data source's URL via `page_reader` (z-ai-web-dev-sdk).
+   573→    2. Truncates page text to 8000 chars for LLM context.
+   574→    3. AI-summarizes into a structured format: KEY FINDINGS, METHODS, RELEVANCE,
+   575→       ABSTRACT (enriched 2-3 sentence abstract).
+   576→    4. Saves the summary to the data source's `summary` field.
+   577→    5. Returns the updated source + summary + content length.
+   578→    6. Graceful error handling: if page_reader can't extract content (e.g. some
+   579→       database pages are bot-protected), returns a clear 422 error message.
+   580→  - **UI**: Added a Microscope icon button (sky-blue) to each data source card in
+   581→    the KnowledgePanel SourcesList (appears when source has a URL). Shows a spinner
+   582→    while deep-reading.
+   583→  - **Summary display**: When a summary exists, a collapsible "Deep-read summary"
+   584→    section appears (sky-tinted box) with the structured summary. Expand/collapse
+   585→    via ChevronUp/ChevronDown toggle.
+   586→  - **Verified**: API returns structured summary (or clear error for bot-protected
+   587→    pages); UI button renders (1 deep-read button found); no console errors.
+   588→
+   589→### Verification Results:
+   590→- `bun run lint` → clean (0 errors, 0 warnings).
+   591→- 0 console errors, 0 runtime errors.
+   592→- Deep-read button visible on source cards with URLs.
+   593→- All previous features still working (18 markers, 4 cards, progress, backup, etc.).
+   594→
+   595→### Stage Summary:
+   596→- **1 new feature added**: Per-source deep read (page_reader + AI structured summary)
+   597→  with collapsible summary display in the Sources list.
+   598→- Dev server stable. Lint clean. No errors.
+   599→
+   600→### Unresolved / Next-phase priorities:
+   601→- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+   602→- **P2**: Persist undo snapshots across page refreshes.
+   603→- **P2**: Writing tips/contextual help panel.
+   604→- **Styling**: More empty-state illustrations, paragraph status transition animations.
+   605→- **P3**: Collaborative annotations / sharing.
+   606→- **Note**: Some database URLs (PubMed, UniProt) may block page_reader extraction;
+   607→  consider adding fallback to use the stored abstract/metadata instead.
+   608→
+   609→---
+   610→
+   611→## Phase 9 — Writing tips contextual help panel (cron round 7)
+   612→
+   613→Task ID: 9
+   614→Agent: main (webDevReview cron)
+   615→Task: QA test, add writing tips/contextual help panel with scientific writing
+   616→best practices that adapt to the current paragraph format & scenario.
+   617→
+   618→### Project Status Assessment
+   619→- Dev server running on port 3000, HTTP 200, 0 console errors after fresh reload.
+   620→- All features verified: 18 citation markers, 4 paragraph cards, progress tracker
+   621→  "599 / 1000w", backup/outline/insights buttons, ⌘K badge, drag handles, deep-read.
+   622→- App stable, no bugs found.
+   623→
+   624→### Work Log:
+   625→- **NEW: Writing Tips contextual help panel** (`WritingTipsPanel` component):
+   626→  - Slide-in side panel (288px / w-72) that overlays the right edge of the
+   627→    WritingWorkspace when toggled. Card-style with backdrop blur + shadow.
+   628→  - **Context-aware**: Shows "Current context" card with the active paragraph's
+   629→    format & scenario, then provides format-specific and scenario-specific tips.
+   630→  - **Tip sections** (collapsible with accordion behavior):
+   631→    1. Format tips (e.g. "Background tips", "Introduction tips") — 4 tips each,
+   632→       covering structure, citation style, tense, and common pitfalls for each
+   633→       of the 7 formats (abstract/intro/background/methods/results/discussion/
+   634→       conclusion).
+   635→    2. Scenario tips (e.g. "Protein structure", "Literature review") — 3 tips
+   636→       each for the 7 scenarios, covering domain-specific guidance (PDB IDs,
+   637→       UniProt accessions, comparison frameworks, etc.).
+   638→    3. General best practices — 5 universal tips (one idea per paragraph, every
+   639→       claim needs a citation, third person past tense, avoid hedging, read aloud).
+   640→    4. Citation format reference — 5 entries explaining [n], [PMID:xxx], [PDB:xxx],
+   641→       [UniProt:xxx], and the auto-generated ### Citations block.
+   642→    5. Word count guidance — 6 entries with recommended word ranges per format.
+   643→  - **Toggle**: "Tips" ghost button in the WritingWorkspace banner (Lightbulb icon,
+   644→    amber-tinted when active). Panel can be closed via X button in the panel header.
+   645→  - Footer note: "Tips adapt to your current format & scenario".
+   646→  - **Verified**: Panel opens with 5 sections, shows "Current context" with the
+   647→    last paragraph's format/scenario, accordion expand/collapse works.
+   648→
+   649→### Verification Results:
+   650→- `bun run lint` → clean (0 errors, 0 warnings).
+   651→- 0 console errors, 0 runtime errors.
+   652→- Tips panel → opens with 5 contextual sections (Background tips, Protein structure,
+   653→  General best practices, Citation format, Word count guidance).
+   654→- All previous features still working.
+   655→
+   656→### Stage Summary:
+   657→- **1 new feature added**: Writing tips contextual help panel with format/scenario-
+   658→  adaptive best practices, citation format reference, and word count guidance.
+   659→- Dev server stable. Lint clean. No errors.
+   660→
+   661→### Unresolved / Next-phase priorities:
+   662→- **P2**: Citation validation check (verify cited sources exist in references).
+   663→- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+   664→- **P2**: Persist undo snapshots across page refreshes.
+   665→- **Styling**: More empty-state illustrations, paragraph status transition animations.
+   666→- **P3**: Collaborative annotations / sharing.
+   667→
+   668→---
+   669→
+   670→## Phase 10 — Citation validation check (cron round 8)
+   671→
+   672→Task ID: 10
+   673→Agent: main (webDevReview cron)
+   674→Task: QA test, add citation validation feature that verifies every citation
+   675→marker in a paragraph resolves to a saved reference or AI-generated citation.
+   676→
+   677→### Project Status Assessment
+   678→- Dev server was down at start of round — restarted via `.zscripts/dev.sh`.
+   679→- After restart: HTTP 200, 0 console errors, all features verified (18 citation
+   680→  markers, 4 paragraph cards, progress tracker, tips/backup/outline buttons).
+   681→- App stable, no bugs found.
+   682→
+   683→### Work Log:
+   684→- **NEW: Citation validation** (`/api/paragraphs/[id]/validate-citations` +
+   685→  `CitationValidationDialog` component):
+   686→  - **API route** (`GET /api/paragraphs/{id}/validate-citations`):
+   687→    - Extracts all citation markers `[n]` and `[SOURCE:ID]` from the paragraph body
+   688→      (excludes the `### Citations` block).
+   689→    - Parses the AI-generated `### Citations` block into a numbered map.
+   690→    - For each marker, checks if it resolves to: (a) a saved reference (by index
+   691→      for numeric, by type+externalId for SOURCE:ID with alias normalization
+   692→      PMID→pubmed, PDB→rcsb), or (b) an AI-citation-block entry.
+   693→    - Returns: totalMarkers, validCount, missingCount, orphanedCount, detailed
+   694→      results (marker, type, status, resolvedTo, suggestion), orphaned references
+   695→      (saved but never cited), and metadata (hasCitationsBlock, aiCitationCount,
+   696→      savedReferenceCount).
+   697→  - **Dialog component**: Shows a summary banner (green if all valid, amber if
+   698→    issues), 4 stat boxes (Markers/Valid/Missing/Orphaned), missing citations
+   699→    list (with suggestions for how to fix), orphaned references list, and valid
+   700→    citations list (collapsed after 10).
+   701→  - **UI integration**: "Validate citations" menu item added to the paragraph card
+   702→    dropdown menu (ShieldCheck icon, between "Copy text" and format selectors).
+   703→  - **Verified via API**: paragraph without citations block → 8 markers, 0 valid,
+   704→    10 missing (numeric ranges expanded); paragraph with AI citations block → 5
+   705→    markers, 5 valid, 0 missing.
+   706→  - **Verified in browser**: dropdown shows "Validate citations" item; dialog opens
+   707→    with "Citation Validation" title, shows "8 citation markers · 0 resolved" and
+   708→    missing citations section.
+   709→
+   710→### Verification Results:
+   711→- `bun run lint` → clean (0 errors, 0 warnings).
+   712→- 0 console errors, 0 runtime errors.
+   713→- Citation validation API → correct counts for both cited and uncited paragraphs.
+   714→- Dialog → opens with summary, stat boxes, missing/orphaned/valid sections.
+   715→- All previous features still working.
+   716→
+   717→### Stage Summary:
+   718→- **1 new feature added**: Citation validation check that scans paragraph content
+   719→  for citation markers and verifies each resolves to a saved reference or AI
+   720→  citation block entry, with detailed missing/orphaned reporting.
+   721→- Dev server stable on port 3000. Lint clean. No errors.
+   722→
+   723→### Unresolved / Next-phase priorities:
+   724→- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+   725→- **P2**: Persist undo snapshots across page refreshes.
+   726→- **Styling**: More empty-state illustrations, paragraph status transition animations.
+   727→- **P3**: Collaborative annotations / sharing.
+   728→- **P3**: Batch citation validation across all paragraphs in a project.
+   729→
+   730→---
+   731→
+   732→## Phase 11 — Batch citation validation (cron round 9)
+   733→
+   734→Task ID: 11
+   735→Agent: main (webDevReview cron)
+   736→Task: QA test, add batch citation validation that audits all paragraphs in a
+   737→project at once, with an aggregate report and per-paragraph breakdown.
+   738→
+   739→### Project Status Assessment
+   740→- Dev server running on port 3000, HTTP 200, 0 console errors after fresh reload.
+   741→- All features verified: 18 citation markers, 4 paragraph cards, progress tracker
+   742→  "599 / 1000w", tips/backup/outline buttons, ⌘K badge, drag handles.
+   743→- App stable, no bugs found.
+   744→
+   745→### Work Log:
+   746→- **NEW: Batch citation validation** (`/api/projects/[id]/validate-citations` +
+   747→  `BatchValidationDialog` component):
+   748→  - **API route** (`GET /api/projects/{id}/validate-citations`):
+   749→    - Iterates all paragraphs in the project, runs the same validation logic as
+   750→      the single-paragraph endpoint (extract markers, parse AI citations block,
+   751→      resolve numeric + SOURCE:ID markers against saved references + AI block).
+   752→    - Returns an `aggregate` (totalParagraphs, totalMarkers, totalValid,
+   753→      totalMissing, paragraphsClean, paragraphsIssues) + a `paragraphs` array
+   754→      with per-paragraph reports (title, format, status, totalMarkers,
+   755→      validCount, missingCount, missing markers list, hasCitationsBlock,
+   756→      savedReferenceCount).
+   757→  - **Dialog component** (`BatchValidationDialog`):
+   758→    - Aggregate banner: green if all clean, amber if issues — with 4 stat boxes
+   759→      (Paragraphs / Total markers / Valid / Missing).
+   760→    - Per-paragraph breakdown: each paragraph as a card with §-number, status
+   761→      icon (green check / amber X), title, format badge, and inline stats
+   762→      (markers / valid / missing / refs / AI-block indicator).
+   763→    - Missing markers shown as red code chips (up to 8, then "+N more").
+   764→  - **UI integration**: "Audit all citations" button (ShieldCheck icon) added to
+   765→    the InsightsDialog footer. Opens the BatchValidationDialog on top of the
+   766→    Insights dialog.
+   767→  - **Verified via API**: 3 paragraphs, 18 total markers, 10 valid, 10 missing,
+   768→    2 paragraphs clean, 1 with issues.
+   769→  - **Verified in browser**: Insights dialog shows "Audit all citations" button;
+   770→    batch dialog opens with "Project Citation Audit" title, correct aggregate
+   771→    stats (3 paragraphs, 18 markers, 10 valid, 10 missing).
+   772→
+   773→### Verification Results:
+   774→- `bun run lint` → clean (0 errors, 0 warnings).
+   775→- 0 console errors, 0 runtime errors.
+   776→- Batch validation API → correct aggregate + per-paragraph counts.
+   777→- Batch dialog → opens with aggregate banner, stat boxes, per-paragraph breakdown.
+   778→- All previous features still working.
+   779→
+   780→### Stage Summary:
+   781→- **1 new feature added**: Batch citation validation across all paragraphs in a
+   782→  project, accessible from the Insights dialog footer, with aggregate + per-
+   783→  paragraph reporting and missing-marker highlighting.
+   784→- Dev server stable on port 3000. Lint clean. No errors.
+   785→
+   786→### Unresolved / Next-phase priorities:
+   787→- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+   788→- **P2**: Persist undo snapshots across page refreshes.
+   789→- **Styling**: More empty-state illustrations, paragraph status transition animations.
+   790→- **P3**: Collaborative annotations / sharing.
+   791→- **P3**: Auto-fix missing citations (AI suggests references for unresolved markers).
+   792→
+   793→---
+   794→
+   795→## Phase 12 — Auto-fix missing citations (cron round 10)
+   796→
+   797→Task ID: 12
+   798→Agent: main (webDevReview cron)
+   799→Task: QA test, add auto-fix feature that uses AI to suggest database queries for
+   800→unresolved citation markers, executes them, and saves found references.
+   801→
+   802→### Project Status Assessment
+   803→- Dev server running on port 3000, HTTP 200, 0 console errors after fresh reload.
+   804→- All features verified: 18 citation markers, 4 paragraph cards, progress tracker
+   805→  "599 / 1000w", tips/backup/outline/insights buttons, ⌘K badge, drag handles.
+   806→- App stable, no bugs found.
+   807→
+   808→### Work Log:
+   809→- **NEW: Auto-fix missing citations** (`/api/paragraphs/[id]/auto-fix-citations` +
+   810→  UI button in CitationValidationDialog):
+   811→  - **API route** (`POST /api/paragraphs/{id}/auto-fix-citations`):
+   812→    1. Identifies missing citation markers (same logic as validation: numeric
+   813→       markers beyond saved-reference range, or SOURCE:ID markers with no match).
+   814→    2. Sends the paragraph context + missing markers to the AI, which suggests
+   815→       concrete database queries (PubMed/RCSB/UniProt/NCBI) for each marker.
+   816→    3. Executes up to 5 suggested queries via the database router.
+   817→    4. For each query result, saves the first found item as a new reference
+   818→       linked to the paragraph (skips duplicates).
+   819→    5. Returns: message, fixed count, totalMissing, saved references, suggestion count.
+   820→  - **UI**: "Auto-fix N missing" button (Wand2 icon) added to the
+   821→    CitationValidationDialog footer. Only appears when missingCount > 0.
+   822→    Shows a spinner while processing; on success, invalidates the validation
+   823→    query to refresh the report.
+   824→  - **Verified via API**: paragraph with 10 missing citations → AI suggested 10
+   825→    queries, 4 new references saved (resolved 4 of 10). Button now shows
+   826→    "Auto-fix 6 missing" (remaining).
+   827→  - **Verified in browser**: CitationValidationDialog footer shows "Auto-fix 6
+   828→    missing" button; no console errors.
+   829→
+   830→### Verification Results:
+   831→- `bun run lint` → clean (0 errors, 0 warnings).
+   832→- 0 console errors, 0 runtime errors.
+   833→- Auto-fix API → resolved 4 of 10 missing citations, saved 4 references.
+   834→- Auto-fix button → visible in CitationValidationDialog when missingCount > 0.
+   835→- All previous features still working.
+   836→
+   837→### Stage Summary:
+   838→- **1 new feature added**: Auto-fix missing citations — AI suggests database
+   839→  queries for unresolved markers, executes them, and saves found references.
+   840→- Dev server stable on port 3000. Lint clean. No errors.
+   841→
+   842→### Unresolved / Next-phase priorities:
+   843→- **P2**: Multi-level undo history (currently only 1 level of undo for revise).
+   844→- **P2**: Persist undo snapshots across page refreshes.
+   845→- **Styling**: More empty-state illustrations, paragraph status transition animations.
+   846→- **P3**: Collaborative annotations / sharing.
+   847→- **P3**: Batch auto-fix across all paragraphs in a project.
+   848→
+   849→---
+   850→
+   851→## Phase 13 — Gather overflow fix + i18n + AI Peer Review (user request)
+   852→
+   853→Task ID: 13
+   854→Agent: main (user request)
+   855→Task: Fix gather dialog candidate overflow blocking next button, add EN/ZH
+   856→language toggle, build AI peer review feature inspired by nature-review-studio
+   857→+ ChatReviewer (multi-dimensional scoring + iterative review+revise).
+   858→
+   859→### Work Log:
+   860→- **FIX: Gather dialog overflow** (`data-gathering-dialog.tsx`):
+   861→  - Root cause: DialogContent lacked `overflow-hidden`, and the ScrollArea's
+   862→    `min-h-[300px]` forced the content to expand beyond the viewport, pushing
+   863→    the footer (with "next step" buttons) off-screen.
+   864→  - Fix: Added `overflow-hidden` to DialogContent, `shrink-0` to DialogHeader
+   865→    and footer, removed `min-h-[300px]` from ScrollArea content, added
+   866→    `overflow-hidden` to ScrollArea, added `bg-card` to footer for visibility.
+   867→
+   868→- **NEW: i18n with EN/ZH language toggle** (`src/lib/i18n.tsx` + `LanguageToggle`):
+   869→  - `I18nProvider` context with `useI18n()` hook — persists language choice to
+   870→    localStorage.
+   871→  - Translation dictionary with ~50 keys covering header, footer, projects,
+   872→    workspace, database panel, knowledge panel, and common UI strings.
+   873→  - `LanguageToggle` dropdown component (Languages icon) added to header next
+   874→    to theme toggle — switches between English and 中文.
+   875→  - Wired `useI18n` into Header (title, subtitle, tagline, button labels) and
+   876→    Footer (aiPowered, citations, commands).
+   877→  - **Verified**: Switching to 中文 updates subtitle to "AI 科研写作助手", tagline
+   878→    to "专业引用写作", button labels to "洞察/大纲/收集/组合/AI 写作".
+   879→
+   880→- **NEW: AI Peer Review** (`/api/ai/review` + `ReviewDialog` + Prisma `Review` model):
+   881→  - Inspired by **nature-review-studio** (structured multi-dimensional scoring)
+   882→    and **ChatReviewer** (iterative AI critique + revision).
+   883→  - **Prisma model**: `Review` with articleId, round, 6 score fields (novelty,
+   884→    significance, clarity, methodology, citations, overall), verdict, summary,
+   885→    strengths/weaknesses/suggestions (JSON arrays), revisedContent.
+   886→  - **API route** (`POST /api/ai/review`) with 3 modes:
+   887→    1. `review` — AI generates a structured peer review with 0-10 scores across
+   888→       6 dimensions, a verdict (accept/minor-revision/major-revision/reject),
+   889→       summary, strengths, weaknesses, and per-section revision suggestions.
+   890→    2. `revise` — AI revises the article to address all review feedback while
+   891→       preserving inline citations; saves revisedContent + updates the article.
+   892→    3. `auto-iterate` — runs N rounds (1-5) of review+revise automatically;
+   893→       stops early if verdict reaches "accept".
+   894→  - **ReviewDialog component**:
+   895→    - "Run review" button + "Auto-iterate" with round selector (1-5).
+   896→    - Verdict banner (green/amber/rose based on verdict).
+   897→    - 6 score cards with progress bars (color-coded by score tier).
+   898→    - Summary, strengths (green), weaknesses (rose), revision suggestions
+   899→      (per-section issue + fix).
+   900→    - Iteration log showing each round's phase and verdict.
+   901→    - "Revise article" button in footer when verdict ≠ accept.
+   902→  - **UI integration**: "AI Review" button (Gavel icon) added to ArticleViewer
+   903→    footer next to Export.
+   904→  - **Verified via API**: review returned verdict=reject, overall=2/10, 3
+   905→    strengths, 5 weaknesses, 5 suggestions.
+   906→
+   907→### Verification Results:
+   908→- `bun run lint` → clean (0 errors, 0 warnings).
+   909→- Language toggle → switches UI to 中文 (verified subtitle, tagline, buttons).
+   910→- Review API → returns structured review with scores, verdict, strengths,
+   911→  weaknesses, suggestions.
+   912→- Gather dialog → overflow fixed (shrink-0 + overflow-hidden on container).
+   913→
+   914→### Stage Summary:
+   915→- **1 bug fixed**: gather dialog overflow blocking next button.
+   916→- **2 new features added**: EN/ZH i18n with language toggle, AI Peer Review
+   917→  with multi-dimensional scoring + iterative auto-iterate.
+   918→- Dev server stable on port 3000. Lint clean. No errors.
+   919→
+   920→### Unresolved / Next-phase priorities:
+   921→- **P2**: Apply i18n to all dialog components (currently only Header/Footer wired).
+   922→- **P2**: Multi-level undo history for paragraph revise.
+   923→- **P2**: Persist undo snapshots across page refreshes.
+   924→- **P3**: Collaborative annotations / sharing.
+   925→- **P3**: Review history timeline (view all past reviews for an article).
+   926→

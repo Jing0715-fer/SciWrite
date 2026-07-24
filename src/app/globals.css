@@ -203,6 +203,29 @@
   border-bottom-color: oklch(0.62 0.2 25);
 }
 
+/* Pending annotation selection — preserves the text selection highlight
+   while the annotation popover is open, even after the native selection
+   is lost due to focus moving to the popover. */
+.pending-selection {
+  background: linear-gradient(
+    120deg,
+    oklch(0.85 0.13 200 / 0.35),
+    oklch(0.82 0.12 220 / 0.4)
+  );
+  border-radius: 2px;
+  padding: 0 1px;
+  box-shadow: 0 0 0 1px oklch(0.7 0.1 200 / 0.3);
+  color: inherit;
+}
+.dark .pending-selection {
+  background: linear-gradient(
+    120deg,
+    oklch(0.65 0.13 200 / 0.35),
+    oklch(0.6 0.12 220 / 0.4)
+  );
+  box-shadow: 0 0 0 1px oklch(0.5 0.1 200 / 0.4);
+}
+
 /* Paper texture for writing surfaces */
 .paper-surface {
   background-color: var(--card);

@@ -23,6 +23,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { useI18n } from "@/lib/i18n";
 
 interface Props {
   open: boolean;
@@ -30,6 +31,7 @@ interface Props {
 }
 
 export function LLMConfigDialog({ open, onOpenChange }: Props) {
+  const { t } = useI18n();
   const [config, setConfig] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(false);
   const [testCli, setTestCli] = React.useState("z-ai");
@@ -69,7 +71,7 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
         toast.error(data.error);
       } else {
         setTestResult(data.output);
-        toast.success("CLI test successful.");
+        toast.success(t("toast.cliTestSuccessful"));
       }
     } catch (e: any) {
       setTestResult(`Error: ${e.message}`);
@@ -85,10 +87,10 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">
             <Cpu className="h-4 w-4 text-primary" />
-            LLM Configuration
+            {t("llmConfig.title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Detect and configure local AI agent CLIs for LLM tasks.
+            {t("llmConfig.desc")}
           </DialogDescription>
         </DialogHeader>
 
@@ -99,15 +101,14 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
               <div className="flex items-center gap-2 mb-1">
                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                 <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                  Default: Z.AI SDK (Built-in)
+                  {t("llmConfig.default")}
                 </span>
                 <Badge variant="outline" className="text-[8px] h-3.5 uppercase ml-auto">
-                  Active
+                  {t("llmConfig.active")}
                 </Badge>
               </div>
               <p className="text-[10px] text-muted-foreground">
-                Using z-ai-web-dev-sdk for all AI tasks (writing, review, gathering).
-                No configuration needed.
+                {t("llmConfig.defaultDesc")}
               </p>
             </div>
 
@@ -116,11 +117,11 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
               <div className="flex items-center justify-between">
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
                   <Terminal className="h-3 w-3" />
-                  Detected Agent CLIs
+                  {t("llmConfig.detected")}
                 </p>
                 <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-1" onClick={detect} disabled={loading}>
                   {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Settings2 className="h-3 w-3" />}
-                  Re-detect
+                  {t("llmConfig.redetect")}
                 </Button>
               </div>
 
@@ -133,8 +134,8 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
               {config?.detected?.length === 0 && !loading && (
                 <div className="text-center py-8 text-muted-foreground">
                   <Terminal className="h-8 w-8 mx-auto opacity-40 mb-2" />
-                  <p className="text-xs">No agent CLIs detected.</p>
-                  <p className="text-[10px] mt-1">Install Claude CLI, Ollama, or other tools to use them.</p>
+                  <p className="text-xs">{t("llmConfig.noClis")}</p>
+                  <p className="text-[10px] mt-1">{t("llmConfig.noClisHint")}</p>
                 </div>
               )}
 
@@ -148,11 +149,11 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
                     </Badge>
                   </div>
                   <div className="text-[10px] text-muted-foreground space-y-0.5">
-                    <p><span className="font-mono">Path:</span> {cli.path}</p>
-                    {cli.version && <p><span className="font-mono">Version:</span> {cli.version}</p>}
+                    <p><span className="font-mono">{t("llmConfig.path")}</span> {cli.path}</p>
+                    {cli.version && <p><span className="font-mono">{t("llmConfig.version")}</span> {cli.version}</p>}
                     {cli.models?.length > 0 && (
                       <div>
-                        <span className="font-mono">Models:</span>
+                        <span className="font-mono">{t("llmConfig.models")}</span>
                         <div className="flex flex-wrap gap-1 mt-1">
                           {cli.models.map((m: string) => (
                             <span key={m} className="text-[9px] px-1 py-0.5 rounded bg-muted/50 font-mono">
@@ -171,7 +172,7 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
             {config?.envKeys && (
               <div className="space-y-2">
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                  API Keys (Environment)
+                  {t("llmConfig.apiKeys")}
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   {Object.entries(config.envKeys).map(([key, has]: [string, any]) => (
@@ -183,7 +184,7 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
                       )}
                       <span className="font-mono">{key}</span>
                       <span className={`ml-auto ${has ? "text-emerald-600" : "text-muted-foreground"}`}>
-                        {has ? "Set" : "Not set"}
+                        {has ? t("llmConfig.keySet") : t("llmConfig.keyNotSet")}
                       </span>
                     </div>
                   ))}
@@ -195,7 +196,7 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
             <div className="space-y-2">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
                 <Zap className="h-3 w-3" />
-                Test CLI
+                {t("llmConfig.testCli")}
               </p>
               <div className="flex gap-2">
                 <Select value={testCli} onValueChange={setTestCli}>
@@ -213,12 +214,12 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
                 <Input
                   value={testPrompt}
                   onChange={(e) => setTestPrompt(e.target.value)}
-                  placeholder="Test prompt..."
+                  placeholder={t("llmConfig.testPromptPlaceholder")}
                   className="flex-1 h-8 text-xs"
                 />
                 <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={runTest} disabled={testing || !testCli}>
                   {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                  Test
+                  {t("llmConfig.testBtn")}
                 </Button>
               </div>
               {testResult && (

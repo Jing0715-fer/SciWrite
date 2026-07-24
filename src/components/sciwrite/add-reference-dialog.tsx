@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/lib/api-client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useI18n } from "@/lib/i18n";
 
 interface Props {
   open: boolean;
@@ -51,6 +52,7 @@ interface LookupResult {
 }
 
 export function AddReferenceDialog({ open, onOpenChange, projectId }: Props) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [mode, setMode] = React.useState<"lookup" | "manual">("lookup");
   const [lookupType, setLookupType] = React.useState<"pmid" | "doi">("pmid");
@@ -89,19 +91,19 @@ export function AddReferenceDialog({ open, onOpenChange, projectId }: Props) {
   const lookupMut = useMutation({
     mutationFn: async () => {
       const id = lookupId.trim();
-      if (!id) throw new Error("Please enter a PMID or DOI.");
+      if (!id) throw new Error(t("addRef.pleaseEnter"));
       const res = await fetch(
         `/api/references/lookup?type=${lookupType}&id=${encodeURIComponent(id)}`
       );
       if (!res.ok) {
-        const t = await res.text();
-        throw new Error(t || `Lookup failed (${res.status})`);
+        const tmsg = await res.text();
+        throw new Error(tmsg || t("addRef.lookupFailed", { status: res.status }));
       }
       return res.json();
     },
     onSuccess: (data: LookupResult) => {
       setLookupResult(data);
-      toast.success("Reference found.");
+      toast.success(t("toast.referenceFound"));
     },
     onError: (e: Error) => {
       setLookupResult(null);
@@ -125,7 +127,7 @@ export function AddReferenceDialog({ open, onOpenChange, projectId }: Props) {
       });
     },
     onSuccess: () => {
-      toast.success("Reference added.");
+      toast.success(t("toast.referenceAdded"));
       qc.invalidateQueries({ queryKey: ["project", projectId] });
       onOpenChange(false);
     },
@@ -138,10 +140,10 @@ export function AddReferenceDialog({ open, onOpenChange, projectId }: Props) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <BookOpen className="h-4 w-4 text-primary" />
-            Add Reference
+            {t("addRef.title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Look up a reference by PMID/DOI, or enter it manually.
+            {t("addRef.desc")}
           </DialogDescription>
         </DialogHeader>
 
@@ -155,7 +157,7 @@ export function AddReferenceDialog({ open, onOpenChange, projectId }: Props) {
             }`}
           >
             <Search className="h-3 w-3 inline mr-1" />
-            Lookup
+            {t("addRef.lookup")}
           </button>
           <button
             onClick={() => setMode("manual")}
@@ -166,7 +168,7 @@ export function AddReferenceDialog({ open, onOpenChange, projectId }: Props) {
             }`}
           >
             <Plus className="h-3 w-3 inline mr-1" />
-            Manual
+            {t("addRef.manual")}
           </button>
         </div>
 
@@ -189,7 +191,7 @@ export function AddReferenceDialog({ open, onOpenChange, projectId }: Props) {
                 value={lookupId}
                 onChange={(e) => setLookupId(e.target.value)}
                 placeholder={
-                  lookupType === "pmid" ? "e.g. 25189619" : "e.g. 10.1038/nature"
+                  lookupType === "pmid" ? t("addRef.pmidPlaceholder") : t("addRef.doiPlaceholder2")
                 }
                 className="flex-1 h-8 text-xs"
                 onKeyDown={(e) => {
@@ -214,7 +216,7 @@ export function AddReferenceDialog({ open, onOpenChange, projectId }: Props) {
               <div className="rounded-lg border border-primary/30 bg-primary/[0.03] p-3 space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] uppercase tracking-wider text-primary font-semibold">
-                    Found
+                    {t("addRef.found")}
                   </span>
                   <button
                     onClick={() => setLookupResult(null)}
@@ -248,7 +250,7 @@ export function AddReferenceDialog({ open, onOpenChange, projectId }: Props) {
                       rel="noreferrer"
                       className="text-[9px] text-primary hover:underline inline-flex items-center gap-0.5"
                     >
-                      <ExternalLink className="h-2.5 w-2.5" /> open
+                      <ExternalLink className="h-2.5 w-2.5" /> {t("common.open")}
                     </a>
                   )}
                 </div>
@@ -263,88 +265,88 @@ export function AddReferenceDialog({ open, onOpenChange, projectId }: Props) {
                   ) : (
                     <Plus className="h-3 w-3" />
                   )}
-                  Add this reference
+                  {t("addRef.addThis")}
                 </Button>
               </div>
             )}
             {!lookupResult && !lookupMut.isPending && (
               <p className="text-[10px] text-muted-foreground text-center py-2">
-                Enter a PMID (PubMed ID) or DOI to look up a reference automatically.
+                {t("addRef.enterPmid")}
               </p>
             )}
           </div>
         ) : (
           <div className="space-y-2.5 max-h-[50vh] overflow-y-auto scroll-academic pr-1">
             <div className="space-y-1">
-              <Label className="text-xs">Title *</Label>
+              <Label className="text-xs">{t("addRef.titleStar")}</Label>
               <Input
                 value={manual.title}
                 onChange={(e) => setManual({ ...manual, title: e.target.value })}
-                placeholder="Article title"
+                placeholder={t("addRef.titlePlaceholder")}
                 className="text-xs h-8"
               />
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs">Authors</Label>
+                <Label className="text-xs">{t("addRef.authors")}</Label>
                 <Input
                   value={manual.authors}
                   onChange={(e) =>
                     setManual({ ...manual, authors: e.target.value })
                   }
-                  placeholder="Smith J, Doe A"
+                  placeholder={t("addRef.authorsPlaceholder")}
                   className="text-xs h-8"
                 />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Year</Label>
+                <Label className="text-xs">{t("addRef.year")}</Label>
                 <Input
                   value={manual.year}
                   onChange={(e) => setManual({ ...manual, year: e.target.value })}
-                  placeholder="2024"
+                  placeholder={t("addRef.yearPlaceholder")}
                   className="text-xs h-8"
                 />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs">Journal</Label>
+                <Label className="text-xs">{t("addRef.journal")}</Label>
                 <Input
                   value={manual.journal}
                   onChange={(e) =>
                     setManual({ ...manual, journal: e.target.value })
                   }
-                  placeholder="Nature"
+                  placeholder={t("addRef.journalPlaceholder")}
                   className="text-xs h-8"
                 />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">DOI</Label>
+                <Label className="text-xs">{t("addRef.doi")}</Label>
                 <Input
                   value={manual.doi}
                   onChange={(e) => setManual({ ...manual, doi: e.target.value })}
-                  placeholder="10.1038/..."
+                  placeholder={t("addRef.doiPlaceholder")}
                   className="text-xs h-8"
                 />
               </div>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">URL</Label>
+              <Label className="text-xs">{t("addRef.url")}</Label>
               <Input
                 value={manual.url}
                 onChange={(e) => setManual({ ...manual, url: e.target.value })}
-                placeholder="https://..."
+                placeholder={t("addRef.urlPlaceholder")}
                 className="text-xs h-8"
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Abstract / notes</Label>
+              <Label className="text-xs">{t("addRef.abstract")}</Label>
               <Textarea
                 value={manual.abstract}
                 onChange={(e) =>
                   setManual({ ...manual, abstract: e.target.value })
                 }
-                placeholder="Brief abstract or notes…"
+                placeholder={t("addRef.abstractPlaceholder")}
                 className="text-xs min-h-[48px]"
               />
             </div>
@@ -363,7 +365,7 @@ export function AddReferenceDialog({ open, onOpenChange, projectId }: Props) {
               ) : (
                 <Plus className="h-3.5 w-3.5" />
               )}
-              Add reference
+              {t("addRef.addReference")}
             </Button>
           </DialogFooter>
         )}

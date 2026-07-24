@@ -35,6 +35,7 @@ import {
 import { api } from "@/lib/api-client";
 import { JOURNAL_TEMPLATES } from "@/lib/journal-templates";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useI18n } from "@/lib/i18n";
 
 interface Props {
   open: boolean;
@@ -44,14 +45,15 @@ interface Props {
 }
 
 const STEPS = [
-  { id: "gather", label: "Gathering data sources", icon: Database },
-  { id: "relationships", label: "Analyzing source relationships", icon: Network },
-  { id: "plan", label: "Planning article sections", icon: ListTree },
-  { id: "generate", label: "Generating chapters", icon: PenLine },
-  { id: "compose", label: "Composing final article", icon: FileStack },
+  { id: "gather", labelKey: "oneClick.stepGather" as const, icon: Database },
+  { id: "relationships", labelKey: "oneClick.stepRelationships" as const, icon: Network },
+  { id: "plan", labelKey: "oneClick.stepPlan" as const, icon: ListTree },
+  { id: "generate", labelKey: "oneClick.stepGenerate" as const, icon: PenLine },
+  { id: "compose", labelKey: "oneClick.stepCompose" as const, icon: FileStack },
 ];
 
 export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }: Props) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [journalTemplate, setJournalTemplate] = React.useState("generic");
   const [language, setLanguage] = React.useState("English");
@@ -97,7 +99,10 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
     onSuccess: (data) => {
       setResult(data);
       toast.success(
-        `Article generated: ${data.stats?.articleWordCount || 0} words, ${data.stats?.referencesSaved || 0} references.`
+        t("toast.oneClickGenerated", {
+          words: data.stats?.articleWordCount || 0,
+          refs: data.stats?.referencesSaved || 0,
+        })
       );
       qc.invalidateQueries({ queryKey: ["project", projectId] });
     },
@@ -112,10 +117,10 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">
             <Zap className="h-4 w-4 text-primary" />
-            One-Click Full Article Generation
+            {t("oneClick.title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Automatically gathers data sources → plans sections → generates chapters → composes article.
+            {t("oneClick.desc")}
           </DialogDescription>
         </DialogHeader>
 
@@ -125,41 +130,39 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
             {!generateMut.isPending && !result && (
               <div className="space-y-3">
                 <div className="rounded-lg bg-primary/[0.04] border border-primary/20 p-3">
-                  <p className="text-[11px] text-muted-foreground mb-0.5">Research topic</p>
+                  <p className="text-[11px] text-muted-foreground mb-0.5">{t("oneClick.researchTopic")}</p>
                   <p className="text-sm font-medium">{topic}</p>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <Label className="text-xs">Journal template</Label>
+                    <Label className="text-xs">{t("oneClick.journalTemplate")}</Label>
                     <Select value={journalTemplate} onValueChange={setJournalTemplate}>
                       <SelectTrigger className="text-xs h-9">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {JOURNAL_TEMPLATES.map((t) => (
-                          <SelectItem key={t.id} value={t.id} className="text-xs">
-                            {t.name}
-                          </SelectItem>
+                        {JOURNAL_TEMPLATES.map((jt) => (
+                          <SelectItem key={jt.id} value={jt.id} className="text-xs">{jt.name}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-xs">Output language</Label>
+                    <Label className="text-xs">{t("oneClick.outputLanguage")}</Label>
                     <Select value={language} onValueChange={setLanguage}>
                       <SelectTrigger className="text-xs h-9">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="English" className="text-xs">English</SelectItem>
-                        <SelectItem value="中文" className="text-xs">中文</SelectItem>
-                        <SelectItem value="both" className="text-xs">English + 中文</SelectItem>
+                        <SelectItem value="English" className="text-xs">{t("topic.langEnglish")}</SelectItem>
+                        <SelectItem value="中文" className="text-xs">{t("topic.langChinese")}</SelectItem>
+                        <SelectItem value="both" className="text-xs">{t("topic.langBoth")}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Target word count: {targetWords}</Label>
+                  <Label className="text-xs">{t("oneClick.targetWordCount", { n: targetWords })}</Label>
                   <input
                     type="range"
                     min={1500}
@@ -178,12 +181,10 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
                 <div className="rounded-lg border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/20 p-3">
                   <p className="text-[10px] text-amber-700 dark:text-amber-400 font-semibold flex items-center gap-1 mb-1">
                     <AlertCircle className="h-3 w-3" />
-                    Important
+                    {t("oneClick.important")}
                   </p>
                   <p className="text-[10px] text-muted-foreground leading-relaxed">
-                    This will gather real data sources from PubMed, RCSB, UniProt, and NCBI before
-                    writing. Only gathered sources will be cited — no fabricated references.
-                    Generation takes ~3-5 minutes depending on article length.
+                    {t("oneClick.importantDesc")}
                   </p>
                 </div>
               </div>
@@ -234,7 +235,7 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
                               : "text-muted-foreground"
                           }`}
                         >
-                          {step.label}
+                          {t(step.labelKey)}
                         </p>
                         {/* Show latest log message for active step */}
                         {isActive && streamLog.length > 0 && (
@@ -244,7 +245,7 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
                         )}
                       </div>
                       {isDone && (
-                        <span className="text-[9px] text-emerald-600 font-semibold">✓ Done</span>
+                        <span className="text-[9px] text-emerald-600 font-semibold">{t("oneClick.done")}</span>
                       )}
                     </div>
                   );
@@ -262,7 +263,7 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
                 )}
 
                 <p className="text-[10px] text-muted-foreground text-center">
-                  Streaming generation — no timeout. This may take several minutes.
+                  {t("oneClick.streamingHint")}
                 </p>
               </div>
             )}
@@ -274,24 +275,24 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
                   <div className="flex items-center gap-2 mb-2">
                     <CheckCircle2 className="h-5 w-5 text-emerald-600" />
                     <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                      Article generated successfully!
+                      {t("oneClick.generatedTitle")}
                     </span>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                     <ResultStat
-                      label="Sources gathered"
+                      label={t("oneClick.sourcesGathered")}
                       value={result.stats?.sourcesGathered || 0}
                     />
                     <ResultStat
-                      label="References saved"
+                      label={t("oneClick.referencesSaved")}
                       value={result.stats?.referencesSaved || 0}
                     />
                     <ResultStat
-                      label="Sections written"
+                      label={t("oneClick.sectionsWritten")}
                       value={result.stats?.sectionsPlanned || 0}
                     />
                     <ResultStat
-                      label="Total words"
+                      label={t("oneClick.totalWords")}
                       value={result.stats?.articleWordCount || 0}
                     />
                   </div>
@@ -300,7 +301,7 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
                 {result.sections && (
                   <div className="space-y-1.5">
                     <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                      Generated sections
+                      {t("oneClick.generatedSections")}
                     </p>
                     {result.sections.map((s: any, i: number) => (
                       <div
@@ -327,7 +328,7 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
           {!generateMut.isPending && !result && (
             <>
               <span className="text-[10px] text-muted-foreground">
-                Gather sources → plan → generate → compose
+                {t("oneClick.footerHint")}
               </span>
               <Button
                 size="sm"
@@ -335,14 +336,14 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
                 onClick={() => generateMut.mutate()}
               >
                 <Zap className="h-3.5 w-3.5" />
-                Generate full article
+                {t("oneClick.generateBtn")}
               </Button>
             </>
           )}
           {generateMut.isPending && (
             <div className="flex items-center gap-2 ml-auto text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Generating…
+              {t("oneClick.generating")}
             </div>
           )}
           {result && (
@@ -352,7 +353,7 @@ export function OneClickGenerateDialog({ open, onOpenChange, projectId, topic }:
               onClick={() => onOpenChange(false)}
             >
               <CheckCircle2 className="h-3.5 w-3.5" />
-              Done
+              {t("oneClick.doneBtn")}
             </Button>
           )}
         </div>

@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { api } from "@/lib/api-client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useI18n } from "@/lib/i18n";
 import { PARAGRAPH_FORMATS, PARAGRAPH_SCENARIOS } from "@/lib/constants";
 
 interface Props {
@@ -62,6 +63,7 @@ export function OutlineDialog({
   topic,
   onUseParagraph,
 }: Props) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [purpose, setPurpose] = React.useState("");
   const [outline, setOutline] = React.useState<any[] | null>(null);
@@ -81,9 +83,9 @@ export function OutlineDialog({
       setOutline(data.outline);
       setSummary(data.summary);
       if (data.outline.length === 0) {
-        toast.info("No outline generated. Try a more specific topic.");
+        toast.info(t("toast.noOutline"));
       } else {
-        toast.success(`Generated ${data.outline.length}-paragraph outline.`);
+        toast.success(t("toast.outlineGenerated", { n: data.outline.length }));
       }
     },
     onError: (e: Error) => toast.error(e.message),
@@ -94,7 +96,7 @@ export function OutlineDialog({
       return api.queryDatabase({ source: q.database, query: q.query });
     },
     onSuccess: (_data, variables) => {
-      toast.success(`Query executed: ${variables.database} "${variables.query.slice(0, 30)}…"`);
+      toast.success(t("toast.queryExecuted", { db: variables.database, query: variables.query.slice(0, 30) }));
       qc.invalidateQueries({ queryKey: ["project", projectId] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -106,29 +108,28 @@ export function OutlineDialog({
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60">
           <DialogTitle className="flex items-center gap-2 text-base">
             <ListTree className="h-4 w-4 text-primary" />
-            AI Research Outline
+            {t("outline.title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Generate a structured paragraph plan from your topic — each with format,
-            scenario, focus, and suggested database queries.
+            {t("outline.desc")}
           </DialogDescription>
         </DialogHeader>
 
         <ScrollArea className="flex-1 min-h-0 scroll-academic">
           <div className="px-6 py-4 min-h-[300px]">
             <div className="rounded-lg bg-primary/[0.04] border border-primary/20 p-3 mb-4">
-              <p className="text-[11px] text-muted-foreground mb-0.5">Research topic</p>
+              <p className="text-[11px] text-muted-foreground mb-0.5">{t("outline.researchTopic")}</p>
               <p className="text-sm font-medium">{topic}</p>
             </div>
 
             <div className="space-y-1.5 mb-4">
               <Label className="text-xs">
-                Purpose / angle (optional — refines the outline)
+                {t("outline.purpose")}
               </Label>
               <Input
                 value={purpose}
                 onChange={(e) => setPurpose(e.target.value)}
-                placeholder="e.g. focus on therapeutic applications and recent engineering improvements"
+                placeholder={t("outline.purposePlaceholder")}
                 className="text-xs h-8"
               />
             </div>
@@ -137,7 +138,7 @@ export function OutlineDialog({
               <div className="space-y-3 py-4">
                 <div className="flex items-center gap-2 text-sm">
                   <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                  <span>Designing paragraph outline…</span>
+                  <span>{t("outline.generating")}</span>
                 </div>
                 {[0, 1, 2, 3].map((i) => (
                   <div
@@ -161,7 +162,7 @@ export function OutlineDialog({
                 <div className="flex items-center gap-1.5 mb-1">
                   <Lightbulb className="h-3.5 w-3.5 text-emerald-600" />
                   <span className="text-[10px] uppercase tracking-wider text-emerald-700 dark:text-emerald-400 font-semibold">
-                    Strategy
+                    {t("outline.strategy")}
                   </span>
                 </div>
                 <p className="text-xs leading-relaxed">{summary}</p>
@@ -211,7 +212,7 @@ export function OutlineDialog({
                             <div className="mt-2 space-y-1">
                               <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
                                 <Search className="h-2.5 w-2.5" />
-                                Suggested queries
+                                {t("outline.suggestedQueries")}
                               </p>
                               {item.suggestedQueries.map(
                                 (q: any, qi: number) => (
@@ -239,7 +240,7 @@ export function OutlineDialog({
                                       disabled={runQueryMut.isPending}
                                     >
                                       <ArrowRight className="h-2.5 w-2.5" />
-                                      Run
+                                      {t("outline.run")}
                                     </Button>
                                   </div>
                                 )
@@ -256,7 +257,7 @@ export function OutlineDialog({
                           onClick={() => onUseParagraph(item)}
                         >
                           <Sparkles className="h-3 w-3" />
-                          Write this paragraph
+                          {t("outline.writeThis")}
                         </Button>
                       )}
                     </div>
@@ -270,11 +271,9 @@ export function OutlineDialog({
                 <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
                   <ListTree className="h-7 w-7 text-primary" />
                 </div>
-                <h3 className="text-sm font-semibold">Generate a paragraph plan</h3>
+                <h3 className="text-sm font-semibold">{t("outline.generatePlan")}</h3>
                 <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
-                  The AI will analyze your topic and propose a structured outline
-                  with formats, scenarios, and database search queries for each
-                  paragraph.
+                  {t("outline.generateDesc")}
                 </p>
               </div>
             )}
@@ -283,7 +282,7 @@ export function OutlineDialog({
 
         <div className="px-6 py-3 border-t border-border/60 flex items-center justify-between gap-2">
           <div className="text-[10px] text-muted-foreground">
-            {outline && `${outline.length} paragraphs planned`}
+            {outline && t("outline.paragraphsPlanned", { n: outline.length })}
           </div>
           <div className="flex items-center gap-2">
             {outline && (
@@ -295,7 +294,7 @@ export function OutlineDialog({
                 disabled={genMut.isPending}
               >
                 <RefreshCw className="h-3.5 w-3.5" />
-                Regenerate
+                {t("outline.regenerate")}
               </Button>
             )}
             <Button
@@ -309,7 +308,7 @@ export function OutlineDialog({
               ) : (
                 <Sparkles className="h-3.5 w-3.5" />
               )}
-              {outline ? "Regenerate outline" : "Generate outline"}
+              {outline ? t("outline.regenerateOutline") : t("outline.generateOutline")}
             </Button>
           </div>
         </div>

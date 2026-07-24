@@ -23,6 +23,7 @@ import { api } from "@/lib/api-client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ParagraphCard } from "./paragraph-card";
+import { useI18n } from "@/lib/i18n";
 import type { Annotation, Paragraph } from "@/lib/types";
 
 interface Props {
@@ -31,6 +32,7 @@ interface Props {
 }
 
 export function SortableParagraphs({ paragraphs, projectId }: Props) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [items, setItems] = React.useState(paragraphs.map((p) => p.id));
 
@@ -80,7 +82,7 @@ export function SortableParagraphs({ paragraphs, projectId }: Props) {
     // persist new order
     const updates = next.map((id, order) => ({ id, order }));
     reorderMut.mutate(updates);
-    toast.success("Paragraph order updated.");
+    toast.success(t("toast.paragraphOrderUpdated"));
   };
 
   const orderedParagraphs = items
@@ -118,6 +120,7 @@ function SortableParagraph({
   projectId: string;
   index: number;
 }) {
+  const { t } = useI18n();
   const {
     attributes,
     listeners,
@@ -140,8 +143,8 @@ function SortableParagraph({
         {...attributes}
         {...listeners}
         className="absolute -left-6 top-4 h-8 w-5 flex items-center justify-center cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity text-muted-foreground hover:text-primary touch-none"
-        aria-label="Drag to reorder"
-        title="Drag to reorder"
+        aria-label={t("sortable.dragReorder")}
+        title={t("sortable.dragReorder")}
       >
         <GripVertical className="h-4 w-4" />
       </button>

@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { api } from "@/lib/api-client";
 import { useQuery } from "@tanstack/react-query";
+import { useI18n } from "@/lib/i18n";
 
 interface Props {
   open: boolean;
@@ -29,6 +30,7 @@ interface Props {
 }
 
 export function BatchValidationDialog({ open, onOpenChange, projectId }: Props) {
+  const { t } = useI18n();
   const { data, isLoading } = useQuery({
     queryKey: ["batch-validate", projectId],
     queryFn: () => api.validateProjectCitations(projectId!),
@@ -52,10 +54,10 @@ export function BatchValidationDialog({ open, onOpenChange, projectId }: Props) 
             ) : (
               <ShieldCheck className="h-4 w-4 text-primary" />
             )}
-            Project Citation Audit
+            {t("batch.title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Batch-validate citations across all paragraphs in this project
+            {t("batch.desc")}
           </DialogDescription>
         </DialogHeader>
 
@@ -91,28 +93,28 @@ export function BatchValidationDialog({ open, onOpenChange, projectId }: Props) 
                       }`}
                     >
                       {allClean
-                        ? "All citations valid across all paragraphs"
-                        : `${agg.totalMissing} missing citations in ${agg.paragraphsIssues} paragraph(s)`}
+                        ? t("batch.allClean")
+                        : t("batch.missingInParagraphs", { missing: agg.totalMissing, paragraphs: agg.paragraphsIssues })}
                     </span>
                   </div>
                   <div className="grid grid-cols-4 gap-2">
                     <AggStat
-                      label="Paragraphs"
+                      label={t("batch.paragraphsLabel")}
                       value={agg.totalParagraphs}
                       color="slate"
                     />
                     <AggStat
-                      label="Total markers"
+                      label={t("batch.totalMarkersLabel")}
                       value={agg.totalMarkers}
                       color="slate"
                     />
                     <AggStat
-                      label="Valid"
+                      label={t("validation.validLabel")}
                       value={agg.totalValid}
                       color="emerald"
                     />
                     <AggStat
-                      label="Missing"
+                      label={t("validation.missingLabel")}
                       value={agg.totalMissing}
                       color="rose"
                     />
@@ -122,7 +124,7 @@ export function BatchValidationDialog({ open, onOpenChange, projectId }: Props) 
                 {/* Per-paragraph breakdown */}
                 <div className="space-y-2">
                   <p className="divider-academic">
-                    <span>Per-paragraph breakdown</span>
+                    <span>{t("batch.perParagraph")}</span>
                   </p>
                   {data.paragraphs.map((p: any, i: number) => {
                     const clean = p.missingCount === 0;
@@ -161,22 +163,22 @@ export function BatchValidationDialog({ open, onOpenChange, projectId }: Props) 
                         <div className="flex items-center gap-3 mt-1.5 pl-6 text-[10px]">
                           <span className="text-muted-foreground">
                             <FileText className="h-2.5 w-2.5 inline mr-0.5" />
-                            {p.totalMarkers} markers
+                            {p.totalMarkers} {t("batch.markersSuffix")}
                           </span>
                           <span className="text-emerald-600 dark:text-emerald-400">
-                            {p.validCount} valid
+                            {p.validCount} {t("batch.validSuffix")}
                           </span>
                           {p.missingCount > 0 && (
                             <span className="text-rose-600 dark:text-rose-400">
-                              {p.missingCount} missing
+                              {p.missingCount} {t("batch.missingSuffix")}
                             </span>
                           )}
                           <span className="text-muted-foreground">
-                            {p.savedReferenceCount} refs
+                            {p.savedReferenceCount} {t("batch.refsSuffix")}
                           </span>
                           {p.hasCitationsBlock && (
                             <span className="text-sky-600 dark:text-sky-400">
-                              AI block
+                              {t("batch.aiBlockLabel")}
                             </span>
                           )}
                         </div>
@@ -192,7 +194,7 @@ export function BatchValidationDialog({ open, onOpenChange, projectId }: Props) 
                             ))}
                             {p.missing.length > 8 && (
                               <span className="text-[9px] text-muted-foreground">
-                                +{p.missing.length - 8} more
+                                {t("batch.moreCount", { n: p.missing.length - 8 })}
                               </span>
                             )}
                           </div>

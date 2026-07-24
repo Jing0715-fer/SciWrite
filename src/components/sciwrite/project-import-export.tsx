@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { api } from "@/lib/api-client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useI18n } from "@/lib/i18n";
 
 interface Props {
   projectId?: string | null;
@@ -34,6 +35,7 @@ export function ProjectImportExport({
   size = "sm",
   onImported,
 }: Props) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [importPreview, setImportPreview] = React.useState<{
@@ -58,7 +60,7 @@ export function ProjectImportExport({
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      toast.success("Project exported as JSON backup.");
+      toast.success(t("toast.projectExported"));
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -67,7 +69,7 @@ export function ProjectImportExport({
     mutationFn: async (data: unknown) => api.importProject(data),
     onSuccess: (data) => {
       toast.success(
-        `Imported project "${data.project.title}" with ${data.stats.paragraphs} paragraphs, ${data.stats.articles} articles.`
+        t("backup.importedToast", { name: data.project.title, paragraphs: data.stats.paragraphs, articles: data.stats.articles })
       );
       qc.invalidateQueries({ queryKey: ["projects"] });
       setImportPreview(null);
@@ -87,12 +89,12 @@ export function ProjectImportExport({
       try {
         const data = JSON.parse(ev.target?.result as string);
         if (!data.version || !data.project) {
-          toast.error("Invalid SciWrite export file.");
+          toast.error(t("backup.invalidFile"));
           return;
         }
         setImportPreview({ data, fileName: file.name });
       } catch {
-        toast.error("Could not parse JSON file.");
+        toast.error(t("backup.parseFailed"));
       }
     };
     reader.readAsText(file);
@@ -106,32 +108,30 @@ export function ProjectImportExport({
         <DropdownMenuTrigger asChild>
           <Button variant={variant} size={size} className="gap-1.5 text-[11px]">
             <FileJson className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Backup</span>
+            <span className="hidden sm:inline">{t("backup.label")}</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-52">
           <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            Project backup
+            {t("backup.title")}
           </DropdownMenuLabel>
           <DropdownMenuItem
             onClick={() => exportMut.mutate()}
             disabled={exportMut.isPending || !projectId}
           >
             <Download className="h-3.5 w-3.5 text-emerald-600" />
-            <span className="text-xs">Export as JSON</span>
+            <span className="text-xs">{t("backup.exportJson")}</span>
             {exportMut.isPending && (
               <Loader2 className="h-3 w-3 animate-spin ml-auto" />
             )}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
             <Upload className="h-3.5 w-3.5 text-sky-600" />
-            <span className="text-xs">Import from JSON</span>
+            <span className="text-xs">{t("backup.importJson")}</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <div className="px-2 py-1 text-[9px] text-muted-foreground leading-relaxed">
-            Export saves the entire project (paragraphs, annotations, references,
-            sources, articles) as a portable .json file. Import creates a new
-            project from the backup.
+            {t("backup.desc")}
           </div>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -153,7 +153,7 @@ export function ProjectImportExport({
                 <Upload className="h-4 w-4 text-sky-600" />
               </div>
               <div>
-                <h3 className="text-sm font-semibold">Import project</h3>
+                <h3 className="text-sm font-semibold">{t("backup.importTitle")}</h3>
                 <p className="text-[10px] text-muted-foreground">
                   {importPreview.fileName}
                 </p>
@@ -172,19 +172,19 @@ export function ProjectImportExport({
                   {importPreview.data.paragraphs?.length || 0} ¶
                 </span>
                 <span className="badge-teal px-1.5 py-0.5 rounded text-[8px] font-semibold uppercase">
-                  {importPreview.data.projectReferences?.length || 0} refs
+                  {importPreview.data.projectReferences?.length || 0} {t("backup.refsSuffix")}
                 </span>
                 <span className="badge-amber px-1.5 py-0.5 rounded text-[8px] font-semibold uppercase">
-                  {importPreview.data.dataSources?.length || 0} sources
+                  {importPreview.data.dataSources?.length || 0} {t("backup.sourcesSuffix")}
                 </span>
                 <span className="badge-violet px-1.5 py-0.5 rounded text-[8px] font-semibold uppercase">
-                  {importPreview.data.articles?.length || 0} articles
+                  {importPreview.data.articles?.length || 0} {t("backup.articlesSuffix")}
                 </span>
               </div>
             </div>
 
             <p className="text-[10px] text-muted-foreground">
-              This will create a new project named &ldquo;{importPreview.data.project.title} (imported)&rdquo;.
+              {t("backup.importWillCreate", { name: importPreview.data.project.title })}
             </p>
 
             <div className="flex items-center justify-end gap-2 pt-1">
@@ -194,7 +194,7 @@ export function ProjectImportExport({
                 className="text-xs"
                 onClick={() => setImportPreview(null)}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button
                 size="sm"
@@ -207,7 +207,7 @@ export function ProjectImportExport({
                 ) : (
                   <CheckCircle2 className="h-3.5 w-3.5" />
                 )}
-                Import project
+                {t("backup.importBtn")}
               </Button>
             </div>
           </div>

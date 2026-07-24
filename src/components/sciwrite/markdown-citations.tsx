@@ -448,7 +448,10 @@ export function MarkdownCitations({
         </div>
       )}
 
-      {/* Complete reference list (all saved references, not just cited ones) */}
+      {/* Complete reference list — only CITED references, in appearance order.
+          Since references are now stored with citationOrder matching [n] numbering,
+          the references array IS the cited list in order. allRefs is the same as
+          the references prop (all cited, in [n] order). */}
       {allRefs.length > 0 && (
         <div className="mt-4 pt-3 border-t border-border/70">
           <p className="divider-academic mb-2">

@@ -91,25 +91,25 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
                   <StatCard
                     icon={<FileText className="h-3.5 w-3.5" />}
-                    label="Paragraphs"
+                    label={t("insights.paragraphsLabel")}
                     value={data.stats.totalParagraphs}
                     color="emerald"
                   />
                   <StatCard
                     icon={<Type className="h-3.5 w-3.5" />}
-                    label="Words"
+                    label={t("insights.wordsLabel")}
                     value={data.stats.totalWords}
                     color="teal"
                   />
                   <StatCard
                     icon={<Quote className="h-3.5 w-3.5" />}
-                    label="Citations"
+                    label={t("insights.citationsLabel")}
                     value={data.stats.totalCitations}
                     color="amber"
                   />
                   <StatCard
                     icon={<Layers className="h-3.5 w-3.5" />}
-                    label="Articles"
+                    label={t("insights.articlesLabel")}
                     value={data.stats.totalArticles}
                     color="violet"
                   />
@@ -134,7 +134,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                     {data.stats.totalParagraphs - Math.round(
                       (data.stats.citationCoverage / 100) * data.stats.totalParagraphs
                     )}{" "}
-                    of {data.stats.totalParagraphs} paragraphs lack inline citations.
+                    {t("insights.paragraphs")} {data.stats.totalParagraphs} {t("insights.paragraphsLack")}
                   </p>
                 </div>
 
@@ -150,7 +150,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                     <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">
                       {data.stats.annotations.unresolved}
                     </p>
-                    <p className="text-[9px] text-muted-foreground">annotations</p>
+                    <p className="text-[9px] text-muted-foreground">{t("insights.annotations")}</p>
                   </div>
                   <div className="rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-3">
                     <div className="flex items-center gap-1.5 mb-1">
@@ -162,19 +162,19 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                     <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">
                       {data.stats.annotations.resolved}
                     </p>
-                    <p className="text-[9px] text-muted-foreground">annotations</p>
+                    <p className="text-[9px] text-muted-foreground">{t("insights.annotations")}</p>
                   </div>
                 </div>
 
                 {/* Distributions */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <DistributionChart
-                    title="Paragraph Status"
+                    title={t("insights.paragraphStatus")}
                     data={data.distributions.status}
                     colorMap={STATUS_COLOR}
                   />
                   <DistributionChart
-                    title="Paragraph Format"
+                    title={t("insights.paragraphFormat")}
                     data={data.distributions.format}
                     colorMap={{
                       background: "bg-slate-400",
@@ -187,12 +187,12 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                     }}
                   />
                   <DistributionChart
-                    title="Data Sources"
+                    title={t("insights.dataSources")}
                     data={data.distributions.source}
                     colorMap={SOURCE_COLOR}
                   />
                   <DistributionChart
-                    title="Reference Types"
+                    title={t("insights.referenceTypes")}
                     data={data.distributions.referenceType}
                     colorMap={SOURCE_COLOR}
                   />
@@ -203,15 +203,15 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                   <TrendingUp className="h-4 w-4 text-primary" />
                   <div className="flex-1">
                     <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Average words per paragraph
+                      {t("insights.avgWords")}
                     </p>
                     <p className="text-sm font-semibold">
-                      {data.stats.avgWordsPerParagraph} words
+                      {data.stats.avgWordsPerParagraph} {t("insights.wordsUnit")}
                     </p>
                   </div>
                   <div className="text-right">
                     <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Total references
+                      {t("insights.totalReferences")}
                     </p>
                     <p className="text-sm font-semibold">
                       {data.stats.totalReferences}
@@ -223,7 +223,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                 {data.timeline.length > 0 && (
                   <div className="space-y-2">
                     <p className="divider-academic">
-                      <span>Writing Timeline</span>
+                      <span>{t("insights.writingTimeline")}</span>
                     </p>
                     <div className="space-y-1.5">
                       {data.timeline.map((item: any, i: number) => (
@@ -243,7 +243,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                             {item.title}
                           </span>
                           <span className="text-[9px] text-muted-foreground">
-                            {item.wordCount}w · {item.citations}cit
+                            {item.wordCount}w · {item.citations}{t("insights.citSuffix")}
                           </span>
                           <span className="text-[9px] text-muted-foreground">
                             {new Date(item.createdAt).toLocaleDateString()}
@@ -258,7 +258,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                 {data.articles.length > 0 && (
                   <div className="space-y-2">
                     <p className="divider-academic">
-                      <span>Composed Articles</span>
+                      <span>{t("insights.composedArticles")}</span>
                     </p>
                     <div className="space-y-1.5">
                       {data.articles.map((a: any) => (
@@ -288,7 +288,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
         {/* Footer with batch citation audit */}
         <div className="px-6 py-3 border-t border-border/60 flex items-center justify-between gap-2 shrink-0">
           <span className="text-[10px] text-muted-foreground">
-            Validate all citations across the project
+            {t("insights.auditDesc")}
           </span>
           <Button
             variant="outline"
@@ -346,6 +346,7 @@ function DistributionChart({
   data: Record<string, number>;
   colorMap: Record<string, string>;
 }) {
+  const { t } = useI18n();
   const entries = Object.entries(data);
   const total = entries.reduce((s, [, v]) => s + v, 0);
   if (entries.length === 0 || total === 0) {
@@ -354,7 +355,7 @@ function DistributionChart({
         <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">
           {title}
         </p>
-        <p className="text-[11px] text-muted-foreground italic">No data yet</p>
+        <p className="text-[11px] text-muted-foreground italic">{t("insights.noData")}</p>
       </div>
     );
   }

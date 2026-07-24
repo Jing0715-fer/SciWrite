@@ -137,12 +137,12 @@ export function TopicComposer({
     },
     onSuccess: (data) => {
       if (data.__full) {
-        toast.success("Full article generated! Check the Article tab.");
+        toast.success(t("toast.fullArticleGenerated"));
         qc.invalidateQueries({ queryKey: ["project", projectId] });
         onOpenChange(false);
       } else {
         setGenerated(data.content);
-        toast.success("Paragraph drafted with citations.");
+        toast.success(t("toast.paragraphDrafted"));
       }
     },
     onError: (e: Error) => toast.error(e.message),
@@ -160,7 +160,7 @@ export function TopicComposer({
       });
     },
     onSuccess: () => {
-      toast.success("Paragraph saved to workspace.");
+      toast.success(t("toast.paragraphSaved"));
       qc.invalidateQueries({ queryKey: ["project", projectId] });
       onOpenChange(false);
     },
@@ -195,7 +195,7 @@ export function TopicComposer({
                 }`}
               >
                 <PenLine className="h-3 w-3 inline mr-1" />
-                {t("topic.langEnglish") === "English" ? "Single Paragraph" : "单段生成"}
+                {t("topic.singleParagraph")}
               </button>
               <button
                 onClick={() => setGenMode("full")}
@@ -204,7 +204,7 @@ export function TopicComposer({
                 }`}
               >
                 <Zap className="h-3 w-3 inline mr-1" />
-                {t("topic.langEnglish") === "English" ? "Full Article (auto-gather)" : "全文生成（自动收集）"}
+                {t("topic.fullArticle")}
               </button>
             </div>
 
@@ -212,7 +212,7 @@ export function TopicComposer({
             {genMode === "full" && (
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t("topic.langEnglish") === "English" ? "Target words" : "目标字数"}: {targetWords}</Label>
+                  <Label className="text-xs">{t("topic.targetWords")}: {targetWords}</Label>
                   <input
                     type="range" min={1500} max={10000} step={500}
                     value={targetWords}
@@ -221,7 +221,7 @@ export function TopicComposer({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t("topic.langEnglish") === "English" ? "Journal template" : "期刊模板"}</Label>
+                  <Label className="text-xs">{t("topic.journalTemplate")}</Label>
                   <Select value={journalTemplate} onValueChange={setJournalTemplate}>
                     <SelectTrigger className="text-xs h-9"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -239,7 +239,7 @@ export function TopicComposer({
               <Textarea
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
-                placeholder="e.g. Structural basis of CRISPR-Cas9 target recognition and off-target effects"
+                placeholder={t("topic.topicPlaceholder")}
                 className="text-sm min-h-[60px]"
               />
             </div>
@@ -248,14 +248,14 @@ export function TopicComposer({
               <Input
                 value={focus}
                 onChange={(e) => setFocus(e.target.value)}
-                placeholder="e.g. focus on PAM-dependent unwinding mechanism"
+                placeholder={t("topic.focusPlaceholder")}
                 className="text-sm"
               />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs">Paragraph format</Label>
+                <Label className="text-xs">{t("topic.formatLabel")}</Label>
                 <Select value={format} onValueChange={setFormat}>
                   <SelectTrigger className="text-xs h-9">
                     <SelectValue />
@@ -270,7 +270,7 @@ export function TopicComposer({
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">Scenario</Label>
+                <Label className="text-xs">{t("topic.scenarioLabel")}</Label>
                 <Select value={scenario} onValueChange={setScenario}>
                   <SelectTrigger className="text-xs h-9">
                     <SelectValue />
@@ -381,7 +381,7 @@ export function TopicComposer({
               <Textarea
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}
-                placeholder={"recent CRISPR off-target reviews 2024\nCas9 PAM specificity mechanisms"}
+                placeholder={t("topic.searchPlaceholder")}
                 className="text-xs min-h-[48px] font-mono"
               />
             </div>
@@ -391,14 +391,14 @@ export function TopicComposer({
                 <div className="flex items-center gap-2">
                   <Loader2 className="h-4 w-4 animate-spin text-primary" />
                   <span className="text-xs font-semibold text-primary">
-                    Researching &amp; writing…
+                    {t("topic.researchingLabel")}
                   </span>
                 </div>
                 <div className="space-y-2">
                   {[
-                    "Searching databases & references",
-                    "Synthesizing scholarly prose",
-                    "Adding inline citations",
+                    t("topic.researchingStep1"),
+                    t("topic.researchingStep2"),
+                    t("topic.researchingStep3"),
                   ].map((step, i) => (
                     <div
                       key={i}
@@ -475,8 +475,8 @@ export function TopicComposer({
                   <Sparkles className="h-4 w-4" />
                 )}
                 {writeMut.isPending
-                  ? (genMode === "full" ? (t("topic.langEnglish") === "English" ? "Generating full article..." : "正在生成全文...") : t("topic.researching"))
-                  : (genMode === "full" ? (t("topic.langEnglish") === "English" ? "Generate full article" : "生成全文") : t("topic.generate"))}
+                  ? (genMode === "full" ? t("topic.generatingFullArticle") : t("topic.researching"))
+                  : (genMode === "full" ? t("topic.generateFullArticle") : t("topic.generate"))}
               </Button>
             </>
           ) : (

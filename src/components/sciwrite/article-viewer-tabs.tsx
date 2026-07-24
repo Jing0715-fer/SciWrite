@@ -32,6 +32,7 @@ import { ExportMenu } from "./export-menu";
 import { ReviewDialog } from "./review-dialog";
 import { MarkdownCitations } from "./markdown-citations";
 import { api } from "@/lib/api-client";
+import { useI18n } from "@/lib/i18n";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 interface Props {
@@ -40,7 +41,36 @@ interface Props {
   onClose: () => void;
 }
 
+/**
+ * Clean article content by removing duplicate/inconsistent reference sections.
+ * Existing articles (composed before the fix) may contain BOTH an AI-generated
+ * "REFERENCES" section AND the code-generated "## References" section. This
+ * function keeps only the LAST reference-like section (the canonical one) and
+ * strips any duplicates before it.
+ */
+function cleanArticleContent(content: string): string {
+  // Match reference-like section headers (## References, REFERENCES, ### Citations, etc.)
+  const refHeaderRe =
+    /^#{0,6}\s*\*{0,2}(References|REFERENCES|Citations|Bibliography|文献|参考文献)\*{0,2}\s*:?\s*$/gm;
+  const matches: { index: number; text: string }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = refHeaderRe.exec(content))) {
+    matches.push({ index: m.index, text: m[0] });
+  }
+  // No duplicates — return as-is
+  if (matches.length <= 1) return content;
+
+  // Keep only the LAST reference section (the code-generated canonical one).
+  // Strip everything from the FIRST reference header to just before the LAST one.
+  const firstIdx = matches[0].index;
+  const lastIdx = matches[matches.length - 1].index;
+  const before = content.slice(0, firstIdx);
+  const after = content.slice(lastIdx);
+  return before.trimEnd() + "\n\n" + after.trim();
+}
+
 export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
+  const { t } = useI18n();
   const [reviewOpen, setReviewOpen] = React.useState(false);
   const qc = useQueryClient();
 
@@ -90,19 +120,19 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
             <TabsList className="h-8">
               <TabsTrigger value="sections" className="text-xs gap-1">
                 <FileText className="h-3 w-3" />
-                Sections
+                {t("articleViewer.sections")}
               </TabsTrigger>
               <TabsTrigger value="composed" className="text-xs gap-1">
                 <Layers className="h-3 w-3" />
-                Composed
+                {t("articleViewer.composed")}
               </TabsTrigger>
               <TabsTrigger value="review" className="text-xs gap-1">
                 <Gavel className="h-3 w-3" />
-                Review
+                {t("articleViewer.review")}
               </TabsTrigger>
               <TabsTrigger value="relationships" className="text-xs gap-1">
                 <Network className="h-3 w-3" />
-                Relationships
+                {t("articleViewer.relationships")}
               </TabsTrigger>
             </TabsList>
             <div className="flex items-center gap-2">
@@ -113,7 +143,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                 onClick={() => setReviewOpen(true)}
               >
                 <Gavel className="h-3.5 w-3.5" />
-                AI Review
+                {t("articleViewer.aiReview")}
               </Button>
               <ExportMenu type="article" id={article.id} variant="outline" />
             </div>
@@ -152,7 +182,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
           <TabsContent value="composed" className="flex-1 mt-0 min-h-0">
             <ScrollArea className="h-full scroll-academic">
               <div className="px-8 py-5 max-w-3xl mx-auto">
-                <MarkdownCitations content={article.content} className="text-[13.5px]" />
+                <MarkdownCitations content={cleanArticleContent(article.content)} className="text-[13.5px]" />
               </div>
             </ScrollArea>
           </TabsContent>
@@ -168,6 +198,15 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
               data={relQ.data}
               isLoading={relQ.isLoading}
               dataSources={dataSources}
+              noDataMessage={t("articleViewer.noRelData")}
+              sectionsLabel={t("articleViewer.sources")}
+              connectionsLabel={t("articleViewer.connections")}
+              themesLabel={t("articleViewer.themes")}
+              thematicClustersLabel={t("articleViewer.thematicClusters")}
+              summaryLabel={t("articleViewer.relSummary")}
+              keyInsightsLabel={t("articleViewer.keyInsights")}
+              contradictionsLabel={t("articleViewer.contradictions")}
+              sourceConnectionsLabel={t("articleViewer.sourceConnections")}
             />
           </TabsContent>
         </Tabs>
@@ -186,13 +225,14 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
 }
 
 function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articleTitle: string }) {
+  const { t } = useI18n();
   const [reviewData, setReviewData] = React.useState<any>(null);
 
   const reviewMut = useMutation({
     mutationFn: () => api.aiReview({ mode: "review", articleId }),
     onSuccess: (data) => {
       setReviewData(data);
-      toast.success("Review completed.");
+      toast.success(t("toast.reviewCompleted"));
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -205,14 +245,13 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
             <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
               <Gavel className="h-7 w-7 text-primary" />
             </div>
-            <h3 className="text-sm font-semibold">AI Peer Review</h3>
+            <h3 className="text-sm font-semibold">{t("articleViewer.aiPeerReview")}</h3>
             <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto mb-4">
-              Run a structured peer review with multi-dimensional scoring, strengths,
-              weaknesses, and revision suggestions.
+              {t("articleViewer.reviewDesc")}
             </p>
             <Button size="sm" className="gap-1.5 text-xs" onClick={() => reviewMut.mutate()}>
               <Gavel className="h-3.5 w-3.5" />
-              Run review
+              {t("articleViewer.runReview")}
             </Button>
           </div>
         )}
@@ -235,7 +274,7 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
                 <span className={`text-sm font-semibold ${
                   reviewData.verdict === "accept" ? "text-emerald-700" : "text-amber-700"
                 }`}>
-                  {reviewData.verdict === "accept" ? "✓ Accept" : `⚠ ${reviewData.verdict}`}
+                  {reviewData.verdict === "accept" ? t("articleViewer.acceptVerdict") : `⚠ ${reviewData.verdict}`}
                 </span>
               </div>
             )}
@@ -255,7 +294,7 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
             {/* Summary */}
             {reviewData.review?.summary && (
               <div className="rounded-md border border-border/50 p-2.5">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">Summary</p>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">{t("articleViewer.summary")}</p>
                 <p className="text-xs leading-relaxed">{reviewData.review.summary}</p>
               </div>
             )}
@@ -264,13 +303,13 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
             {reviewData.review && (
               <div className="grid grid-cols-2 gap-2">
                 <div className="rounded-md border border-emerald-200/50 bg-emerald-50/30 p-2">
-                  <p className="text-[10px] uppercase font-semibold text-emerald-700 mb-1">Strengths</p>
+                  <p className="text-[10px] uppercase font-semibold text-emerald-700 mb-1">{t("articleViewer.strengths")}</p>
                   {safeParse(reviewData.review.strengths).map((s: string, i: number) => (
                     <p key={i} className="text-[10px] mb-1">• {s}</p>
                   ))}
                 </div>
                 <div className="rounded-md border border-rose-200/50 bg-rose-50/30 p-2">
-                  <p className="text-[10px] uppercase font-semibold text-rose-700 mb-1">Weaknesses</p>
+                  <p className="text-[10px] uppercase font-semibold text-rose-700 mb-1">{t("articleViewer.weaknesses")}</p>
                   {safeParse(reviewData.review.weaknesses).map((w: string, i: number) => (
                     <p key={i} className="text-[10px] mb-1">• {w}</p>
                   ))}
@@ -286,7 +325,7 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
               disabled={reviewMut.isPending}
             >
               <Loader2 className={reviewMut.isPending ? "h-3.5 w-3.5 animate-spin" : "hidden"} />
-              Re-run review
+              {t("articleViewer.rerunReview")}
             </Button>
           </div>
         )}
@@ -295,7 +334,33 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
   );
 }
 
-function RelationshipView({ data, isLoading, dataSources }: { data: any; isLoading: boolean; dataSources: any[] }) {
+function RelationshipView({
+  data,
+  isLoading,
+  dataSources,
+  noDataMessage,
+  sectionsLabel,
+  connectionsLabel,
+  themesLabel,
+  thematicClustersLabel,
+  summaryLabel,
+  keyInsightsLabel,
+  contradictionsLabel,
+  sourceConnectionsLabel,
+}: {
+  data: any;
+  isLoading: boolean;
+  dataSources: any[];
+  noDataMessage: string;
+  sectionsLabel: string;
+  connectionsLabel: string;
+  themesLabel: string;
+  thematicClustersLabel: string;
+  summaryLabel: string;
+  keyInsightsLabel: string;
+  contradictionsLabel: string;
+  sourceConnectionsLabel: string;
+}) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full py-12">
@@ -309,7 +374,7 @@ function RelationshipView({ data, isLoading, dataSources }: { data: any; isLoadi
       <div className="text-center py-12">
         <Network className="h-10 w-10 mx-auto opacity-40 mb-3" />
         <p className="text-xs text-muted-foreground">
-          {data?.error || "No relationship data available. Gather sources first."}
+          {data?.error || noDataMessage}
         </p>
       </div>
     );
@@ -322,7 +387,7 @@ function RelationshipView({ data, isLoading, dataSources }: { data: any; isLoadi
         {data.summary && (
           <div className="rounded-lg border border-primary/20 bg-primary/[0.03] p-3">
             <p className="text-[10px] uppercase tracking-wider text-primary font-semibold mb-1">
-              Source Relationship Summary
+              {summaryLabel}
             </p>
             <p className="text-xs leading-relaxed">{data.summary}</p>
           </div>
@@ -332,15 +397,15 @@ function RelationshipView({ data, isLoading, dataSources }: { data: any; isLoadi
         <div className="grid grid-cols-3 gap-2">
           <div className="rounded-md border border-border/50 p-2 text-center">
             <p className="text-lg font-bold">{data.nodes?.length || dataSources.length}</p>
-            <p className="text-[9px] uppercase text-muted-foreground">Sources</p>
+            <p className="text-[9px] uppercase text-muted-foreground">{sectionsLabel}</p>
           </div>
           <div className="rounded-md border border-border/50 p-2 text-center">
             <p className="text-lg font-bold">{data.edges?.length || 0}</p>
-            <p className="text-[9px] uppercase text-muted-foreground">Connections</p>
+            <p className="text-[9px] uppercase text-muted-foreground">{connectionsLabel}</p>
           </div>
           <div className="rounded-md border border-border/50 p-2 text-center">
             <p className="text-lg font-bold">{data.themes?.length || 0}</p>
-            <p className="text-[9px] uppercase text-muted-foreground">Themes</p>
+            <p className="text-[9px] uppercase text-muted-foreground">{themesLabel}</p>
           </div>
         </div>
 
@@ -348,7 +413,7 @@ function RelationshipView({ data, isLoading, dataSources }: { data: any; isLoadi
         {data.themes?.length > 0 && (
           <div className="space-y-2">
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-              Thematic Clusters
+              {thematicClustersLabel}
             </p>
             {data.themes.map((t: any, i: number) => (
               <div key={i} className="rounded-md border border-border/50 p-2.5">
@@ -370,7 +435,7 @@ function RelationshipView({ data, isLoading, dataSources }: { data: any; isLoadi
         {data.keyInsights?.length > 0 && (
           <div className="space-y-1.5">
             <p className="text-[10px] uppercase tracking-wider text-primary font-semibold">
-              Key Insights
+              {keyInsightsLabel}
             </p>
             {data.keyInsights.map((insight: string, i: number) => (
               <div key={i} className="flex items-start gap-1.5 text-[11px]">
@@ -385,7 +450,7 @@ function RelationshipView({ data, isLoading, dataSources }: { data: any; isLoadi
         {data.contradictions?.length > 0 && (
           <div className="space-y-1.5">
             <p className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold">
-              Contradictions
+              {contradictionsLabel}
             </p>
             {data.contradictions.map((c: any, i: number) => (
               <div key={i} className="rounded-md border border-rose-200/50 bg-rose-50/30 p-2">
@@ -405,7 +470,7 @@ function RelationshipView({ data, isLoading, dataSources }: { data: any; isLoadi
         {data.edges?.length > 0 && (
           <div className="space-y-1.5">
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-              Source Connections ({data.edges.length})
+              {sourceConnectionsLabel.replace("{n}", String(data.edges.length))}
             </p>
             {data.edges.slice(0, 20).map((e: any, i: number) => (
               <div key={i} className="flex items-center gap-2 text-[10px] rounded-md bg-muted/20 px-2 py-1">

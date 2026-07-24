@@ -60,7 +60,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
 
   const searchMut = useMutation({
     mutationFn: async () => {
-      if (!query.trim()) throw new Error("Please enter a search query.");
+      if (!query.trim()) throw new Error(t("db.pleaseEnterQuery"));
       return api.queryDatabase({
         source,
         query,
@@ -71,9 +71,9 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
       setResults(data);
       setError(null);
       if (data.items.length === 0) {
-        toast.info("No results found. Try a broader query.");
+        toast.info(t("db.noResultsFound"));
       } else {
-        toast.success(`Found ${data.total} result(s) from ${srcMeta.shortName}.`);
+        toast.success(t("db.foundToast", { n: data.total, src: srcMeta.shortName }));
       }
     },
     onError: (err: Error) => {
@@ -95,7 +95,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
       });
     },
     onSuccess: () => {
-      toast.success("Added to data sources.");
+      toast.success(t("toast.addedToSources"));
       qc.invalidateQueries({ queryKey: ["project", projectId] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -117,7 +117,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
       });
     },
     onSuccess: () => {
-      toast.success("Saved as reference.");
+      toast.success(t("toast.savedAsReference"));
       qc.invalidateQueries({ queryKey: ["project", projectId] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -172,8 +172,8 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="blastp">blastp (protein)</SelectItem>
-                  <SelectItem value="blastn">blastn (nucleotide)</SelectItem>
+                  <SelectItem value="blastp">{t("db.blastpProtein")}</SelectItem>
+                  <SelectItem value="blastn">{t("db.blastnNucleotide")}</SelectItem>
                 </SelectContent>
               </Select>
               <Button
@@ -187,7 +187,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
                 ) : (
                   <Dna className="h-3.5 w-3.5" />
                 )}
-                <span className="ml-1">BLAST</span>
+                <span className="ml-1">{t("db.blast")}</span>
               </Button>
             </div>
           </>
@@ -225,7 +225,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
             onClick={() => setQuery(srcMeta.example)}
             className="text-[10px] text-muted-foreground hover:text-primary transition-colors"
           >
-            Try: {srcMeta.example}
+            {t("db.try")} {srcMeta.example}
           </button>
         )}
       </div>
@@ -310,6 +310,7 @@ function ResultCard({
   savingSource: boolean;
   savingRef: boolean;
 }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = React.useState(false);
   const badgeClass = SOURCE_BADGE[item.source] || "badge-slate";
   return (
@@ -370,7 +371,7 @@ function ResultCard({
           onClick={onAddSource}
           disabled={savingSource}
         >
-          <Plus className="h-3 w-3" /> Source
+          <Plus className="h-3 w-3" /> {t("db.source")}
         </Button>
         <Button
           variant="ghost"
@@ -379,7 +380,7 @@ function ResultCard({
           onClick={onAddRef}
           disabled={savingRef}
         >
-          <Plus className="h-3 w-3" /> Reference
+          <Plus className="h-3 w-3" /> {t("db.reference")}
         </Button>
         {item.abstract && (
           <Button
@@ -388,7 +389,7 @@ function ResultCard({
             className="h-6 text-[10px] px-2 ml-auto"
             onClick={() => setExpanded((v) => !v)}
           >
-            {expanded ? "Less" : "More"}
+            {expanded ? t("common.less") : t("common.more")}
             <ChevronDown
               className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`}
             />

@@ -266,6 +266,67 @@ export function renumberCitations(
   };
 }
 
+/**
+ * Renumber numeric [n] citations within a SINGLE paragraph by order of first
+ * appearance, so [1] = first cited ref, [2] = second cited ref, etc.
+ *
+ * This eliminates "orphan" references — uncited refs simply don't get a number
+ * and are excluded from the returned reordered reference list.
+ *
+ * @param content   The paragraph body text (may contain a "### Citations" block).
+ * @param references The references array in current order (index 0 = old [1]).
+ * @returns { content, references } — renumbered content + references reordered
+ *          to match the new numbering (only cited refs included).
+ */
+export function renumberByAppearance<T extends { id?: string; type?: string; externalId?: string | null; title: string }>(
+  content: string,
+  references: T[]
+): { content: string; references: T[] } {
+  if (!references.length) return { content, references };
+
+  // Split off the "### Citations" block (if any) so we don't renumber inside it.
+  const citeHeaderIdx = content.indexOf("### Citations");
+  const body = citeHeaderIdx >= 0 ? content.slice(0, citeHeaderIdx) : content;
+  const tail = citeHeaderIdx >= 0 ? content.slice(citeHeaderIdx) : "";
+
+  // First pass: collect all numeric citations in order of first appearance.
+  const citeRe = /\[(\d{1,3}(?:[,\-–]\s*\d{1,3})*)\]/g;
+  const appearanceOrder: number[] = []; // old numbers in first-appearance order
+  const seen = new Set<number>();
+  let m: RegExpExecArray | null;
+  while ((m = citeRe.exec(body))) {
+    const nums = expandCitationRange(m[1]);
+    for (const n of nums) {
+      if (n >= 1 && n <= references.length && !seen.has(n)) {
+        seen.add(n);
+        appearanceOrder.push(n);
+      }
+    }
+  }
+
+  // Build mapping: old number → new number (1-based, by appearance).
+  const oldToNew: Record<number, number> = {};
+  appearanceOrder.forEach((oldNum, i) => {
+    oldToNew[oldNum] = i + 1;
+  });
+
+  // Second pass: replace each citation in the body with renumbered version.
+  let newBody = body.replace(citeRe, (match, inner: string) => {
+    const nums = expandCitationRange(inner);
+    const newNums = nums
+      .map((n: number) => oldToNew[n])
+      .filter((n: number | undefined): n is number => n !== undefined);
+    if (newNums.length === 0) return match; // keep original if none resolved
+    return `[${newNums.join(",")}]`;
+  });
+
+  // Build the reordered references array (only cited refs, in new order).
+  const reorderedRefs: T[] = appearanceOrder.map((oldNum) => references[oldNum - 1]);
+
+  const newContent = tail ? newBody + tail : newBody;
+  return { content: newContent, references: reorderedRefs };
+}
+
 function expandCitationRange(inner: string): number[] {
   const trimmed = inner.trim();
   const nums: number[] = [];

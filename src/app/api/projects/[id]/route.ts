@@ -15,7 +15,7 @@ export async function GET(
         orderBy: { order: "asc" },
         include: {
           annotations: { orderBy: { createdAt: "desc" } },
-          references: true,
+          references: { orderBy: [{ citationOrder: "asc" }, { createdAt: "asc" }] },
           _count: { select: { annotations: true, references: true } },
         },
       },

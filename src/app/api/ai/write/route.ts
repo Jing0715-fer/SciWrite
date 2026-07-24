@@ -5,6 +5,7 @@ import {
   buildCitationContext,
   buildWritePrompt,
   countWords,
+  renumberByAppearance,
   summarizeDataSource,
   writingSystemPrompt,
 } from "@/lib/writing";
@@ -141,7 +142,14 @@ export async function POST(req: NextRequest) {
       searchContext: [dsContext, searchContext, userDataContext].filter(Boolean).join("\n\n"),
     });
 
-    const content = await chat(prompt, { system, temperature: 0.65 });
+    let content = await chat(prompt, { system, temperature: 0.65 });
+
+    // Renumber citations by order of first appearance so [1] = first cited ref,
+    // [2] = second cited ref, etc. This eliminates orphan references.
+    // Only references that are actually cited will appear in the reordered list.
+    const { content: renumberedContent, references: reorderedRefs } =
+      renumberByAppearance(content, references);
+    content = renumberedContent;
 
     // Create the paragraph record if a project is provided
     let paragraph = null;
@@ -163,11 +171,13 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // attach references used
-      if (references.length) {
-        await db.reference.updateMany({
-          where: { id: { in: references.map((r) => r.id) } },
-          data: { paragraphId: paragraph.id },
+      // Link ONLY the cited references (in appearance order) to this paragraph.
+      // Uncited references are not linked — no orphans.
+      // Set citationOrder to match the [n] numbering (0-based).
+      for (let idx = 0; idx < reorderedRefs.length; idx++) {
+        await db.reference.update({
+          where: { id: reorderedRefs[idx].id },
+          data: { paragraphId: paragraph.id, citationOrder: idx },
         });
       }
     }

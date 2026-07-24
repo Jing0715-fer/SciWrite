@@ -14,6 +14,8 @@ import {
   X,
 } from "lucide-react";
 import { PARAGRAPH_FORMATS, PARAGRAPH_SCENARIOS } from "@/lib/constants";
+import { useI18n } from "@/lib/i18n";
+import type { TranslationKey } from "@/lib/i18n";
 
 interface Props {
   format?: string;
@@ -22,9 +24,9 @@ interface Props {
   onOpenChange: (v: boolean) => void;
 }
 
-const FORMAT_TIPS: Record<string, { title: string; tips: string[] }> = {
+const FORMAT_TIPS: Record<string, { titleKey: TranslationKey; tips: string[] }> = {
   abstract: {
-    title: "Abstract tips",
+    titleKey: "tips.formatTitle.abstract",
     tips: [
       "Keep it under 250 words — be concise and self-contained.",
       "Structure: background → aim → method → key result → implication.",
@@ -33,7 +35,7 @@ const FORMAT_TIPS: Record<string, { title: string; tips: string[] }> = {
     ],
   },
   intro: {
-    title: "Introduction tips",
+    titleKey: "tips.formatTitle.intro",
     tips: [
       "Start broad (context) then narrow to your specific question.",
       "Clearly state the knowledge gap your work addresses.",
@@ -42,7 +44,7 @@ const FORMAT_TIPS: Record<string, { title: string; tips: string[] }> = {
     ],
   },
   background: {
-    title: "Background tips",
+    titleKey: "tips.formatTitle.background",
     tips: [
       "Synthesize — don't just list prior work; show how studies relate.",
       "Group references by theme or chronology for narrative flow.",
@@ -51,7 +53,7 @@ const FORMAT_TIPS: Record<string, { title: string; tips: string[] }> = {
     ],
   },
   methods: {
-    title: "Methods tips",
+    titleKey: "tips.formatTitle.methods",
     tips: [
       "Be reproducible — include enough detail for others to replicate.",
       "Cite databases/tools: [PDB:1A3N], [UniProt:P04637], [PMID:xxx].",
@@ -60,7 +62,7 @@ const FORMAT_TIPS: Record<string, { title: string; tips: string[] }> = {
     ],
   },
   results: {
-    title: "Results tips",
+    titleKey: "tips.formatTitle.results",
     tips: [
       "Report findings objectively — save interpretation for Discussion.",
       "Use past tense: 'We found that...', 'The structure revealed...'.",
@@ -69,7 +71,7 @@ const FORMAT_TIPS: Record<string, { title: string; tips: string[] }> = {
     ],
   },
   discussion: {
-    title: "Discussion tips",
+    titleKey: "tips.formatTitle.discussion",
     tips: [
       "Interpret results — don't just repeat them.",
       "Compare with prior work: 'Consistent with [n], we found...'.",
@@ -78,7 +80,7 @@ const FORMAT_TIPS: Record<string, { title: string; tips: string[] }> = {
     ],
   },
   conclusion: {
-    title: "Conclusion tips",
+    titleKey: "tips.formatTitle.conclusion",
     tips: [
       "Summarize key takeaways in 2-3 sentences.",
       "State the broader significance of the findings.",
@@ -88,9 +90,9 @@ const FORMAT_TIPS: Record<string, { title: string; tips: string[] }> = {
   },
 };
 
-const SCENARIO_TIPS: Record<string, { title: string; tips: string[] }> = {
+const SCENARIO_TIPS: Record<string, { titleKey: TranslationKey; tips: string[] }> = {
   "literature-review": {
-    title: "Literature review",
+    titleKey: "tips.scenarioTitle.literatureReview",
     tips: [
       "Organize thematically, not paper-by-paper.",
       "Identify trends, controversies, and gaps.",
@@ -98,7 +100,7 @@ const SCENARIO_TIPS: Record<string, { title: string; tips: string[] }> = {
     ],
   },
   "protein-structure": {
-    title: "Protein structure",
+    titleKey: "tips.scenarioTitle.proteinStructure",
     tips: [
       "Reference PDB entries explicitly: [PDB:1A3N].",
       "Describe resolution, method (X-ray/cryo-EM), and key residues.",
@@ -106,7 +108,7 @@ const SCENARIO_TIPS: Record<string, { title: string; tips: string[] }> = {
     ],
   },
   "sequence-analysis": {
-    title: "Sequence analysis",
+    titleKey: "tips.scenarioTitle.sequenceAnalysis",
     tips: [
       "Cite UniProt accessions: [UniProt:P04637].",
       "Mention alignment tools, E-values, and identity thresholds.",
@@ -114,7 +116,7 @@ const SCENARIO_TIPS: Record<string, { title: string; tips: string[] }> = {
     ],
   },
   mechanism: {
-    title: "Mechanism",
+    titleKey: "tips.scenarioTitle.mechanism",
     tips: [
       "Build a logical causal chain: A → B → C.",
       "Support each step with structural or experimental evidence.",
@@ -122,7 +124,7 @@ const SCENARIO_TIPS: Record<string, { title: string; tips: string[] }> = {
     ],
   },
   comparative: {
-    title: "Comparative",
+    titleKey: "tips.scenarioTitle.comparative",
     tips: [
       "Use a clear comparison framework (table or structured prose).",
       "Highlight both similarities AND differences.",
@@ -130,7 +132,7 @@ const SCENARIO_TIPS: Record<string, { title: string; tips: string[] }> = {
     ],
   },
   clinical: {
-    title: "Clinical / translational",
+    titleKey: "tips.scenarioTitle.clinical",
     tips: [
       "Define jargon for a broader audience.",
       "Reference clinical trial IDs or patient cohorts where applicable.",
@@ -138,7 +140,7 @@ const SCENARIO_TIPS: Record<string, { title: string; tips: string[] }> = {
     ],
   },
   custom: {
-    title: "Custom",
+    titleKey: "tips.scenarioTitle.custom",
     tips: [
       "Maintain academic register and precise terminology.",
       "Ensure every factual claim has a citation.",
@@ -156,6 +158,7 @@ const GENERAL_TIPS = [
 ];
 
 export function WritingTipsPanel({ format, scenario, open, onOpenChange }: Props) {
+  const { t } = useI18n();
   const [expandedSection, setExpandedSection] = React.useState<string | null>(
     "format"
   );
@@ -176,9 +179,9 @@ export function WritingTipsPanel({ format, scenario, open, onOpenChange }: Props
             <Lightbulb className="h-3.5 w-3.5 text-amber-600" />
           </div>
           <div>
-            <p className="text-xs font-semibold leading-none">Writing Tips</p>
+            <p className="text-xs font-semibold leading-none">{t("tips.title")}</p>
             <p className="text-[9px] text-muted-foreground mt-0.5">
-              Contextual guidance
+              {t("tips.contextual")}
             </p>
           </div>
         </div>
@@ -196,16 +199,16 @@ export function WritingTipsPanel({ format, scenario, open, onOpenChange }: Props
         {(formatMeta || scenarioMeta) && (
           <div className="rounded-md bg-primary/[0.05] border border-primary/20 p-2 space-y-0.5">
             <p className="text-[9px] uppercase tracking-wider text-primary font-semibold">
-              Current context
+              {t("tips.currentContext")}
             </p>
             {formatMeta && (
               <p className="text-[10px] text-foreground/80">
-                Format: <span className="font-semibold">{formatMeta.label}</span>
+                {t("tips.formatLabel")} <span className="font-semibold">{formatMeta.label}</span>
               </p>
             )}
             {scenarioMeta && (
               <p className="text-[10px] text-foreground/80">
-                Scenario: <span className="font-semibold">{scenarioMeta.label}</span>
+                {t("tips.scenarioLabel")} <span className="font-semibold">{scenarioMeta.label}</span>
               </p>
             )}
           </div>
@@ -216,7 +219,7 @@ export function WritingTipsPanel({ format, scenario, open, onOpenChange }: Props
           <TipSection
             id="format"
             icon={<PenLine className="h-3 w-3" />}
-            title={fmtTips.title}
+            title={t(fmtTips.titleKey)}
             tips={fmtTips.tips}
             expanded={expandedSection === "format"}
             onToggle={() =>
@@ -232,7 +235,7 @@ export function WritingTipsPanel({ format, scenario, open, onOpenChange }: Props
           <TipSection
             id="scenario"
             icon={<Target className="h-3 w-3" />}
-            title={scnTips.title}
+            title={t(scnTips.titleKey)}
             tips={scnTips.tips}
             expanded={expandedSection === "scenario"}
             onToggle={() =>
@@ -247,7 +250,7 @@ export function WritingTipsPanel({ format, scenario, open, onOpenChange }: Props
         <TipSection
           id="general"
           icon={<BookOpen className="h-3 w-3" />}
-          title="General best practices"
+          title={t("tips.general")}
           tips={GENERAL_TIPS}
           expanded={expandedSection === "general"}
           onToggle={() =>
@@ -261,13 +264,13 @@ export function WritingTipsPanel({ format, scenario, open, onOpenChange }: Props
         <TipSection
           id="citations"
           icon={<Quote className="h-3 w-3" />}
-          title="Citation format"
+          title={t("tips.citationFormat")}
           tips={[
-            "[n] — numeric reference to the numbered list (e.g. [1], [2,3]).",
-            "[PMID:12345678] — PubMed ID (absolute).",
-            "[PDB:1A3N] — RCSB Protein Data Bank ID.",
-            "[UniProt:P04637] — UniProt accession.",
-            "AI auto-generates the ### Citations block after each paragraph.",
+            t("tips.citeNumeric"),
+            t("tips.citePmid"),
+            t("tips.citePdb"),
+            t("tips.citeUniprot"),
+            t("tips.citeAutoBlock"),
           ]}
           expanded={expandedSection === "citations"}
           onToggle={() =>
@@ -281,14 +284,14 @@ export function WritingTipsPanel({ format, scenario, open, onOpenChange }: Props
         <TipSection
           id="wordcount"
           icon={<Type className="h-3 w-3" />}
-          title="Word count guidance"
+          title={t("tips.wordCount")}
           tips={[
-            "Abstract: 150-250 words",
-            "Introduction paragraph: 200-300 words",
-            "Background paragraph: 180-320 words",
-            "Methods paragraph: 150-250 words",
-            "Results paragraph: 150-250 words",
-            "Discussion paragraph: 200-350 words",
+            t("tips.wordAbstract"),
+            t("tips.wordIntro"),
+            t("tips.wordBackground"),
+            t("tips.wordMethods"),
+            t("tips.wordResults"),
+            t("tips.wordDiscussion"),
           ]}
           expanded={expandedSection === "wordcount"}
           onToggle={() =>
@@ -303,7 +306,7 @@ export function WritingTipsPanel({ format, scenario, open, onOpenChange }: Props
       <div className="px-3 py-2 border-t border-border/60 shrink-0">
         <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
           <CheckCircle2 className="h-2.5 w-2.5 text-emerald-500" />
-          <span>Tips adapt to your current format &amp; scenario</span>
+          <span>{t("tips.adapt")}</span>
         </div>
       </div>
     </div>

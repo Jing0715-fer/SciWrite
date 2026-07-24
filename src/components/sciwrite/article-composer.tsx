@@ -83,8 +83,8 @@ export function ArticleComposer({
 
   const composeMut = useMutation({
     mutationFn: async () => {
-      if (order.length < 2) throw new Error("Select at least 2 paragraphs to compose.");
-      if (!title.trim()) throw new Error("Please provide an article title.");
+      if (order.length < 2) throw new Error(t("compose.needTwoParagraphs"));
+      if (!title.trim()) throw new Error(t("compose.needTitle"));
       return api.aiCompose({
         projectId,
         title: title.trim(),
@@ -94,7 +94,7 @@ export function ArticleComposer({
       });
     },
     onSuccess: () => {
-      toast.success("Article composed & saved.");
+      toast.success(t("toast.articleComposed"));
       qc.invalidateQueries({ queryKey: ["project", projectId] });
       onOpenChange(false);
     },
@@ -114,8 +114,7 @@ export function ArticleComposer({
             {t("compose.title")}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Arrange paragraphs into a coherent, deeply-synthesized research article.
-            The AI stitches sections, preserves citations, and adds a references list.
+            {t("compose.desc")}
           </DialogDescription>
         </DialogHeader>
 
@@ -126,7 +125,7 @@ export function ArticleComposer({
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. Structural and Functional Insights into CRISPR-Cas9 Specificity"
+                placeholder={t("compose.titlePlaceholder")}
                 className="text-sm"
               />
             </div>
@@ -236,6 +235,7 @@ export function ArticleViewer({
   article: { id: string; title: string; abstract?: string | null; content: string };
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [reviewOpen, setReviewOpen] = React.useState(false);
   return (
     <>
@@ -264,7 +264,7 @@ export function ArticleViewer({
             onClick={() => setReviewOpen(true)}
           >
             <Gavel className="h-3.5 w-3.5" />
-            AI Review
+            {t("articleViewer.aiReview")}
           </Button>
           <ExportMenu type="article" id={article.id} variant="outline" />
         </div>

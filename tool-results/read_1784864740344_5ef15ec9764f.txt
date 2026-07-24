@@ -1,0 +1,735 @@
+     1→"use client";
+     2→
+     3→import * as React from "react";
+     4→import { toast } from "sonner";
+     5→import {
+     6→  FileText,
+     7→  MessageSquare,
+     8→  Pencil,
+     9→  Trash2,
+    10→  CheckCircle2,
+    11→  Loader2,
+    12→  Wand2,
+    13→  MoreHorizontal,
+    14→  ChevronDown,
+    15→  ChevronUp,
+    16→  PenLine,
+    17→  Copy,
+    18→  X,
+    19→  Undo2,
+    20→  GitCompare,
+    21→  ShieldCheck,
+    22→} from "lucide-react";
+    23→import { Button } from "@/components/ui/button";
+    24→import { Textarea } from "@/components/ui/textarea";
+    25→import { Badge } from "@/components/ui/badge";
+    26→import {
+    27→  DropdownMenu,
+    28→  DropdownMenuContent,
+    29→  DropdownMenuItem,
+    30→  DropdownMenuSeparator,
+    31→  DropdownMenuTrigger,
+    32→} from "@/components/ui/dropdown-menu";
+    33→import {
+    34→  Select,
+    35→  SelectContent,
+    36→  SelectItem,
+    37→  SelectTrigger,
+    38→  SelectValue,
+    39→} from "@/components/ui/select";
+    40→import {
+    41→  Popover,
+    42→  PopoverContent,
+    43→  PopoverTrigger,
+    44→} from "@/components/ui/popover";
+    45→import {
+    46→  Collapsible,
+    47→  CollapsibleContent,
+    48→  CollapsibleTrigger,
+    49→} from "@/components/ui/collapsible";
+    50→import { api } from "@/lib/api-client";
+    51→import {
+    52→  PARAGRAPH_FORMATS,
+    53→  PARAGRAPH_SCENARIOS,
+    54→  STATUS_STYLES,
+    55→  ANNOTATION_TYPES,
+    56→  SEVERITY_STYLES,
+    57→} from "@/lib/constants";
+    58→import type { Annotation, Paragraph } from "@/lib/types";
+    59→import { useMutation, useQueryClient } from "@tanstack/react-query";
+    60→import { MarkdownCitations } from "./markdown-citations";
+    61→import { ExportMenu } from "./export-menu";
+    62→import { DiffView } from "./diff-view";
+    63→import { CitationValidationDialog } from "./citation-validation-dialog";
+    64→import { Icon } from "./icon";
+    65→
+    66→interface Props {
+    67→  paragraph: Paragraph & { annotations: Annotation[]; references: any[] };
+    68→  projectId: string;
+    69→  index: number;
+    70→}
+    71→
+    72→export function ParagraphCard({ paragraph, projectId, index }: Props) {
+    73→  const qc = useQueryClient();
+    74→  const [editing, setEditing] = React.useState(false);
+    75→  const [draft, setDraft] = React.useState(paragraph.content);
+    76→  const [annOpen, setAnnOpen] = React.useState(false);
+    77→  const [activeAnnotation, setActiveAnnotation] = React.useState<Annotation | null>(null);
+    78→  const [selection, setSelection] = React.useState<{ text: string; rect: DOMRect } | null>(null);
+    79→  const [undoSnapshot, setUndoSnapshot] = React.useState<string | null>(null);
+    80→  const [diffOpen, setDiffOpen] = React.useState(false);
+    81→  const [validateOpen, setValidateOpen] = React.useState(false);
+    82→  const bodyRef = React.useRef<HTMLDivElement>(null);
+    83→
+    84→  const invalidate = () => qc.invalidateQueries({ queryKey: ["project", projectId] });
+    85→
+    86→  const updateMut = useMutation({
+    87→    mutationFn: (input: Partial<Paragraph>) =>
+    88→      api.updateParagraph(paragraph.id, input),
+    89→    onSuccess: () => {
+    90→      toast.success("Paragraph updated.");
+    91→      setEditing(false);
+    92→      invalidate();
+    93→    },
+    94→    onError: (e: Error) => toast.error(e.message),
+    95→  });
+    96→
+    97→  const deleteMut = useMutation({
+    98→    mutationFn: () => api.deleteParagraph(paragraph.id),
+    99→    onSuccess: () => {
+   100→      toast.success("Paragraph deleted.");
+   101→      invalidate();
+   102→    },
+   103→    onError: (e: Error) => toast.error(e.message),
+   104→  });
+   105→
+   106→  const addAnnMut = useMutation({
+   107→    mutationFn: (input: Partial<Annotation>) =>
+   108→      api.addAnnotation(paragraph.id, input),
+   109→    onSuccess: () => {
+   110→      toast.success("Annotation added.");
+   111→      setSelection(null);
+   112→      invalidate();
+   113→    },
+   114→    onError: (e: Error) => toast.error(e.message),
+   115→  });
+   116→
+   117→  const resolveAnnMut = useMutation({
+   118→    mutationFn: ({ id, resolved }: { id: string; resolved: boolean }) =>
+   119→      api.updateAnnotation(id, { resolved }),
+   120→    onSuccess: () => invalidate(),
+   121→    onError: (e: Error) => toast.error(e.message),
+   122→  });
+   123→
+   124→  const deleteAnnMut = useMutation({
+   125→    mutationFn: (id: string) => api.deleteAnnotation(id),
+   126→    onSuccess: () => {
+   127→      toast.success("Annotation removed.");
+   128→      invalidate();
+   129→    },
+   130→    onError: (e: Error) => toast.error(e.message),
+   131→  });
+   132→
+   133→  const reviseMut = useMutation({
+   134→    mutationFn: async (input: { mode?: string; instructions?: string }) => {
+   135→      // Save snapshot before revising (for undo)
+   136→      setUndoSnapshot(paragraph.content);
+   137→      return api.reviseParagraph(paragraph.id, input);
+   138→    },
+   139→    onSuccess: () => {
+   140→      toast.success("Paragraph revised by AI. Undo available.");
+   141→      invalidate();
+   142→    },
+   143→    onError: (e: Error) => {
+   144→      setUndoSnapshot(null);
+   145→      toast.error(e.message);
+   146→    },
+   147→  });
+   148→
+   149→  const undoReviseMut = useMutation({
+   150→    mutationFn: async () => {
+   151→      if (!undoSnapshot) throw new Error("No undo snapshot available.");
+   152→      return api.updateParagraph(paragraph.id, {
+   153→        content: undoSnapshot,
+   154→        status: "annotated",
+   155→      });
+   156→    },
+   157→    onSuccess: () => {
+   158→      toast.success("Reverted to pre-revision content.");
+   159→      setUndoSnapshot(null);
+   160→      invalidate();
+   161→    },
+   162→    onError: (e: Error) => toast.error(e.message),
+   163→  });
+   164→
+   165→  // Capture text selection within this paragraph body
+   166→  const handleMouseUp = React.useCallback(() => {
+   167→    const sel = window.getSelection();
+   168→    if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+   169→      setSelection(null);
+   170→      return;
+   171→    }
+   172→    const text = sel.toString().trim();
+   173→    if (text.length < 2) {
+   174→      setSelection(null);
+   175→      return;
+   176→    }
+   177→    const range = sel.getRangeAt(0);
+   178→    const bodyEl = bodyRef.current;
+   179→    if (!bodyEl || !bodyEl.contains(range.commonAncestorContainer)) {
+   180→      setSelection(null);
+   181→      return;
+   182→    }
+   183→    const rect = range.getBoundingClientRect();
+   184→    setSelection({ text, rect });
+   185→  }, []);
+   186→
+   187→  const unresolvedCount = paragraph.annotations.filter((a) => !a.resolved).length;
+   188→  const status = STATUS_STYLES[paragraph.status] || STATUS_STYLES.draft;
+   189→  const formatMeta = PARAGRAPH_FORMATS.find((f) => f.id === paragraph.format);
+   190→
+   191→  const ANN_CARD_CLASS: Record<string, string> = {
+   192→    emerald: "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/50 dark:bg-emerald-950/20",
+   193→    teal: "border-teal-200 bg-teal-50/50 dark:border-teal-900/50 dark:bg-teal-950/20",
+   194→    amber: "border-amber-200 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20",
+   195→    rose: "border-rose-200 bg-rose-50/50 dark:border-rose-900/50 dark:bg-rose-950/20",
+   196→    violet: "border-violet-200 bg-violet-50/50 dark:border-violet-900/50 dark:bg-violet-950/20",
+   197→    sky: "border-sky-200 bg-sky-50/50 dark:border-sky-900/50 dark:bg-sky-950/20",
+   198→  };
+   199→
+   200→  return (
+   201→    <div className="rounded-xl border border-border/70 bg-card shadow-sm hover:shadow-md transition-shadow overflow-hidden acad-fade-in">
+   202→      {/* Header */}
+   203→      <div className="flex items-start gap-3 px-4 py-3 border-b border-border/50 bg-gradient-to-r from-muted/40 to-transparent">
+   204→        <span className="text-[10px] font-mono text-muted-foreground mt-1 shrink-0">
+   205→          §{String(index + 1).padStart(2, "0")}
+   206→        </span>
+   207→        <div className="flex-1 min-w-0">
+   208→          {editing ? (
+   209→            <input
+   210→              defaultValue={paragraph.title}
+   211→              onBlur={(e) =>
+   212→                updateMut.mutate({ title: e.target.value })
+   213→              }
+   214→              className="text-sm font-semibold bg-transparent border-b border-dashed border-primary/40 focus:outline-none w-full"
+   215→            />
+   216→          ) : (
+   217→            <h3 className="text-sm font-semibold leading-tight truncate">
+   218→              {paragraph.title}
+   219→            </h3>
+   220→          )}
+   221→          <div className="flex flex-wrap items-center gap-1 mt-1.5">
+   222→            <span
+   223→              className={`badge-${status.color} inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide`}
+   224→            >
+   225→              <Icon name={status.icon} className="h-2.5 w-2.5" />
+   226→              {status.label}
+   227→            </span>
+   228→            <span className="text-[9px] text-muted-foreground">
+   229→              {formatMeta?.label || paragraph.format}
+   230→            </span>
+   231→            <span className="text-[9px] text-muted-foreground">·</span>
+   232→            <span className="text-[9px] text-muted-foreground">
+   233→              {paragraph.wordCount} words
+   234→            </span>
+   235→            {unresolvedCount > 0 && (
+   236→              <span className="inline-flex items-center gap-0.5 text-[9px] text-amber-600 dark:text-amber-400 font-medium">
+   237→                <MessageSquare className="h-2.5 w-2.5" />
+   238→                {unresolvedCount}
+   239→              </span>
+   240→            )}
+   241→          </div>
+   242→        </div>
+   243→        <DropdownMenu>
+   244→          <DropdownMenuTrigger asChild>
+   245→            <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0">
+   246→              <MoreHorizontal className="h-3.5 w-3.5" />
+   247→            </Button>
+   248→          </DropdownMenuTrigger>
+   249→          <DropdownMenuContent align="end" className="w-44">
+   250→            <DropdownMenuItem onClick={() => setEditing((v) => !v)}>
+   251→              <Pencil className="h-3.5 w-3.5" /> {editing ? "Stop editing" : "Edit content"}
+   252→            </DropdownMenuItem>
+   253→            <DropdownMenuItem
+   254→              onClick={() =>
+   255→                navigator.clipboard.writeText(paragraph.content).then(() =>
+   256→                  toast.success("Copied to clipboard.")
+   257→                )
+   258→              }
+   259→            >
+   260→              <Copy className="h-3.5 w-3.5" /> Copy text
+   261→            </DropdownMenuItem>
+   262→            <DropdownMenuItem onClick={() => setValidateOpen(true)}>
+   263→              <ShieldCheck className="h-3.5 w-3.5" /> Validate citations
+   264→            </DropdownMenuItem>
+   265→            <DropdownMenuSeparator />
+   266→            <FormatSelect
+   267→              value={paragraph.format}
+   268→              onChange={(v) => updateMut.mutate({ format: v })}
+   269→              options={PARAGRAPH_FORMATS.map((f) => ({ value: f.id, label: f.label }))}
+   270→            />
+   271→            <FormatSelect
+   272→              value={paragraph.scenario}
+   273→              onChange={(v) => updateMut.mutate({ scenario: v })}
+   274→              options={PARAGRAPH_SCENARIOS.map((s) => ({ value: s.id, label: s.label }))}
+   275→            />
+   276→            <DropdownMenuSeparator />
+   277→            <DropdownMenuItem
+   278→              className="text-destructive focus:text-destructive"
+   279→              onClick={() => deleteMut.mutate()}
+   280→            >
+   281→              <Trash2 className="h-3.5 w-3.5" /> Delete
+   282→            </DropdownMenuItem>
+   283→          </DropdownMenuContent>
+   284→        </DropdownMenu>
+   285→      </div>
+   286→
+   287→      {/* Body */}
+   288→      <div className="px-4 py-3 relative paper-surface" ref={bodyRef} onMouseUp={handleMouseUp}>
+   289→        {editing ? (
+   290→          <div className="space-y-2">
+   291→            <Textarea
+   292→              value={draft}
+   293→              onChange={(e) => setDraft(e.target.value)}
+   294→              className="font-serif-text text-sm min-h-[160px] leading-relaxed"
+   295→            />
+   296→            <div className="flex items-center gap-2">
+   297→              <Button
+   298→                size="sm"
+   299→                onClick={() => updateMut.mutate({ content: draft })}
+   300→                disabled={updateMut.isPending}
+   301→              >
+   302→                {updateMut.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+   303→                Save
+   304→              </Button>
+   305→              <Button
+   306→                size="sm"
+   307→                variant="ghost"
+   308→                onClick={() => {
+   309→                  setDraft(paragraph.content);
+   310→                  setEditing(false);
+   311→                }}
+   312→              >
+   313→                Cancel
+   314→              </Button>
+   315→            </div>
+   316→          </div>
+   317→        ) : (
+   318→          <MarkdownCitations
+   319→            content={paragraph.content}
+   320→            annotations={paragraph.annotations}
+   321→            references={paragraph.references || []}
+   322→            onAnnotationClick={(a) => setActiveAnnotation(a)}
+   323→          />
+   324→        )}
+   325→
+   326→        {/* Floating selection toolbar */}
+   327→        {selection && !editing && (
+   328→          <SelectionToolbar
+   329→            text={selection.text}
+   330→            onSubmit={(comment, type, severity) => {
+   331→              const startOffset = paragraph.content.indexOf(selection.text);
+   332→              addAnnMut.mutate({
+   333→                selectedText: selection.text,
+   334→                startOffset: startOffset >= 0 ? startOffset : 0,
+   335→                endOffset: startOffset >= 0 ? startOffset + selection.text.length : 0,
+   336→                comment,
+   337→                type,
+   338→                severity,
+   339→              });
+   340→            }}
+   341→            onClose={() => setSelection(null)}
+   342→            pending={addAnnMut.isPending}
+   343→          />
+   344→        )}
+   345→      </div>
+   346→
+   347→      {/* Footer: annotations + revise */}
+   348→      {paragraph.annotations.length > 0 && (
+   349→        <Collapsible open={annOpen} onOpenChange={setAnnOpen} className="border-t border-border/50">
+   350→          <div className="px-4 py-2 flex items-center justify-between bg-muted/30">
+   351→            <CollapsibleTrigger asChild>
+   352→              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5">
+   353→                <MessageSquare className="h-3.5 w-3.5" />
+   354→                Annotations ({paragraph.annotations.length})
+   355→                {annOpen ? (
+   356→                  <ChevronUp className="h-3 w-3" />
+   357→                ) : (
+   358→                  <ChevronDown className="h-3 w-3" />
+   359→                )}
+   360→              </Button>
+   361→            </CollapsibleTrigger>
+   362→          </div>
+   363→          <CollapsibleContent>
+   364→            <div className="px-4 py-2 space-y-2 bg-muted/10">
+   365→              {paragraph.annotations.map((a) => {
+   366→                const meta = ANNOTATION_TYPES.find((t) => t.id === a.type) || ANNOTATION_TYPES[0];
+   367→                const sev = SEVERITY_STYLES[a.severity as keyof typeof SEVERITY_STYLES] || SEVERITY_STYLES.info;
+   368→                return (
+   369→                  <div
+   370→                    key={a.id}
+   371→                    className={`rounded-md border p-2.5 text-xs ${
+   372→                      a.resolved ? "opacity-60" : ""
+   373→                    } ${ANN_CARD_CLASS[meta.color] || "border-border bg-muted/30"}`}
+   374→                  >
+   375→                    <div className="flex items-center gap-1.5 mb-1">
+   376→                      <Icon name={meta.icon} className="h-3 w-3" />
+   377→                      <span className="font-semibold text-[10px] uppercase tracking-wide">
+   378→                        {meta.label}
+   379→                      </span>
+   380→                      <span className={`badge-${sev.color} px-1 py-0.5 rounded text-[8px] uppercase`}>
+   381→                        {sev.label}
+   382→                      </span>
+   383→                      {a.resolved && (
+   384→                        <span className="text-[9px] text-emerald-600 flex items-center gap-0.5">
+   385→                          <CheckCircle2 className="h-2.5 w-2.5" /> resolved
+   386→                        </span>
+   387→                      )}
+   388→                      <div className="ml-auto flex items-center gap-0.5">
+   389→                        <Button
+   390→                          variant="ghost"
+   391→                          size="icon"
+   392→                          className="h-5 w-5"
+   393→                          onClick={() =>
+   394→                            resolveAnnMut.mutate({ id: a.id, resolved: !a.resolved })
+   395→                          }
+   396→                          title={a.resolved ? "Reopen" : "Resolve"}
+   397→                        >
+   398→                          <CheckCircle2 className="h-3 w-3" />
+   399→                        </Button>
+   400→                        <Button
+   401→                          variant="ghost"
+   402→                          size="icon"
+   403→                          className="h-5 w-5 text-destructive"
+   404→                          onClick={() => deleteAnnMut.mutate(a.id)}
+   405→                        >
+   406→                          <X className="h-3 w-3" />
+   407→                        </Button>
+   408→                      </div>
+   409→                    </div>
+   410→                    {a.selectedText && (
+   411→                      <p className="text-[10px] italic text-muted-foreground mb-1 line-clamp-1">
+   412→                        “{a.selectedText}”
+   413→                      </p>
+   414→                    )}
+   415→                    <p className="text-foreground/90">{a.comment}</p>
+   416→                    {a.aiResponse && (
+   417→                      <p className="mt-1.5 text-[10px] text-primary italic border-l-2 border-primary/40 pl-2">
+   418→                        AI: {a.aiResponse}
+   419→                      </p>
+   420→                    )}
+   421→                  </div>
+   422→                );
+   423→              })}
+   424→            </div>
+   425→          </CollapsibleContent>
+   426→        </Collapsible>
+   427→      )}
+   428→
+   429→      {/* Action bar */}
+   430→      <div className="px-4 py-2 border-t border-border/50 flex items-center gap-1.5 bg-card">
+   431→        <RevisePopover
+   432→          unresolvedCount={unresolvedCount}
+   433→          isRevising={reviseMut.isPending}
+   434→          onRevise={(mode, instructions) =>
+   435→            reviseMut.mutate({ mode, instructions })
+   436→          }
+   437→        />
+   438→        {undoSnapshot && (
+   439→          <>
+   440→            <Button
+   441→              variant="ghost"
+   442→              size="sm"
+   443→              className="h-7 text-[11px] gap-1.5 text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950/30"
+   444→              onClick={() => setDiffOpen(true)}
+   445→              title="Compare before/after revision"
+   446→            >
+   447→              <GitCompare className="h-3 w-3" />
+   448→              Compare
+   449→            </Button>
+   450→            <Button
+   451→              variant="ghost"
+   452→              size="sm"
+   453→              className="h-7 text-[11px] gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+   454→              onClick={() => undoReviseMut.mutate()}
+   455→              disabled={undoReviseMut.isPending}
+   456→              title="Undo last AI revision"
+   457→            >
+   458→              {undoReviseMut.isPending ? (
+   459→                <Loader2 className="h-3 w-3 animate-spin" />
+   460→              ) : (
+   461→                <Undo2 className="h-3 w-3" />
+   462→              )}
+   463→              Undo
+   464→            </Button>
+   465→          </>
+   466→        )}
+   467→        <ExportMenu
+   468→          type="paragraph"
+   469→          id={paragraph.id}
+   470→          hasAnnotations={paragraph.annotations.length > 0}
+   471→        />
+   472→        <Button
+   473→          variant="ghost"
+   474→          size="sm"
+   475→          className="h-7 text-[11px] gap-1.5 ml-auto"
+   476→          onClick={() => setEditing((v) => !v)}
+   477→        >
+   478→          <PenLine className="h-3 w-3" />
+   479→          {editing ? "Preview" : "Edit"}
+   480→        </Button>
+   481→      </div>
+   482→
+   483→      {undoSnapshot && (
+   484→        <DiffView
+   485→          open={diffOpen}
+   486→          onOpenChange={setDiffOpen}
+   487→          before={undoSnapshot}
+   488→          after={paragraph.content}
+   489→          title={paragraph.title}
+   490→        />
+   491→      )}
+   492→
+   493→      <CitationValidationDialog
+   494→        open={validateOpen}
+   495→        onOpenChange={setValidateOpen}
+   496→        paragraphId={paragraph.id}
+   497→        paragraphTitle={paragraph.title}
+   498→      />
+   499→    </div>
+   500→  );
+   501→}
+   502→
+   503→function FormatSelect({
+   504→  value,
+   505→  onChange,
+   506→  options,
+   507→}: {
+   508→  value: string;
+   509→  onChange: (v: string) => void;
+   510→  options: { value: string; label: string }[];
+   511→}) {
+   512→  return (
+   513→    <div className="px-2 py-1">
+   514→      <Select value={value} onValueChange={onChange}>
+   515→        <SelectTrigger className="h-7 text-[11px]">
+   516→          <SelectValue />
+   517→        </SelectTrigger>
+   518→        <SelectContent>
+   519→          {options.map((o) => (
+   520→            <SelectItem key={o.value} value={o.value} className="text-xs">
+   521→              {o.label}
+   522→            </SelectItem>
+   523→          ))}
+   524→        </SelectContent>
+   525→      </Select>
+   526→    </div>
+   527→  );
+   528→}
+   529→
+   530→function SelectionToolbar({
+   531→  text,
+   532→  onSubmit,
+   533→  onClose,
+   534→  pending,
+   535→}: {
+   536→  text: string;
+   537→  onSubmit: (comment: string, type: string, severity: string) => void;
+   538→  onClose: () => void;
+   539→  pending: boolean;
+   540→}) {
+   541→  const [comment, setComment] = React.useState("");
+   542→  const [type, setType] = React.useState("revise-request");
+   543→  const [severity, setSeverity] = React.useState("warning");
+   544→
+   545→  return (
+   546→    <Popover open={true} onOpenChange={(o) => !o && onClose()}>
+   547→      <PopoverTrigger asChild>
+   548→        <span
+   549→          className="absolute"
+   550→          style={{
+   551→            left: 0,
+   552→            top: 0,
+   553→            width: 1,
+   554→            height: 1,
+   555→          }}
+   556→        />
+   557→      </PopoverTrigger>
+   558→      <PopoverContent
+   559→        className="w-72 p-3 shadow-lg"
+   560→        side="top"
+   561→        align="center"
+   562→        sideOffset={8}
+   563→      >
+   564→        <div className="space-y-2">
+   565→          <div className="flex items-center justify-between">
+   566→            <span className="text-[10px] uppercase tracking-wider text-primary font-semibold flex items-center gap-1">
+   567→              <MessageSquare className="h-3 w-3" /> Annotate selection
+   568→            </span>
+   569→            <div className="flex items-center gap-0.5">
+   570→              <Button
+   571→                variant="ghost"
+   572→                size="icon"
+   573→                className="h-5 w-5"
+   574→                onClick={() => {
+   575→                  navigator.clipboard.writeText(text).then(() => toast.success("Copied to clipboard."));
+   576→                  onClose();
+   577→                }}
+   578→                title="Copy selected text"
+   579→              >
+   580→                <Copy className="h-3 w-3" />
+   581→              </Button>
+   582→              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onClose}>
+   583→                <X className="h-3 w-3" />
+   584→              </Button>
+   585→            </div>
+   586→          </div>
+   587→          <p className="text-[10px] italic text-muted-foreground line-clamp-2 border-l-2 border-primary/40 pl-2">
+   588→            “{text.slice(0, 100)}{text.length > 100 ? "…" : ""}”
+   589→          </p>
+   590→          <Textarea
+   591→            autoFocus
+   592→            value={comment}
+   593→            onChange={(e) => setComment(e.target.value)}
+   594→            placeholder="Write your revision request or comment…"
+   595→            className="text-xs min-h-[56px]"
+   596→          />
+   597→          <div className="grid grid-cols-2 gap-1.5">
+   598→            <Select value={type} onValueChange={setType}>
+   599→              <SelectTrigger className="h-7 text-[10px]">
+   600→                <SelectValue />
+   601→              </SelectTrigger>
+   602→              <SelectContent>
+   603→                {ANNOTATION_TYPES.map((t) => (
+   604→                  <SelectItem key={t.id} value={t.id} className="text-[10px]">
+   605→                    {t.label}
+   606→                  </SelectItem>
+   607→                ))}
+   608→              </SelectContent>
+   609→            </Select>
+   610→            <Select value={severity} onValueChange={setSeverity}>
+   611→              <SelectTrigger className="h-7 text-[10px]">
+   612→                <SelectValue />
+   613→              </SelectTrigger>
+   614→              <SelectContent>
+   615→                <SelectItem value="info" className="text-[10px]">Info</SelectItem>
+   616→                <SelectItem value="warning" className="text-[10px]">Warning</SelectItem>
+   617→                <SelectItem value="critical" className="text-[10px]">Critical</SelectItem>
+   618→              </SelectContent>
+   619→            </Select>
+   620→          </div>
+   621→          <Button
+   622→            size="sm"
+   623→            className="w-full h-7 text-[11px]"
+   624→            disabled={!comment.trim() || pending}
+   625→            onClick={() => onSubmit(comment.trim(), type, severity)}
+   626→          >
+   627→            {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+   628→            Add annotation
+   629→          </Button>
+   630→        </div>
+   631→      </PopoverContent>
+   632→    </Popover>
+   633→  );
+   634→}
+   635→
+   636→function RevisePopover({
+   637→  unresolvedCount,
+   638→  isRevising,
+   639→  onRevise,
+   640→}: {
+   641→  unresolvedCount: number;
+   642→  isRevising: boolean;
+   643→  onRevise: (mode: string, instructions?: string) => void;
+   644→}) {
+   645→  const [open, setOpen] = React.useState(false);
+   646→  const [mode, setMode] = React.useState<"annotations" | "instructions" | "polish">("annotations");
+   647→  const [instructions, setInstructions] = React.useState("");
+   648→
+   649→  return (
+   650→    <Popover open={open} onOpenChange={setOpen}>
+   651→      <PopoverTrigger asChild>
+   652→        <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1.5">
+   653→          {isRevising ? (
+   654→            <Loader2 className="h-3 w-3 animate-spin" />
+   655→          ) : (
+   656→            <Wand2 className="h-3 w-3" />
+   657→          )}
+   658→          AI Revise
+   659→          {unresolvedCount > 0 && (
+   660→            <span className="ml-0.5 inline-flex items-center justify-center h-3.5 min-w-3.5 px-1 rounded-full bg-amber-500 text-white text-[8px] font-bold">
+   661→              {unresolvedCount}
+   662→            </span>
+   663→          )}
+   664→        </Button>
+   665→      </PopoverTrigger>
+   666→      <PopoverContent className="w-80 p-3" align="start">
+   667→        <div className="space-y-2.5">
+   668→          <span className="text-[10px] uppercase tracking-wider text-primary font-semibold flex items-center gap-1">
+   669→            <Wand2 className="h-3 w-3" /> AI revision mode
+   670→          </span>
+   671→          <div className="grid grid-cols-3 gap-1">
+   672→            {(
+   673→              [
+   674→                ["annotations", "Annotations", unresolvedCount > 0],
+   675→                ["instructions", "Instructions", true],
+   676→                ["polish", "Polish", true],
+   677→              ] as const
+   678→            ).map(([id, label, enabled]) => (
+   679→              <button
+   680→                key={id}
+   681→                disabled={!enabled}
+   682→                onClick={() => setMode(id)}
+   683→                className={`text-[10px] px-2 py-1.5 rounded-md border transition-colors ${
+   684→                  mode === id
+   685→                    ? "border-primary bg-primary/10 text-primary font-medium"
+   686→                    : "border-border hover:bg-muted"
+   687→                } ${!enabled ? "opacity-40 cursor-not-allowed" : ""}`}
+   688→              >
+   689→                {label}
+   690→              </button>
+   691→            ))}
+   692→          </div>
+   693→          {mode === "annotations" && (
+   694→            <p className="text-[10px] text-muted-foreground">
+   695→              Will address {unresolvedCount} unresolved annotation(s). Resolved ones
+   696→              stay addressed.
+   697→            </p>
+   698→          )}
+   699→          {mode === "instructions" && (
+   700→            <Textarea
+   701→              value={instructions}
+   702→              onChange={(e) => setInstructions(e.target.value)}
+   703→              placeholder="e.g. Add a sentence comparing eukaryotic vs prokaryotic systems; cite [PMID:…]."
+   704→              className="text-xs min-h-[64px]"
+   705→            />
+   706→          )}
+   707→          {mode === "polish" && (
+   708→            <p className="text-[10px] text-muted-foreground">
+   709→              Lightly polish for clarity, flow and academic register without
+   710→              altering meaning.
+   711→            </p>
+   712→          )}
+   713→          <Button
+   714→            size="sm"
+   715→            className="w-full h-7 text-[11px] gap-1.5"
+   716→            disabled={
+   717→              isRevising ||
+   718→              (mode === "annotations" && unresolvedCount === 0) ||
+   719→              (mode === "instructions" && !instructions.trim())
+   720→            }
+   721→            onClick={() => {
+   722→              onRevise(mode, mode === "instructions" ? instructions.trim() : undefined);
+   723→              setOpen(false);
+   724→              setInstructions("");
+   725→            }}
+   726→          >
+   727→            {isRevising ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+   728→            Run revision
+   729→          </Button>
+   730→        </div>
+   731→      </PopoverContent>
+   732→    </Popover>
+   733→  );
+   734→}
+   735→

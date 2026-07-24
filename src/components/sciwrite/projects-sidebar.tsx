@@ -40,15 +40,15 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Project } from "@/lib/types";
 
 const FIELDS = [
-  { value: "structural-biology", label: "Structural Biology" },
-  { value: "genomics", label: "Genomics" },
-  { value: "proteomics", label: "Proteomics" },
-  { value: "molecular-biology", label: "Molecular Biology" },
-  { value: "biochemistry", label: "Biochemistry" },
-  { value: "drug-discovery", label: "Drug Discovery" },
-  { value: "clinical", label: "Clinical / Translational" },
-  { value: "computational-biology", label: "Computational Biology" },
-  { value: "other", label: "Other" },
+  { value: "structural-biology", labelKey: "projects.fieldStructuralBiology" as const },
+  { value: "genomics", labelKey: "projects.fieldGenomics" as const },
+  { value: "proteomics", labelKey: "projects.fieldProteomics" as const },
+  { value: "molecular-biology", labelKey: "projects.fieldMolecularBiology" as const },
+  { value: "biochemistry", labelKey: "projects.fieldBiochemistry" as const },
+  { value: "drug-discovery", labelKey: "projects.fieldDrugDiscovery" as const },
+  { value: "clinical", labelKey: "projects.fieldClinical" as const },
+  { value: "computational-biology", labelKey: "projects.fieldComputationalBiology" as const },
+  { value: "other", labelKey: "projects.fieldOther" as const },
 ];
 
 interface Props {
@@ -66,7 +66,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect }: Props) {
   const delMut = useMutation({
     mutationFn: (id: string) => api.deleteProject(id),
     onSuccess: () => {
-      toast.success("Project deleted.");
+      toast.success(t("toast.projectDeleted"));
       qc.invalidateQueries({ queryKey: ["projects"] });
       if (editingId) setEditingId(null);
     },
@@ -146,6 +146,7 @@ function ProjectItem({
   onDelete: () => void;
   deleting: boolean;
 }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [editing, setEditing] = React.useState(false);
   const [title, setTitle] = React.useState(project.title);
@@ -154,7 +155,7 @@ function ProjectItem({
   const updateMut = useMutation({
     mutationFn: () => api.updateProject(project.id, { title, topic }),
     onSuccess: () => {
-      toast.success("Project updated.");
+      toast.success(t("toast.projectUpdated"));
       setEditing(false);
       qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["project", project.id] });
@@ -195,7 +196,7 @@ function ProjectItem({
               ) : (
                 <Check className="h-3 w-3" />
               )}
-              Save
+              {t("common.save")}
             </Button>
             <Button
               size="sm"
@@ -240,7 +241,7 @@ function ProjectItem({
                 className="h-5 w-5 text-destructive"
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (confirm(`Delete project "${project.title}"? All paragraphs and articles will be removed.`)) {
+                  if (confirm(t("projects.deleteConfirm", { name: project.title }))) {
                     onDelete();
                   }
                 }}
@@ -300,7 +301,7 @@ function CreateProjectDialog({
     mutationFn: () =>
       api.createProject({ title, topic, description: description || undefined, field }),
     onSuccess: (data) => {
-      toast.success("Project created.");
+      toast.success(t("toast.projectCreated"));
       qc.invalidateQueries({ queryKey: ["projects"] });
       onOpenChange(false);
       setTitle("");
@@ -331,7 +332,7 @@ function CreateProjectDialog({
             <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. CRISPR-Cas9 Specificity Review"
+              placeholder={t("projects.titlePlaceholder")}
               className="text-sm"
             />
           </div>
@@ -340,7 +341,7 @@ function CreateProjectDialog({
             <Textarea
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
-              placeholder="Describe the scientific question or theme in 1–3 sentences…"
+              placeholder={t("projects.topicPlaceholder")}
               className="text-sm min-h-[80px]"
             />
           </div>
@@ -353,7 +354,7 @@ function CreateProjectDialog({
               <SelectContent>
                 {FIELDS.map((f) => (
                   <SelectItem key={f.value} value={f.value} className="text-sm">
-                    {f.label}
+                    {t(f.labelKey)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -364,7 +365,7 @@ function CreateProjectDialog({
             <Input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Any extra context…"
+              placeholder={t("projects.notesPlaceholder")}
               className="text-sm"
             />
           </div>

@@ -60,6 +60,7 @@ import { useI18n } from "@/lib/i18n";
 import type { Article, Project } from "@/lib/types";
 
 export default function Home() {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
   const [writeOpen, setWriteOpen] = React.useState(false);
@@ -369,57 +370,57 @@ export default function Home() {
         actions={[
           {
             id: "write",
-            label: "AI Write paragraph",
-            hint: "Draft a citation-backed paragraph",
+            label: t("cmd.writeParagraph"),
+            hint: t("cmd.writeHint"),
             icon: <Sparkles className="h-3.5 w-3.5" />,
             shortcut: "N",
             onSelect: () => setWriteOpen(true),
-            group: "Writing",
+            group: t("cmd.groupWriting"),
             disabled: !activeProjectId,
           },
           {
             id: "gather",
-            label: "Gather sources (AI)",
-            hint: "Clarify → organize → adversarial critique",
+            label: t("cmd.gatherSourcesAction"),
+            hint: t("cmd.gatherDesc"),
             icon: <Radar className="h-3.5 w-3.5" />,
             shortcut: "G",
             onSelect: () => setGatherOpen(true),
-            group: "Writing",
+            group: t("cmd.groupWriting"),
             disabled: !activeProjectId,
           },
           {
             id: "compose",
-            label: "Compose article",
-            hint: "Stitch paragraphs into a deeper article",
+            label: t("cmd.composeArticle"),
+            hint: t("cmd.composeHint"),
             icon: <Layers className="h-3.5 w-3.5" />,
             shortcut: "C",
             onSelect: () => setComposeOpen(true),
-            group: "Writing",
+            group: t("cmd.groupWriting"),
             disabled: paragraphs.length < 2,
           },
           {
             id: "insights",
-            label: "Project insights",
-            hint: "Word count, citation coverage, distributions",
+            label: t("cmd.projectInsights"),
+            hint: t("cmd.insightsHint"),
             icon: <BarChart3 className="h-3.5 w-3.5" />,
             shortcut: "I",
             onSelect: () => setInsightsOpen(true),
-            group: "Project",
+            group: t("cmd.groupProject"),
             disabled: !activeProjectId,
           },
           {
             id: "outline",
-            label: "Generate research outline",
-            hint: "AI-suggested paragraph plan with queries",
+            label: t("cmd.generateOutline"),
+            hint: t("cmd.outlineHint"),
             icon: <ListTree className="h-3.5 w-3.5" />,
             shortcut: "O",
             onSelect: () => setOutlineOpen(true),
-            group: "Writing",
+            group: t("cmd.groupWriting"),
             disabled: !activeProjectId,
           },
           {
             id: "dark",
-            label: "Toggle dark mode",
+            label: t("cmd.toggleDark"),
             icon: <Moon className="h-3.5 w-3.5" />,
             shortcut: "D",
             onSelect: () => {
@@ -429,7 +430,7 @@ export default function Home() {
                 localStorage.setItem("theme", isDark ? "light" : "dark");
               } catch {}
             },
-            group: "Project",
+            group: t("cmd.groupProject"),
           },
         ]}
       />
@@ -511,7 +512,7 @@ function Header({
               size="sm"
               className="h-8 text-xs gap-1.5"
               onClick={onOpenInsights}
-              title="Project insights & analytics"
+              title={t("app.insightsTitle")}
             >
               <BarChart3 className="h-3.5 w-3.5" />
               <span className="hidden lg:inline">{t("app.insights")}</span>
@@ -521,7 +522,7 @@ function Header({
               size="sm"
               className="h-8 text-xs gap-1.5"
               onClick={onOpenOutline}
-              title="Generate AI research outline"
+              title={t("app.outlineTitle")}
             >
               <ListTree className="h-3.5 w-3.5" />
               <span className="hidden xl:inline">{t("app.outline")}</span>
@@ -531,7 +532,7 @@ function Header({
               size="sm"
               className="h-8 text-xs gap-1.5"
               onClick={onOpenGather}
-              title="AI gathers & organizes sources with adversarial check"
+              title={t("app.gatherTitle")}
             >
               <Radar className="h-3.5 w-3.5" />
               <span className="hidden md:inline">{t("app.gather")}</span>
@@ -542,7 +543,7 @@ function Header({
               className="h-8 text-xs gap-1.5"
               onClick={onOpenCompose}
               disabled={paragraphCount < 2}
-              title={paragraphCount < 2 ? "Need ≥2 paragraphs" : "Compose article"}
+              title={paragraphCount < 2 ? t("app.needTwoParagraphs") : t("app.composeTitle")}
             >
               <Layers className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">{t("app.compose")}</span>
@@ -562,7 +563,7 @@ function Header({
           size="icon"
           className="h-8 w-8 rounded-full"
           onClick={() => onOpenLLMConfig()}
-          title="LLM Configuration"
+          title={t("app.llmConfigTitle")}
         >
           <Cpu className="h-4 w-4" />
         </Button>
@@ -615,6 +616,7 @@ function WritingWorkspace({
   onOpenUserData: () => void;
   onOpenArticle: (a: any) => void;
 }) {
+  const { t } = useI18n();
   const [workspaceTab, setWorkspaceTab] = React.useState("paragraphs");
 
   if (!activeProjectId || !project) {
@@ -645,13 +647,13 @@ function WritingWorkspace({
             </p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <Button variant="ghost" size="sm" className="h-8 text-xs gap-1.5" onClick={onOpenUserData} title="Upload experiment data">
+            <Button variant="ghost" size="sm" className="h-8 text-xs gap-1.5" onClick={onOpenUserData} title={t("app.uploadDataTitle")}>
               <DatabaseZap className="h-3.5 w-3.5" />
-              <span className="hidden xl:inline">Data</span>
+              <span className="hidden xl:inline">{t("app.dataButton")}</span>
             </Button>
-            <Button variant="ghost" size="sm" className={`h-8 text-xs gap-1.5 ${tipsOpen ? "bg-amber-100/60 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400" : ""}`} onClick={() => onTipsOpenChange(!tipsOpen)} title="Writing tips">
+            <Button variant="ghost" size="sm" className={`h-8 text-xs gap-1.5 ${tipsOpen ? "bg-amber-100/60 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400" : ""}`} onClick={() => onTipsOpenChange(!tipsOpen)} title={t("app.writingTipsTitle")}>
               <Lightbulb className="h-3.5 w-3.5" />
-              <span className="hidden xl:inline">Tips</span>
+              <span className="hidden xl:inline">{t("app.tips")}</span>
             </Button>
           </div>
         </div>
@@ -671,16 +673,16 @@ function WritingWorkspace({
       {/* Workspace tabs */}
       <div className="flex items-center gap-1 px-5 py-1.5 border-b border-border/60 shrink-0 bg-muted/20 overflow-x-auto">
         <button onClick={() => setWorkspaceTab("paragraphs")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${workspaceTab === "paragraphs" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}>
-          <PenLine className="h-3 w-3 inline mr-1" />Paragraphs ({paragraphs.length})
+          <PenLine className="h-3 w-3 inline mr-1" />{t("workspace.paragraphsTabLabel", { n: paragraphs.length })}
         </button>
         <button onClick={() => setWorkspaceTab("article")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${workspaceTab === "article" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}>
-          <Layers className="h-3 w-3 inline mr-1" />Article {latestArticle ? `(${articles.length})` : ""}
+          <Layers className="h-3 w-3 inline mr-1" />{t("workspace.articleTab")}{latestArticle ? ` (${articles.length})` : ""}
         </button>
         <button onClick={() => setWorkspaceTab("review")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${workspaceTab === "review" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}>
-          <Gavel className="h-3 w-3 inline mr-1" />Review
+          <Gavel className="h-3 w-3 inline mr-1" />{t("workspace.reviewTab")}
         </button>
         <button onClick={() => setWorkspaceTab("relationships")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${workspaceTab === "relationships" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}>
-          <Network className="h-3 w-3 inline mr-1" />Relationships
+          <Network className="h-3 w-3 inline mr-1" />{t("workspace.relationshipsTab")}
         </button>
         {latestArticle && (
           <div className="ml-auto shrink-0">
@@ -698,13 +700,13 @@ function WritingWorkspace({
                 <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
                   <Lightbulb className="h-7 w-7 text-primary" />
                 </div>
-                <h3 className="text-sm font-semibold">Start writing</h3>
+                <h3 className="text-sm font-semibold">{t("workspace.startWriting")}</h3>
                 <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
-                  Use "AI Write" to draft your first citation-backed paragraph.
+                  {t("workspace.startHint")}
                 </p>
                 <Button size="sm" className="mt-4 gap-1.5" onClick={onOpenWrite}>
                   <Sparkles className="h-3.5 w-3.5" />
-                  Draft first paragraph
+                  {t("workspace.draftFirst")}
                   <ArrowRight className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -712,14 +714,14 @@ function WritingWorkspace({
               <>
                 <div className="divider-academic mb-1">
                   <Library className="h-3 w-3" />
-                  Paragraphs ({paragraphs.length})
-                  <span className="text-[9px] text-muted-foreground/70 normal-case tracking-normal ml-2">drag ⠿ to reorder</span>
+                  {t("workspace.paragraphs")} ({paragraphs.length})
+                  <span className="text-[9px] text-muted-foreground/70 normal-case tracking-normal ml-2">{t("workspace.dragReorder")}</span>
                 </div>
                 <SortableParagraphs paragraphs={paragraphs} projectId={activeProjectId} />
                 <div className="pt-2">
                   <Button variant="outline" size="sm" className="w-full h-9 text-xs gap-1.5 border-dashed" onClick={onOpenWrite}>
                     <Sparkles className="h-3.5 w-3.5" />
-                    Draft another paragraph
+                    {t("workspace.draftAnother")}
                   </Button>
                 </div>
               </>
@@ -748,13 +750,13 @@ function WritingWorkspace({
             ) : (
               <div className="text-center py-16">
                 <Layers className="h-10 w-10 mx-auto opacity-40 mb-3" />
-                <h3 className="text-sm font-semibold">No composed article yet</h3>
+                <h3 className="text-sm font-semibold">{t("workspace.noArticleTitle")}</h3>
                 <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto mb-4">
-                  Use "Compose" or "Generate" to create a full article.
+                  {t("workspace.noArticleDesc")}
                 </p>
                 <Button size="sm" className="gap-1.5" onClick={onOpenCompose} disabled={paragraphs.length < 2}>
                   <Layers className="h-3.5 w-3.5" />
-                  Compose article
+                  {t("workspace.composeArticleBtn")}
                 </Button>
               </div>
             )}
@@ -779,6 +781,7 @@ function WritingWorkspace({
 
 
 function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { articleId?: string; articleTitle?: string; projectId: string }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   // Load saved review from DB on mount
   const { data: savedReview } = useQuery({
@@ -799,7 +802,7 @@ function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { artic
     onSuccess: (data) => {
       qc.setQueryData(["article-review", articleId], data);
       qc.invalidateQueries({ queryKey: ["saved-review", articleId] });
-      toast.success("Review completed.");
+      toast.success(t("toast.reviewCompleted"));
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -815,12 +818,12 @@ function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { artic
             <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
               <Gavel className="h-7 w-7 text-primary" />
             </div>
-            <h3 className="text-sm font-semibold">AI Peer Review</h3>
+            <h3 className="text-sm font-semibold">{t("workspace.peerReviewTitle")}</h3>
             <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto mb-4">
-              Run a structured peer review with multi-dimensional scoring.
+              {t("workspace.peerReviewDesc")}
             </p>
             <Button size="sm" className="gap-1.5 text-xs" onClick={() => reviewMut.mutate()} disabled={!articleId}>
-              <Gavel className="h-3.5 w-3.5" /> Run review
+              <Gavel className="h-3.5 w-3.5" /> {t("workspace.runReviewBtn")}
             </Button>
           </div>
         )}
@@ -832,7 +835,7 @@ function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { artic
             {displayData.verdict && (
               <div className={`rounded-lg border p-3 ${displayData.verdict === "accept" ? "border-emerald-200/60 bg-emerald-50/50" : "border-amber-200/60 bg-amber-50/50"}`}>
                 <span className={`text-sm font-semibold ${displayData.verdict === "accept" ? "text-emerald-700" : "text-amber-700"}`}>
-                  {displayData.verdict === "accept" ? "✓ Accept" : `⚠ ${displayData.verdict}`}
+                  {displayData.verdict === "accept" ? t("workspace.acceptVerdict") : `⚠ ${displayData.verdict}`}
                 </span>
               </div>
             )}
@@ -848,25 +851,25 @@ function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { artic
             )}
             {displayData.review?.summary && (
               <div className="rounded-md border border-border/50 p-2.5">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">Summary</p>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">{t("workspace.relSummaryLabel")}</p>
                 <p className="text-xs leading-relaxed">{displayData.review.summary}</p>
               </div>
             )}
             {displayData.review && (
               <div className="grid grid-cols-2 gap-2">
                 <div className="rounded-md border border-emerald-200/50 bg-emerald-50/30 p-2">
-                  <p className="text-[10px] uppercase font-semibold text-emerald-700 mb-1">Strengths</p>
+                  <p className="text-[10px] uppercase font-semibold text-emerald-700 mb-1">{t("workspace.strengths")}</p>
                   {safeParseArr(displayData.review.strengths).map((s: string, i: number) => <p key={i} className="text-[10px] mb-1">• {s}</p>)}
                 </div>
                 <div className="rounded-md border border-rose-200/50 bg-rose-50/30 p-2">
-                  <p className="text-[10px] uppercase font-semibold text-rose-700 mb-1">Weaknesses</p>
+                  <p className="text-[10px] uppercase font-semibold text-rose-700 mb-1">{t("workspace.weaknesses")}</p>
                   {safeParseArr(displayData.review.weaknesses).map((w: string, i: number) => <p key={i} className="text-[10px] mb-1">• {w}</p>)}
                 </div>
               </div>
             )}
             <Button size="sm" variant="outline" className="gap-1.5 text-xs w-full" onClick={() => reviewMut.mutate()} disabled={reviewMut.isPending}>
               {reviewMut.isPending && !displayData && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              Re-run review
+              {t("workspace.rerunReviewBtn")}
             </Button>
           </div>
         )}
@@ -876,6 +879,7 @@ function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { artic
 }
 
 function RelationshipWorkspace({ projectId }: { projectId: string }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   // First try to load saved analysis from DB
   const { data: savedRel } = useQuery({
@@ -894,7 +898,7 @@ function RelationshipWorkspace({ projectId }: { projectId: string }) {
       });
       if (!res.ok) {
         const text = await res.text();
-        throw new Error(text.slice(0, 200) || `Analysis failed (${res.status})`);
+        throw new Error(text.slice(0, 200) || t("workspace.analysisFailedError", { status: res.status }));
       }
       const data = await res.json();
       qc.invalidateQueries({ queryKey: ["saved-relationships", projectId] });
@@ -911,13 +915,13 @@ function RelationshipWorkspace({ projectId }: { projectId: string }) {
       }).then(async (res) => {
         if (!res.ok) {
           const text = await res.text();
-          throw new Error(text.slice(0, 200) || `Analysis failed (${res.status})`);
+          throw new Error(text.slice(0, 200) || t("workspace.analysisFailedError", { status: res.status }));
         }
         return res.json();
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["saved-relationships", projectId] });
-      toast.success("Relationship analysis complete.");
+      toast.success(t("toast.relAnalysisComplete"));
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -937,7 +941,7 @@ function RelationshipWorkspace({ projectId }: { projectId: string }) {
             <Network className="h-10 w-10 mx-auto opacity-40 mb-3" />
             <p className="text-xs text-destructive mb-3">{(relError as Error).message}</p>
             <Button size="sm" className="gap-1.5 text-xs" onClick={() => relMut.mutate()}>
-              <Network className="h-3.5 w-3.5" /> Retry
+              <Network className="h-3.5 w-3.5" /> {t("workspace.retryBtn")}
             </Button>
           </div>
         )}
@@ -951,27 +955,27 @@ function RelationshipWorkspace({ projectId }: { projectId: string }) {
           <div className="space-y-3">
             {relData.summary && (
               <div className="rounded-lg border border-primary/20 bg-primary/[0.03] p-3">
-                <p className="text-[10px] uppercase tracking-wider text-primary font-semibold mb-1">Summary</p>
+                <p className="text-[10px] uppercase tracking-wider text-primary font-semibold mb-1">{t("workspace.relSummaryLabel")}</p>
                 <p className="text-xs leading-relaxed">{relData.summary}</p>
               </div>
             )}
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-md border border-border/50 p-2 text-center">
                 <p className="text-lg font-bold">{relData.nodes?.length || 0}</p>
-                <p className="text-[9px] uppercase text-muted-foreground">Sources</p>
+                <p className="text-[9px] uppercase text-muted-foreground">{t("workspace.sources")}</p>
               </div>
               <div className="rounded-md border border-border/50 p-2 text-center">
                 <p className="text-lg font-bold">{relData.edges?.length || 0}</p>
-                <p className="text-[9px] uppercase text-muted-foreground">Connections</p>
+                <p className="text-[9px] uppercase text-muted-foreground">{t("workspace.connections")}</p>
               </div>
               <div className="rounded-md border border-border/50 p-2 text-center">
                 <p className="text-lg font-bold">{relData.themes?.length || 0}</p>
-                <p className="text-[9px] uppercase text-muted-foreground">Themes</p>
+                <p className="text-[9px] uppercase text-muted-foreground">{t("workspace.themes")}</p>
               </div>
             </div>
             {relData.themes?.length > 0 && (
               <div className="space-y-2">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Thematic Clusters</p>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{t("workspace.thematicClusters")}</p>
                 {relData.themes.map((t: any, i: number) => (
                   <div key={i} className="rounded-md border border-border/50 p-2.5">
                     <span className="text-xs font-semibold">{t.name}</span>
@@ -982,7 +986,7 @@ function RelationshipWorkspace({ projectId }: { projectId: string }) {
             )}
             {relData.keyInsights?.length > 0 && (
               <div className="space-y-1.5">
-                <p className="text-[10px] uppercase tracking-wider text-primary font-semibold">Key Insights</p>
+                <p className="text-[10px] uppercase tracking-wider text-primary font-semibold">{t("workspace.keyInsights")}</p>
                 {relData.keyInsights.map((insight: string, i: number) => (
                   <div key={i} className="flex items-start gap-1.5 text-[11px]">
                     <CheckCircle2 className="h-3 w-3 text-primary mt-0.5 shrink-0" />
@@ -993,7 +997,7 @@ function RelationshipWorkspace({ projectId }: { projectId: string }) {
             )}
             {relData.contradictions?.length > 0 && (
               <div className="space-y-1.5">
-                <p className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold">Contradictions</p>
+                <p className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold">{t("workspace.contradictions")}</p>
                 {relData.contradictions.map((c: any, i: number) => (
                   <div key={i} className="rounded-md border border-rose-200/50 bg-rose-50/30 p-2">
                     <div className="flex items-center gap-1.5 mb-0.5">
@@ -1006,7 +1010,7 @@ function RelationshipWorkspace({ projectId }: { projectId: string }) {
               </div>
             )}
             <Button size="sm" variant="outline" className="gap-1.5 text-xs w-full" onClick={() => relMut.mutate()}>
-              <Network className="h-3.5 w-3.5" /> Re-analyze
+              <Network className="h-3.5 w-3.5" /> {t("workspace.reanalyzeBtn")}
             </Button>
           </div>
         )}
@@ -1019,38 +1023,37 @@ function safeParseArr(raw: string): any[] {
   try { const p = JSON.parse(raw); return Array.isArray(p) ? p : []; } catch { return []; }
 }
 function EmptyWorkspace() {
+  const { t } = useI18n();
   return (
     <div className="flex flex-col items-center justify-center h-full text-center px-6">
       <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary/15 to-teal-500/15 flex items-center justify-center mb-4 ring-academic">
         <FlaskConical className="h-8 w-8 text-primary" />
       </div>
       <h2 className="text-xl font-semibold font-serif-text">
-        Scientific Literature Writing Assistant
+        {t("workspace.emptyTitle")}
       </h2>
       <p className="text-sm text-muted-foreground mt-2 max-w-md leading-relaxed">
-        Query RCSB, UniProt, PubMed, NCBI and BLAST. Let AI draft
-        citation-backed scholarly paragraphs, annotate and revise them, then
-        compose deeper research articles.
+        {t("workspace.emptyDesc")}
       </p>
       <div className="mt-6 grid grid-cols-3 gap-2 max-w-lg text-[11px]">
         {[
-          ["1", "Create a project", "Define your research topic & field"],
-          ["2", "Query databases", "Fetch papers, structures, sequences, genes"],
-          ["3", "Draft & revise", "AI writes; you annotate; AI revises"],
-        ].map(([n, t, d]) => (
+          ["1", t("workspace.step1Title"), t("workspace.step1Desc")],
+          ["2", t("workspace.step2Title"), t("workspace.step2Desc")],
+          ["3", t("workspace.step3Title"), t("workspace.step3Desc")],
+        ].map(([n, title, desc]) => (
           <div key={n} className="rounded-lg border border-border/60 p-2.5 text-left">
             <div className="flex items-center gap-1 mb-1">
               <span className="h-4 w-4 rounded-full bg-primary/15 text-primary text-[9px] font-bold flex items-center justify-center">
                 {n}
               </span>
-              <span className="font-semibold text-[11px]">{t}</span>
+              <span className="font-semibold text-[11px]">{title}</span>
             </div>
-            <p className="text-[10px] text-muted-foreground leading-snug">{d}</p>
+            <p className="text-[10px] text-muted-foreground leading-snug">{desc}</p>
           </div>
         ))}
       </div>
       <p className="text-[10px] text-muted-foreground mt-6">
-        Create a project from the left panel to begin.
+        {t("workspace.emptyHint")}
       </p>
     </div>
   );
@@ -1075,7 +1078,7 @@ function Footer({ onOpenPalette }: { onOpenPalette?: () => void }) {
           <button
             onClick={onOpenPalette}
             className="hidden md:inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 hover:bg-muted/60 transition-colors"
-            title="Open command palette"
+            title={t("footer.openPaletteTitle")}
           >
             <kbd className="font-mono text-[9px] font-semibold">⌘K</kbd>
             <span className="text-muted-foreground">{t("footer.commands")}</span>
