@@ -1274,3 +1274,20 @@ User feedback:
 - AI Write route fixed to copy references (not move) — preserves project-level refs.
 - Full real test completed with 52 data sources + 12 references.
 - All changes committed and pushed to GitHub (commit c6d239e).
+
+### Final Verification (complete real test):
+- **Paragraph cards (8 total)**: Each shows exactly 1 "REFERENCES" section (no duplicates).
+- **Article tab**: Shows only "## References" (1 section, was 2 before fix).
+- **New paragraph generated via AI Write**:
+  - 4 citation markers all [1], 1 linked reference (citationOrder: 0)
+  - 0 orphans ✓, 0 missing refs ✓, appearance order correct ✓
+- **Project-level references preserved**: 12 before → 12 after (copies created, not moved)
+- **KnowledgePanel tab bar**: "🗂️ ALL 52 | 📄 PUBMED 12 | 🧬 RCSB 20 | 🧪 UNIPROT 20"
+  - All counts visible at a glance, tab filtering works correctly
+- `bun run lint` → clean
+- Dev server stable, 0 console errors
+- All changes committed and pushed to GitHub (commits c6d239e, 573659f)
+
+### Commits pushed:
+- c6d239e: Tab-based KnowledgePanel + copy references on AI Write
+- 573659f: Fix duplicate reference lists in articles + paragraph cards
