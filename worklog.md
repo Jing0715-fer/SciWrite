@@ -1420,3 +1420,65 @@ Task: All LLM tasks within the same project should run in the same session, inhe
 - Context is token-budget aware (max 8000 tokens, trims oldest messages).
 - generate-full clears session at start for a fresh pipeline.
 - Verified end-to-end: write → outline both save to and load from the same session.
+
+
+---
+
+## Phase 19 — Unified AI Writing Hub + Insights overflow fix
+
+Task ID: 19
+Agent: main
+Task: Consolidate duplicate full-article generation entry points into one unified dialog with tabs for all AI writing functions, with real-time progress. Fix Insights dialog content overflow.
+
+### Work Log:
+
+- **NEW: UnifiedWritingDialog component** (`unified-writing-dialog.tsx`):
+  - Single tabbed dialog with 5 tabs: Outline / Gather / Paragraph / Compose / Full Article
+  - Each tab has its own configuration and action button
+  - **Full Article tab**: 6-step progress timeline (gather/curate/relationships/plan/generate/compose)
+    with overall progress bar + per-step status indicators
+  - Feature chips: Force re-gather, Chunked generation
+  - Word count slider (2,000-50,000) with visual gradient fill
+  - Result stats: sources gathered / sections written / total words
+
+- **REMOVED duplicated entry points**:
+  - Old TopicComposer (AI Write dialog) — replaced by Paragraph tab
+  - Old ArticleComposer (Compose dialog) — replaced by Compose tab
+  - Old DataGatheringDialog (Gather dialog) — replaced by Gather tab
+  - Old OutlineDialog (Outline dialog) — replaced by Outline tab
+  - Old OneClickGenerateDialog (Full Article dialog) — replaced by Full Article tab
+
+- **Header simplified**:
+  - Removed 5 separate buttons (Outline, Gather, Compose, AI Write, Full Article)
+  - Added single "AI Hub" button (gradient-styled) that opens the unified dialog
+  - Insights button retained separately
+
+- **Keyboard shortcuts updated**:
+  - N → opens dialog at Paragraph tab
+  - G → opens dialog at Gather tab
+  - O → opens dialog at Outline tab
+  - C → opens dialog at Compose tab (requires 2+ paragraphs)
+  - F → opens dialog at Full Article tab (NEW)
+
+- **FIX: Insights dialog content overflow**:
+  - Root cause: ScrollArea component's Viewport wasn't getting constrained height
+    from flex-1 parent (Radix ScrollArea needs explicit height context)
+  - Replaced `<ScrollArea className="flex-1 min-h-0">` with plain `<div className="flex-1 min-h-0 overflow-y-auto">`
+  - Widened dialog from max-w-2xl to max-w-3xl (more breathing room)
+  - Changed max-h from 88vh to 90vh with overflow-hidden on DialogContent
+  - Verified: content now scrolls properly, dialog bottom (548px) < viewport (577px)
+
+### Verification Results:
+- `bun run lint` → clean (0 errors, 0 warnings).
+- Dev server stable, 0 console errors.
+- AI Writing Hub dialog opens with 5 tabs, default to Paragraph tab.
+- Full Article tab shows feature chips, word slider, 6-step progress timeline.
+- Insights dialog scrolls correctly (scrollHeight 1182 > clientHeight 379, canScroll: true).
+- All changes committed and pushed to GitHub (commit e77d462).
+
+### Stage Summary:
+- Eliminated feature duplication: 5 separate dialogs → 1 unified tabbed dialog.
+- All AI writing tools now in one place with consistent UI.
+- Real-time progress visible for Full Article generation (6-step timeline).
+- Insights overflow fixed.
+- Header cleaner with single "AI Hub" button.
