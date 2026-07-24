@@ -332,6 +332,9 @@ CITATION FORMAT (MANDATORY):
 - Use ONLY numeric [n] citations in the body text (e.g. [1], [2], [3]).
 - Number citations starting from [1] for THIS section. Each [n] refers to the n-th entry
   in the REFERENCE LIST above (which has ${savedReferences.length} entries, numbered [1] to [${savedReferences.length}]).
+- You MUST cite AT LEAST 5 different references in this section. A paragraph with fewer than 5
+  distinct citations is unacceptable — every factual claim needs a citation, and you should
+  reference multiple sources to show synthesis.
 - You MUST NOT use citation numbers greater than ${savedReferences.length}. If you need a source
   not in the list, use [$REF] as a placeholder instead.
 - Do NOT use [SOURCE:ID] format (no [PDB:xxx], [PMID:xxx], [UniProt:xxx] in body).

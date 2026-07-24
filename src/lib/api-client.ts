@@ -105,6 +105,18 @@ export const api = {
   validateCitations: (id: string) =>
     jfetch<any>(`/api/paragraphs/${id}/validate-citations`),
 
+  /* Load saved reviews for an article */
+  getSavedReview: (articleId: string) =>
+    jfetch<any>(`/api/reviews?articleId=${articleId}`),
+
+  /* Load saved relationship analysis */
+  getSavedRelationships: (projectId: string) =>
+    jfetch<any>(`/api/ai/source-relationships?projectId=${projectId}`),
+
+  /* Save (run) relationship analysis */
+  runRelationshipAnalysis: (projectId: string) =>
+    jfetch<any>(`/api/ai/source-relationships`, { method: "POST", body: JSON.stringify({ projectId }) }),
+
   /* Auto-fix missing citations */
   autoFixCitations: (id: string) =>
     jfetch<any>(`/api/paragraphs/${id}/auto-fix-citations`, { method: "POST" }),

@@ -5,6 +5,35 @@ import { chat } from "@/lib/ai";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+// GET: Load saved relationship analysis from DB
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const projectId = searchParams.get("projectId");
+  if (!projectId) {
+    return NextResponse.json({ error: "Missing 'projectId'." }, { status: 400 });
+  }
+  const latest = await db.relationshipAnalysis.findFirst({
+    where: { projectId },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!latest) {
+    return NextResponse.json({ notFound: true });
+  }
+  return NextResponse.json({
+    summary: latest.summary,
+    themes: safeJson(latest.themes, []),
+    edges: safeJson(latest.edges, []),
+    nodes: safeJson(latest.nodes, []),
+    keyInsights: safeJson(latest.keyInsights, []),
+    contradictions: safeJson(latest.contradictions, []),
+    createdAt: latest.createdAt,
+  });
+}
+
+function safeJson(raw: string, fallback: any): any {
+  try { return JSON.parse(raw); } catch { return fallback; }
+}
+
 // Analyze relationships between data sources using LLM.
 // Returns a network graph: nodes (sources) + edges (relationships) + summary.
 export async function POST(req: NextRequest) {
@@ -119,14 +148,29 @@ Output JSON only. Focus on scientific substance, not metadata similarity.`;
       sourceIdsResolved: (t.sourceIds || []).map((s: string) => nodeMap[s] || s),
     }));
 
-    return NextResponse.json({
+    const result = {
       summary: parsed.summary || "",
       themes,
       edges,
       nodes,
       keyInsights: parsed.keyInsights || [],
       contradictions: parsed.contradictions || [],
+    };
+
+    // Save to database for persistence
+    await db.relationshipAnalysis.create({
+      data: {
+        projectId,
+        summary: result.summary,
+        themes: JSON.stringify(result.themes),
+        edges: JSON.stringify(result.edges),
+        nodes: JSON.stringify(result.nodes),
+        keyInsights: JSON.stringify(result.keyInsights),
+        contradictions: JSON.stringify(result.contradictions),
+      },
     });
+
+    return NextResponse.json(result);
   } catch (err: any) {
     console.error("[/api/ai/source-relationships] error:", err);
     return NextResponse.json(

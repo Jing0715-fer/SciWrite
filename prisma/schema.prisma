@@ -23,6 +23,7 @@ model Project {
   dataSources DataSource[]
   references  Reference[]
   userData    UserData[]
+  relationships RelationshipAnalysis[]
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 }
@@ -174,6 +175,22 @@ model UserData {
   description String?  // user-provided caption/description
   filePath    String?  // for uploaded images (relative path under /upload)
   data        String?  // JSON: for tables (rows/cols) or structured data
+  createdAt   DateTime @default(now())
+
+  @@index([projectId])
+}
+
+// Source relationship analysis (persisted)
+model RelationshipAnalysis {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  summary     String
+  themes      String   // JSON array
+  edges       String   // JSON array
+  nodes       String   // JSON array
+  keyInsights String   // JSON array
+  contradictions String // JSON array
   createdAt   DateTime @default(now())
 
   @@index([projectId])

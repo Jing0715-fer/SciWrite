@@ -780,10 +780,17 @@ function WritingWorkspace({
 
 function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { articleId?: string; articleTitle?: string; projectId: string }) {
   const qc = useQueryClient();
-  const { data: reviewData, isLoading: loading } = useQuery({
+  // Load saved review from DB on mount
+  const { data: savedReview } = useQuery({
+    queryKey: ["saved-review", articleId],
+    queryFn: () => articleId ? api.getSavedReview(articleId) : Promise.resolve({ notFound: true }),
+    enabled: !!articleId,
+    staleTime: Infinity,
+  });
+  const { data: reviewData } = useQuery({
     queryKey: ["article-review", articleId],
     queryFn: () => api.aiReview({ mode: "review", articleId: articleId! }),
-    enabled: false, // Only fetch on manual trigger
+    enabled: false,
     staleTime: Infinity,
   });
 
@@ -791,15 +798,19 @@ function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { artic
     mutationFn: () => articleId ? api.aiReview({ mode: "review", articleId }) : Promise.reject(new Error("No article")),
     onSuccess: (data) => {
       qc.setQueryData(["article-review", articleId], data);
+      qc.invalidateQueries({ queryKey: ["saved-review", articleId] });
       toast.success("Review completed.");
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // Use freshly-run review if available, else saved from DB
+  const displayData = reviewData || (savedReview && !savedReview.notFound ? savedReview : null);
+
   return (
     <ScrollArea className="flex-1 min-h-0 scroll-academic">
       <div className="px-5 py-4 max-w-2xl mx-auto">
-        {!reviewData && !reviewMut.isPending && (
+        {!displayData && !reviewMut.isPending && (
           <div className="text-center py-12">
             <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
               <Gavel className="h-7 w-7 text-primary" />
@@ -813,21 +824,21 @@ function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { artic
             </Button>
           </div>
         )}
-        {reviewMut.isPending && (
+        {reviewMut.isPending && !displayData && (
           <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
         )}
-        {reviewData && !reviewMut.isPending && (
+        {displayData && !reviewMut.isPending && (
           <div className="space-y-3">
-            {reviewData.verdict && (
-              <div className={`rounded-lg border p-3 ${reviewData.verdict === "accept" ? "border-emerald-200/60 bg-emerald-50/50" : "border-amber-200/60 bg-amber-50/50"}`}>
-                <span className={`text-sm font-semibold ${reviewData.verdict === "accept" ? "text-emerald-700" : "text-amber-700"}`}>
-                  {reviewData.verdict === "accept" ? "✓ Accept" : `⚠ ${reviewData.verdict}`}
+            {displayData.verdict && (
+              <div className={`rounded-lg border p-3 ${displayData.verdict === "accept" ? "border-emerald-200/60 bg-emerald-50/50" : "border-amber-200/60 bg-amber-50/50"}`}>
+                <span className={`text-sm font-semibold ${displayData.verdict === "accept" ? "text-emerald-700" : "text-amber-700"}`}>
+                  {displayData.verdict === "accept" ? "✓ Accept" : `⚠ ${displayData.verdict}`}
                 </span>
               </div>
             )}
-            {reviewData.scores && (
+            {displayData.scores && (
               <div className="grid grid-cols-3 gap-2">
-                {Object.entries(reviewData.scores).map(([key, val]: [string, any]) => (
+                {Object.entries(displayData.scores).map(([key, val]: [string, any]) => (
                   <div key={key} className="rounded-md border border-border/50 p-2 text-center">
                     <p className="text-sm font-bold">{val}/10</p>
                     <p className="text-[9px] uppercase text-muted-foreground">{key}</p>
@@ -835,26 +846,26 @@ function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { artic
                 ))}
               </div>
             )}
-            {reviewData.review?.summary && (
+            {displayData.review?.summary && (
               <div className="rounded-md border border-border/50 p-2.5">
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">Summary</p>
-                <p className="text-xs leading-relaxed">{reviewData.review.summary}</p>
+                <p className="text-xs leading-relaxed">{displayData.review.summary}</p>
               </div>
             )}
-            {reviewData.review && (
+            {displayData.review && (
               <div className="grid grid-cols-2 gap-2">
                 <div className="rounded-md border border-emerald-200/50 bg-emerald-50/30 p-2">
                   <p className="text-[10px] uppercase font-semibold text-emerald-700 mb-1">Strengths</p>
-                  {safeParseArr(reviewData.review.strengths).map((s: string, i: number) => <p key={i} className="text-[10px] mb-1">• {s}</p>)}
+                  {safeParseArr(displayData.review.strengths).map((s: string, i: number) => <p key={i} className="text-[10px] mb-1">• {s}</p>)}
                 </div>
                 <div className="rounded-md border border-rose-200/50 bg-rose-50/30 p-2">
                   <p className="text-[10px] uppercase font-semibold text-rose-700 mb-1">Weaknesses</p>
-                  {safeParseArr(reviewData.review.weaknesses).map((w: string, i: number) => <p key={i} className="text-[10px] mb-1">• {w}</p>)}
+                  {safeParseArr(displayData.review.weaknesses).map((w: string, i: number) => <p key={i} className="text-[10px] mb-1">• {w}</p>)}
                 </div>
               </div>
             )}
             <Button size="sm" variant="outline" className="gap-1.5 text-xs w-full" onClick={() => reviewMut.mutate()} disabled={reviewMut.isPending}>
-              {reviewMut.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {reviewMut.isPending && !displayData && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               Re-run review
             </Button>
           </div>
@@ -865,16 +876,17 @@ function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { artic
 }
 
 function RelationshipWorkspace({ projectId }: { projectId: string }) {
-  const { data: relData, isLoading: loading, error: relError, refetch } = useQuery({
+  const qc = useQueryClient();
+  // First try to load saved analysis from DB
+  const { data: savedRel } = useQuery({
+    queryKey: ["saved-relationships", projectId],
+    queryFn: () => api.getSavedRelationships(projectId),
+    enabled: !!projectId,
+    staleTime: Infinity,
+  });
+  const { data: freshRel, isLoading: loading, error: relError } = useQuery({
     queryKey: ["source-relationships", projectId],
     queryFn: async () => {
-      const projRes = await fetch(`/api/projects/${projectId}`);
-      if (!projRes.ok) throw new Error("Failed to load project");
-      const projData = await projRes.json();
-      const ds = projData?.project?.dataSources || [];
-      if (ds.length < 2) {
-        return { skipped: true, message: "Need at least 2 data sources to analyze relationships." };
-      }
       const res = await fetch("/api/ai/source-relationships", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -884,16 +896,38 @@ function RelationshipWorkspace({ projectId }: { projectId: string }) {
         const text = await res.text();
         throw new Error(text.slice(0, 200) || `Analysis failed (${res.status})`);
       }
-      return res.json();
+      const data = await res.json();
+      qc.invalidateQueries({ queryKey: ["saved-relationships", projectId] });
+      return data;
     },
-    enabled: !!projectId,
-    staleTime: Infinity,
+    enabled: false, // Only on manual trigger
   });
+  const relMut = useMutation({
+    mutationFn: () =>
+      fetch("/api/ai/source-relationships", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId }),
+      }).then(async (res) => {
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text.slice(0, 200) || `Analysis failed (${res.status})`);
+        }
+        return res.json();
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["saved-relationships", projectId] });
+      toast.success("Relationship analysis complete.");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const relData = freshRel || (savedRel && !savedRel.notFound ? savedRel : null);
 
   return (
     <ScrollArea className="flex-1 min-h-0 scroll-academic">
       <div className="px-5 py-4 max-w-2xl mx-auto">
-        {loading && (
+        {relMut.isPending && (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>
@@ -902,18 +936,18 @@ function RelationshipWorkspace({ projectId }: { projectId: string }) {
           <div className="text-center py-12">
             <Network className="h-10 w-10 mx-auto opacity-40 mb-3" />
             <p className="text-xs text-destructive mb-3">{(relError as Error).message}</p>
-            <Button size="sm" className="gap-1.5 text-xs" onClick={() => refetch()}>
+            <Button size="sm" className="gap-1.5 text-xs" onClick={() => relMut.mutate()}>
               <Network className="h-3.5 w-3.5" /> Retry
             </Button>
           </div>
         )}
-        {!loading && !relError && relData?.skipped && (
+        {!relMut.isPending && !relError && relData?.skipped && (
           <div className="text-center py-12">
             <Network className="h-10 w-10 mx-auto opacity-40 mb-3" />
             <p className="text-xs text-muted-foreground">{relData.message}</p>
           </div>
         )}
-        {!loading && !relError && relData && !relData.skipped && (
+        {!relMut.isPending && !relError && relData && !relData.skipped && (
           <div className="space-y-3">
             {relData.summary && (
               <div className="rounded-lg border border-primary/20 bg-primary/[0.03] p-3">
@@ -971,7 +1005,7 @@ function RelationshipWorkspace({ projectId }: { projectId: string }) {
                 ))}
               </div>
             )}
-            <Button size="sm" variant="outline" className="gap-1.5 text-xs w-full" onClick={() => refetch()}>
+            <Button size="sm" variant="outline" className="gap-1.5 text-xs w-full" onClick={() => relMut.mutate()}>
               <Network className="h-3.5 w-3.5" /> Re-analyze
             </Button>
           </div>
