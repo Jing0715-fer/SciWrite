@@ -55,7 +55,7 @@ export async function GET(
     const body = citeHeaderIdx >= 0 ? content.slice(0, citeHeaderIdx) : content;
     const citationsBlock = citeHeaderIdx >= 0 ? content.slice(citeHeaderIdx) : "";
 
-    const markerRe = /\[(\d{1,3}(?:[,\-–\s]\d{1,3})*|[A-Z]{2,12}:\s?[^\]\n]{1,60})\]/g;
+    const markerRe = /\[(\d{1,3}(?:[,\-–]\s*\d{1,3})*|[A-Z]{2,12}:\s?[^\]\n]{1,60})\]/g;
     const markers: { full: string; inner: string }[] = [];
     let m: RegExpExecArray | null;
     while ((m = markerRe.exec(body))) {

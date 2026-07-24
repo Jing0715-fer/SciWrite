@@ -346,7 +346,7 @@ CITATION FORMAT (MANDATORY):
           // Sanitize citations: replace any [n] where n > savedReferences.length with [$REF]
           const maxRefNum = savedReferences.length;
           content = content.replace(
-            /\[(\d+(?:[,\-–\s]\d+)*)\]/g,
+            /\[(\d+(?:[,\-–]\s*\d+)*)\]/g,
             (match, inner: string) => {
               const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
                 const rm = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
@@ -457,7 +457,7 @@ CITATION FORMAT (MANDATORY):
           // The AI cites [1] through [N] where N = refs.length, so [1] = refs[0].
           let result = content;
           // For each local citation [n] in this paragraph, map to global number
-          const citeRe = /\[(\d+(?:[,\-–\s]\d+)*)\]/g;
+          const citeRe = /\[(\d+(?:[,\-–]\s*\d+)*)\]/g;
           result = result.replace(citeRe, (match, inner: string) => {
             const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
               const rangeMatch = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);

@@ -27,7 +27,8 @@ export async function GET(
   const citationsBlock = citeHeaderIdx >= 0 ? content.slice(citeHeaderIdx) : "";
 
   // Extract all citation markers from the body
-  const markerRe = /\[(\d{1,3}(?:[,\-–\s]\d{1,3})*|[A-Z]{2,12}:\s?[^\]\n]{1,60})\]/g;
+  // Matches [1], [2,3], [1, 5], [1-3], [1–3], [PMID:12345]
+  const markerRe = /\[(\d{1,3}(?:[,\-–]\s*\d{1,3})*|[A-Z]{2,12}:\s?[^\]\n]{1,60})\]/g;
   const markers: { full: string; inner: string; index: number }[] = [];
   let m: RegExpExecArray | null;
   while ((m = markerRe.exec(body))) {

@@ -35,7 +35,7 @@ interface HighlightRange {
 }
 
 const CITE_RE_SOURCE =
-  "\\[(\\d{1,3}(?:[,\\-\\u2013\\s]\\d{1,3})*|[A-Z]{2,12}:\\s?[^\\]\\n]{1,60})\\]";
+  "\\[(\\d{1,3}(?:[,\\-\\u2013]\\s*\\d{1,3})*|[A-Z]{2,12}:\\s?[^\\]\\n]{1,60})\\]";
 
 const SEVERITY_TO_CLASS: Record<string, string> = {
   critical: "ann-highlight-critical",
