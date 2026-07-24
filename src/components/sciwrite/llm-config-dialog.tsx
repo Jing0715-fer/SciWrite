@@ -38,6 +38,20 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
   const [testPrompt, setTestPrompt] = React.useState("What is 2+2?");
   const [testResult, setTestResult] = React.useState<string | null>(null);
   const [testing, setTesting] = React.useState(false);
+  // Persisted across reloads; mirrors the server-side authoritative state in
+  // /api/llm-config/select which `src/lib/ai.ts` reads.
+  const [selected, setSelected] = React.useState<string>("zai-sdk");
+  const [selecting, setSelecting] = React.useState<string | null>(null);
+
+  const loadSelection = React.useCallback(async () => {
+    try {
+      const r = await fetch("/api/llm-config/select");
+      const d = await r.json();
+      if (d?.provider) setSelected(d.provider);
+    } catch {
+      /* server not reachable; keep default */
+    }
+  }, []);
 
   const detect = React.useCallback(async () => {
     setLoading(true);
@@ -45,10 +59,47 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
       const res = await fetch("/api/llm-config");
       const data = await res.json();
       setConfig(data);
+      await loadSelection();
     } catch (e: any) {
       toast.error(e.message);
     } finally {
       setLoading(false);
+    }
+  }, [loadSelection]);
+
+  const choose = React.useCallback(async (name: string) => {
+    const providerMap: Record<string, string> = {
+      hermes: "cli:hermes",
+      claude: "cli:claude",
+      codex: "cli:codex",
+      gemini: "cli:gemini",
+      openclaw: "cli:openclaw",
+      codebuddy: "cli:codebuddy",
+      aider: "cli:aider",
+      "z-ai": "zai-sdk",
+      "anthropic-sdk": "anthropic",
+      "openai-sdk": "openai",
+    };
+    const provider = providerMap[name] ?? name;
+    setSelecting(name);
+    try {
+      const r = await fetch("/api/llm-config/select", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d?.ok) {
+        toast.error(d?.error || "Failed to select provider");
+        return;
+      }
+      setSelected(d.provider);
+      try { localStorage.setItem("sciwrite:llm-provider:v1", d.provider); } catch {}
+      toast.success(`Default provider set to ${name}`);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSelecting(null);
     }
   }, []);
 
@@ -96,19 +147,29 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
 
         <ScrollArea className="flex-1 min-h-0 scroll-academic">
           <div className="px-6 py-4 space-y-4">
-            {/* Default provider */}
+            {/* Currently selected default provider */}
             <div className="rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-3">
               <div className="flex items-center gap-2 mb-1">
                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                 <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                  {t("llmConfig.default")}
+                  {t("llmConfig.default")} {(config?.detected?.find((c: any) => {
+                    const m: Record<string, string> = {
+                      hermes: "cli:hermes", claude: "cli:claude", codex: "cli:codex",
+                      gemini: "cli:gemini", openclaw: "cli:openclaw", codebuddy: "cli:codebuddy",
+                      aider: "cli:aider", "z-ai": "zai-sdk",
+                      "anthropic-sdk": "anthropic", "openai-sdk": "openai",
+                    };
+                    return m[c.name] === selected;
+                  })?.label) ?? selected}
                 </span>
                 <Badge variant="outline" className="text-[8px] h-3.5 uppercase ml-auto">
                   {t("llmConfig.active")}
                 </Badge>
               </div>
               <p className="text-[10px] text-muted-foreground">
-                {t("llmConfig.defaultDesc")}
+                {selected === "zai-sdk" || !selected
+                  ? t("llmConfig.defaultDesc")
+                  : `Currently routing all AI tasks through ${selected} (selected via LLM Config).`}
               </p>
             </div>
 
@@ -139,14 +200,44 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
                 </div>
               )}
 
-              {config?.detected?.map((cli: any) => (
-                <div key={cli.name} className="rounded-lg border border-border/60 p-3 space-y-1.5">
+              {config?.detected?.map((cli: any) => {
+                const providerMap: Record<string, string> = {
+                  hermes: "cli:hermes",
+                  claude: "cli:claude",
+                  codex: "cli:codex",
+                  gemini: "cli:gemini",
+                  openclaw: "cli:openclaw",
+                  codebuddy: "cli:codebuddy",
+                  aider: "cli:aider",
+                  "z-ai": "zai-sdk",
+                  "anthropic-sdk": "anthropic",
+                  "openai-sdk": "openai",
+                };
+                const provId = providerMap[cli.name] ?? cli.name;
+                const isSelected = selected === provId;
+                return (
+                <button
+                  key={cli.name}
+                  type="button"
+                  onClick={() => choose(cli.name)}
+                  disabled={selecting === cli.name}
+                  className={`w-full text-left rounded-lg border p-3 space-y-1.5 transition-colors ${
+                    isSelected
+                      ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                      : "border-border/60 hover:border-primary/40 hover:bg-muted/30"
+                  } ${selecting === cli.name ? "opacity-60" : ""}`}
+                >
                   <div className="flex items-center gap-2">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                    <CheckCircle2 className={`h-3.5 w-3.5 shrink-0 ${isSelected ? "text-primary" : "text-emerald-600"}`} />
                     <span className="text-xs font-semibold">{cli.label}</span>
                     <Badge variant="outline" className="text-[8px] h-3.5 uppercase">
                       {cli.name}
                     </Badge>
+                    {isSelected && (
+                      <Badge className="text-[8px] h-3.5 uppercase ml-auto bg-primary text-primary-foreground">
+                        default
+                      </Badge>
+                    )}
                   </div>
                   <div className="text-[10px] text-muted-foreground space-y-0.5">
                     <p><span className="font-mono">{t("llmConfig.path")}</span> {cli.path}</p>
@@ -164,8 +255,9 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
                       </div>
                     )}
                   </div>
-                </div>
-              ))}
+                </button>
+                );
+              })}
             </div>
 
             {/* Environment variables */}
