@@ -1,0 +1,663 @@
+     1→"use client";
+     2→
+     3→import * as React from "react";
+     4→import { toast } from "sonner";
+     5→import {
+     6→  ListTree,
+     7→  Radar,
+     8→  PenLine,
+     9→  Layers,
+    10→  Zap,
+    11→  Loader2,
+    12→  CheckCircle2,
+    13→  X,
+    14→  Sparkles,
+    15→  Database,
+    16→  Network,
+    17→  Filter,
+    18→  FileStack,
+    19→  AlertCircle,
+    20→} from "lucide-react";
+    21→import { Button } from "@/components/ui/button";
+    22→import { Label } from "@/components/ui/label";
+    23→import { Badge } from "@/components/ui/badge";
+    24→import {
+    25→  Select,
+    26→  SelectContent,
+    27→  SelectItem,
+    28→  SelectTrigger,
+    29→  SelectValue,
+    30→} from "@/components/ui/select";
+    31→import {
+    32→  Dialog,
+    33→  DialogContent,
+    34→  DialogHeader,
+    35→  DialogTitle,
+    36→  DialogDescription,
+    37→} from "@/components/ui/dialog";
+    38→import {
+    39→  Tabs,
+    40→  TabsContent,
+    41→  TabsList,
+    42→  TabsTrigger,
+    43→} from "@/components/ui/tabs";
+    44→import { api } from "@/lib/api-client";
+    45→import { JOURNAL_TEMPLATES } from "@/lib/journal-templates";
+    46→import { useMutation, useQueryClient } from "@tanstack/react-query";
+    47→import { useI18n } from "@/lib/i18n";
+    48→import { PARAGRAPH_FORMATS, PARAGRAPH_SCENARIOS } from "@/lib/constants";
+    49→
+    50→type WriteTab = "outline" | "gather" | "paragraph" | "compose" | "full";
+    51→
+    52→interface Props {
+    53→  open: boolean;
+    54→  onOpenChange: (v: boolean) => void;
+    55→  projectId: string;
+    56→  topic: string;
+    57→  field?: string;
+    58→  paragraphCount: number;
+    59→  initialTab?: WriteTab;
+    60→}
+    61→
+    62→const TAB_CONFIG: { id: WriteTab; icon: any; color: string }[] = [
+    63→  { id: "outline", icon: ListTree, color: "amber" },
+    64→  { id: "gather", icon: Radar, color: "emerald" },
+    65→  { id: "paragraph", icon: PenLine, color: "sky" },
+    66→  { id: "compose", icon: Layers, color: "violet" },
+    67→  { id: "full", icon: Zap, color: "rose" },
+    68→];
+    69→
+    70→const STEP_COLORS: Record<string, string> = {
+    71→  emerald: "text-emerald-600 bg-emerald-100 dark:bg-emerald-950/40 border-emerald-200/60 dark:border-emerald-900/40",
+    72→  teal: "text-teal-600 bg-teal-100 dark:bg-teal-950/40 border-teal-200/60 dark:border-teal-900/40",
+    73→  sky: "text-sky-600 bg-sky-100 dark:bg-sky-950/40 border-sky-200/60 dark:border-sky-900/40",
+    74→  amber: "text-amber-600 bg-amber-100 dark:bg-amber-950/40 border-amber-200/60 dark:border-amber-900/40",
+    75→  violet: "text-violet-600 bg-violet-100 dark:bg-violet-950/40 border-violet-200/60 dark:border-violet-900/40",
+    76→  rose: "text-rose-600 bg-rose-100 dark:bg-rose-950/40 border-rose-200/60 dark:border-rose-900/40",
+    77→};
+    78→
+    79→export function UnifiedWritingDialog({
+    80→  open,
+    81→  onOpenChange,
+    82→  projectId,
+    83→  topic,
+    84→  field,
+    85→  paragraphCount,
+    86→  initialTab = "outline",
+    87→}: Props) {
+    88→  const { t } = useI18n();
+    89→  const qc = useQueryClient();
+    90→  const [activeTab, setActiveTab] = React.useState<WriteTab>(initialTab);
+    91→
+    92→  React.useEffect(() => {
+    93→    if (open) {
+    94→      setActiveTab(initialTab);
+    95→    }
+    96→  }, [open, initialTab]);
+    97→
+    98→  const invalidate = () => qc.invalidateQueries({ queryKey: ["project", projectId] });
+    99→
+   100→  return (
+   101→    <Dialog open={open} onOpenChange={onOpenChange}>
+   102→      <DialogContent className="max-w-3xl max-h-[92vh] flex flex-col gap-0 p-0 overflow-hidden">
+   103→        {/* Header */}
+   104→        <div className="px-6 pt-5 pb-3 border-b border-border/60 shrink-0 bg-gradient-to-br from-primary/[0.06] via-transparent to-transparent">
+   105→          <DialogTitle className="flex items-center gap-2 text-base">
+   106→            <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
+   107→              <Sparkles className="h-4 w-4 text-primary" />
+   108→            </div>
+   109→            {t("unifiedWrite.title")}
+   110→          </DialogTitle>
+   111→          <DialogDescription className="text-xs mt-1 ml-10">
+   112→            {t("unifiedWrite.desc")}
+   113→          </DialogDescription>
+   114→        </div>
+   115→
+   116→        {/* Tabs */}
+   117→        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as WriteTab)} className="flex-1 min-h-0 flex flex-col">
+   118→          <div className="px-6 pt-3 pb-2 border-b border-border/40 shrink-0">
+   119→            <TabsList className="grid grid-cols-5 h-9 w-full">
+   120→              {TAB_CONFIG.map((tab) => {
+   121→                const Icon = tab.icon;
+   122→                return (
+   123→                  <TabsTrigger key={tab.id} value={tab.id} className="text-[11px] gap-1">
+   124→                    <Icon className="h-3 w-3" />
+   125→                    <span className="hidden sm:inline">{t(`unifiedWrite.tab_${tab.id}`)}</span>
+   126→                  </TabsTrigger>
+   127→                );
+   128→              })}
+   129→            </TabsList>
+   130→          </div>
+   131→
+   132→          <div className="flex-1 min-h-0 overflow-y-auto scroll-academic">
+   133→            {activeTab === "outline" && (
+   134→              <OutlineTab projectId={projectId} topic={topic} field={field} onInvalidate={invalidate} />
+   135→            )}
+   136→            {activeTab === "gather" && (
+   137→              <GatherTab projectId={projectId} topic={topic} field={field} onInvalidate={invalidate} />
+   138→            )}
+   139→            {activeTab === "paragraph" && (
+   140→              <ParagraphTab projectId={projectId} topic={topic} field={field} onInvalidate={invalidate} />
+   141→            )}
+   142→            {activeTab === "compose" && (
+   143→              <ComposeTab projectId={projectId} topic={topic} paragraphCount={paragraphCount} onInvalidate={invalidate} />
+   144→            )}
+   145→            {activeTab === "full" && (
+   146→              <FullArticleTab projectId={projectId} topic={topic} field={field} onInvalidate={invalidate} />
+   147→            )}
+   148→          </div>
+   149→        </Tabs>
+   150→      </DialogContent>
+   151→    </Dialog>
+   152→  );
+   153→}
+   154→
+   155→// ==================== Progress Timeline Component ====================
+   156→function ProgressTimeline({
+   157→  steps,
+   158→  currentStep,
+   159→  stepProgress,
+   160→}: {
+   161→  steps: { id: string; label: string; icon: any }[];
+   162→  currentStep: number;
+   163→  stepProgress: Record<string, string>;
+   164→}) {
+   165→  return (
+   166→    <div className="space-y-2">
+   167→      {/* Overall progress bar */}
+   168→      <div className="rounded-lg border border-primary/20 bg-primary/[0.03] p-2.5">
+   169→        <div className="flex items-center justify-between mb-1.5">
+   170→          <span className="text-[11px] font-semibold text-primary">
+   171→            {currentStep >= 0 && currentStep < steps.length
+   172→              ? `${currentStep + 1}/${steps.length}: ${steps[currentStep].label}`
+   173→              : currentStep >= steps.length
+   174→              ? "Complete"
+   175→              : "Ready"}
+   176→          </span>
+   177→          <span className="text-[10px] text-muted-foreground">
+   178→            {Math.round(((currentStep + 1) / steps.length) * 100)}%
+   179→          </span>
+   180→        </div>
+   181→        <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+   182→          <div
+   183→            className="h-full bg-gradient-to-r from-primary to-primary/70 transition-all duration-500"
+   184→            style={{ width: `${((currentStep + 1) / steps.length) * 100}%` }}
+   185→          />
+   186→        </div>
+   187→      </div>
+   188→
+   189→      {/* Step timeline */}
+   190→      <div className="space-y-1">
+   191→        {steps.map((step, i) => {
+   192→          const isDone = currentStep > i;
+   193→          const isActive = currentStep === i;
+   194→          const Icon = step.icon;
+   195→          return (
+   196→            <div
+   197→              key={step.id}
+   198→              className={`flex items-center gap-2 rounded-md border p-2 transition-all ${
+   199→                isDone
+   200→                  ? "border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/30 dark:bg-emerald-950/10"
+   201→                  : isActive
+   202→                  ? "border-primary/40 bg-primary/[0.05] ring-1 ring-primary/20"
+   203→                  : "border-border/40 opacity-50"
+   204→              }`}
+   205→            >
+   206→              <div className={`h-6 w-6 rounded-md flex items-center justify-center shrink-0 ${
+   207→                isDone ? "bg-emerald-100 dark:bg-emerald-950/40" : isActive ? "bg-primary/10" : "bg-muted/40"
+   208→              }`}>
+   209→                {isDone ? (
+   210→                  <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+   211→                ) : isActive ? (
+   212→                  <Loader2 className="h-3 w-3 animate-spin text-primary" />
+   213→                ) : (
+   214→                  <Icon className="h-3 w-3 text-muted-foreground" />
+   215→                )}
+   216→              </div>
+   217→              <div className="flex-1 min-w-0">
+   218→                <p className={`text-[10px] font-medium ${
+   219→                  isDone ? "text-emerald-700 dark:text-emerald-400" : isActive ? "text-primary" : "text-muted-foreground"
+   220→                }`}>
+   221→                  {step.label}
+   222→                </p>
+   223→                {isActive && stepProgress[step.id] && (
+   224→                  <p className="text-[9px] text-muted-foreground mt-0.5 truncate">{stepProgress[step.id]}</p>
+   225→                )}
+   226→              </div>
+   227→              {isDone && <span className="text-[9px] text-emerald-600 font-semibold">✓</span>}
+   228→            </div>
+   229→          );
+   230→        })}
+   231→      </div>
+   232→    </div>
+   233→  );
+   234→}
+   235→
+   236→// ==================== Shared config component ====================
+   237→function ConfigRow({ label, children }: { label: string; children: React.ReactNode }) {
+   238→  return (
+   239→    <div className="space-y-1.5">
+   240→      <Label className="text-xs">{label}</Label>
+   241→      {children}
+   242→    </div>
+   243→  );
+   244→}
+   245→
+   246→// ==================== Outline Tab ====================
+   247→function OutlineTab({ projectId, topic, field, onInvalidate }: { projectId: string; topic: string; field?: string; onInvalidate: () => void }) {
+   248→  const { t } = useI18n();
+   249→  const [purpose, setPurpose] = React.useState("");
+   250→  const [loading, setLoading] = React.useState(false);
+   251→  const [result, setResult] = React.useState<any>(null);
+   252→
+   253→  const run = async () => {
+   254→    setLoading(true);
+   255→    setResult(null);
+   256→    try {
+   257→      const data = await api.aiOutline({ projectId, purpose });
+   258→      setResult(data);
+   259→      onInvalidate();
+   260→      toast.success(t("toast.outlineGenerated"));
+   261→    } catch (e: any) {
+   262→      toast.error(e.message);
+   263→    } finally {
+   264→      setLoading(false);
+   265→    }
+   266→  };
+   267→
+   268→  return (
+   269→    <div className="px-6 py-4 space-y-3">
+   270→      <p className="text-[11px] text-muted-foreground">{t("unifiedWrite.outlineDesc")}</p>
+   271→      <ConfigRow label={t("outline.purpose")}>
+   272→        <textarea
+   273→          value={purpose}
+   274→          onChange={(e) => setPurpose(e.target.value)}
+   275→          placeholder="e.g. Focus on structural mechanisms and therapeutic implications..."
+   276→          className="text-xs min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2"
+   277→        />
+   278→      </ConfigRow>
+   279→      {loading ? (
+   280→        <div className="flex items-center gap-2 py-4">
+   281→          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+   282→          <span className="text-xs text-muted-foreground">{t("outline.generating")}</span>
+   283→        </div>
+   284→      ) : result ? (
+   285→        <div className="space-y-2">
+   286→          <p className="text-[10px] uppercase tracking-wider text-emerald-600 font-semibold">{t("outline.generateOutline")} ✓</p>
+   287→          <p className="text-xs text-muted-foreground italic">{result.summary}</p>
+   288→          {result.outline?.map((item: any, i: number) => (
+   289→            <div key={i} className="rounded-md border border-border/50 p-2 text-[11px]">
+   290→              <div className="flex items-center gap-2">
+   291→                <span className="font-mono text-muted-foreground">§{i + 1}</span>
+   292→                <Badge variant="outline" className="text-[8px] h-3.5 uppercase">{item.format}</Badge>
+   293→                <span className="font-medium flex-1 truncate">{item.title}</span>
+   294→              </div>
+   295→              <p className="text-[10px] text-muted-foreground mt-1">{item.focus?.slice(0, 100)}</p>
+   296→            </div>
+   297→          ))}
+   298→        </div>
+   299→      ) : null}
+   300→      <Button size="sm" className="gap-1.5 text-xs w-full" onClick={run} disabled={loading}>
+   301→        {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ListTree className="h-3.5 w-3.5" />}
+   302→        {t("outline.generateOutline")}
+   303→      </Button>
+   304→    </div>
+   305→  );
+   306→}
+   307→
+   308→// ==================== Gather Tab ====================
+   309→function GatherTab({ projectId, topic, field, onInvalidate }: { projectId: string; topic: string; field?: string; onInvalidate: () => void }) {
+   310→  const { t } = useI18n();
+   311→  const [loading, setLoading] = React.useState(false);
+   312→  const [result, setResult] = React.useState<any>(null);
+   313→
+   314→  const run = async () => {
+   315→    setLoading(true);
+   316→    setResult(null);
+   317→    try {
+   318→      const data = await api.aiGather({ projectId, topic, field, mode: "organize", runQueries: true });
+   319→      setResult(data);
+   320→      onInvalidate();
+   321→      toast.success(t("toast.sourcesGathered", { n: data.addedResults?.length || 0 }));
+   322→    } catch (e: any) {
+   323→      toast.error(e.message);
+   324→    } finally {
+   325→      setLoading(false);
+   326→    }
+   327→  };
+   328→
+   329→  return (
+   330→    <div className="px-6 py-4 space-y-3">
+   331→      <p className="text-[11px] text-muted-foreground">{t("unifiedWrite.gatherDesc")}</p>
+   332→      <div className="rounded-lg bg-primary/[0.04] border border-primary/20 p-3">
+   333→        <p className="text-[10px] uppercase tracking-wider text-primary font-semibold mb-0.5">{t("gather.researchTopic")}</p>
+   334→        <p className="text-sm font-medium">{topic}</p>
+   335→      </div>
+   336→      {loading ? (
+   337→        <div className="flex items-center gap-2 py-4">
+   338→          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+   339→          <span className="text-xs text-muted-foreground">Gathering sources from multiple databases...</span>
+   340→        </div>
+   341→      ) : result ? (
+   342→        <div className="space-y-2">
+   343→          <p className="text-[10px] uppercase tracking-wider text-emerald-600 font-semibold">{t("gather.organize")} ✓</p>
+   344→          <p className="text-xs text-muted-foreground">{result.plan}</p>
+   345→          {result.addedResults?.length > 0 && (
+   346→            <p className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium">
+   347→              {result.addedResults.length} sources gathered
+   348→            </p>
+   349→          )}
+   350→        </div>
+   351→      ) : null}
+   352→      <Button size="sm" className="gap-1.5 text-xs w-full" onClick={run} disabled={loading}>
+   353→        {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Radar className="h-3.5 w-3.5" />}
+   354→        {t("gather.startGathering")}
+   355→      </Button>
+   356→    </div>
+   357→  );
+   358→}
+   359→
+   360→// ==================== Paragraph Tab ====================
+   361→function ParagraphTab({ projectId, topic, field, onInvalidate }: { projectId: string; topic: string; field?: string; onInvalidate: () => void }) {
+   362→  const { t } = useI18n();
+   363→  const [format, setFormat] = React.useState("background");
+   364→  const [scenario, setScenario] = React.useState("literature-review");
+   365→  const [focus, setFocus] = React.useState("");
+   366→  const [language, setLanguage] = React.useState("English");
+   367→  const [loading, setLoading] = React.useState(false);
+   368→
+   369→  const run = async () => {
+   370→    setLoading(true);
+   371→    try {
+   372→      await api.aiWrite({
+   373→        topic,
+   374→        projectId,
+   375→        format: format as any,
+   376→        scenario: scenario as any,
+   377→        focus,
+   378→        language,
+   379→        field,
+   380→      });
+   381→      onInvalidate();
+   382→      toast.success(t("toast.paragraphGenerated"));
+   383→      setFocus("");
+   384→    } catch (e: any) {
+   385→      toast.error(e.message);
+   386→    } finally {
+   387→      setLoading(false);
+   388→    }
+   389→  };
+   390→
+   391→  return (
+   392→    <div className="px-6 py-4 space-y-3">
+   393→      <p className="text-[11px] text-muted-foreground">{t("unifiedWrite.paragraphDesc")}</p>
+   394→      <div className="grid grid-cols-2 gap-3">
+   395→        <ConfigRow label={t("topic.formatLabel")}>
+   396→          <Select value={format} onValueChange={setFormat}>
+   397→            <SelectTrigger className="text-xs h-9"><SelectValue /></SelectTrigger>
+   398→            <SelectContent>
+   399→              {PARAGRAPH_FORMATS.map((f) => <SelectItem key={f.id} value={f.id} className="text-xs">{f.label}</SelectItem>)}
+   400→            </SelectContent>
+   401→          </Select>
+   402→        </ConfigRow>
+   403→        <ConfigRow label={t("topic.scenarioLabel")}>
+   404→          <Select value={scenario} onValueChange={setScenario}>
+   405→            <SelectTrigger className="text-xs h-9"><SelectValue /></SelectTrigger>
+   406→            <SelectContent>
+   407→              {PARAGRAPH_SCENARIOS.map((s) => <SelectItem key={s.id} value={s.id} className="text-xs">{s.label}</SelectItem>)}
+   408→            </SelectContent>
+   409→          </Select>
+   410→        </ConfigRow>
+   411→      </div>
+   412→      <ConfigRow label={t("topic.focusLabel")}>
+   413→        <input
+   414→          value={focus}
+   415→          onChange={(e) => setFocus(e.target.value)}
+   416→          placeholder="e.g. focus on PAM-dependent unwinding mechanism"
+   417→          className="text-xs h-9 w-full rounded-md border border-input bg-background px-3"
+   418→        />
+   419→      </ConfigRow>
+   420→      <ConfigRow label={t("topic.languageLabel")}>
+   421→        <Select value={language} onValueChange={setLanguage}>
+   422→          <SelectTrigger className="text-xs h-9"><SelectValue /></SelectTrigger>
+   423→          <SelectContent>
+   424→            <SelectItem value="English" className="text-xs">{t("topic.langEnglish")}</SelectItem>
+   425→            <SelectItem value="中文" className="text-xs">{t("topic.langChinese")}</SelectItem>
+   426→            <SelectItem value="both" className="text-xs">{t("topic.langBoth")}</SelectItem>
+   427→          </SelectContent>
+   428→        </Select>
+   429→      </ConfigRow>
+   430→      {loading && (
+   431→        <div className="flex items-center gap-2 py-2">
+   432→          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+   433→          <span className="text-xs text-muted-foreground">{t("topic.researching")}</span>
+   434→        </div>
+   435→      )}
+   436→      <Button size="sm" className="gap-1.5 text-xs w-full" onClick={run} disabled={loading}>
+   437→        {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PenLine className="h-3.5 w-3.5" />}
+   438→        {t("topic.generate")}
+   439→      </Button>
+   440→    </div>
+   441→  );
+   442→}
+   443→
+   444→// ==================== Compose Tab ====================
+   445→function ComposeTab({ projectId, topic, paragraphCount, onInvalidate }: { projectId: string; topic: string; paragraphCount: number; onInvalidate: () => void }) {
+   446→  const { t } = useI18n();
+   447→  const [title, setTitle] = React.useState(topic);
+   448→  const [depth, setDepth] = React.useState<"shallow" | "standard" | "deep">("deep");
+   449→  const [loading, setLoading] = React.useState(false);
+   450→
+   451→  const run = async () => {
+   452→    if (paragraphCount < 2) {
+   453→      toast.error(t("compose.noParagraphs"));
+   454→      return;
+   455→    }
+   456→    setLoading(true);
+   457→    try {
+   458→      // Fetch paragraph IDs
+   459→      const projectData = await api.getProject(projectId);
+   460→      const paraIds = (projectData.project?.paragraphs || []).map((p: any) => p.id);
+   461→      await api.aiCompose({
+   462→        projectId,
+   463→        title,
+   464→        paragraphIds: paraIds,
+   465→        depth,
+   466→      });
+   467→      onInvalidate();
+   468→      toast.success(t("toast.articleComposed"));
+   469→    } catch (e: any) {
+   470→      toast.error(e.message);
+   471→    } finally {
+   472→      setLoading(false);
+   473→    }
+   474→  };
+   475→
+   476→  return (
+   477→    <div className="px-6 py-4 space-y-3">
+   478→      <p className="text-[11px] text-muted-foreground">{t("unifiedWrite.composeDesc")}</p>
+   479→      <ConfigRow label={t("compose.articleTitle")}>
+   480→        <input
+   481→          value={title}
+   482→          onChange={(e) => setTitle(e.target.value)}
+   483→          className="text-xs h-9 w-full rounded-md border border-input bg-background px-3"
+   484→        />
+   485→      </ConfigRow>
+   486→      <ConfigRow label={t("compose.depth")}>
+   487→        <div className="grid grid-cols-3 gap-1.5">
+   488→          {(["shallow", "standard", "deep"] as const).map((d) => (
+   489→            <button
+   490→              key={d}
+   491→              onClick={() => setDepth(d)}
+   492→              className={`text-[10px] px-2 py-1.5 rounded-md border transition-colors ${
+   493→                depth === d ? "border-primary bg-primary/10 text-primary font-medium" : "border-border hover:bg-muted"
+   494→              }`}
+   495→            >
+   496→              {t(`compose.${d}`)}
+   497→            </button>
+   498→          ))}
+   499→        </div>
+   500→      </ConfigRow>
+   501→      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+   502→        <Layers className="h-3 w-3" />
+   503→        {paragraphCount} {t("compose.paragraphOrder")}
+   504→      </div>
+   505→      {paragraphCount < 2 && (
+   506→        <div className="rounded-md border border-amber-200/60 bg-amber-50/40 dark:bg-amber-950/20 p-2 text-[10px] text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+   507→          <AlertCircle className="h-3 w-3" />
+   508→          {t("compose.noParagraphs")}
+   509→        </div>
+   510→      )}
+   511→      {loading && (
+   512→        <div className="flex items-center gap-2 py-2">
+   513→          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+   514→          <span className="text-xs text-muted-foreground">{t("compose.composing")}</span>
+   515→        </div>
+   516→      )}
+   517→      <Button size="sm" className="gap-1.5 text-xs w-full" onClick={run} disabled={loading || paragraphCount < 2}>
+   518→        {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Layers className="h-3.5 w-3.5" />}
+   519→        {t("compose.compose")}
+   520→      </Button>
+   521→    </div>
+   522→  );
+   523→}
+   524→
+   525→// ==================== Full Article Tab ====================
+   526→function FullArticleTab({ projectId, topic, field, onInvalidate }: { projectId: string; topic: string; field?: string; onInvalidate: () => void }) {
+   527→  const { t } = useI18n();
+   528→  const [language, setLanguage] = React.useState("English");
+   529→  const [targetWords, setTargetWords] = React.useState(5000);
+   530→  const [currentStep, setCurrentStep] = React.useState(-1);
+   531→  const [stepProgress, setStepProgress] = React.useState<Record<string, string>>({});
+   532→  const [result, setResult] = React.useState<any>(null);
+   533→
+   534→  const STEPS = [
+   535→    { id: "gather", label: t("oneClick.stepGather"), icon: Database },
+   536→    { id: "curate", label: t("oneClick.stepCurate"), icon: Filter },
+   537→    { id: "relationships", label: t("oneClick.stepRelationships"), icon: Network },
+   538→    { id: "plan", label: t("oneClick.stepPlan"), icon: ListTree },
+   539→    { id: "generate", label: t("oneClick.stepGenerate"), icon: PenLine },
+   540→    { id: "compose", label: t("oneClick.stepCompose"), icon: FileStack },
+   541→  ];
+   542→
+   543→  const run = async () => {
+   544→    setCurrentStep(0);
+   545→    setStepProgress({});
+   546→    setResult(null);
+   547→    try {
+   548→      const data = await api.aiGenerateFullStream(
+   549→        { projectId, language, targetWords },
+   550→        (event, data) => {
+   551→          const stepMap: Record<string, number> = {
+   552→            gather: 0, curate: 1, relationships: 2, plan: 3, generate: 4, compose: 5,
+   553→          };
+   554→          if (stepMap[event] !== undefined && data.status === "started") {
+   555→            setCurrentStep(stepMap[event]);
+   556→          }
+   557→          if (data.message) {
+   558→            setStepProgress((prev) => ({ ...prev, [event]: data.message }));
+   559→          }
+   560→        }
+   561→      );
+   562→      setCurrentStep(STEPS.length);
+   563→      setResult(data);
+   564→      onInvalidate();
+   565→      toast.success(t("toast.oneClickGenerated", { words: data.stats?.articleWordCount || 0, refs: data.stats?.referencesSaved || 0 }));
+   566→    } catch (e: any) {
+   567→      toast.error(e.message);
+   568→    } finally {
+   569→      setCurrentStep(-1);
+   570→    }
+   571→  };
+   572→
+   573→  const formatWords = (n: number) => n.toLocaleString();
+   574→  const isRunning = currentStep >= 0 && currentStep < STEPS.length;
+   575→
+   576→  return (
+   577→    <div className="px-6 py-4 space-y-3">
+   578→      <p className="text-[11px] text-muted-foreground">{t("unifiedWrite.fullDesc")}</p>
+   579→
+   580→      {/* Feature chips */}
+   581→      <div className="grid grid-cols-2 gap-1.5">
+   582→        <div className="flex items-center gap-1 rounded-md border border-emerald-200/50 dark:border-emerald-900/40 bg-emerald-50/30 dark:bg-emerald-950/10 p-1.5">
+   583→          <Database className="h-2.5 w-2.5 text-emerald-600 shrink-0" />
+   584→          <span className="text-[9px] font-medium text-emerald-700 dark:text-emerald-400">{t("oneClick.forceRegather")}</span>
+   585→        </div>
+   586→        <div className="flex items-center gap-1 rounded-md border border-violet-200/50 dark:border-violet-900/40 bg-violet-50/30 dark:bg-violet-950/10 p-1.5">
+   587→          <PenLine className="h-2.5 w-2.5 text-violet-600 shrink-0" />
+   588→          <span className="text-[9px] font-medium text-violet-700 dark:text-violet-400">{t("oneClick.chunkedGen")}</span>
+   589→        </div>
+   590→      </div>
+   591→
+   592→      <ConfigRow label={t("oneClick.outputLanguage")}>
+   593→        <Select value={language} onValueChange={setLanguage}>
+   594→          <SelectTrigger className="text-xs h-9"><SelectValue /></SelectTrigger>
+   595→          <SelectContent>
+   596→            <SelectItem value="English" className="text-xs">{t("topic.langEnglish")}</SelectItem>
+   597→            <SelectItem value="中文" className="text-xs">{t("topic.langChinese")}</SelectItem>
+   598→            <SelectItem value="both" className="text-xs">{t("topic.langBoth")}</SelectItem>
+   599→          </SelectContent>
+   600→        </Select>
+   601→      </ConfigRow>
+   602→
+   603→      {/* Word count slider */}
+   604→      <div className="space-y-1.5">
+   605→        <div className="flex items-center justify-between">
+   606→          <Label className="text-xs">{t("oneClick.targetWordCount", { n: formatWords(targetWords) })}</Label>
+   607→          <span className="text-[10px] text-muted-foreground">{t("oneClick.maxWords")}</span>
+   608→        </div>
+   609→        <input
+   610→          type="range"
+   611→          min={2000}
+   612→          max={50000}
+   613→          step={1000}
+   614→          value={targetWords}
+   615→          onChange={(e) => setTargetWords(Number(e.target.value))}
+   616→          className="w-full h-2 rounded-full appearance-none cursor-pointer"
+   617→          style={{
+   618→            background: `linear-gradient(to right, hsl(var(--primary)) 0%, hsl(var(--primary)) ${(targetWords - 2000) / 48000 * 100}%, hsl(var(--muted)) ${(targetWords - 2000) / 48000 * 100}%, hsl(var(--muted)) 100%)`,
+   619→          }}
+   620→        />
+   621→        <div className="flex justify-between text-[9px] text-muted-foreground">
+   622→          <span>2,000</span>
+   623→          <span className="font-medium text-primary">{formatWords(targetWords)}</span>
+   624→          <span>50,000</span>
+   625→        </div>
+   626→      </div>
+   627→
+   628→      {/* Progress or result */}
+   629→      {isRunning && (
+   630→        <ProgressTimeline steps={STEPS} currentStep={currentStep} stepProgress={stepProgress} />
+   631→      )}
+   632→
+   633→      {result && (
+   634→        <div className="rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 bg-gradient-to-br from-emerald-50/60 to-teal-50/30 dark:from-emerald-950/20 dark:to-teal-950/10 p-3">
+   635→          <div className="flex items-center gap-2 mb-2">
+   636→            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+   637→            <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">{t("oneClick.generatedTitle")}</span>
+   638→          </div>
+   639→          <div className="grid grid-cols-3 gap-2 text-center">
+   640→            <div>
+   641→              <p className="text-base font-bold text-emerald-700 dark:text-emerald-400">{result.stats?.sourcesGathered || 0}</p>
+   642→              <p className="text-[8px] uppercase text-muted-foreground">{t("oneClick.sourcesGathered")}</p>
+   643→            </div>
+   644→            <div>
+   645→              <p className="text-base font-bold text-violet-700 dark:text-violet-400">{result.stats?.sectionsPlanned || 0}</p>
+   646→              <p className="text-[8px] uppercase text-muted-foreground">{t("oneClick.sectionsWritten")}</p>
+   647→            </div>
+   648→            <div>
+   649→              <p className="text-base font-bold text-rose-700 dark:text-rose-400">{result.stats?.articleWordCount || 0}</p>
+   650→              <p className="text-[8px] uppercase text-muted-foreground">{t("oneClick.totalWords")}</p>
+   651→            </div>
+   652→          </div>
+   653→        </div>
+   654→      )}
+   655→
+   656→      <Button size="sm" className="gap-1.5 text-xs w-full" onClick={run} disabled={isRunning}>
+   657→        {isRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+   658→        {t("oneClick.generateBtn")}
+   659→      </Button>
+   660→    </div>
+   661→  );
+   662→}
+   663→
