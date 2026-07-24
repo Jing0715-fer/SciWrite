@@ -1482,3 +1482,46 @@ Task: Consolidate duplicate full-article generation entry points into one unifie
 - Real-time progress visible for Full Article generation (6-step timeline).
 - Insights overflow fixed.
 - Header cleaner with single "AI Hub" button.
+
+
+---
+
+## Phase 20 — Sidebar overlap fix + full QA test
+
+Task ID: 20
+Agent: main
+Task: Fix left sidebar New/Backup button overlap, then run complete QA test.
+
+### Work Log:
+
+- **FIX: Projects sidebar button overlap**:
+  - Root cause: Backup button used `size="icon"` which renders as 36x36 (shadcn default),
+    while New button was `h-7` (28px) — different heights caused visual overlap/crowding.
+  - Fixed: Backup button now uses `h-7 w-7 p-0` to match New button height (28px).
+  - Added `gap-1` between buttons (was `gap-0.5`), `shrink-0` to prevent wrapping.
+  - Projects title now truncates with `min-w-0` to prevent pushing buttons.
+  - Verified: Backup at x=158 (28px wide), New at x=190 (36px wide) — clean spacing.
+
+### QA Test Results (agent-browser):
+
+**Page load**: ✅ HTTP 200, title correct, 0 runtime errors after fresh reload.
+
+**Project selection**: ✅ Clicked project, 74 citation markers rendered, all 4 workspace tabs visible (Paragraphs/Article/Review/Relationships).
+
+**AI Hub dialog**: ✅ Opens with 5 tabs (Outline/Gather/Paragraph/Compose/Full Article). Full Article tab shows word count slider (2,000-50,000), feature chips (Force re-gather, Chunked generation), generate button.
+
+**KnowledgePanel**: ✅ Shows 5 source type tabs with counts at a glance: "🗂️ ALL 53 | 📄 PUBMED 10 | 🧬 RCSB 10 | 🧪 UNIPROT 20 | 🧩 NCBI 13".
+
+**Insights dialog**: ✅ Opens correctly, content scrolls (scrollHeight 1182 > clientHeight 379), no overflow (dialog bottom 548px < viewport 577px).
+
+**Language toggle**: ✅ EN→ZH→EN works — verified Chinese translations render (项目/洞察/AI中心/段落).
+
+**Footer sticky**: ✅ Footer at bottom (top 543px, viewport 577px, atBottom: true).
+
+**Console errors**: ✅ None after fresh reload (stale Fast Refresh errors cleared).
+
+### Stage Summary:
+- Sidebar overlap fixed (Backup button resized to match New button).
+- Full QA test passed: all major features working correctly.
+- 0 lint errors, 0 runtime errors, dev server stable.
+- All changes committed and pushed to GitHub (commit 3816e45).
