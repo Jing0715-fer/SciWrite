@@ -104,7 +104,7 @@ function SourcesList({
 }) {
   const { t } = useI18n();
   const qc = useQueryClient();
-  const [collapsedTypes, setCollapsedTypes] = React.useState<Set<string>>(new Set());
+  const [activeType, setActiveType] = React.useState<string>("all");
 
   const togglePin = useMutation({
     mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) =>
@@ -140,14 +140,15 @@ function SourcesList({
     return a.localeCompare(b);
   });
 
-  const toggleType = (type: string) => {
-    setCollapsedTypes((prev) => {
-      const next = new Set(prev);
-      if (next.has(type)) next.delete(type);
-      else next.add(type);
-      return next;
-    });
-  };
+  // If the active type is no longer present (e.g. after deletion), reset to "all"
+  React.useEffect(() => {
+    if (activeType !== "all" && !sourceTypes.includes(activeType)) {
+      setActiveType("all");
+    }
+  }, [activeType, sourceTypes]);
+
+  const filteredItems =
+    activeType === "all" ? items : items.filter((d) => d.source === activeType);
 
   if (items.length === 0) {
     return (
@@ -164,56 +165,94 @@ function SourcesList({
   }
 
   return (
-    <ScrollArea className="h-full scroll-academic">
-      <div className="px-3 py-2 space-y-2.5">
-        {sourceTypes.map((st) => {
-          const typeItems = items.filter((d) => d.source === st);
-          const isCollapsed = collapsedTypes.has(st);
-          return (
-            <div key={st} className="rounded-lg border border-border/50 overflow-hidden">
-              {/* Type section header */}
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Horizontal type tab bar — shows ALL types + counts at a glance */}
+      <div className="px-2 pt-1.5 pb-2 border-b border-border/40 shrink-0">
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-thin pb-1">
+          {/* "All" tab */}
+          <button
+            onClick={() => setActiveType("all")}
+            className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide transition-all whitespace-nowrap ${
+              activeType === "all"
+                ? "bg-primary/15 text-primary border border-primary/30 shadow-sm"
+                : "bg-muted/40 text-muted-foreground hover:bg-muted border border-transparent"
+            }`}
+          >
+            <span className="text-[11px]">🗂️</span>
+            <span>All</span>
+            <span className={`text-[9px] px-1 rounded-full ${
+              activeType === "all" ? "bg-primary/20 text-primary" : "bg-muted-foreground/15"
+            }`}>
+              {items.length}
+            </span>
+          </button>
+          {/* Per-type tabs */}
+          {sourceTypes.map((st) => {
+            const count = items.filter((d) => d.source === st).length;
+            const isActive = activeType === st;
+            return (
               <button
-                onClick={() => toggleType(st)}
-                className="w-full flex items-center gap-1.5 px-2.5 py-1.5 bg-muted/40 hover:bg-muted/60 transition-colors"
+                key={st}
+                onClick={() => setActiveType(st)}
+                className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide transition-all whitespace-nowrap border ${
+                  isActive
+                    ? `${TYPE_BADGE[st] || "badge-slate"} border-primary/30 shadow-sm`
+                    : "bg-muted/40 text-muted-foreground hover:bg-muted border-transparent"
+                }`}
               >
                 <span className="text-[11px]">{SOURCE_TYPE_ICONS[st] || "📦"}</span>
-                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase ${TYPE_BADGE[st] || "badge-slate"}`}>
-                  {st}
-                </span>
-                <span className="text-[10px] font-medium text-foreground/80">
-                  {typeItems.length} {typeItems.length === 1 ? "item" : "items"}
-                </span>
-                <span className="ml-auto text-muted-foreground">
-                  {isCollapsed ? (
-                    <ChevronDown className="h-3 w-3" />
-                  ) : (
-                    <ChevronUp className="h-3 w-3" />
-                  )}
+                <span>{st}</span>
+                <span className={`text-[9px] px-1 rounded-full ${
+                  isActive ? "bg-foreground/15" : "bg-muted-foreground/15"
+                }`}>
+                  {count}
                 </span>
               </button>
-              {/* Type section body */}
-              {!isCollapsed && (
-                <div className="p-2 space-y-2 bg-card/30">
-                  {typeItems.map((d) => (
-                    <SourceCard
-                      key={d.id}
-                      d={d}
-                      t={t}
-                      expandedSource={expandedSource}
-                      setExpandedSource={setExpandedSource}
-                      onPin={(id, pinned) => togglePin.mutate({ id, pinned })}
-                      onDelete={(id) => del.mutate(id)}
-                      onDeepRead={(id) => deepReadMut.mutate(id)}
-                      deepReadPending={deepReadMut.isPending && deepReadMut.variables === d.id}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
+        {/* Active filter indicator */}
+        <div className="flex items-center justify-between mt-1 px-0.5">
+          <span className="text-[9px] text-muted-foreground">
+            {activeType === "all"
+              ? `${filteredItems.length} sources`
+              : `${filteredItems.length} ${activeType} sources`}
+          </span>
+          {activeType !== "all" && (
+            <button
+              onClick={() => setActiveType("all")}
+              className="text-[9px] text-primary hover:underline"
+            >
+              show all
+            </button>
+          )}
+        </div>
       </div>
-    </ScrollArea>
+      {/* Source cards for the active type */}
+      <ScrollArea className="flex-1 min-h-0 scroll-academic">
+        <div className="px-3 py-2 space-y-2">
+          {filteredItems.length === 0 ? (
+            <div className="text-center py-6 text-[10px] text-muted-foreground">
+              No {activeType} sources.
+            </div>
+          ) : (
+            filteredItems.map((d) => (
+              <SourceCard
+                key={d.id}
+                d={d}
+                t={t}
+                expandedSource={expandedSource}
+                setExpandedSource={setExpandedSource}
+                onPin={(id, pinned) => togglePin.mutate({ id, pinned })}
+                onDelete={(id) => del.mutate(id)}
+                onDeepRead={(id) => deepReadMut.mutate(id)}
+                deepReadPending={deepReadMut.isPending && deepReadMut.variables === d.id}
+              />
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </div>
   );
 }
 

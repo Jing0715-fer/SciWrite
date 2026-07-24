@@ -173,12 +173,42 @@ export async function POST(req: NextRequest) {
 
       // Link ONLY the cited references (in appearance order) to this paragraph.
       // Uncited references are not linked — no orphans.
+      // CREATE COPIES of the cited references (don't move the originals), so
+      // the project-level references remain available for future paragraphs.
       // Set citationOrder to match the [n] numbering (0-based).
       for (let idx = 0; idx < reorderedRefs.length; idx++) {
-        await db.reference.update({
-          where: { id: reorderedRefs[idx].id },
-          data: { paragraphId: paragraph.id, citationOrder: idx },
+        const ref = reorderedRefs[idx];
+        // Check if a copy already exists for this paragraph (same type+externalId)
+        const existing = await db.reference.findFirst({
+          where: {
+            externalId: ref.externalId,
+            paragraphId: paragraph.id,
+          },
         });
+        if (!existing) {
+          await db.reference.create({
+            data: {
+              type: ref.type || "manual",
+              externalId: ref.externalId,
+              title: ref.title,
+              authors: ref.authors,
+              journal: ref.journal,
+              year: ref.year,
+              url: ref.url,
+              doi: ref.doi,
+              abstract: ref.abstract,
+              projectId: body.projectId,
+              paragraphId: paragraph.id,
+              citationOrder: idx,
+            },
+          });
+        } else {
+          // Update citationOrder if copy already exists
+          await db.reference.update({
+            where: { id: existing.id },
+            data: { citationOrder: idx },
+          });
+        }
       }
     }
 
