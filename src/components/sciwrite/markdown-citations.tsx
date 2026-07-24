@@ -130,18 +130,18 @@ function resolveCitation(
 
 /**
  * Parse the AI-generated "### Citations" block into structured references.
- * Handles multiple formats the AI may emit:
- *   [1] PDB:5F9R
- *   [2] PMID:29162691
- *   [3] Authors (2021) Journal. Title. — https://...
- *   [4] Author (year) Journal. Title. [SOURCE:ID] — url
+ * Returns a sparse array indexed by the citation number (so [1] = index 0,
+ * [3] = index 2, with undefined for gaps like [9] if not cited).
  */
 function parseCitationsBlock(text: string): CitationRef[] {
   const lines = text.split("\n").filter((l) => l.trim());
-  const refs: CitationRef[] = [];
+  const refMap: Map<number, CitationRef> = new Map();
+  let maxNum = 0;
   for (const line of lines) {
     const m = line.match(/^\s*\[(\d+)\]\s*(.+)$/);
     if (!m) continue;
+    const num = parseInt(m[1], 10);
+    if (num > maxNum) maxNum = num;
     const body = m[2].trim();
     const yearMatch = body.match(/\((\d{4}[a-z]?)\)/);
     const year = yearMatch?.[1];
@@ -151,7 +151,6 @@ function parseCitationsBlock(text: string): CitationRef[] {
       body.match(/\[([A-Z]{2,12}):\s?([^\]]+)\]/) ||
       body.match(/\b([A-Z]{2,12}):\s?([A-Za-z0-9_\-\.]+)/);
     const rawType = sourceMatch?.[1]?.toLowerCase();
-    // Normalize common aliases
     const type =
       rawType === "pmid" ? "pubmed" :
       rawType === "pdb" ? "rcsb" :
@@ -188,7 +187,7 @@ function parseCitationsBlock(text: string): CitationRef[] {
     // If all we have is a source:ID, construct a title from it
     const fallbackTitle = type && externalId ? `${type.toUpperCase()}:${externalId}` : body;
 
-    refs.push({
+    refMap.set(num, {
       type: type || "manual",
       externalId,
       title: cleaned.slice(0, 200) || fallbackTitle,
@@ -198,7 +197,12 @@ function parseCitationsBlock(text: string): CitationRef[] {
       journal: undefined,
     });
   }
-  return refs;
+  // Return a sparse array: index 0 = ref [1], index 8 = ref [9] (or undefined if not cited)
+  const result: CitationRef[] = [];
+  for (let k = 1; k <= maxNum; k++) {
+    result.push(refMap.get(k) || null as any);
+  }
+  return result;
 }
 
 export function MarkdownCitations({
@@ -230,13 +234,14 @@ export function MarkdownCitations({
       citeHeaderIdx >= 0 ? content.slice(citeHeaderIdx) : "";
     const parsedAiRefs = aiCitationsText ? parseCitationsBlock(aiCitationsText) : [];
     // Merge: saved references take priority (by index), then AI-parsed refs fill gaps.
+    // parsedAiRefs is now a sparse array where index 0 = ref [1], index 8 = ref [9] (or null)
     const merged: CitationRef[] = [];
     const maxLen = Math.max(references.length, parsedAiRefs.length);
     for (let k = 0; k < maxLen; k++) {
       const saved = references[k];
       const ai = parsedAiRefs[k];
       merged.push(
-        saved || ai || { type: "manual", title: ai?.title || `Reference ${k + 1}` }
+        saved || ai || { type: "manual", title: `Reference ${k + 1}` }
       );
     }
 
@@ -443,14 +448,14 @@ export function MarkdownCitations({
         </div>
       )}
 
-      {/* Complete reference list (from saved records + parsed AI citations) */}
-      {citedRefs.length > 0 && (
+      {/* Complete reference list (all saved references, not just cited ones) */}
+      {allRefs.length > 0 && (
         <div className="mt-4 pt-3 border-t border-border/70">
           <p className="divider-academic mb-2">
             <span>References</span>
           </p>
           <ol className="space-y-1.5 list-none">
-            {citedRefs.map((r, i) => (
+            {allRefs.map((r, i) => (
               <li
                 key={r.id || i}
                 className="text-[11px] leading-snug flex gap-1.5 font-sans text-foreground/85"
