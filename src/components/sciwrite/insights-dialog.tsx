@@ -18,7 +18,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { BatchValidationDialog } from "./batch-validation-dialog";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -67,7 +66,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
   return (
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[88vh] flex flex-col gap-0 p-0">
+      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60">
           <DialogTitle className="flex items-center gap-2 text-base">
             <BarChart3 className="h-4 w-4 text-primary" />
@@ -78,15 +77,15 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 min-h-0 scroll-academic">
-          <div className="px-6 py-4">
-            {isLoading && (
-              <div className="flex items-center justify-center py-16">
-                <Loader2 className="h-6 w-6 animate-spin text-primary" />
-              </div>
-            )}
-            {data && (
-              <div className="space-y-5">
+        <div className="flex-1 min-h-0 overflow-y-auto scroll-academic">
+            <div className="px-6 py-4">
+              {isLoading && (
+                <div className="flex items-center justify-center py-16">
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                </div>
+              )}
+              {data && (
+                <div className="space-y-5">
                 {/* Stat cards */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
                   <StatCard
@@ -284,7 +283,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
               </div>
             )}
           </div>
-        </ScrollArea>
+        </div>
         {/* Footer with batch citation audit */}
         <div className="px-6 py-3 border-t border-border/60 flex items-center justify-between gap-2 shrink-0">
           <span className="text-[10px] text-muted-foreground">

@@ -55,6 +55,7 @@ import { CommandPalette } from "@/components/sciwrite/command-palette";
 import { OutlineDialog } from "@/components/sciwrite/outline-dialog";
 import { UserDataDialog } from "@/components/sciwrite/user-data-dialog";
 import { OneClickGenerateDialog } from "@/components/sciwrite/one-click-generate-dialog";
+import { UnifiedWritingDialog } from "@/components/sciwrite/unified-writing-dialog";
 import { ProgressTracker } from "@/components/sciwrite/progress-tracker";
 import { WritingTipsPanel } from "@/components/sciwrite/writing-tips-panel";
 import { useI18n } from "@/lib/i18n";
@@ -68,13 +69,12 @@ export default function Home() {
   const [composeOpen, setComposeOpen] = React.useState(false);
   const [tipsOpen, setTipsOpen] = React.useState(false);
   const [viewArticle, setViewArticle] = React.useState<Article | null>(null);
-  const [gatherOpen, setGatherOpen] = React.useState(false);
   const [insightsOpen, setInsightsOpen] = React.useState(false);
   const [paletteOpen, setPaletteOpen] = React.useState(false);
-  const [outlineOpen, setOutlineOpen] = React.useState(false);
   const [userDataOpen, setUserDataOpen] = React.useState(false);
-  const [oneClickOpen, setOneClickOpen] = React.useState(false);
   const [llmConfigOpen, setLlmConfigOpen] = React.useState(false);
+  const [unifiedWriteOpen, setUnifiedWriteOpen] = React.useState(false);
+  const [unifiedWriteTab, setUnifiedWriteTab] = React.useState<"outline" | "gather" | "paragraph" | "compose" | "full">("outline");
 
   const projectsQ = useQuery({
     queryKey: ["projects"],
@@ -182,19 +182,27 @@ export default function Home() {
       const k = e.key.toLowerCase();
       if (k === "n") {
         e.preventDefault();
-        setWriteOpen(true);
+        setUnifiedWriteTab("paragraph");
+        setUnifiedWriteOpen(true);
       } else if (k === "g") {
         e.preventDefault();
-        setGatherOpen(true);
+        setUnifiedWriteTab("gather");
+        setUnifiedWriteOpen(true);
       } else if (k === "i") {
         e.preventDefault();
         setInsightsOpen(true);
       } else if (k === "o") {
         e.preventDefault();
-        setOutlineOpen(true);
+        setUnifiedWriteTab("outline");
+        setUnifiedWriteOpen(true);
       } else if (k === "c" && paragraphs.length >= 2) {
         e.preventDefault();
-        setComposeOpen(true);
+        setUnifiedWriteTab("compose");
+        setUnifiedWriteOpen(true);
+      } else if (k === "f") {
+        e.preventDefault();
+        setUnifiedWriteTab("full");
+        setUnifiedWriteOpen(true);
       } else if (k === "d") {
         e.preventDefault();
         const isDark = document.documentElement.classList.contains("dark");
@@ -212,12 +220,12 @@ export default function Home() {
     <div className="h-screen flex flex-col bg-background overflow-hidden">
       <Header
         project={project}
-        onOpenWrite={() => setWriteOpen(true)}
-        onOpenCompose={() => setComposeOpen(true)}
-        onOpenGather={() => setGatherOpen(true)}
+        onOpenWrite={() => { setUnifiedWriteTab("paragraph"); setUnifiedWriteOpen(true); }}
+        onOpenCompose={() => { setUnifiedWriteTab("compose"); setUnifiedWriteOpen(true); }}
+        onOpenGather={() => { setUnifiedWriteTab("gather"); setUnifiedWriteOpen(true); }}
         onOpenInsights={() => setInsightsOpen(true)}
-        onOpenOutline={() => setOutlineOpen(true)}
-        onOpenOneClick={() => setOneClickOpen(true)}
+        onOpenOutline={() => { setUnifiedWriteTab("outline"); setUnifiedWriteOpen(true); }}
+        onOpenOneClick={() => { setUnifiedWriteTab("full"); setUnifiedWriteOpen(true); }}
         onOpenLLMConfig={() => setLlmConfigOpen(true)}
         paragraphCount={paragraphs.length}
         articleCount={articles.length}
@@ -243,10 +251,10 @@ export default function Home() {
               articles={articles}
               references={references}
               activeProjectId={activeProjectId}
-              onOpenWrite={() => setWriteOpen(true)}
-              onOpenCompose={() => setComposeOpen(true)}
-              onOpenGather={() => setGatherOpen(true)}
-              onOpenOutline={() => setOutlineOpen(true)}
+              onOpenWrite={() => { setUnifiedWriteTab("paragraph"); setUnifiedWriteOpen(true); }}
+              onOpenCompose={() => { setUnifiedWriteTab("compose"); setUnifiedWriteOpen(true); }}
+              onOpenGather={() => { setUnifiedWriteTab("gather"); setUnifiedWriteOpen(true); }}
+              onOpenOutline={() => { setUnifiedWriteTab("outline"); setUnifiedWriteOpen(true); }}
               progressStats={progressStats}
               wordGoal={wordGoal}
               onWordGoalChange={setWordGoal}
@@ -282,32 +290,14 @@ export default function Home() {
 
       {/* Modals */}
       {activeProjectId && project && (
-        <TopicComposer
-          open={writeOpen}
-          onOpenChange={setWriteOpen}
+        <UnifiedWritingDialog
+          open={unifiedWriteOpen}
+          onOpenChange={setUnifiedWriteOpen}
           projectId={activeProjectId}
-          projectTopic={project.topic}
-          projectField={project.field}
-          references={references.map((r) => ({
-            id: r.id,
-            title: r.title,
-            type: r.type,
-            externalId: r.externalId,
-          }))}
-          dataSources={dataSources.map((d) => ({
-            id: d.id,
-            source: d.source,
-            title: d.title,
-            query: d.query,
-          }))}
-        />
-      )}
-      {activeProjectId && (
-        <ArticleComposer
-          open={composeOpen}
-          onOpenChange={setComposeOpen}
-          projectId={activeProjectId}
-          paragraphs={paragraphs}
+          topic={project.topic}
+          field={project.field}
+          paragraphCount={paragraphs.length}
+          initialTab={unifiedWriteTab}
         />
       )}
       {viewArticle && (
@@ -317,16 +307,6 @@ export default function Home() {
           onClose={() => setViewArticle(null)}
         />
       )}
-      {activeProjectId && project && (
-        <DataGatheringDialog
-          open={gatherOpen}
-          onOpenChange={setGatherOpen}
-          projectId={activeProjectId}
-          topic={project.topic}
-          field={project.field}
-          onProceedToWrite={() => setWriteOpen(true)}
-        />
-      )}
       {activeProjectId && (
         <InsightsDialog
           open={insightsOpen}
@@ -334,31 +314,11 @@ export default function Home() {
           projectId={activeProjectId}
         />
       )}
-      {activeProjectId && project && (
-        <OutlineDialog
-          open={outlineOpen}
-          onOpenChange={setOutlineOpen}
-          projectId={activeProjectId}
-          topic={project.topic}
-          onUseParagraph={() => {
-            setOutlineOpen(false);
-            setWriteOpen(true);
-          }}
-        />
-      )}
       {activeProjectId && (
         <UserDataDialog
           open={userDataOpen}
           onOpenChange={setUserDataOpen}
           projectId={activeProjectId}
-        />
-      )}
-      {activeProjectId && project && (
-        <OneClickGenerateDialog
-          open={oneClickOpen}
-          onOpenChange={setOneClickOpen}
-          projectId={activeProjectId}
-          topic={project.topic}
         />
       )}
       <LLMConfigDialog
@@ -518,54 +478,16 @@ function Header({
               <BarChart3 className="h-3.5 w-3.5" />
               <span className="hidden lg:inline">{t("app.insights")}</span>
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 text-xs gap-1.5"
-              onClick={onOpenOutline}
-              title={t("app.outlineTitle")}
-            >
-              <ListTree className="h-3.5 w-3.5" />
-              <span className="hidden xl:inline">{t("app.outline")}</span>
-            </Button>
+            {/* Unified AI Writing Hub button */}
             <Button
               variant="outline"
               size="sm"
-              className="h-8 text-xs gap-1.5"
-              onClick={onOpenGather}
-              title={t("app.gatherTitle")}
-            >
-              <Radar className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">{t("app.gather")}</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs gap-1.5"
-              onClick={onOpenCompose}
-              disabled={paragraphCount < 2}
-              title={paragraphCount < 2 ? t("app.needTwoParagraphs") : t("app.composeTitle")}
-            >
-              <Layers className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{t("app.compose")}</span>
-            </Button>
-            <Button
-              size="sm"
-              className="h-8 text-xs gap-1.5"
+              className="h-8 text-xs gap-1.5 bg-gradient-to-r from-primary/15 to-primary/5 border-primary/40 hover:from-primary/20 hover:to-primary/10"
               onClick={onOpenWrite}
+              title={t("app.unifiedWriteTitle")}
             >
-              <Sparkles className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{t("app.aiWrite")}</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs gap-1.5 bg-gradient-to-r from-primary/10 to-primary/5 border-primary/30 hover:from-primary/15 hover:to-primary/10"
-              onClick={onOpenOneClick}
-              title={t("oneClick.title")}
-            >
-              <Zap className="h-3.5 w-3.5 text-primary" />
-              <span className="hidden md:inline">{t("app.fullGenerate")}</span>
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              <span className="hidden sm:inline">{t("app.unifiedWrite")}</span>
             </Button>
           </>
         )}
