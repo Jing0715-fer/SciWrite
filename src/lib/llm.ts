@@ -527,7 +527,7 @@ interface AdapterProbes {
 
 let _probeCache: Promise<Record<string, AdapterProbes>> | null = null;
 let _probeCacheAt = 0;
-const PROBE_TTL_MS = 5 * 60_000; // 5 minutes
+const PROBE_TTL_MS = 6 * 24 * 60 * 60_000; // 6 days (avoid frequent spawning)
 
 // Cache file lives in OS tmpdir so writing does NOT trigger webpack's file
 // watcher → no HMR / page refresh / CSS flash. Per-project namespace
@@ -711,7 +711,8 @@ export function markLlmProviderStale(adapterId: string, via: "native" | "wsl"): 
 
 function isZaiSdkAvailable(): boolean {
   try {
-    require.resolve("z-ai-web-dev-sdk");
+    // Use eval to bypass Turbopack static analysis of require.resolve
+    (0, eval)("require.resolve")("z-ai-web-dev-sdk");
     return true;
   } catch {
     return false;
