@@ -1352,3 +1352,71 @@ Task: Redesign full article auto-generation — no format selection, force re-ga
 - Chunked generation prevents max token issues for large articles.
 - 50,000 word limit (5x increase).
 - UI optimized with better visual hierarchy and progress indicators.
+
+
+---
+
+## Phase 18 — LLM session manager: shared conversation context across all AI tasks
+
+Task ID: 18
+Agent: main
+Task: All LLM tasks within the same project should run in the same session, inheriting context so tasks connect coherently rather than being isolated.
+
+### Work Log:
+
+- **NEW DB model: ConversationSession**:
+  - Fields: id, projectId, taskType, role (system/user/assistant), content, metadata (JSON), tokenEstimate, createdAt
+  - Indexed by projectId and (projectId, taskType) for fast context loading
+  - Persists ALL LLM messages across ALL task types within a project
+
+- **NEW module: src/lib/llm-session.ts**:
+  - `chatWithSession(projectId, prompt, opts)`: The core function that:
+    1. Loads prior conversation context for the project (all task types)
+    2. Appends context as "PRIOR CONVERSATION CONTEXT" preamble
+    3. Calls the LLM with system + context + new prompt
+    4. Saves both the user message and assistant response to DB
+    5. Returns the assistant's response
+  - `loadSessionContext()`: Loads messages chronologically, trims by token budget (max 8000 tokens, 20 messages)
+  - `saveSessionMessage()`: Persists a message with token estimate
+  - `clearSession()`: Clears session (used by generate-full for fresh pipeline)
+  - `getSessionSummary()`: For debugging/UI
+
+- **Updated ALL 8 AI routes to use chatWithSession**:
+  - `/api/ai/write` — taskType: "write"
+  - `/api/ai/generate-full` — taskTypes: "gather", "curate", "relationships", "plan", "generate", "compose" (clears session at start)
+  - `/api/ai/compose` — taskType: "compose"
+  - `/api/ai/review` — taskTypes: "review", "revise" (review + revise + auto-iterate)
+  - `/api/ai/gather` — taskType: "gather" (clarify/organize/critique)
+  - `/api/ai/outline` — taskType: "outline"
+  - `/api/ai/source-relationships` — taskType: "relationships"
+  - `/api/paragraphs/[id]/revise` — taskType: "revise"
+  - `/api/paragraphs/[id]/auto-fix-citations` — taskType: "auto-fix"
+
+- **Context sharing flow**:
+  - gather task saves source-gathering decisions
+  - curate task loads gather context, knows what sources were found
+  - relationships task loads gather+curate context, understands source curation rationale
+  - plan task loads all prior context, designs outline informed by sources + relationships
+  - generate task loads plan context, knows the section structure and themes
+  - compose task loads generate context, understands the section content
+  - review task loads compose context, can reference the generation decisions
+  - revise task loads review context, addresses specific review feedback
+
+### Verification Results:
+- `bun run lint` → clean (0 errors, 0 warnings).
+- Dev server stable, 0 console errors.
+- ConversationSession table created successfully (db:push applied).
+- **Test 1 (AI Write)**: POST /api/ai/write → 200, paragraph created.
+  - Session saved: 2 messages (user prompt + assistant response), taskType="write".
+- **Test 2 (Outline)**: POST /api/ai/outline → 200, outline generated.
+  - Session now has 4 messages: write(user) → write(assistant) → outline(user) → outline(assistant).
+  - The outline task loaded the write task's context, making the outline coherent with the prior paragraph.
+- All changes committed and pushed to GitHub (commit 65da227).
+
+### Stage Summary:
+- LLM session manager implemented and verified.
+- All AI tasks within a project now share conversation context.
+- Tasks are no longer isolated — each task knows what previous tasks did.
+- Context is token-budget aware (max 8000 tokens, trims oldest messages).
+- generate-full clears session at start for a fresh pipeline.
+- Verified end-to-end: write → outline both save to and load from the same session.
