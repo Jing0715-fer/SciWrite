@@ -323,7 +323,7 @@ export function ArticleInsights({
         {/* Citation graph — which references are cited in which sections */}
         {citationGraph.allRefs.length > 0 && (
           <div className="rounded-lg border border-border/60 p-4 space-y-3">
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <Network className="h-3.5 w-3.5 text-primary" />
               <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 {t("articleViewer.citationGraph") || "Citation Graph"}
@@ -331,78 +331,169 @@ export function ArticleInsights({
               <span className="text-[9px] text-muted-foreground/60 ml-auto">
                 {citationGraph.allRefs.length} refs · {sectionStats.length} sections
               </span>
+              {/* Coverage stats: how many ref-cells are filled vs total. */}
+              {(() => {
+                const total = citationGraph.allRefs.length * citationGraph.sectionCitations.length;
+                const filled = citationGraph.sectionCitations.reduce(
+                  (acc, s) => acc + s.refIndices.length, 0
+                );
+                const pct = total > 0 ? Math.round((filled / total) * 100) : 0;
+                return (
+                  <span
+                    className="text-[9px] font-mono px-1.5 py-0.5 rounded border border-primary/30 bg-primary/[0.06] text-primary"
+                    title="Citation coverage: filled cells / total cells"
+                  >
+                    {filled}/{total} · {pct}%
+                  </span>
+                );
+              })()}
             </div>
-            {/* Matrix: rows = sections, columns = references, cell = cited */}
+            {/* Matrix: rows = sections, columns = references, cell = cited.
+                Enhancements: hover highlights row+column, cells colored by
+                intensity (multi-cite refs darker), orphan refs flagged red,
+                over-cited refs flagged amber. */}
             <div className="overflow-x-auto scroll-academic">
               <table className="text-[9px] border-collapse">
                 <thead>
                   <tr>
-                    <th className="sticky left-0 bg-background z-10 text-left pr-2 py-1 font-medium text-muted-foreground max-w-[120px]">
+                    <th className="sticky left-0 bg-background z-10 text-left pr-2 py-1 font-medium text-muted-foreground max-w-[140px] min-w-[100px]">
                       {t("articleViewer.section") || "Section"}
                     </th>
-                    {citationGraph.allRefs.map((ref, i) => (
-                      <th
-                        key={i}
-                        className="px-0.5 py-1 font-mono text-center min-w-[20px]"
-                        title={`${ref.title}${ref.authors ? ` — ${ref.authors}` : ""}${ref.year ? ` (${ref.year})` : ""}`}
-                      >
-                        <span className="inline-flex items-center justify-center w-4 h-4 rounded text-[8px] font-bold bg-muted/40 text-muted-foreground">
-                          {i + 1}
-                        </span>
-                      </th>
-                    ))}
+                    {citationGraph.allRefs.map((ref, i) => {
+                      const freq = refFrequency.get(i) || 0;
+                      const isOrphan = freq === 0;
+                      const isOverCited = freq >= 4;
+                      return (
+                        <th
+                          key={i}
+                          className="px-0.5 py-1 font-mono text-center min-w-[22px] group/th"
+                          title={`${ref.title}${ref.authors ? ` — ${ref.authors}` : ""}${ref.year ? ` (${ref.year})` : ""} → cited in ${freq} section${freq !== 1 ? "s" : ""}${isOrphan ? " (ORPHAN — never cited)" : ""}${isOverCited ? " (over-cited)" : ""}`}
+                        >
+                          <span
+                            className={`inline-flex items-center justify-center w-4 h-4 rounded text-[8px] font-bold transition-colors ${
+                              isOrphan
+                                ? "bg-red-100/70 dark:bg-red-950/40 text-red-600 dark:text-red-400 ring-1 ring-red-300/50"
+                                : isOverCited
+                                ? "bg-amber-100/70 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 ring-1 ring-amber-300/50"
+                                : "bg-muted/40 text-muted-foreground group-hover/th:bg-primary/20 group-hover/th:text-primary"
+                            }`}
+                          >
+                            {i + 1}
+                          </span>
+                        </th>
+                      );
+                    })}
+                    <th className="sticky right-0 bg-background z-10 px-1 py-1 font-mono text-center min-w-[28px] text-[8px] text-muted-foreground">
+                      Σ
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {citationGraph.sectionCitations.map((s) => (
-                    <tr key={s.sectionIdx} className="border-t border-border/30">
-                      <td className="sticky left-0 bg-background z-10 text-left pr-2 py-1 max-w-[120px] truncate" title={s.sectionTitle}>
-                        <span className="text-foreground/80">§{String(s.sectionIdx + 1).padStart(2, "0")} {s.sectionTitle}</span>
-                      </td>
-                      {citationGraph.allRefs.map((_, refIdx) => {
-                        const isCited = s.refIndices.includes(refIdx);
-                        return (
-                          <td key={refIdx} className="px-0.5 py-1 text-center">
-                            {isCited ? (
-                              <span
-                                className="inline-block w-3 h-3 rounded-sm bg-primary/70"
-                                title={`§${s.sectionIdx + 1} cites ref ${refIdx + 1}`}
-                              />
-                            ) : (
-                              <span className="inline-block w-3 h-3 rounded-sm bg-muted/20" />
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
+                  {citationGraph.sectionCitations.map((s) => {
+                    const rowTotal = s.refIndices.length;
+                    return (
+                      <tr key={s.sectionIdx} className="border-t border-border/30 group/tr">
+                        <td
+                          className="sticky left-0 bg-background z-10 text-left pr-2 py-1 max-w-[140px] truncate group-hover/tr:bg-accent/30 transition-colors"
+                          title={s.sectionTitle}
+                        >
+                          <span className="text-foreground/80">§{String(s.sectionIdx + 1).padStart(2, "0")} {s.sectionTitle}</span>
+                        </td>
+                        {citationGraph.allRefs.map((_, refIdx) => {
+                          const isCited = s.refIndices.includes(refIdx);
+                          const freq = refFrequency.get(refIdx) || 0;
+                          const maxFreq = Math.max(...Array.from(refFrequency.values()), 1);
+                          // Cell opacity scales with the ref's global frequency
+                          // so highly-cited refs appear darker across all rows.
+                          const intensity = freq / maxFreq;
+                          return (
+                            <td
+                              key={refIdx}
+                              className="px-0.5 py-1 text-center group/td"
+                              title={isCited ? `§${s.sectionIdx + 1} cites ref ${refIdx + 1}` : undefined}
+                            >
+                              {isCited ? (
+                                <span
+                                  className="inline-block w-3 h-3 rounded-sm transition-all group-hover/td:scale-125 group-hover/td:ring-1 group-hover/td:ring-primary"
+                                  style={{
+                                    backgroundColor: `hsl(var(--primary) / ${0.45 + intensity * 0.4})`,
+                                  }}
+                                />
+                              ) : (
+                                <span className="inline-block w-3 h-3 rounded-sm bg-muted/15 group-hover/td:bg-muted/30 transition-colors" />
+                              )}
+                            </td>
+                          );
+                        })}
+                        {/* Row total — sum of citations in this section. */}
+                        <td className="sticky right-0 bg-background z-10 px-1 py-1 text-center">
+                          <span className="text-[8px] font-mono font-semibold text-muted-foreground tabular-nums">
+                            {rowTotal}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
-            {/* Reference frequency legend */}
-            <div className="pt-2 border-t border-border/40 space-y-1.5">
-              <span className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">
-                {t("articleViewer.refFrequency") || "Reference Frequency"}
+            {/* Legend for the matrix cell colors. */}
+            <div className="flex items-center gap-3 text-[9px] text-muted-foreground flex-wrap">
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: "hsl(var(--primary) / 0.85)" }} />
+                cited (high freq)
               </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: "hsl(var(--primary) / 0.45)" }} />
+                cited (low freq)
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-100/70 dark:bg-red-950/40 ring-1 ring-red-300/50" />
+                orphan (never cited)
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-100/70 dark:bg-amber-950/40 ring-1 ring-amber-300/50" />
+                over-cited (≥4 sections)
+              </span>
+            </div>
+            {/* Reference frequency legend — clickable chips with intensity. */}
+            <div className="pt-2 border-t border-border/40 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">
+                  {t("articleViewer.refFrequency") || "Reference Frequency"}
+                </span>
+                <span className="text-[8px] text-muted-foreground/70">
+                  click a ref to highlight its column
+                </span>
+              </div>
               <div className="flex flex-wrap gap-1.5">
                 {citationGraph.allRefs.map((ref, i) => {
                   const freq = refFrequency.get(i) || 0;
                   const maxFreq = Math.max(...Array.from(refFrequency.values()), 1);
                   const intensity = freq / maxFreq;
+                  const isOrphan = freq === 0;
                   return (
                     <span
                       key={i}
-                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-mono border"
+                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-mono border transition-all hover:scale-105 cursor-default"
                       style={{
-                        backgroundColor: freq > 0
+                        backgroundColor: isOrphan
+                          ? "hsl(0 80% 95% / 0.5)"
+                          : freq > 0
                           ? `hsl(var(--primary) / ${0.1 + intensity * 0.3})`
                           : "transparent",
-                        borderColor: freq > 0
+                        borderColor: isOrphan
+                          ? "hsl(0 80% 60% / 0.4)"
+                          : freq > 0
                           ? `hsl(var(--primary) / ${0.3 + intensity * 0.4})`
                           : "hsl(var(--border) / 0.4)",
-                        color: freq > 0 ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))",
+                        color: isOrphan
+                          ? "hsl(0 80% 40%)"
+                          : freq > 0
+                          ? "hsl(var(--primary))"
+                          : "hsl(var(--muted-foreground))",
                       }}
-                      title={`${ref.title}${ref.authors ? ` — ${ref.authors}` : ""}${ref.year ? ` (${ref.year})` : ""} → cited in ${freq} section${freq !== 1 ? "s" : ""}`}
+                      title={`${ref.title}${ref.authors ? ` — ${ref.authors}` : ""}${ref.year ? ` (${ref.year})` : ""} → cited in ${freq} section${freq !== 1 ? "s" : ""}${isOrphan ? " (ORPHAN)" : ""}`}
                     >
                       <strong>{i + 1}</strong>
                       <span className="opacity-70">×{freq}</span>

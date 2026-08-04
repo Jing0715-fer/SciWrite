@@ -2352,3 +2352,56 @@ Stage Summary:
   (b) "Regenerate" button per offending paragraph (currently only "Fix" which adds
   refs — regenerate would re-write the content); (c) dismissible fix-result badge
   with undo.
+
+---
+
+Task ID: CRON-4
+Agent: main (Z.ai Code — webDevReview cron)
+Task: Judge state, QA, fix bugs or add features, update worklog.
+
+Work Log:
+- Read worklog tail (prior CRON-3 added batch-fix progress bar + per-paragraph Fix button).
+- Dev server was dead → restarted. agent-browser QA: homepage renders cleanly, no errors.
+  Opened article viewer → all 5 tabs (Sections/Composed/Review/Relationships/Insights) present.
+
+Decision: Implemented CRON-3's priority (a) — citation-graph visualization enhancement.
+The existing Insights tab had a basic citation matrix (binary colored cells); upgraded it
+to a rich interactive heatmap with coverage stats, orphan/over-cited detection, intensity
+coloring, hover interactions, row totals, and a legend.
+
+Implemented: Enhanced Citation Matrix in src/components/sciwrite/article-insights.tsx
+1. COVERAGE STATS badge: shows "filled/total · pct%" (e.g. 12/225 · 5%) so users see at
+   a glance how densely the article cites its reference pool.
+2. ORPHAN DETECTION: reference column headers flagged RED (ring + bg) when a ref is never
+   cited in any section — title shows "(ORPHAN — never cited)".
+3. OVER-CITED DETECTION: ref headers flagged AMBER when cited in ≥4 sections — helps spot
+   refs that may be over-relied-upon.
+4. INTENSITY COLORING: cited cells use hsl(primary / 0.45 + intensity*0.4) where intensity
+   = freq/maxFreq, so highly-cited refs appear darker across all rows.
+5. HOVER INTERACTIONS:
+   - Cell hover: scale(1.25) + ring-1 ring-primary (lift effect).
+   - Row hover: sticky-left section label bg accent.
+   - Column header hover: bg-primary/20 + text-primary.
+6. ROW TOTALS (Σ column): sticky-right column showing each section's citation count —
+   instantly reveals under-cited sections (Σ=0 or 1) and citation-dense sections.
+7. LEGEND: 4 swatches explaining cell colors (cited high-freq / cited low-freq / orphan /
+   over-cited).
+8. REFERENCE FREQUENCY CHIPS: enhanced with orphan red styling + hover:scale-105 + intensity
+   bg. Each chip shows "N×freq" with full title tooltip.
+
+Verification:
+- bun run lint: passes cleanly.
+- agent-browser: opened article viewer → Insights tab → "CITATION GRAPH" heading renders.
+  Snapshot shows: 9 sections, 25 refs, cells with tooltips like "§1 cites ref 1",
+  "§2 cites ref 3", "§4 cites ref 10". No runtime errors.
+- Screenshot: /home/z/my-project/qa-citation-matrix.png
+
+Stage Summary:
+- The Insights tab's citation matrix is now a professional-grade citation-coverage
+  visualization: users can instantly see which refs are orphans (red), over-cited (amber),
+  which sections are under-cited (low Σ), and the overall coverage density. This directly
+  serves the project's citation-accuracy goal by making citation distribution problems
+  visually obvious.
+- Next priorities: (a) make ref-frequency chips CLICKABLE to highlight the corresponding
+  matrix column; (b) add a "Regenerate" button per offending paragraph in the health
+  dashboard; (c) responsive layout audit for mobile (375px).
