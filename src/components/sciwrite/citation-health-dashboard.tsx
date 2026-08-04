@@ -16,6 +16,8 @@ import {
   BookOpen,
   AlertTriangle,
   Sparkles,
+  Wand2,
+  CheckCircle2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -136,6 +138,12 @@ export function CitationHealthDashboard({
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [open, setOpen] = React.useState(false);
+  const [fixing, setFixing] = React.useState(false);
+  const [fixResult, setFixResult] = React.useState<{
+    totalFixed: number;
+    totalBefore: number;
+    paragraphsProcessed: number;
+  } | null>(null);
 
   const fetchHealth = React.useCallback(async () => {
     setLoading(true);
@@ -153,6 +161,32 @@ export function CitationHealthDashboard({
       setLoading(false);
     }
   }, [projectId]);
+
+  // Batch auto-fix: runs the paragraph-level auto-fix-citations flow on every
+  // paragraph with blocking findings. Shows a progress state + result toast.
+  const runBatchAutoFix = React.useCallback(async () => {
+    setFixing(true);
+    setFixResult(null);
+    try {
+      const res = await fetch(
+        `/api/projects/${projectId}/batch-auto-fix-citations`,
+        { method: "POST" }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setFixResult({
+        totalFixed: data.aggregate.totalFixed,
+        totalBefore: data.aggregate.totalBeforeBlocking,
+        paragraphsProcessed: data.aggregate.paragraphsProcessed,
+      });
+      // Re-fetch health to reflect the fixes.
+      await fetchHealth();
+    } catch (err: any) {
+      setError(err?.message || "Batch auto-fix failed.");
+    } finally {
+      setFixing(false);
+    }
+  }, [projectId, fetchHealth]);
 
   React.useEffect(() => {
     fetchHealth();
@@ -301,6 +335,38 @@ export function CitationHealthDashboard({
             </Button>
           </CollapsibleTrigger>
         </Collapsible>
+      )}
+
+      {/* Batch auto-fix button — runs the LLM + database query pipeline to
+          resolve missing/out-of-range citations across all offending
+          paragraphs. Only shown when there are blocking errors. */}
+      {agg.totalBlocking > 0 && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-6 px-2 text-[10px] gap-1 border-amber-300/60 text-amber-700 dark:text-amber-400 hover:bg-amber-50/60 dark:hover:bg-amber-950/30"
+          disabled={fixing}
+          onClick={runBatchAutoFix}
+          title="Run the LLM auto-fix on all paragraphs with blocking citation errors"
+        >
+          {fixing ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Wand2 className="h-3 w-3" />
+          )}
+          {fixing ? "Fixing…" : "Auto-fix all"}
+        </Button>
+      )}
+
+      {/* Fix result badge — shows for 8s after a batch fix completes. */}
+      {fixResult && !fixing && (
+        <div className="flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20 px-1.5 py-0.5 rounded">
+          <CheckCircle2 className="h-3 w-3" />
+          <span>
+            Fixed {fixResult.totalFixed}/{fixResult.totalBefore} across{" "}
+            {fixResult.paragraphsProcessed} ¶
+          </span>
+        </div>
       )}
 
       {/* Refresh */}

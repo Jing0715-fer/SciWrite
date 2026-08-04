@@ -232,11 +232,18 @@
   margin: 0 0.04em;
   font-weight: 600;
   cursor: help;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .cite-marker:hover {
   background: oklch(0.86 0.07 172);
   color: oklch(0.34 0.1 162);
+  transform: translateY(-1px) scale(1.06);
+  box-shadow: 0 1px 3px oklch(0.45 0.1 162 / 0.25);
+}
+.cite-marker:focus-visible {
+  outline: 2px solid oklch(0.55 0.15 162);
+  outline-offset: 1px;
 }
 .dark .cite-marker {
   color: oklch(0.78 0.1 162);

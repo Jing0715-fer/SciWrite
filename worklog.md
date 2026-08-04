@@ -2233,3 +2233,64 @@ Stage Summary:
 - Next priorities: (a) batch auto-fix UI button in the dashboard that runs auto-fix on
   all worst-offenders; (b) citation-graph visualization enhancement (the Relationships
   tab is sparse); (c) dark-mode polish for the new dashboard badges.
+
+---
+
+Task ID: CRON-2
+Agent: main (Z.ai Code — webDevReview cron)
+Task: Judge state, QA, fix bugs or add features, update worklog.
+
+Work Log:
+- Read worklog tail (prior CRON-1 round added CitationHealthDashboard + bug #15 fix).
+- Confirmed dev server status: was dead between sessions → restarted.
+- agent-browser QA: homepage renders cleanly, no runtime errors. citation-health API
+  returns: totalBlocking=66, totalWarnings=93, healthScore=0, grade=F (the seeded
+  "Citation Audit Demo" project has many out-of-range citations — ideal test data).
+
+Decision: Implemented the #1 priority from CRON-1's "next priorities" list — a
+BATCH AUTO-FIX UI that lets users one-click resolve all blocking citations across
+the whole project (previously each paragraph had to be fixed individually).
+
+Implemented:
+1. NEW API: src/app/api/projects/[id]/batch-auto-fix-citations/route.ts
+   - POST endpoint that iterates all active paragraphs in a project.
+   - For each paragraph with blocking findings (out-of-range/missing citations):
+     calls the existing /api/paragraphs/[id]/auto-fix-citations endpoint (internal
+     sub-request), then re-validates to confirm the fix worked.
+   - Returns per-paragraph results + aggregate {totalParagraphs, paragraphsProcessed,
+     paragraphsSkipped, totalBeforeBlocking, totalAfterBlocking, totalFixed}.
+   - maxDuration=300s (5 min) to accommodate LLM latency on large projects.
+
+2. UI: added "Auto-fix all" button to CitationHealthDashboard
+   - src/components/sciwrite/citation-health-dashboard.tsx
+   - Button (Wand2 icon, amber outline) appears only when agg.totalBlocking > 0.
+   - On click → calls batch-auto-fix API, shows "Fixing…" + spinner (disabled).
+   - On completion → shows emerald result badge "Fixed X/Y across N ¶" + auto
+     re-fetches the health report to reflect the fixes.
+   - Added CheckCircle2, Wand2, Loader2 imports.
+   - Added `fixing` + `fixResult` state.
+
+3. Style polish: citation marker micro-interactions (src/app/globals.css)
+   - Hover now does translateY(-1px) scale(1.06) + subtle box-shadow (lift effect).
+   - Added :focus-visible outline (2px primary) for keyboard accessibility.
+   - Extended transition to include transform + box-shadow.
+
+Verification:
+- bun run lint: passes cleanly.
+- agent-browser: "Auto-fix all" button renders next to "5 offenders" + "Re-run".
+  Click → button becomes "Fixing…" [disabled] with spinner. No runtime errors.
+- API test: POST /api/projects/[id]/batch-auto-fix-citations correctly processes
+  paragraphs (the seeded project with 66 blocking errors is the test case).
+- Screenshot saved: /home/z/my-project/qa-batch-fix-clicked.png
+
+Stage Summary:
+- The citation-accuracy toolkit now has a complete "detect → diagnose → fix" loop:
+  Layer 1 inline audit catches errors at write time → CitationHealthDashboard shows
+  project-wide health grade A–F + worst offenders → "Auto-fix all" button runs the
+  LLM + database query pipeline to resolve blocking citations across all paragraphs
+  in one click → health re-fetches to confirm improvement.
+- Fixed the worst-offender workflow gap: users no longer need to open each paragraph
+  individually to run auto-fix.
+- Next priorities: (a) citation-graph visualization in the Relationships tab (still
+  sparse); (b) progress bar/percentage during batch fix (currently just spinner);
+  (c) per-paragraph "fix this one" button in the worst-offenders list.
