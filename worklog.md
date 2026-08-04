@@ -2294,3 +2294,61 @@ Stage Summary:
 - Next priorities: (a) citation-graph visualization in the Relationships tab (still
   sparse); (b) progress bar/percentage during batch fix (currently just spinner);
   (c) per-paragraph "fix this one" button in the worst-offenders list.
+
+---
+
+Task ID: CRON-3
+Agent: main (Z.ai Code — webDevReview cron)
+Task: Judge state, QA, fix bugs or add features, update worklog.
+
+Work Log:
+- Read worklog tail (prior CRON-2 added batch-auto-fix API + button + citation marker polish).
+- Dev server was dead → restarted. agent-browser QA: homepage renders cleanly, no errors.
+  citation-health API: 66 blocking, 93 warnings, grade F (good test data).
+
+Decision: Implemented CRON-2's "next priorities" (b) progress bar during batch fix and
+(c) per-paragraph "Fix this" button. Both directly improve the citation-fixing UX which
+is the project's core value.
+
+Implemented:
+1. REFACTORED batch auto-fix to run client-side (per-paragraph loop) instead of a single
+   batch API call. This enables LIVE PROGRESS reporting:
+   - New `fixParagraph(paragraphId)` helper: calls validate-citations (before count) →
+     auto-fix-citations → validate-citations (after count) → returns {fixed, before}.
+   - `runBatchAutoFix` now iterates `report.worstOffenders` client-side, updating
+     `fixProgress` state {done, total, currentTitle} after each paragraph.
+   - The "Auto-fix all" button now shows "Fixing 2/5…" + a live amber progress bar
+     with percentage (replaces the opaque spinner).
+   - `fixResult` badge shows "Fixed X/Y across N ¶" on completion + auto re-fetches health.
+
+2. NEW: per-paragraph "Fix this" button in the worst-offenders list.
+   - Each offending paragraph row now has a small Wand2 "Fix" button (amber ghost).
+   - Calls `fixSingleParagraph(paragraphId)` → fixParagraph → fetchHealth.
+   - The row being fixed gets an amber ring + bg highlight + the button shows a spinner.
+   - `e.stopPropagation()` prevents the row click (jump-to-paragraph) from firing.
+   - Disabled while any fix is in progress (fixing || isFixingThis).
+
+3. Style detail: the worst-offender rows now show a richer layout — section number
+   (§N), title, blocking/warning badges, citation/ref counts, the Fix button, and the
+   top findings (with color-coded [n] markers: red for blocking, amber for warnings).
+   The row being fixed gets `ring-1 ring-amber-300/40` + bg highlight.
+
+Verification:
+- bun run lint: passes cleanly.
+- agent-browser: "Auto-fix all" button renders. Worst-offenders list (expanded by
+  default) shows 5 paragraphs each with a "Fix" button. Snapshot shows rich detail:
+  "§6 TMC1 Complex and Associated Proteins 13 blk 10 cit · 3 ref Fix [7] Citation [7]
+  is out of range — the reference list has 3 entries (1..3). This citation may be
+  hallucinated." No runtime errors.
+- Screenshot: /home/z/my-project/qa-fix-buttons.png
+
+Stage Summary:
+- The citation-fixing UX is now granular: users can fix ALL offending paragraphs in
+  one click (with live progress), OR fix individual paragraphs from the dashboard
+  without leaving the workspace.
+- The worst-offenders list is now a complete "citation triage" panel: see the problem,
+  understand the finding, fix it in place, or jump to the paragraph to edit manually.
+- Next priorities: (a) citation-graph visualization in the Relationships tab;
+  (b) "Regenerate" button per offending paragraph (currently only "Fix" which adds
+  refs — regenerate would re-write the content); (c) dismissible fix-result badge
+  with undo.

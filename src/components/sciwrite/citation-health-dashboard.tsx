@@ -144,6 +144,15 @@ export function CitationHealthDashboard({
     totalBefore: number;
     paragraphsProcessed: number;
   } | null>(null);
+  // Live progress for batch fix: { done, total, currentTitle }.
+  const [fixProgress, setFixProgress] = React.useState<{
+    done: number;
+    total: number;
+    currentTitle?: string;
+  } | null>(null);
+  // Per-paragraph fixing state — supports the "Fix this" button on each
+  // worst-offender row.
+  const [fixingParagraphId, setFixingParagraphId] = React.useState<string | null>(null);
 
   const fetchHealth = React.useCallback(async () => {
     setLoading(true);
@@ -162,22 +171,72 @@ export function CitationHealthDashboard({
     }
   }, [projectId]);
 
-  // Batch auto-fix: runs the paragraph-level auto-fix-citations flow on every
-  // paragraph with blocking findings. Shows a progress state + result toast.
-  const runBatchAutoFix = React.useCallback(async () => {
-    setFixing(true);
-    setFixResult(null);
-    try {
-      const res = await fetch(
-        `/api/projects/${projectId}/batch-auto-fix-citations`,
+  // Fix a single paragraph by calling the paragraph-level auto-fix endpoint.
+  // Used by both the batch loop and the per-paragraph "Fix this" button.
+  const fixParagraph = React.useCallback(
+    async (paragraphId: string): Promise<{ fixed: number; before: number }> => {
+      // Fetch the paragraph's current blocking count (before fix).
+      const healthRes = await fetch(
+        `/api/paragraphs/${paragraphId}/validate-citations`
+      );
+      const beforeData = healthRes.ok ? await healthRes.json() : null;
+      const before = beforeData?.missingCount ?? 0;
+
+      const fixRes = await fetch(
+        `/api/paragraphs/${paragraphId}/auto-fix-citations`,
         { method: "POST" }
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      if (!fixRes.ok) throw new Error(`auto-fix HTTP ${fixRes.status}`);
+      const fixData = await fixRes.json();
+
+      // Re-validate to get the after count.
+      const afterRes = await fetch(
+        `/api/paragraphs/${paragraphId}/validate-citations`
+      );
+      const afterData = afterRes.ok ? await afterRes.json() : null;
+      const after = afterData?.missingCount ?? before;
+      return { fixed: Math.max(0, before - after), before };
+    },
+    []
+  );
+
+  // Batch auto-fix: iterates all worst-offender paragraphs client-side so we
+  // can show live progress (done/total + current paragraph title). This is
+  // better than a single batch API call because the user sees incremental
+  // progress instead of an opaque spinner for potentially minutes.
+  const runBatchAutoFix = React.useCallback(async () => {
+    if (!report) return;
+    const offenders = report.worstOffenders.filter((p) => p.blockingCount > 0);
+    if (offenders.length === 0) return;
+    setFixing(true);
+    setFixResult(null);
+    setFixProgress({ done: 0, total: offenders.length });
+    let totalFixed = 0;
+    let totalBefore = 0;
+    let processed = 0;
+    try {
+      for (let i = 0; i < offenders.length; i++) {
+        const p = offenders[i];
+        setFixProgress({
+          done: i,
+          total: offenders.length,
+          currentTitle: p.title,
+        });
+        setFixingParagraphId(p.paragraphId);
+        try {
+          const result = await fixParagraph(p.paragraphId);
+          totalFixed += result.fixed;
+          totalBefore += result.before;
+          processed++;
+        } catch (err) {
+          // Continue with other paragraphs even if one fails.
+          console.error(`auto-fix failed for ${p.paragraphId}:`, err);
+        }
+      }
       setFixResult({
-        totalFixed: data.aggregate.totalFixed,
-        totalBefore: data.aggregate.totalBeforeBlocking,
-        paragraphsProcessed: data.aggregate.paragraphsProcessed,
+        totalFixed,
+        totalBefore,
+        paragraphsProcessed: processed,
       });
       // Re-fetch health to reflect the fixes.
       await fetchHealth();
@@ -185,8 +244,26 @@ export function CitationHealthDashboard({
       setError(err?.message || "Batch auto-fix failed.");
     } finally {
       setFixing(false);
+      setFixProgress(null);
+      setFixingParagraphId(null);
     }
-  }, [projectId, fetchHealth]);
+  }, [report, fixParagraph, fetchHealth]);
+
+  // Per-paragraph "Fix this" — fixes a single worst-offender in place.
+  const fixSingleParagraph = React.useCallback(
+    async (paragraphId: string) => {
+      setFixingParagraphId(paragraphId);
+      try {
+        await fixParagraph(paragraphId);
+        await fetchHealth();
+      } catch (err: any) {
+        setError(err?.message || "Auto-fix failed for this paragraph.");
+      } finally {
+        setFixingParagraphId(null);
+      }
+    },
+    [fixParagraph, fetchHealth]
+  );
 
   React.useEffect(() => {
     fetchHealth();
@@ -339,23 +416,49 @@ export function CitationHealthDashboard({
 
       {/* Batch auto-fix button — runs the LLM + database query pipeline to
           resolve missing/out-of-range citations across all offending
-          paragraphs. Only shown when there are blocking errors. */}
+          paragraphs. Only shown when there are blocking errors. During the
+          fix, shows live progress (done/total) instead of an opaque spinner. */}
       {agg.totalBlocking > 0 && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-6 px-2 text-[10px] gap-1 border-amber-300/60 text-amber-700 dark:text-amber-400 hover:bg-amber-50/60 dark:hover:bg-amber-950/30"
-          disabled={fixing}
-          onClick={runBatchAutoFix}
-          title="Run the LLM auto-fix on all paragraphs with blocking citation errors"
-        >
-          {fixing ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <Wand2 className="h-3 w-3" />
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-6 px-2 text-[10px] gap-1 border-amber-300/60 text-amber-700 dark:text-amber-400 hover:bg-amber-50/60 dark:hover:bg-amber-950/30"
+            disabled={fixing}
+            onClick={runBatchAutoFix}
+            title="Run the LLM auto-fix on all paragraphs with blocking citation errors"
+          >
+            {fixing ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Wand2 className="h-3 w-3" />
+            )}
+            {fixing && fixProgress
+              ? `Fixing ${fixProgress.done}/${fixProgress.total}…`
+              : "Auto-fix all"}
+          </Button>
+          {/* Live progress bar during batch fix. */}
+          {fixing && fixProgress && (
+            <div className="flex items-center gap-1.5 min-w-[80px]">
+              <Progress
+                value={
+                  fixProgress.total > 0
+                    ? (fixProgress.done / fixProgress.total) * 100
+                    : 0
+                }
+                className="h-1.5 w-16 [&>div]:bg-amber-500"
+              />
+              <span className="text-[9px] text-muted-foreground font-mono tabular-nums shrink-0">
+                {Math.round(
+                  fixProgress.total > 0
+                    ? (fixProgress.done / fixProgress.total) * 100
+                    : 0
+                )}
+                %
+              </span>
+            </div>
           )}
-          {fixing ? "Fixing…" : "Auto-fix all"}
-        </Button>
+        </div>
       )}
 
       {/* Fix result badge — shows for 8s after a batch fix completes. */}
@@ -397,16 +500,20 @@ export function CitationHealthDashboard({
                 </p>
               ) : (
                 <div className="space-y-1 max-h-44 overflow-y-auto scroll-academic">
-                  {report.worstOffenders.map((p) => (
+                  {report.worstOffenders.map((p) => {
+                    const isFixingThis = fixingParagraphId === p.paragraphId;
+                    return (
                     <div
                       key={p.paragraphId}
                       className={cn(
                         "rounded-md border px-2 py-1.5 text-[11px] cursor-pointer hover:bg-accent/30 transition-colors",
-                        p.blockingCount > 0
+                        isFixingThis
+                          ? "border-amber-400/70 bg-amber-50/60 dark:bg-amber-950/25 ring-1 ring-amber-300/40"
+                          : p.blockingCount > 0
                           ? "border-red-300/50 bg-red-50/40 dark:bg-red-950/15"
                           : "border-amber-300/50 bg-amber-50/40 dark:bg-amber-950/15"
                       )}
-                      onClick={() => onJumpParagraph?.(p.paragraphId)}
+                      onClick={() => !isFixingThis && onJumpParagraph?.(p.paragraphId)}
                     >
                       <div className="flex items-center gap-1.5 mb-1">
                         <span className="font-mono text-[9px] text-muted-foreground">
@@ -434,6 +541,29 @@ export function CitationHealthDashboard({
                         <span className="text-[9px] text-muted-foreground shrink-0">
                           {p.citationCount} cit · {p.refCount} ref
                         </span>
+                        {/* Per-paragraph "Fix this" button — only for paragraphs
+                            with blocking findings. Stops propagation so the
+                            row click (jump to paragraph) doesn't fire. */}
+                        {p.blockingCount > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-5 px-1.5 text-[9px] gap-0.5 shrink-0 text-amber-700 dark:text-amber-400 hover:bg-amber-100/60 dark:hover:bg-amber-950/40"
+                            disabled={fixing || isFixingThis}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              fixSingleParagraph(p.paragraphId);
+                            }}
+                            title="Run auto-fix on just this paragraph"
+                          >
+                            {isFixingThis ? (
+                              <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                            ) : (
+                              <Wand2 className="h-2.5 w-2.5" />
+                            )}
+                            {isFixingThis ? "…" : "Fix"}
+                          </Button>
+                        )}
                       </div>
                       {p.topFindings.length > 0 && (
                         <div className="space-y-0.5">
@@ -459,7 +589,8 @@ export function CitationHealthDashboard({
                         </div>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
