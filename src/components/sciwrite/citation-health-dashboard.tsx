@@ -18,6 +18,7 @@ import {
   Sparkles,
   Wand2,
   CheckCircle2,
+  RotateCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -265,6 +266,30 @@ export function CitationHealthDashboard({
     [fixParagraph, fetchHealth]
   );
 
+  // Per-paragraph "Regenerate" — calls the regenerate endpoint which re-writes
+  // the paragraph content via LLM using the current reference list. This is
+  // a stronger fix than "Fix" (which only adds references): regenerate
+  // produces fresh body text with correct [n] citations. Used when the
+  // paragraph content itself is broken (wrong citations, out-of-range, etc.).
+  const [regeneratingParagraphId, setRegeneratingParagraphId] = React.useState<string | null>(null);
+  const regenerateParagraph = React.useCallback(
+    async (paragraphId: string) => {
+      setRegeneratingParagraphId(paragraphId);
+      try {
+        const res = await fetch(`/api/paragraphs/${paragraphId}/regenerate`, {
+          method: "POST",
+        });
+        if (!res.ok) throw new Error(`regenerate HTTP ${res.status}`);
+        await fetchHealth();
+      } catch (err: any) {
+        setError(err?.message || "Regenerate failed for this paragraph.");
+      } finally {
+        setRegeneratingParagraphId(null);
+      }
+    },
+    [fetchHealth]
+  );
+
   React.useEffect(() => {
     fetchHealth();
   }, [fetchHealth]);
@@ -502,6 +527,7 @@ export function CitationHealthDashboard({
                 <div className="space-y-1 max-h-44 overflow-y-auto scroll-academic">
                   {report.worstOffenders.map((p) => {
                     const isFixingThis = fixingParagraphId === p.paragraphId;
+                    const isRegenerating = regeneratingParagraphId === p.paragraphId;
                     return (
                     <div
                       key={p.paragraphId}
@@ -509,11 +535,13 @@ export function CitationHealthDashboard({
                         "rounded-md border px-2 py-1.5 text-[11px] cursor-pointer hover:bg-accent/30 transition-colors",
                         isFixingThis
                           ? "border-amber-400/70 bg-amber-50/60 dark:bg-amber-950/25 ring-1 ring-amber-300/40"
+                          : isRegenerating
+                          ? "border-primary/50 bg-primary/[0.06] dark:bg-primary/[0.08] ring-1 ring-primary/30"
                           : p.blockingCount > 0
                           ? "border-red-300/50 bg-red-50/40 dark:bg-red-950/15"
                           : "border-amber-300/50 bg-amber-50/40 dark:bg-amber-950/15"
                       )}
-                      onClick={() => !isFixingThis && onJumpParagraph?.(p.paragraphId)}
+                      onClick={() => !isFixingThis && !isRegenerating && onJumpParagraph?.(p.paragraphId)}
                     >
                       <div className="flex items-center gap-1.5 mb-1">
                         <span className="font-mono text-[9px] text-muted-foreground">
@@ -549,12 +577,12 @@ export function CitationHealthDashboard({
                             variant="ghost"
                             size="sm"
                             className="h-5 px-1.5 text-[9px] gap-0.5 shrink-0 text-amber-700 dark:text-amber-400 hover:bg-amber-100/60 dark:hover:bg-amber-950/40"
-                            disabled={fixing || isFixingThis}
+                            disabled={fixing || isFixingThis || isRegenerating}
                             onClick={(e) => {
                               e.stopPropagation();
                               fixSingleParagraph(p.paragraphId);
                             }}
-                            title="Run auto-fix on just this paragraph"
+                            title="Run auto-fix on just this paragraph (adds missing references via LLM + database queries)"
                           >
                             {isFixingThis ? (
                               <Loader2 className="h-2.5 w-2.5 animate-spin" />
@@ -562,6 +590,32 @@ export function CitationHealthDashboard({
                               <Wand2 className="h-2.5 w-2.5" />
                             )}
                             {isFixingThis ? "…" : "Fix"}
+                          </Button>
+                        )}
+                        {/* Per-paragraph "Regenerate" button — re-writes the
+                            paragraph content via LLM using the current
+                            reference list. Stronger than "Fix" (which only
+                            adds references): regenerate produces fresh body
+                            text with correct [n] citations. Shown for any
+                            paragraph with findings (blocking OR warnings). */}
+                        {(p.blockingCount > 0 || p.warningCount > 0) && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-5 px-1.5 text-[9px] gap-0.5 shrink-0 text-primary/70 dark:text-primary/60 hover:bg-primary/10 hover:text-primary"
+                            disabled={fixing || isFixingThis || isRegenerating}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              regenerateParagraph(p.paragraphId);
+                            }}
+                            title="Regenerate this paragraph's content via LLM using the current reference list (re-writes the body with correct [n] citations)"
+                          >
+                            {isRegenerating ? (
+                              <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                            ) : (
+                              <RotateCw className="h-2.5 w-2.5" />
+                            )}
+                            {isRegenerating ? "…" : "Regen"}
                           </Button>
                         )}
                       </div>

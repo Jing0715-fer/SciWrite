@@ -2556,3 +2556,63 @@ Stage Summary:
 - Next priorities: (a) add a "Regenerate" button per offending paragraph in the health
   dashboard; (b) audit mobile layout for the article viewer dialog (currently a Dialog
   that may overflow on mobile); (c) export citation matrix as PNG image.
+
+---
+
+Task ID: CRON-8
+Agent: main (Z.ai Code — webDevReview cron)
+Task: Judge state, QA, fix bugs or add features, update worklog.
+
+Work Log:
+- Read worklog tail (prior CRON-7 added mobile responsive layout).
+- Dev server was dead → restarted. agent-browser QA: homepage renders cleanly,
+  no runtime errors. Desktop layout works correctly.
+
+Decision: Implemented CRON-7's priority (a) — add a "Regenerate" button per
+offending paragraph in the citation health dashboard. The dashboard previously
+had only a "Fix" button (which adds missing references via LLM + database
+queries). "Regenerate" is a stronger fix: it re-writes the paragraph content via
+LLM using the current reference list, producing fresh body text with correct
+[n] citations. This is the right tool when the paragraph content itself is
+broken (wrong citation numbers, out-of-range markers, etc.).
+
+Implemented in src/components/sciwrite/citation-health-dashboard.tsx:
+1. Added RotateCw icon import (for the Regenerate button).
+2. Added `regeneratingParagraphId` state + `regenerateParagraph(paragraphId)`
+   callback that POSTs to /api/paragraphs/[id]/regenerate, then re-fetches
+   health. Mirrors the existing `fixSingleParagraph` pattern.
+3. Added a "Regen" button (RotateCw icon, primary/70 color) next to the "Fix"
+   button on each worst-offender row. Shown when blockingCount > 0 OR
+   warningCount > 0 (regenerate can fix both blocking errors AND topicality
+   warnings by rewriting with better citations).
+4. Both Fix and Regen buttons disabled while any fix/regen is in progress
+   (fixing || isFixingThis || isRegenerating).
+5. The row being regenerated gets a primary-colored ring + bg highlight
+   (border-primary/50 bg-primary/[0.06] ring-1 ring-primary/30) — visually
+   distinct from the amber "fixing" state.
+6. Row click (jump to paragraph) is blocked while regenerating.
+7. Tooltips explain the difference: Fix = "adds missing references via LLM +
+   database queries", Regen = "re-writes the body with correct [n] citations".
+
+Verification:
+- bun run lint: passes cleanly.
+- agent-browser: dashboard renders with "5 offenders" (expanded), each row
+  shows BOTH "Fix" and "Regen" buttons. Snapshot shows rich detail:
+  "§6 TMC1 Complex and Associated Proteins 13 blk 10 cit · 3 ref Fix Regen
+  [7] Citation [7] is out of range — the reference list has 3 entries (1..3).
+  This citation may be hallucinated." No runtime errors.
+- Screenshot: /home/z/my-project/qa-regen-button.png
+
+Stage Summary:
+- The citation-health dashboard's worst-offenders list now offers TWO repair
+  paths per paragraph: "Fix" (add missing references — fast, additive) and
+  "Regen" (rewrite the paragraph — slower, more thorough). Users can choose
+  the right tool: Fix when the references are just missing, Regen when the
+  body text itself has wrong citation numbers or poor topicality.
+- The dashboard is now a complete citation-repair control center: detect
+  (health grade + findings) → diagnose (worst-offenders with top findings)
+  → repair (Fix or Regen per paragraph, or Auto-fix all with live progress).
+- Next priorities: (a) audit mobile layout for the article viewer dialog
+  (currently a Dialog that may overflow on mobile); (b) export citation
+  matrix as PNG image; (c) add a "Regenerate all" batch button alongside
+  "Auto-fix all".
