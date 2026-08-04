@@ -2157,3 +2157,79 @@ Stage Summary:
 - An optional LLM deep-audit adjudicates suspect citations by asking "does this reference
   plausibly support this specific claim?" (batched, temperature 0, cost-controlled).
 - E2E verified via API test + agent-browser UI test. All green.
+
+---
+
+Task ID: CRON-1
+Agent: main (Z.ai Code — webDevReview cron)
+Task: Judge current state, run agent-browser QA, fix bugs or add features, update worklog.
+
+Work Log:
+- Read prior worklog (2159 lines) to understand the 4-layer citation audit system.
+- Confirmed dev server running (HTTP 200). No runtime errors.
+- Ran agent-browser QA on the homepage + article viewer:
+  * Homepage renders all panels (project sidebar, database query, theme switcher, command palette). No errors.
+  * Article viewer "Composed" tab: CitationAuditBanner renders correctly with "Citation audit found blocking errors" + blocking/missing/suspect badges + "Deep audit" button + expandable findings (SUSPECT/MISSING verdicts with overlap %).
+  * Clicked "Deep audit" → POST /api/articles/[id]/audit-citations?deep=true returned 200.
+  * Per-section inline audit logs present in dev.log (e.g. "section 1 citation audit — 0 blocking, 8 topicality warning(s)").
+  * No console errors, no build errors.
+
+Decision: System is stable. Picked the highest-value feature gap from the prior worklog's
+suggestions: a PROJECT-LEVEL citation health dashboard (the existing audit only runs per-article
+after compose; there was no way to see citation health across all paragraphs BEFORE composing).
+
+Implemented:
+1. NEW API: src/app/api/projects/[id]/citation-health/route.ts
+   - GET endpoint that aggregates citation-audit findings across an entire project.
+   - Runs per-paragraph inline audit (validateCitationsInline) on all active paragraphs.
+   - Runs per-article post-compose audit (buildAuditReport) on all articles.
+   - Computes a 0–100 health score = 100 − (5×blocking + 1×warning), capped at [0,100].
+   - Computes an A–F grade (A≥90, B≥70, C≥50, D≥30, F<30).
+   - Returns worst-offenders list (top 5 paragraphs by blocking×5+warning), each with its
+     top 3 findings (sorted blocking > unsupported > suspect).
+   - Fixed Prisma error: Article model has no wordCount field — compute via countWords().
+
+2. NEW COMPONENT: src/components/sciwrite/citation-health-dashboard.tsx
+   - Compact dashboard mounted in the workspace header (between ProgressTracker and tabs).
+   - Shows: A–F grade badge (colored by grade) with tooltip explaining the scoring,
+     quick stats (total citations, refs, blocking, warnings), a clean-progress bar
+     (emerald/amber/red by % clean), and a collapsible worst-offenders list.
+   - Worst-offender rows are clickable → jumpToParagraph scrolls + highlights the card.
+   - Article audits panel shows per-article verdicts (blocking, missing, suspect,
+     unsupported, orphan, numbering drift, clean).
+   - Auto-expands when blocking errors exist. Refresh button re-runs the audit.
+
+3. MOUNTED in src/app/page.tsx:
+   - Added CitationHealthDashboard below ProgressTracker (only when a project is active).
+   - Added jumpToParagraph callback: switches to the paragraphs tab, then
+     scrollIntoView + 2.5s ring highlight on the target paragraph card.
+
+4. BUG FIX #15: src/app/api/paragraphs/[id]/auto-fix-citations/route.ts
+   - The route saved auto-fixed references with NO citationOrder → they collided at
+     order 0 with the first cited ref, breaking hover tooltips and compose dedup.
+   - Fix: compute maxExistingOrder + 1 from existing refs and assign citationOrder
+     incrementally so new refs append at the tail of the ordered list.
+   - Also added DOI-based dedup in the "already saved" check (was type+externalId only).
+
+Verification:
+- bun run lint: passes cleanly (no errors).
+- API test: GET /api/projects/[id]/citation-health returns full report with paragraphs[],
+  articles[], aggregate (healthScore, grade, totalBlocking, totalWarnings, paragraphsClean),
+  and worstOffenders[].
+- agent-browser UI test: dashboard renders with "blocking" badge, "93 warnings",
+  progress bar, "5 offenders" button (expanded), WORST-OFFENDING PARAGRAPHS list showing
+  detailed findings like "Citation [7] is out of range — the reference list has 3 entries
+  (1..3). This citation may be hallucinated." No runtime errors.
+
+Stage Summary:
+- Added a project-level citation health dashboard giving users an at-a-glance A–F grade
+  for citation accuracy BEFORE they compose an article. Previously the audit only ran
+  after compose — now users can see per-paragraph issues in real time and jump directly
+  to the worst-offending paragraphs to fix them.
+- Fixed bug #15 (auto-fix-citations collision at citationOrder 0).
+- The 4-layer adversarial citation audit system now has a 5th surface: a project-level
+  health summary that bridges the inline (Layer 1) and post-compose (Layer 2) audits into
+  a single user-facing score.
+- Next priorities: (a) batch auto-fix UI button in the dashboard that runs auto-fix on
+  all worst-offenders; (b) citation-graph visualization enhancement (the Relationships
+  tab is sparse); (c) dark-mode polish for the new dashboard badges.

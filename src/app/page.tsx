@@ -52,6 +52,7 @@ import { ExportMenu } from "@/components/sciwrite/export-menu";
 import { MarkdownCitations } from "@/components/sciwrite/markdown-citations";
 import { CommandPalette } from "@/components/sciwrite/command-palette";
 import { ProgressTracker } from "@/components/sciwrite/progress-tracker";
+import { CitationHealthDashboard } from "@/components/sciwrite/citation-health-dashboard";
 import { WritingTipsPanel } from "@/components/sciwrite/writing-tips-panel";
 import { LLMCacheStatsPanel } from "@/components/sciwrite/llm-config-dialog";
 // Lazy-loaded heavy dialog components — these are only needed when the user
@@ -590,6 +591,33 @@ function WritingWorkspace({
   const [articleViewLang, setArticleViewLang] = React.useState<"en" | "zh">("en");
   const [paraTrashOpen, setParaTrashOpen] = React.useState(false);
 
+  // Jump to a specific paragraph in the workspace. Switches to the
+  // paragraphs tab, waits a tick for it to render, then scrolls the
+  // paragraph card into view + briefly highlights it. Used by the
+  // CitationHealthDashboard's worst-offender list.
+  const jumpToParagraph = React.useCallback((paragraphId: string) => {
+    setWorkspaceTab("paragraphs");
+    // Defer until the paragraphs tab is rendered (next animation frame).
+    requestAnimationFrame(() => {
+      // The ParagraphCard sets id={paragraph.id} on its root container.
+      const el = document.getElementById(paragraphId)
+        || document.querySelector(`[data-paragraph-id="${paragraphId}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add("ring-2", "ring-primary", "ring-offset-1");
+        setTimeout(
+          () =>
+            el.classList.remove(
+              "ring-2",
+              "ring-primary",
+              "ring-offset-1"
+            ),
+          2500
+        );
+      }
+    });
+  }, []);
+
   if (!activeProjectId || !project) {
     return <EmptyWorkspace />;
   }
@@ -640,6 +668,13 @@ function WritingWorkspace({
         wordGoal={wordGoal}
         onWordGoalChange={onWordGoalChange}
       />
+
+      {/* Citation Health Dashboard — project-level adversarial audit summary.
+          Shows a 0–100 health grade (A–F), blocking/warning counts, and a
+          collapsible worst-offenders list. Clicking a paragraph scrolls to it. */}
+      {activeProjectId && (
+        <CitationHealthDashboard projectId={activeProjectId} onJumpParagraph={jumpToParagraph} />
+      )}
 
       {/* Workspace tabs */}
       <div className="flex items-center gap-1 px-5 py-1.5 border-b border-border/60 shrink-0 bg-muted/20 overflow-x-auto">

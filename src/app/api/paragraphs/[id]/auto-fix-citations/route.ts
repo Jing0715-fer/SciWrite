@@ -141,7 +141,18 @@ Output JSON only.`;
       ? parsed.suggestions.filter((s: any) => s.database && s.query)
       : [];
 
-    // 3. Execute the suggested queries and save found references
+    // 3. Execute the suggested queries and save found references.
+    // Bug #15 fix: the original code saved new references at the END of the
+    // paragraph's reference list WITHOUT setting citationOrder — so they got
+    // the default 0 and collided with the first cited ref, breaking hover
+    // tooltips and compose dedup. Now we append them with citationOrder
+    // starting after the last existing ref's order, so they sit at the tail
+    // of the ordered list (consistent with renumberByAppearance expectations).
+    const maxExistingOrder = references.reduce(
+      (max, r) => Math.max(max, r.citationOrder ?? -1),
+      -1
+    );
+    let nextOrder = maxExistingOrder + 1;
     const savedRefs: any[] = [];
     for (const suggestion of suggestions.slice(0, 5)) {
       try {
@@ -151,11 +162,12 @@ Output JSON only.`;
         );
         if (dbResult.items.length > 0) {
           const item = dbResult.items[0];
-          // Check if already saved
+          // Check if already saved (by type+externalId OR by DOI).
           const exists = references.find(
             (r) =>
-              r.type === item.source &&
-              r.externalId === item.externalId
+              (r.type === item.source &&
+                r.externalId === item.externalId) ||
+              (item.doi && r.doi === item.doi)
           );
           if (!exists) {
             const ref = await db.reference.create({
@@ -170,6 +182,11 @@ Output JSON only.`;
                 doi: item.doi || null,
                 abstract: item.abstract || null,
                 paragraphId: id,
+                // Bug #15 fix: assign a citationOrder so the new ref does not
+                // collide with existing refs at order 0. These auto-fixed
+                // refs are appended at the tail; a subsequent regenerate or
+                // renumberByAppearance call will re-pack them by appearance.
+                citationOrder: nextOrder++,
               },
             });
             savedRefs.push(ref);
