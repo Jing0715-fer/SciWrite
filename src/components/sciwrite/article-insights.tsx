@@ -9,8 +9,10 @@ import {
   TrendingUp,
   Quote,
   Network,
+  Download,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useI18n } from "@/lib/i18n";
 import { countWords } from "@/lib/writing";
@@ -182,6 +184,62 @@ export function ArticleInsights({
   // column header, that column is highlighted across all rows. null = none.
   const [selectedRef, setSelectedRef] = React.useState<number | null>(null);
 
+  // Export the citation matrix as a CSV file. Rows = sections, columns =
+  // references, cells = 1 (cited) or 0 (not cited). Includes a header row
+  // with ref numbers + a final Σ column per section. Client-side only —
+  // generates a Blob and triggers a download.
+  const exportMatrixCSV = React.useCallback(() => {
+    const refs = citationGraph.allRefs;
+    const sections = citationGraph.sectionCitations;
+    if (!refs.length || !sections.length) return;
+
+    // Build CSV header: "Section", "Ref 1 title", "Ref 2 title", ..., "Total"
+    const header = [
+      "Section",
+      ...refs.map((r: any, i: number) =>
+        `Ref ${i + 1}: ${(r.title || "").replace(/"/g, "'").replace(/[\r\n]+/g, " ").slice(0, 80)}`
+      ),
+      "Total",
+    ];
+
+    // Build rows: section title, 1/0 per ref, row total.
+    const rows = sections.map((s: any) => {
+      const cells = refs.map((_: any, refIdx: number) =>
+        s.refIndices.includes(refIdx) ? "1" : "0"
+      );
+      const rowTotal = s.refIndices.length;
+      return [
+        `§${s.sectionIdx + 1} ${s.sectionTitle.replace(/"/g, "'").replace(/[\r\n]+/g, " ")}`,
+        ...cells,
+        String(rowTotal),
+      ];
+    });
+
+    // Add a summary row: ref frequencies.
+    const freqRow = [
+      "Frequency (sections)",
+      ...refs.map((_: any, i: number) => String(refFrequency.get(i) || 0)),
+      String(refs.length),
+    ];
+
+    // Escape all fields with quotes (RFC 4180).
+    const csv = [header, ...rows, freqRow]
+      .map((row) => row.map((cell) => `"${cell}"`).join(","))
+      .join("\r\n");
+
+    // Add BOM so Excel opens UTF-8 correctly.
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const safeTitle = (article.title || "article").replace(/[^\w\u4e00-\u9fa5-]+/g, "_").slice(0, 40);
+    link.download = `${safeTitle}_citation_matrix.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [citationGraph, refFrequency, article.title]);
+
   return (
     <ScrollArea className="h-full scroll-academic">
       <div className="px-8 py-5 max-w-4xl mx-auto space-y-5">
@@ -351,6 +409,17 @@ export function ArticleInsights({
                   </span>
                 );
               })()}
+              {/* Export citation matrix as CSV — client-side download. */}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 px-1.5 text-[9px] gap-0.5 ml-1"
+                onClick={exportMatrixCSV}
+                title="Download the citation matrix as a CSV file (openable in Excel/Sheets)"
+              >
+                <Download className="h-2.5 w-2.5" />
+                CSV
+              </Button>
             </div>
             {/* Matrix: rows = sections, columns = references, cell = cited.
                 Enhancements: hover highlights row+column, cells colored by

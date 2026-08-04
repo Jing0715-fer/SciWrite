@@ -2460,3 +2460,51 @@ Stage Summary:
 - Next priorities: (a) add a "Regenerate" button per offending paragraph in the health
   dashboard; (b) responsive layout audit for mobile (375px); (c) export citation
   matrix as CSV/PNG for sharing.
+
+---
+
+Task ID: CRON-6
+Agent: main (Z.ai Code — webDevReview cron)
+Task: Judge state, QA, fix bugs or add features, update worklog.
+
+Work Log:
+- Read worklog tail (prior CRON-5 made ref-frequency chips clickable to highlight
+  matrix columns).
+- Dev server was dead → restarted. agent-browser QA: homepage + article viewer render
+  cleanly, no runtime errors.
+
+Decision: Implemented CRON-5's priority (c) — export citation matrix as CSV. This is a
+practical feature for researchers who need to share/analyze citation coverage data
+externally (Excel, Google Sheets, R, Python).
+
+Implemented in src/components/sciwrite/article-insights.tsx:
+1. NEW FUNCTION `exportMatrixCSV`:
+   - Builds a CSV from citationGraph data: header row with ref numbers+titles,
+     one row per section (1=cited, 0=not cited), final Σ total per row.
+   - Appends a "Frequency (sections)" summary row at the bottom.
+   - RFC 4180 compliant: all fields quoted, inner quotes escaped, newlines removed.
+   - UTF-8 BOM prefix so Excel opens Chinese/Unicode titles correctly.
+   - Client-side only: Blob + createObjectURL + temporary <a> click + revoke.
+   - Filename: safe-title_citation_matrix.csv (sanitized, ≤40 chars).
+2. NEW UI: "CSV" button (Download icon) in the Citation Graph header, next to the
+   coverage-stats badge. Ghost variant, h-5, text-[9px]. Tooltip: "Download the
+   citation matrix as a CSV file (openable in Excel/Sheets)".
+3. Added Download icon import + Button component import.
+
+Verification:
+- bun run lint: passes cleanly.
+- agent-browser: opened article viewer → Insights tab → CITATION GRAPH header shows
+  "CSV" button next to coverage badge. Clicked the button → "✓ Done", no runtime
+  errors. (The downloaded file goes to the browser's download dir, not visible in
+  the sandbox filesystem, but the click + Blob generation succeeded.)
+- Screenshot: /home/z/my-project/qa-csv-export.png
+
+Stage Summary:
+- The citation matrix is now exportable as CSV — researchers can download the full
+  section×reference citation map for external analysis (bibliometrics, systematic
+  review tracking, collaboration sharing). This completes the citation-visualization
+  feature set: view (interactive heatmap) → explore (clickable column highlight) →
+  export (CSV download).
+- Next priorities: (a) add a "Regenerate" button per offending paragraph in the health
+  dashboard; (b) responsive layout audit for mobile (375px); (c) export citation
+  matrix as PNG image for visual sharing.
