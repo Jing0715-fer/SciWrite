@@ -178,6 +178,10 @@ export function ArticleInsights({
   const maxWordCount = Math.max(...sectionStats.map((s: any) => s.wordCount), 1);
   const maxFreq = wordFreq.length > 0 ? wordFreq[0].count : 1;
 
+  // Selected reference column — when the user clicks a ref-frequency chip or a
+  // column header, that column is highlighted across all rows. null = none.
+  const [selectedRef, setSelectedRef] = React.useState<number | null>(null);
+
   return (
     <ScrollArea className="h-full scroll-academic">
       <div className="px-8 py-5 max-w-4xl mx-auto space-y-5">
@@ -363,19 +367,25 @@ export function ArticleInsights({
                       const freq = refFrequency.get(i) || 0;
                       const isOrphan = freq === 0;
                       const isOverCited = freq >= 4;
+                      const isSelected = selectedRef === i;
                       return (
                         <th
                           key={i}
-                          className="px-0.5 py-1 font-mono text-center min-w-[22px] group/th"
-                          title={`${ref.title}${ref.authors ? ` — ${ref.authors}` : ""}${ref.year ? ` (${ref.year})` : ""} → cited in ${freq} section${freq !== 1 ? "s" : ""}${isOrphan ? " (ORPHAN — never cited)" : ""}${isOverCited ? " (over-cited)" : ""}`}
+                          className={`px-0.5 py-1 font-mono text-center min-w-[22px] group/th cursor-pointer ${
+                            isSelected ? "bg-primary/10" : ""
+                          }`}
+                          title={`${ref.title}${ref.authors ? ` — ${ref.authors}` : ""}${ref.year ? ` (${ref.year})` : ""} → cited in ${freq} section${freq !== 1 ? "s" : ""}${isOrphan ? " (ORPHAN — never cited)" : ""}${isOverCited ? " (over-cited)" : ""} — click to highlight column`}
+                          onClick={() => setSelectedRef(isSelected ? null : i)}
                         >
                           <span
-                            className={`inline-flex items-center justify-center w-4 h-4 rounded text-[8px] font-bold transition-colors ${
-                              isOrphan
+                            className={`inline-flex items-center justify-center w-4 h-4 rounded text-[8px] font-bold transition-all ${
+                              isSelected
+                                ? "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-1 scale-110"
+                                : isOrphan
                                 ? "bg-red-100/70 dark:bg-red-950/40 text-red-600 dark:text-red-400 ring-1 ring-red-300/50"
                                 : isOverCited
                                 ? "bg-amber-100/70 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 ring-1 ring-amber-300/50"
-                                : "bg-muted/40 text-muted-foreground group-hover/th:bg-primary/20 group-hover/th:text-primary"
+                                : "bg-muted/40 text-muted-foreground group-hover/th:bg-primary/20 group-hover/th:text-primary group-hover/th:scale-110"
                             }`}
                           >
                             {i + 1}
@@ -406,21 +416,30 @@ export function ArticleInsights({
                           // Cell opacity scales with the ref's global frequency
                           // so highly-cited refs appear darker across all rows.
                           const intensity = freq / maxFreq;
+                          const isColSelected = selectedRef === refIdx;
                           return (
                             <td
                               key={refIdx}
-                              className="px-0.5 py-1 text-center group/td"
+                              className={`px-0.5 py-1 text-center group/td transition-colors ${
+                                isColSelected ? "bg-primary/[0.08]" : ""
+                              }`}
                               title={isCited ? `§${s.sectionIdx + 1} cites ref ${refIdx + 1}` : undefined}
                             >
                               {isCited ? (
                                 <span
-                                  className="inline-block w-3 h-3 rounded-sm transition-all group-hover/td:scale-125 group-hover/td:ring-1 group-hover/td:ring-primary"
+                                  className={`inline-block w-3 h-3 rounded-sm transition-all group-hover/td:scale-125 ${
+                                    isColSelected
+                                      ? "ring-2 ring-primary scale-110"
+                                      : "group-hover/td:ring-1 group-hover/td:ring-primary"
+                                  }`}
                                   style={{
                                     backgroundColor: `hsl(var(--primary) / ${0.45 + intensity * 0.4})`,
                                   }}
                                 />
                               ) : (
-                                <span className="inline-block w-3 h-3 rounded-sm bg-muted/15 group-hover/td:bg-muted/30 transition-colors" />
+                                <span className={`inline-block w-3 h-3 rounded-sm transition-colors ${
+                                  isColSelected ? "bg-primary/15" : "bg-muted/15 group-hover/td:bg-muted/30"
+                                }`} />
                               )}
                             </td>
                           );
@@ -456,14 +475,15 @@ export function ArticleInsights({
                 over-cited (≥4 sections)
               </span>
             </div>
-            {/* Reference frequency legend — clickable chips with intensity. */}
+            {/* Reference frequency legend — clickable chips with intensity.
+                Clicking a chip toggles column-highlight in the matrix above. */}
             <div className="pt-2 border-t border-border/40 space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">
                   {t("articleViewer.refFrequency") || "Reference Frequency"}
                 </span>
                 <span className="text-[8px] text-muted-foreground/70">
-                  click a ref to highlight its column
+                  click a ref to highlight its column{selectedRef !== null ? " · click again to clear" : ""}
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -472,32 +492,43 @@ export function ArticleInsights({
                   const maxFreq = Math.max(...Array.from(refFrequency.values()), 1);
                   const intensity = freq / maxFreq;
                   const isOrphan = freq === 0;
+                  const isSelected = selectedRef === i;
                   return (
-                    <span
+                    <button
                       key={i}
-                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-mono border transition-all hover:scale-105 cursor-default"
+                      type="button"
+                      onClick={() => setSelectedRef(isSelected ? null : i)}
+                      className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-mono border transition-all hover:scale-105 cursor-pointer ${
+                        isSelected ? "ring-2 ring-primary ring-offset-1 scale-105" : ""
+                      }`}
                       style={{
-                        backgroundColor: isOrphan
+                        backgroundColor: isSelected
+                          ? "hsl(var(--primary))"
+                          : isOrphan
                           ? "hsl(0 80% 95% / 0.5)"
                           : freq > 0
                           ? `hsl(var(--primary) / ${0.1 + intensity * 0.3})`
                           : "transparent",
-                        borderColor: isOrphan
+                        borderColor: isSelected
+                          ? "hsl(var(--primary))"
+                          : isOrphan
                           ? "hsl(0 80% 60% / 0.4)"
                           : freq > 0
                           ? `hsl(var(--primary) / ${0.3 + intensity * 0.4})`
                           : "hsl(var(--border) / 0.4)",
-                        color: isOrphan
+                        color: isSelected
+                          ? "hsl(var(--primary-foreground))"
+                          : isOrphan
                           ? "hsl(0 80% 40%)"
                           : freq > 0
                           ? "hsl(var(--primary))"
                           : "hsl(var(--muted-foreground))",
                       }}
-                      title={`${ref.title}${ref.authors ? ` — ${ref.authors}` : ""}${ref.year ? ` (${ref.year})` : ""} → cited in ${freq} section${freq !== 1 ? "s" : ""}${isOrphan ? " (ORPHAN)" : ""}`}
+                      title={`${ref.title}${ref.authors ? ` — ${ref.authors}` : ""}${ref.year ? ` (${ref.year})` : ""} → cited in ${freq} section${freq !== 1 ? "s" : ""}${isOrphan ? " (ORPHAN)" : ""} — click to ${isSelected ? "clear" : "highlight"} column`}
                     >
                       <strong>{i + 1}</strong>
                       <span className="opacity-70">×{freq}</span>
-                    </span>
+                    </button>
                   );
                 })}
               </div>

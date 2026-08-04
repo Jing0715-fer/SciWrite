@@ -2405,3 +2405,58 @@ Stage Summary:
 - Next priorities: (a) make ref-frequency chips CLICKABLE to highlight the corresponding
   matrix column; (b) add a "Regenerate" button per offending paragraph in the health
   dashboard; (c) responsive layout audit for mobile (375px).
+
+---
+
+Task ID: CRON-5
+Agent: main (Z.ai Code — webDevReview cron)
+Task: Judge state, QA, fix bugs or add features, update worklog.
+
+Work Log:
+- Read worklog tail (prior CRON-4 enhanced citation matrix with orphan/over-cited
+  detection, intensity coloring, row totals, legend).
+- Dev server was dead → restarted. agent-browser QA: homepage + article viewer render
+  cleanly, no runtime errors.
+
+Decision: Implemented CRON-4's priority (a) — make ref-frequency chips CLICKABLE to
+highlight the corresponding matrix column. This transforms the citation matrix from a
+read-only visualization into an interactive exploration tool.
+
+Implemented in src/components/sciwrite/article-insights.tsx:
+1. NEW STATE: `selectedRef` (number | null) — tracks which reference column is
+   currently highlighted. null = none.
+2. COLUMN HEADERS now clickable:
+   - Click a header → toggles selectedRef (click again to clear).
+   - Selected header: bg-primary/10 on the <th>, the number badge becomes
+     bg-primary text-primary-foreground + ring-2 ring-primary ring-offset-1 scale-110.
+   - Tooltip updated: "… — click to highlight column".
+3. MATRIX CELLS respond to selectedRef:
+   - Selected column's cells get bg-primary/[0.08] background tint.
+   - Cited cells in the selected column get ring-2 ring-primary scale-110 (stand out).
+   - Uncited cells in the selected column get bg-primary/15 (subtle tint) so the user
+     can see which sections DON'T cite this ref.
+4. REF-FREQUENCY CHIPS converted from <span> to <button>:
+   - Clicking a chip toggles selectedRef (same as clicking the column header).
+   - Selected chip: bg-primary + text-primary-foreground + ring-2 ring-primary scale-105.
+   - Hint text dynamically updates: "click a ref to highlight its column" → adds
+     "· click again to clear" when a ref is selected.
+   - Tooltip updates: "… — click to highlight/clear column".
+
+Verification:
+- bun run lint: passes cleanly.
+- agent-browser: opened article viewer → Insights tab → CITATION GRAPH renders.
+  Ref-frequency chips now render as buttons: "1 ×1", "2 ×0", "3 ×2", "4 ×1", etc.
+  (showing each ref's citation count). Clicked chip "3 ×2" (ref #3, cited in 2
+  sections) → click succeeded, no runtime errors.
+- Screenshots: /home/z/my-project/qa-clickable-chips.png, qa-column-highlighted.png
+
+Stage Summary:
+- The citation matrix is now fully interactive: users can click a ref-frequency chip
+  OR a column header to highlight that reference's column across all sections. This
+  makes it easy to see exactly which sections cite (or don't cite) a specific
+  reference — crucial for identifying under-cited important refs or over-relied-upon
+  ones.
+- The hint text dynamically adapts to guide the user ("click again to clear").
+- Next priorities: (a) add a "Regenerate" button per offending paragraph in the health
+  dashboard; (b) responsive layout audit for mobile (375px); (c) export citation
+  matrix as CSV/PNG for sharing.
