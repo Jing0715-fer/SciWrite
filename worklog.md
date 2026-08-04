@@ -2616,3 +2616,54 @@ Stage Summary:
   (currently a Dialog that may overflow on mobile); (b) export citation
   matrix as PNG image; (c) add a "Regenerate all" batch button alongside
   "Auto-fix all".
+
+---
+
+Task ID: CRON-9
+Agent: main (Z.ai Code — webDevReview cron)
+Task: Judge state, QA, fix bugs or add features, update worklog.
+
+Work Log:
+- Read worklog tail (prior CRON-8 added per-paragraph "Regen" button).
+- Dev server was dead → restarted. agent-browser QA: homepage renders cleanly,
+  no runtime errors.
+
+Decision: Implemented CRON-8's priority (c) — add a "Regenerate all" batch
+button alongside "Auto-fix all". This completes the parallel batch-repair
+toolset: users can now one-click fix (add refs) OR one-click regenerate
+(rewrite content) across ALL worst-offender paragraphs.
+
+Implemented in src/components/sciwrite/citation-health-dashboard.tsx:
+1. NEW FUNCTION `runBatchRegenerate` — mirrors `runBatchAutoFix` but calls the
+   regenerate endpoint. Iterates ALL worst-offenders with blocking OR warning
+   findings (regenerate can fix both). Shows live progress.
+2. NEW STATE `regenProgress` ({done, total, currentTitle}) + `regenResult`
+   ({processed, total}) — parallel to fixProgress/fixResult.
+3. NEW UI: "Regenerate all" button (RotateCw icon, primary outline) next to
+   "Auto-fix all". Shown when totalBlocking > 0 OR totalWarnings > 0.
+   - During batch: shows "Regen 2/5…" + live primary-colored progress bar + %.
+   - On completion: emerald badge "Regenerated N/M ¶".
+   - Disabled while fixing OR regen in progress (mutual exclusion with Auto-fix).
+4. Tooltip explains: "Regenerate ALL paragraphs with citation issues via LLM
+   (re-writes body text with correct [n] citations). Slower but more thorough
+   than Auto-fix."
+
+Verification:
+- bun run lint: passes cleanly.
+- agent-browser: dashboard renders with "Auto-fix all" + "Regenerate all"
+  buttons side by side, plus "Re-run citation health check". Each
+  worst-offender row shows both "Fix" and "Regen" buttons. No runtime errors.
+- Screenshot: /home/z/my-project/qa-regen-all.png
+
+Stage Summary:
+- The citation-health dashboard now offers a COMPLETE parallel batch-repair
+  toolset:
+    * Auto-fix all  — adds missing references (fast, additive, amber)
+    * Regenerate all — rewrites paragraph content (slower, thorough, primary)
+  Both show live progress (done/total + progress bar + %) and a completion
+  badge. Users choose based on the nature of the citation problem.
+- The dashboard is now a full citation-repair control center with both
+  per-paragraph (Fix/Regen) and batch (Auto-fix all/Regenerate all) options.
+- Next priorities: (a) audit mobile layout for the article viewer dialog;
+  (b) export citation matrix as PNG image; (c) add a confirmation dialog
+  before "Regenerate all" (rewriting all paragraphs is a destructive op).

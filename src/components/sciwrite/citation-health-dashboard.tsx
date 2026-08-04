@@ -290,6 +290,61 @@ export function CitationHealthDashboard({
     [fetchHealth]
   );
 
+  // Batch regenerate — iterates ALL worst-offender paragraphs (those with
+  // blocking OR warning findings) client-side, calling regenerate on each.
+  // Mirrors runBatchAutoFix but uses the regenerate endpoint. Shows live
+  // progress (done/total + current paragraph title). The regenResult badge
+  // shows how many paragraphs were processed.
+  const [regenProgress, setRegenProgress] = React.useState<{
+    done: number;
+    total: number;
+    currentTitle?: string;
+  } | null>(null);
+  const [regenResult, setRegenResult] = React.useState<{
+    processed: number;
+    total: number;
+  } | null>(null);
+  const runBatchRegenerate = React.useCallback(async () => {
+    if (!report) return;
+    // Regenerate ALL paragraphs with findings (blocking OR warnings) —
+    // regenerate can fix both by rewriting with better citations.
+    const offenders = report.worstOffenders.filter(
+      (p) => p.blockingCount > 0 || p.warningCount > 0
+    );
+    if (offenders.length === 0) return;
+    setRegeneratingParagraphId("__batch__"); // sentinel: batch mode active
+    setRegenResult(null);
+    setRegenProgress({ done: 0, total: offenders.length });
+    let processed = 0;
+    try {
+      for (let i = 0; i < offenders.length; i++) {
+        const p = offenders[i];
+        setRegenProgress({
+          done: i,
+          total: offenders.length,
+          currentTitle: p.title,
+        });
+        setRegeneratingParagraphId(p.paragraphId);
+        try {
+          const res = await fetch(`/api/paragraphs/${p.paragraphId}/regenerate`, {
+            method: "POST",
+          });
+          if (!res.ok) throw new Error(`regenerate HTTP ${res.status}`);
+          processed++;
+        } catch (err) {
+          console.error(`regenerate failed for ${p.paragraphId}:`, err);
+        }
+      }
+      setRegenResult({ processed, total: offenders.length });
+      await fetchHealth();
+    } catch (err: any) {
+      setError(err?.message || "Batch regenerate failed.");
+    } finally {
+      setRegeneratingParagraphId(null);
+      setRegenProgress(null);
+    }
+  }, [report, fetchHealth]);
+
   React.useEffect(() => {
     fetchHealth();
   }, [fetchHealth]);
@@ -493,6 +548,63 @@ export function CitationHealthDashboard({
           <span>
             Fixed {fixResult.totalFixed}/{fixResult.totalBefore} across{" "}
             {fixResult.paragraphsProcessed} ¶
+          </span>
+        </div>
+      )}
+
+      {/* Batch regenerate button — re-writes ALL worst-offender paragraphs via
+          LLM. Stronger than Auto-fix (which only adds references): regenerate
+          produces fresh body text with correct [n] citations. Shown when there
+          are ANY findings (blocking OR warnings). */}
+      {(agg.totalBlocking > 0 || agg.totalWarnings > 0) && (
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-6 px-2 text-[10px] gap-1 border-primary/40 text-primary hover:bg-primary/10"
+            disabled={fixing || regenProgress !== null}
+            onClick={runBatchRegenerate}
+            title="Regenerate ALL paragraphs with citation issues via LLM (re-writes body text with correct [n] citations). Slower but more thorough than Auto-fix."
+          >
+            {regenProgress !== null ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <RotateCw className="h-3 w-3" />
+            )}
+            {regenProgress !== null
+              ? `Regen ${regenProgress.done}/${regenProgress.total}…`
+              : "Regenerate all"}
+          </Button>
+          {/* Live progress bar during batch regenerate. */}
+          {regenProgress !== null && (
+            <div className="flex items-center gap-1.5 min-w-[80px]">
+              <Progress
+                value={
+                  regenProgress.total > 0
+                    ? (regenProgress.done / regenProgress.total) * 100
+                    : 0
+                }
+                className="h-1.5 w-16 [&>div]:bg-primary"
+              />
+              <span className="text-[9px] text-muted-foreground font-mono tabular-nums shrink-0">
+                {Math.round(
+                  regenProgress.total > 0
+                    ? (regenProgress.done / regenProgress.total) * 100
+                    : 0
+                )}
+                %
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Regen result badge — shows after a batch regenerate completes. */}
+      {regenResult && regenProgress === null && (
+        <div className="flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20 px-1.5 py-0.5 rounded">
+          <CheckCircle2 className="h-3 w-3" />
+          <span>
+            Regenerated {regenResult.processed}/{regenResult.total} ¶
           </span>
         </div>
       )}
