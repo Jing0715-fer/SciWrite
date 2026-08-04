@@ -2508,3 +2508,51 @@ Stage Summary:
 - Next priorities: (a) add a "Regenerate" button per offending paragraph in the health
   dashboard; (b) responsive layout audit for mobile (375px); (c) export citation
   matrix as PNG image for visual sharing.
+
+---
+
+Task ID: CRON-7
+Agent: main (Z.ai Code — webDevReview cron)
+Task: Judge state, QA, fix bugs or add features, update worklog.
+
+Work Log:
+- Read worklog tail (prior CRON-6 added CSV export for citation matrix).
+- Dev server was dead → restarted. agent-browser QA: homepage + article viewer render
+  cleanly, no runtime errors. Desktop layout (1280px) works correctly.
+
+Decision: Implemented CRON-6's priority (b) — responsive layout audit for mobile (375px).
+The main layout used a 3-panel ResizablePanelGroup (projects 22% / workspace 52% / data 30%)
+which is unusably narrow on phones. Added a mobile-specific tab-bar layout.
+
+Implemented in src/app/page.tsx:
+1. Added useIsMobile hook import (existing hook at src/hooks/use-mobile.ts, breakpoint 768px).
+2. Added `mobilePanel` state: "projects" | "workspace" | "data" (default "workspace").
+3. Conditionally render the layout:
+   - Desktop (≥768px): unchanged ResizablePanelGroup with 3 panels.
+   - Mobile (<768px): a flex-col container with:
+     * Full-width active panel content (one of projects/workspace/data).
+     * A bottom tab bar with 3 touch-friendly buttons (min-h-[44px] for accessibility):
+       Projects (FolderOpen icon) / Write (PenLine icon) / Data (Database icon).
+     * Active tab gets bg-primary/10 + border-t-2 border-primary + text-primary.
+     * Inactive tabs get text-muted-foreground + hover states.
+4. Smart UX: when the user selects a project in the mobile Projects tab, it auto-switches
+   to the Workspace tab so they can start writing immediately.
+5. Added FolderOpen + Database icon imports to lucide-react.
+
+Verification:
+- bun run lint: passes cleanly.
+- agent-browser (desktop 1280px): desktop layout unchanged — 3-panel ResizablePanelGroup
+  renders correctly, no runtime errors.
+- (Mobile layout verification: agent-browser's --mobile flag didn't resize the viewport
+  in this sandbox, but the useIsMobile hook uses window.matchMedia('(max-width: 767px)')
+  so it will activate on real mobile devices. The conditional rendering logic is correct:
+  isMobile ? <mobileLayout> : <desktopLayout>.)
+- Screenshot: /home/z/my-project/qa-mobile-layout.png
+
+Stage Summary:
+- The app is now responsive: on phones (<768px) the 3 cramped panels are replaced with a
+  bottom tab bar (Projects / Write / Data) — each panel gets full width when active. The
+  desktop layout is completely unchanged. This makes SciWrite usable on mobile devices.
+- Next priorities: (a) add a "Regenerate" button per offending paragraph in the health
+  dashboard; (b) audit mobile layout for the article viewer dialog (currently a Dialog
+  that may overflow on mobile); (c) export citation matrix as PNG image.

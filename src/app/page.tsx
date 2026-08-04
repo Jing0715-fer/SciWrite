@@ -26,6 +26,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   Trash2,
+  FolderOpen,
+  Database,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +47,7 @@ import { DatabaseQueryPanel } from "@/components/sciwrite/database-query-panel";
 import { KnowledgePanel } from "@/components/sciwrite/knowledge-panel";
 import { ParagraphCard } from "@/components/sciwrite/paragraph-card";
 import { SortableParagraphs } from "@/components/sciwrite/sortable-paragraphs";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { TopicComposer } from "@/components/sciwrite/topic-composer";
 import { ArticleComposer } from "@/components/sciwrite/article-composer";
 import { cleanArticleContent } from "@/lib/writing";
@@ -85,6 +88,11 @@ import type { Article, Project } from "@/lib/types";
 export default function Home() {
   const { t } = useI18n();
   const qc = useQueryClient();
+  const isMobile = useIsMobile();
+  // Mobile layout active panel — on screens < 768px the 3-panel ResizablePanelGroup
+  // is replaced with a tab bar so each panel gets full width. Values:
+  // "projects" | "workspace" | "data".
+  const [mobilePanel, setMobilePanel] = React.useState<"projects" | "workspace" | "data">("workspace");
   const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
   const [writeOpen, setWriteOpen] = React.useState(false);
   const [composeOpen, setComposeOpen] = React.useState(false);
@@ -253,6 +261,92 @@ export default function Home() {
       />
 
       <main className="flex-1 min-h-0 px-3 pb-2">
+        {isMobile ? (
+          /* Mobile layout — on screens < 768px the 3-panel ResizablePanelGroup
+             is replaced with a bottom tab bar + full-width panel switcher.
+             This prevents the 3 panels from being unusably narrow on phones. */
+          <div className="flex flex-col h-full rounded-xl border border-border/60 bg-card overflow-hidden">
+            {/* Active panel content — full width */}
+            <div className="flex-1 min-h-0 overflow-hidden">
+              {mobilePanel === "projects" && (
+                <ProjectsSidebar
+                  projects={projects}
+                  activeId={activeProjectId}
+                  onSelect={(id) => {
+                    setActiveProjectId(id);
+                    setMobilePanel("workspace");
+                  }}
+                  articles={articles}
+                  onOpenArticle={(a) => setViewArticle(a as Article)}
+                />
+              )}
+              {mobilePanel === "workspace" && (
+                <WritingWorkspace
+                  project={project}
+                  paragraphs={paragraphs}
+                  articles={articles}
+                  references={references}
+                  activeProjectId={activeProjectId}
+                  onOpenWrite={() => { setUnifiedWriteTab("paragraph"); setUnifiedWriteOpen(true); }}
+                  onOpenCompose={() => { setUnifiedWriteTab("compose"); setUnifiedWriteOpen(true); }}
+                  onOpenGather={() => { setUnifiedWriteTab("gather"); setUnifiedWriteOpen(true); }}
+                  onOpenOutline={() => { setUnifiedWriteTab("outline"); setUnifiedWriteOpen(true); }}
+                  progressStats={progressStats}
+                  wordGoal={wordGoal}
+                  onWordGoalChange={setWordGoal}
+                  tipsOpen={tipsOpen}
+                  onTipsOpenChange={setTipsOpen}
+                  onOpenUserData={() => setUserDataOpen(true)}
+                  onOpenArticle={(a) => setViewArticle(a as Article)}
+                />
+              )}
+              {mobilePanel === "data" && (
+                <div className="flex flex-col h-full overflow-hidden">
+                  <div className="h-[44%] min-h-0 border-b border-border/60 overflow-hidden">
+                    <DatabaseQueryPanel projectId={activeProjectId} />
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-hidden">
+                    <KnowledgePanel
+                      projectId={activeProjectId}
+                      dataSources={dataSources}
+                      references={references}
+                      articles={articles}
+                      onOpenArticle={(a) => setViewArticle(a as Article)}
+                    />
+                  </div>
+                  <div className="shrink-0 border-t border-border/60 p-2">
+                    <LLMCacheStatsPanel />
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* Bottom tab bar — fixed-height, touch-friendly 44px targets */}
+            <div className="shrink-0 flex border-t border-border/60 bg-sidebar/40">
+              {([
+                { id: "projects", label: "Projects", icon: FolderOpen },
+                { id: "workspace", label: "Write", icon: PenLine },
+                { id: "data", label: "Data", icon: Database },
+              ] as const).map((tab) => {
+                const Icon = tab.icon;
+                const active = mobilePanel === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setMobilePanel(tab.id)}
+                    className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition-colors min-h-[44px] ${
+                      active
+                        ? "text-primary bg-primary/10 border-t-2 border-primary -mt-px"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/30"
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
         <ResizablePanelGroup direction="horizontal" className="rounded-xl border border-border/60 bg-card overflow-hidden h-full">
           {/* Left: projects */}
           <ResizablePanel defaultSize={22} minSize={18} maxSize={32} className="bg-sidebar/50">
@@ -312,6 +406,7 @@ export default function Home() {
             </div>
           </ResizablePanel>
         </ResizablePanelGroup>
+        )}
       </main>
 
       <Footer onOpenPalette={() => setPaletteOpen(true)} />
