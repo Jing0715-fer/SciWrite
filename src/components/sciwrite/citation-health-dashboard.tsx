@@ -24,6 +24,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from "@/components/ui/alert-dialog";
+import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
@@ -304,6 +314,9 @@ export function CitationHealthDashboard({
     processed: number;
     total: number;
   } | null>(null);
+  // Confirmation dialog state for "Regenerate all" — rewriting all
+  // paragraphs is a destructive operation, so we double-confirm.
+  const [confirmRegen, setConfirmRegen] = React.useState(false);
   const runBatchRegenerate = React.useCallback(async () => {
     if (!report) return;
     // Regenerate ALL paragraphs with findings (blocking OR warnings) —
@@ -555,7 +568,9 @@ export function CitationHealthDashboard({
       {/* Batch regenerate button — re-writes ALL worst-offender paragraphs via
           LLM. Stronger than Auto-fix (which only adds references): regenerate
           produces fresh body text with correct [n] citations. Shown when there
-          are ANY findings (blocking OR warnings). */}
+          are ANY findings (blocking OR warnings).
+          Opens a confirmation dialog first because rewriting all paragraphs is
+          a destructive operation (the current body text will be replaced). */}
       {(agg.totalBlocking > 0 || agg.totalWarnings > 0) && (
         <div className="flex items-center gap-1.5">
           <Button
@@ -563,8 +578,8 @@ export function CitationHealthDashboard({
             size="sm"
             className="h-6 px-2 text-[10px] gap-1 border-primary/40 text-primary hover:bg-primary/10"
             disabled={fixing || regenProgress !== null}
-            onClick={runBatchRegenerate}
-            title="Regenerate ALL paragraphs with citation issues via LLM (re-writes body text with correct [n] citations). Slower but more thorough than Auto-fix."
+            onClick={() => setConfirmRegen(true)}
+            title="Regenerate ALL paragraphs with citation issues via LLM (re-writes body text with correct [n] citations). Slower but more thorough than Auto-fix. You will be asked to confirm."
           >
             {regenProgress !== null ? (
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -873,6 +888,58 @@ export function CitationHealthDashboard({
           </div>
         </CollapsibleContent>
       </Collapsible>
+
+      {/* Confirmation dialog for "Regenerate all" — rewriting all paragraphs is
+          destructive (replaces the current body text), so we double-confirm.
+          Shows the count of paragraphs that will be regenerated. */}
+      <AlertDialog open={confirmRegen} onOpenChange={setConfirmRegen}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-base">
+              <RotateCw className="h-5 w-5 text-primary shrink-0" />
+              Regenerate all paragraphs with citation issues?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-sm leading-relaxed space-y-2">
+              <span className="block">
+                This will re-write the body text of{" "}
+                <strong className="text-foreground">
+                  {report?.worstOffenders.filter(
+                    (p) => p.blockingCount > 0 || p.warningCount > 0
+                  ).length || 0}{" "}
+                  paragraph(s)
+                </strong>{" "}
+                via LLM using their current reference lists.
+              </span>
+              <span className="block text-amber-600 dark:text-amber-400">
+                ⚠ This is a destructive operation — the current paragraph
+                content will be replaced with fresh text. Consider using
+                "Auto-fix all" first if you only need to add missing references.
+              </span>
+              <span className="block text-muted-foreground text-xs">
+                The regeneration runs the LLM with the project's curated
+                references and re-numbers citations by appearance order. Each
+                paragraph's reference list is rebuilt to match the new body.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="text-xs">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="text-xs gap-1.5"
+              onClick={(e) => {
+                e.preventDefault();
+                setConfirmRegen(false);
+                runBatchRegenerate();
+              }}
+            >
+              <RotateCw className="h-3.5 w-3.5" />
+              Regenerate all
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
