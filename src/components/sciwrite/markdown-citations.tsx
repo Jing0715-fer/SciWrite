@@ -579,8 +579,13 @@ export function MarkdownCitations({
     // Pre-parse the AI "### Citations" block (if any) to build a fallback
     // reference list for hover tooltips + the bottom reference list.
     const citeHeaderIdx = content.indexOf("### Citations");
-    // Also check for "## References" header (articles have this)
-    const refHeaderIdx = content.indexOf("## References");
+    // Also check for "## References" header (articles have this).
+    // Also check for "## 参考文献" (Chinese reference section header) so that
+    // Chinese-translated articles (contentZh) can resolve [n] citations.
+    const refHeaderIdx =
+      content.indexOf("## References") >= 0
+        ? content.indexOf("## References")
+        : content.indexOf("## 参考文献");
     // Also check for bare "REFERENCES" header
     const bareRefIdx = content.indexOf("\nREFERENCES\n");
 

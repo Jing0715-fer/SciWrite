@@ -120,8 +120,12 @@ export function VirtualizedArticle({
     if (references.length > 0) return references as CitationRef[];
 
     // Otherwise, parse the "## References" or "REFERENCES" section from the
-    // full article content.
-    const refHeaderIdx = cleanedContent.indexOf("## References");
+    // full article content. Also check "## 参考文献" for Chinese-translated
+    // articles (contentZh) so citations resolve correctly in the ZH view.
+    const refHeaderIdx =
+      cleanedContent.indexOf("## References") >= 0
+        ? cleanedContent.indexOf("## References")
+        : cleanedContent.indexOf("## 参考文献");
     const bareRefIdx = cleanedContent.indexOf("\nREFERENCES\n");
     if (refHeaderIdx >= 0) {
       const refText = cleanedContent.slice(refHeaderIdx);

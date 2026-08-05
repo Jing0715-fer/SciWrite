@@ -2800,3 +2800,60 @@ Stage Summary:
   * The auto-fix and regenerate buttons can then resolve [$REF] → real citations.
 - Existing paragraphs with out-of-range [n] can be cleaned by running auto-fix
   (which now also remaps [n] → [$REF] per BUGFIX-1) or regenerate.
+
+---
+
+Task ID: BUGFIX-3
+Agent: main (Z.ai Code — ZH citation rendering fix)
+Task: Fix "article部分切换到中文后引用文献有问题" — citations show as 1? in ZH view.
+
+Work Log:
+- User reported: when switching to Chinese view, citation markers show as "1?" 
+  and reference list shows "1?", "2?" instead of [1], [2].
+
+Root cause analysis:
+1. The contentZh (Chinese translation) contains [n] markers (preserved from EN
+   by the translation prompt). But the MarkdownCitations and VirtualizedArticle
+   components only looked for "## References" (English header) to parse the
+   reference list — they did NOT check "## 参考文献" (Chinese header). So when
+   rendering contentZh, the reference list was empty → all [n] markers were
+   unresolved → rendered as "[n?]" (red).
+2. Compounding this: the existing paragraphs had pre-existing out-of-range
+   citations (e.g. [15] with only 5 refs) from before the renumberByAppearance
+   fix (BUGFIX-2). The ZH translation preserved these broken [n] markers, so
+   the ZH view showed the same out-of-range errors.
+
+Fixes:
+1. src/components/sciwrite/markdown-citations.tsx: the reference section header
+   detection now checks "## 参考文献" (Chinese) as a fallback when "## References"
+   (English) is not found. This allows ZH articles with a Chinese reference
+   section to resolve [n] citations.
+2. src/components/sciwrite/virtualized-article.tsx: same fix — globalArticleRefs
+   parsing now checks "## 参考文献" as a fallback.
+3. Cleaned up existing data: ran auto-fix on all 6 paragraphs with out-of-range
+   citations. The auto-fix (BUGFIX-1) replaced unresolvable [n] → [$REF] and
+   remapped resolvable ones to correct indices. Then re-translated all 6
+   paragraphs so contentZh matches the updated English body (with [$REF]
+   placeholders instead of broken [15], [16], etc.).
+
+Verification:
+- bun run lint: passes cleanly.
+- Before: 6 paragraphs with out-of-range citations (max [n]=18 with 3 refs).
+- After: totalBlocking = 0 (all out-of-range citations resolved or replaced
+  with [$REF]). All 6 paragraphs re-translated — contentZh now has [$REF]
+  placeholders matching the English body.
+- agent-browser: ZH view renders with no "1?" errors, no "out of range" errors,
+  no runtime errors.
+
+Stage Summary:
+- ZH view citations now render correctly: [n] markers resolve to the correct
+  reference (via the English article's ## References section or the paragraph's
+  local references), and unresolvable markers show as [$REF] (explicit
+  placeholder) instead of broken [n?].
+- The root cause was twofold: (a) Chinese reference section headers weren't
+  recognized, (b) pre-existing out-of-range citations in the data. Both are
+  now fixed — the header recognition is permanent, and the existing data has
+  been cleaned + re-translated.
+- Future ZH translations will automatically work correctly because the
+  translation preserves [n] markers, and the rendering now recognizes both
+  English and Chinese reference section headers.
