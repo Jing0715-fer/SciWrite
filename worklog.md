@@ -2857,3 +2857,64 @@ Stage Summary:
 - Future ZH translations will automatically work correctly because the
   translation preserves [n] markers, and the rendering now recognizes both
   English and Chinese reference section headers.
+
+---
+
+Task ID: BUGFIX-4
+Agent: main (Z.ai Code — Chinese font beautification)
+Task: 美化中文显示字体。
+
+Work Log:
+- User reported: "中文的显示字体需要美化一下"
+- Root cause: the app only loaded Latin fonts (Geist Sans/Mono, Lora serif) from
+  Google Fonts. These fonts do NOT contain Chinese glyphs, so the browser fell
+  back to system default fonts (PingFang on macOS, Microsoft YaHei on Windows,
+  WenQuanYi on Linux) — inconsistent and often unattractive across platforms.
+
+Fixes:
+1. src/app/layout.tsx: added Noto Serif SC (中文衬线) + Noto Sans SC (中文无衬线)
+   from next/font/google. These are Google's high-quality CJK fonts that pair
+   well with the existing Latin fonts:
+   - Noto Serif SC pairs with Lora (both serif, academic look)
+   - Noto Sans SC pairs with Geist Sans (both sans-serif, UI look)
+   - Weights carefully chosen to control load size: Serif 400/600/700,
+     Sans 400/500/700.
+   - Both use display: "swap" so text renders immediately with fallback fonts
+     while the web font loads.
+
+2. src/app/globals.css @theme inline: updated the font stacks to include the
+   Chinese font variables as fallbacks:
+   - --font-sans: Geist Sans → Noto Sans SC → PingFang SC → Microsoft YaHei
+   - --font-serif: Lora → Noto Serif SC → Songti SC → SimSun
+
+3. src/app/globals.css .font-serif-text + .prose-academic: updated the academic
+   typography classes to include Noto Serif SC in the font stack, so Chinese
+   article body text uses the serif Chinese font (matching the English Lora
+   serif look).
+
+4. NEW Chinese typography polish rules:
+   - :lang(zh) selector: increases line-height to 1.85 (Chinese needs more
+     vertical breathing room than Latin) and removes letter-spacing (which
+     creates awkward gaps between Chinese characters).
+   - text-justify: inter-ideograph for proper Chinese text justification.
+   - text-spacing: trim-start allow-end for hanging punctuation (prevents
+     full-width punctuation from creating large gaps at line starts).
+   - word-break: break-word + overflow-wrap: break-word for proper CJK wrapping.
+
+5. Headings (h1-h6): now use the serif stack with Chinese fallback, so Chinese
+   section titles match the serif body text for a cohesive academic look.
+
+Verification:
+- bun run lint: passes cleanly.
+- Font loading confirmed: noto_serif_sc + noto_sans_sc appear in the rendered HTML.
+- HTTP 200, no runtime errors.
+- Screenshot: /home/z/my-project/qa-zh-fonts.png
+
+Stage Summary:
+- Chinese text now renders with Noto Serif SC (for academic body text and
+  headings) and Noto Sans SC (for UI elements) — consistent, high-quality CJK
+  typography across all platforms. The fonts pair visually with the existing
+  Latin fonts (Lora serif + Geist sans) for a cohesive bilingual experience.
+- Additional CJK typography optimizations: looser line-height, no letter-spacing,
+  hanging punctuation, proper text justification — these make Chinese text
+  feel more natural and readable.
