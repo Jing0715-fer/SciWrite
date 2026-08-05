@@ -2736,3 +2736,67 @@ Stage Summary:
   [11] markers, the system now surfaces them as explicit "needs attention"
   markers that the user can see and act on (add a reference manually or
   regenerate the paragraph).
+
+---
+
+Task ID: BUGFIX-2
+Agent: main (Z.ai Code — root-cause fix for out-of-range citations)
+Task: Prevent out-of-range citations at the source instead of fixing them after.
+
+Work Log:
+- User asked: "为何生成时会出现超出范围的问题呢，能否从开始就避免呢"
+  (Why do out-of-range citations appear during generation? Can we prevent them
+  from the start?)
+
+Root cause analysis:
+- The LLM is told "cite as [n], 1-based, list has N entries, do NOT use numbers
+  greater than N" (generate-full:1130-1136). But LLMs sometimes ignore this.
+- The sanitization step (generate-full:1259-1278) catches [n] > sectionRefs.length
+  and replaces with [$REF]. This works for the per-chunk case.
+- HOWEVER, the renumberByAppearance function (writing.ts:279) had a critical bug:
+  when a citation [n] had NO mapping in oldToNew (because n > references.length
+  OR n was a hallucinated number that never appeared in the first pass), it did:
+    if (newNums.length === 0) return match; // keep original if none resolved
+  This KEPT THE ORIGINAL [n] in the body — an out-of-range citation that breaks
+  hover tooltips and the audit. This is the exact source of the "Citation [N] is
+  out of range" errors the user saw.
+
+The flow that produced the bug:
+  1. LLM outputs body with [1],[2],[5],[11] (5 and 11 are hallucinated)
+  2. Sanitization checks: 5 ≤ sectionRefs.length? If sectionRefs has ≥5 entries,
+     [5] passes (not caught). [11] is caught if 11 > sectionRefs.length.
+  3. renumberByAppearance first pass: collects [1],[2],[5] (if 5 ≤ refs.length).
+     [11] is skipped (11 > refs.length).
+  4. renumberByAppearance second pass: [1]→[1], [2]→[2], [5]→[3] (renumbered).
+     But [11] has no mapping → old code returned `match` (kept "[11]") → BUG.
+
+SOURCE-LEVEL FIX in src/lib/writing.ts:renumberByAppearance (line 279):
+  - Changed: `if (newNums.length === 0) return match;`
+  - To:      `if (newNums.length === 0) return "[$REF]";`
+  - Now any citation with no valid mapping is replaced with [$REF] at the
+    source — during generation, BEFORE the paragraph is saved. This means
+    out-of-range citations can NEVER reach the database or the UI.
+
+This fix protects ALL three generation routes (write, generate-full, regenerate)
+because they all call renumberByAppearance.
+
+Verification (unit test):
+  Input:  "First claim [1]. Second claim [2]. Third claim [5]. Fourth claim [11]."
+  Refs:   4 entries
+  Output: "First claim [1]. Second claim [2]. Third claim [$REF]. Fourth claim [$REF]."
+  - [1]→[1] ✓, [2]→[2] ✓ (valid, renumbered)
+  - [5]→[$REF] ✓, [11]→[$REF] ✓ (out-of-range, now placeholder instead of kept)
+  - No [5] or [11] in output ✓
+  - 2 [$REF] placeholders ✓
+
+Stage Summary:
+- Out-of-range citations are now PREVENTED at the source. The renumberByAppearance
+  function — which runs on EVERY generated paragraph — now converts any unmappable
+  [n] to [$REF] instead of leaving the broken [n] in the body. This means:
+  * New paragraphs generated via /api/ai/write, /api/ai/generate-full, or
+    /api/paragraphs/[id]/regenerate will NEVER contain out-of-range [n] markers.
+  * The user will see [$REF] placeholders (which are explicit "needs attention"
+    markers) instead of silently-broken [11] citations.
+  * The auto-fix and regenerate buttons can then resolve [$REF] → real citations.
+- Existing paragraphs with out-of-range [n] can be cleaned by running auto-fix
+  (which now also remaps [n] → [$REF] per BUGFIX-1) or regenerate.

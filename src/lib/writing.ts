@@ -271,12 +271,18 @@ export function renumberByAppearance<T extends { id?: string; type?: string; ext
   });
 
   // Second pass: replace each citation in the body with renumbered version.
+  // CRITICAL FIX: when a citation [n] has NO mapping in oldToNew (i.e. it
+  // was never seen in the first pass because n > references.length, or it
+  // was a hallucinated number), we MUST NOT keep the original [n] — that
+  // would leave an out-of-range citation in the body that breaks hover
+  // tooltips and the audit. Instead, replace it with [$REF] so the user
+  // sees an explicit "needs a reference" placeholder.
   let newBody = body.replace(citeRe, (match, inner: string) => {
     const nums = expandCitationRange(inner);
     const newNums = nums
       .map((n: number) => oldToNew[n])
       .filter((n: number | undefined): n is number => n !== undefined);
-    if (newNums.length === 0) return match; // keep original if none resolved
+    if (newNums.length === 0) return "[$REF]"; // SOURCE-LEVEL FIX: mark as needing a ref
     return `[${newNums.join(",")}]`;
   });
 
