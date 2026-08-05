@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chatWithSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
+import { renumberByAppearance, countWords } from "@/lib/writing";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -142,18 +143,26 @@ Output JSON only.`;
       : [];
 
     // 3. Execute the suggested queries and save found references.
-    // Bug #15 fix: the original code saved new references at the END of the
-    // paragraph's reference list WITHOUT setting citationOrder — so they got
-    // the default 0 and collided with the first cited ref, breaking hover
-    // tooltips and compose dedup. Now we append them with citationOrder
-    // starting after the last existing ref's order, so they sit at the tail
-    // of the ordered list (consistent with renumberByAppearance expectations).
+    // CRITICAL FIX: the original code saved new references but NEVER updated
+    // the paragraph body. If the body had [11] but only 4 refs existed, a 5th
+    // ref was saved — but the body still said [11] (still out of range).
+    // The citation [11] was never remapped to [5]. This is why out-of-range
+    // citations "couldn't be fixed" — the fix added refs but didn't touch the
+    // body text.
+    //
+    // Fix: track which marker (e.g. "[11]") maps to which new ref's
+    // citationOrder. After saving all refs, remap the body: replace each
+    // out-of-range [n] with the 1-based index of its newly-added ref. Then
+    // call renumberByAppearance to re-pack all citations by appearance order.
     const maxExistingOrder = references.reduce(
       (max, r) => Math.max(max, r.citationOrder ?? -1),
       -1
     );
     let nextOrder = maxExistingOrder + 1;
     const savedRefs: any[] = [];
+    // marker → new 1-based index (e.g. "[11]" → 5 if saved at order 4)
+    const markerToNewIndex = new Map<string, number>();
+
     for (const suggestion of suggestions.slice(0, 5)) {
       try {
         const dbResult = await queryDatabase(
@@ -170,6 +179,7 @@ Output JSON only.`;
               (item.doi && r.doi === item.doi)
           );
           if (!exists) {
+            const newOrder = nextOrder++;
             const ref = await db.reference.create({
               data: {
                 type: item.source,
@@ -182,14 +192,19 @@ Output JSON only.`;
                 doi: item.doi || null,
                 abstract: item.abstract || null,
                 paragraphId: id,
-                // Bug #15 fix: assign a citationOrder so the new ref does not
-                // collide with existing refs at order 0. These auto-fixed
-                // refs are appended at the tail; a subsequent regenerate or
-                // renumberByAppearance call will re-pack them by appearance.
-                citationOrder: nextOrder++,
+                citationOrder: newOrder,
               },
             });
             savedRefs.push(ref);
+            // Map the suggestion's marker to the new ref's 1-based index.
+            // suggestion.marker is like "[11]" — normalize to "11".
+            const markerNum = String(suggestion.marker || "").replace(
+              /[\[\]]/g,
+              ""
+            );
+            if (markerNum) {
+              markerToNewIndex.set(markerNum, newOrder + 1);
+            }
           }
         }
       } catch (e) {
@@ -197,12 +212,102 @@ Output JSON only.`;
       }
     }
 
+    // 4. CRITICAL FIX — remap the paragraph body: replace each out-of-range
+    // [n] with the 1-based index of its newly-added reference. Then renumber
+    // by appearance order so all citations are clean and sequential.
+    //
+    // ADDITIONAL FIX: for out-of-range markers whose database query returned
+    // no results (so no new ref was saved), replace [n] with [$REF] so the
+    // user sees an explicit "needs a reference" placeholder instead of a
+    // silently-broken citation number. This ensures auto-fix ALWAYS makes
+    // progress — either resolving the citation (with a new ref) or marking
+    // it as needing manual attention.
+    let updatedBody = body;
+    let bodyChanged = false;
+    if (markerToNewIndex.size > 0) {
+      // Sort markers by number DESCENDING so [11] is replaced before [1]
+      // (otherwise [1] would match inside [11] and corrupt it).
+      const sortedMarkers = Array.from(markerToNewIndex.entries()).sort(
+        (a, b) => parseInt(b[0], 10) - parseInt(a[0], 10)
+      );
+      for (const [markerNum, newIdx] of sortedMarkers) {
+        // Replace [markerNum] → [newIdx] in the body.
+        const re = new RegExp(
+          `\\[${markerNum.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\d])\\]`,
+          "g"
+        );
+        const before = updatedBody;
+        updatedBody = updatedBody.replace(re, `[${newIdx}]`);
+        if (before !== updatedBody) bodyChanged = true;
+      }
+    }
+
+    // 4b. Replace any REMAINING out-of-range [n] (where the database query
+    // found nothing) with [$REF] placeholder. This prevents the citation
+    // from silently remaining broken — the user sees [$REF] and knows to
+    // add a reference manually or regenerate the paragraph.
+    const allRefsAfterFix = await db.reference.findMany({
+      where: { paragraphId: id },
+      orderBy: { citationOrder: "asc" },
+    });
+    const refCountAfterFix = allRefsAfterFix.length;
+    const unresolvedMarkers = missing.filter(
+      (m) => m.type === "numeric" && !markerToNewIndex.has(m.inner)
+    );
+    if (unresolvedMarkers.length > 0) {
+      // Sort by number descending to avoid [1] matching inside [11].
+      const sortedUnresolved = unresolvedMarkers
+        .map((m) => parseInt(m.inner, 10))
+        .filter((n) => !isNaN(n))
+        .sort((a, b) => b - a);
+      for (const n of sortedUnresolved) {
+        const re = new RegExp(
+          `\\[${n}(?![\\d])\\]`,
+          "g"
+        );
+        const before = updatedBody;
+        updatedBody = updatedBody.replace(re, "[$REF]");
+        if (before !== updatedBody) bodyChanged = true;
+      }
+    }
+
+    if (bodyChanged) {
+      // Re-load all references (old + newly added) ordered by citationOrder.
+      const allRefs = await db.reference.findMany({
+        where: { paragraphId: id },
+        orderBy: { citationOrder: "asc" },
+      });
+      // Renumber by appearance — this re-packs [n] to 1..N by first-citation
+      // order and reorders the references array to match.
+      const { content: renumberedBody, references: reorderedRefs } =
+        renumberByAppearance(updatedBody, allRefs as any);
+
+      // Save the renumbered body + update citationOrder on each ref.
+      await db.paragraph.update({
+        where: { id },
+        data: {
+          content: renumberedBody,
+          wordCount: countWords(renumberedBody),
+        },
+      });
+      for (let idx = 0; idx < reorderedRefs.length; idx++) {
+        const ref = reorderedRefs[idx] as any;
+        await db.reference.update({
+          where: { id: ref.id },
+          data: { citationOrder: idx },
+        });
+      }
+    }
+
     return NextResponse.json({
-      message: `Resolved ${savedRefs.length} of ${missing.length} missing citations.`,
+      message: `Resolved ${savedRefs.length} of ${missing.length} missing citations${
+        bodyChanged ? " and remapped body text" : ""
+      }.`,
       fixed: savedRefs.length,
       totalMissing: missing.length,
       references: savedRefs,
       suggestions: suggestions.length,
+      bodyUpdated: bodyChanged,
     });
   } catch (err: any) {
     console.error("[/api/paragraphs/[id]/auto-fix-citations] error:", err);

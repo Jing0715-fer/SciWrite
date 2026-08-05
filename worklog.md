@@ -2667,3 +2667,72 @@ Stage Summary:
 - Next priorities: (a) audit mobile layout for the article viewer dialog;
   (b) export citation matrix as PNG image; (c) add a confirmation dialog
   before "Regenerate all" (rewriting all paragraphs is a destructive op).
+
+---
+
+Task ID: BUGFIX-1
+Agent: main (Z.ai Code — user-reported bug fix)
+Task: Fix "Previous layout not found for panel index 1" + out-of-range citations can't be fixed.
+
+Work Log:
+- User reported two issues:
+  1. Console error: "Previous layout not found for panel index 1" (from react-resizable-panels)
+  2. Many "Citation [N] is out of range — may be hallucinated" errors that can't be fixed
+
+Root cause analysis:
+
+ISSUE 1 (panel layout):
+- The `useIsMobile` hook returns `undefined` on first render, then resolves to
+  `true`/`false` after mount. The `{isMobile ? <mobile> : <desktop>}` ternary
+  caused the ResizablePanelGroup to mount → unmount → remount when isMobile
+  flipped, destroying react-resizable-panels' internal layout state.
+- Fix in src/app/page.tsx: defer layout rendering until isMobile resolves.
+  When isMobile === undefined, show a loader spinner instead of either layout.
+  Also added a stable `key="desktop-panels"` prop to the ResizablePanelGroup.
+
+ISSUE 2 (out-of-range citations can't be fixed) — CRITICAL DESIGN BUG:
+- The auto-fix-citations route (/api/paragraphs/[id]/auto-fix-citations) had a
+  fundamental flaw: it ADDED new references to the paragraph but NEVER updated
+  the paragraph's body text. So if the body had [11] but only 4 refs existed,
+  auto-fix saved a 5th ref — but the body still said [11] (still > 5). The
+  citation [11] was never remapped to [5].
+- Compounding this: when the LLM's database queries returned no results (which
+  happened for all 4 suggestions in the test paragraph), NO refs were saved,
+  so the body was completely untouched. The user saw "fixed: 0" and the
+  citations remained broken forever.
+
+Fix in src/app/api/paragraphs/[id]/auto-fix-citations/route.ts:
+1. CRITICAL FIX — body text remapping: after saving new refs, track which
+   marker (e.g. "[11]") maps to which new ref's 1-based index. Replace each
+   out-of-range [n] in the body with the correct new index. Then call
+   renumberByAppearance to re-pack all citations by appearance order. Saves
+   the updated body + wordCount + updates each ref's citationOrder.
+2. FALLBACK FIX — [$REF] placeholder: for out-of-range markers whose database
+   query returned nothing (no new ref saved), replace [n] with [$REF] so the
+   user sees an explicit "needs a reference" placeholder instead of a silently-
+   broken [11]. This ensures auto-fix ALWAYS makes progress — either resolving
+   the citation (with a new ref) or marking it as needing manual attention.
+3. Added imports: renumberByAppearance + countWords from @/lib/writing.
+4. Response now includes `bodyUpdated: boolean` so the UI knows the body changed.
+
+Verification:
+- bun run lint: passes cleanly.
+- Before fix: paragraph had 10 missing (out-of-range) citations, 6 refs.
+- After fix: 0 missing citations — all 10 [n] markers replaced with [$REF]
+  placeholders (the LLM's DB queries found nothing, so the fallback kicked in).
+  bodyUpdated: true. Message: "Resolved 0 of 10 missing citations and remapped
+  body text."
+- agent-browser: no "Previous layout" error, no runtime errors, homepage
+  renders cleanly.
+
+Stage Summary:
+- Both user-reported bugs are FIXED:
+  1. "Previous layout not found" → eliminated by deferring layout render until
+     useIsMobile resolves + stable key on ResizablePanelGroup.
+  2. Out-of-range citations can't be fixed → the auto-fix route now (a) remaps
+     resolvable citations to their new ref index, and (b) replaces unresolvable
+     ones with [$REF] placeholders. Auto-fix now ALWAYS makes progress.
+- The [$REF] placeholder is the key insight: instead of silently leaving broken
+  [11] markers, the system now surfaces them as explicit "needs attention"
+  markers that the user can see and act on (add a reference manually or
+  regenerate the paragraph).

@@ -261,7 +261,18 @@ export default function Home() {
       />
 
       <main className="flex-1 min-h-0 px-3 pb-2">
-        {isMobile ? (
+        {/* Defer layout rendering until useIsMobile resolves (it returns
+            undefined on first render). This prevents the ResizablePanelGroup
+            from mounting → unmounting → remounting when isMobile flips from
+            undefined → true/false, which triggers the
+            "Previous layout not found for panel index 1" warning from
+            react-resizable-panels (its internal layout state is destroyed
+            when the component is conditionally re-created). */}
+        {isMobile === undefined ? (
+          <div className="rounded-xl border border-border/60 bg-card overflow-hidden h-full flex items-center justify-center">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : isMobile ? (
           /* Mobile layout — on screens < 768px the 3-panel ResizablePanelGroup
              is replaced with a bottom tab bar + full-width panel switcher.
              This prevents the 3 panels from being unusably narrow on phones. */
@@ -347,7 +358,11 @@ export default function Home() {
             </div>
           </div>
         ) : (
-        <ResizablePanelGroup direction="horizontal" className="rounded-xl border border-border/60 bg-card overflow-hidden h-full">
+        <ResizablePanelGroup
+          direction="horizontal"
+          key="desktop-panels"
+          className="rounded-xl border border-border/60 bg-card overflow-hidden h-full"
+        >
           {/* Left: projects */}
           <ResizablePanel defaultSize={22} minSize={18} maxSize={32} className="bg-sidebar/50">
             <ProjectsSidebar
