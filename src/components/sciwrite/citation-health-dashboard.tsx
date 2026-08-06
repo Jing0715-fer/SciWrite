@@ -624,6 +624,26 @@ export function CitationHealthDashboard({
         </div>
       )}
 
+      {/* Low-confidence review — opens the Analysis tab's Audit Trail so the
+          user can review citations that were flagged but NOT auto-corrected
+          (confidence < 70). Only shown when there are warnings. */}
+      {agg.totalWarnings > 0 && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 px-2 text-[10px] gap-1 text-orange-600 dark:text-orange-400 hover:bg-orange-100/60 dark:hover:bg-orange-950/40"
+          onClick={() => {
+            // Trigger a custom event that the article viewer can listen for
+            // to switch to the Analysis → Audit Trail sub-tab.
+            window.dispatchEvent(new CustomEvent("open-audit-trail"));
+          }}
+          title="Review low-confidence citation issues that need manual verification"
+        >
+          <CircleAlert className="h-3 w-3" />
+          Review {agg.totalWarnings} warnings
+        </Button>
+      )}
+
       {/* Refresh */}
       <Button
         variant="ghost"

@@ -179,18 +179,36 @@ export async function POST(req: NextRequest) {
         .map((p, i) => `## ${p.title}\n\n${renumberedContents[i]}`)
         .join("\n\n");
 
-      // Build deduplicated references list
+      // Build deduplicated references list.
+      // FIX: paragraph-level refs may have empty authors/journal/year (they
+      // were created as copies with minimal fields). Backfill from project-
+      // level refs by matching type+externalId or title.
+      const projectLevelRefs = await db.reference.findMany({
+        where: { projectId: body.projectId, paragraphId: null },
+      });
+      const projectRefMap = new Map<string, any>();
+      for (const pr of projectLevelRefs) {
+        const key = `${(pr.type || "manual").toLowerCase()}:${pr.externalId || pr.title}`;
+        projectRefMap.set(key, pr);
+      }
+
       const refList = globalRefs
         .map((r, i) => {
-          // Show authors if available; omit "Anonymous" when missing (just
-          // start with the title — cleaner than showing "Anonymous").
-          const auth = r.authors ? `${r.authors} ` : "";
-          const yr = r.year ? `(${r.year})` : "";
-          const yrAuth = auth || yr ? `${auth}${yr ? (auth ? "" : "") + yr : ""}` : "";
-          const jour = r.journal ? `, ${r.journal}` : "";
-          const url = r.url ? ` — ${r.url}` : "";
+          // Backfill missing fields from project-level refs
+          const key = `${(r.type || "manual").toLowerCase()}:${r.externalId || r.title}`;
+          const pr = projectRefMap.get(key);
+          const authors = r.authors || pr?.authors || "";
+          const year = r.year || pr?.year || "";
+          const journal = r.journal || pr?.journal || "";
+          const url = r.url || pr?.url || "";
+
+          const auth = authors ? `${authors} ` : "";
+          const yr = year ? `(${year})` : "";
+          const yrAuth = auth || yr ? `${auth}${yr}` : "";
+          const jour = journal ? `, ${journal}` : "";
+          const link = url ? ` — ${url}` : "";
           const prefix = yrAuth ? `${yrAuth}${jour}. ` : jour ? `${jour.slice(2)}. ` : "";
-          return `[${i + 1}] ${prefix}${r.title}.${url}`;
+          return `[${i + 1}] ${prefix}${r.title}.${link}`;
         })
         .join("\n");
 

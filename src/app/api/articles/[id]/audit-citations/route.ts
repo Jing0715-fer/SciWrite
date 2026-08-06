@@ -125,7 +125,13 @@ export async function POST(
   }
 
   // Run deterministic checks.
-  const report = buildAuditReport(article.content, globalRefs);
+  // FIX: pass EMPTY dbRefs to buildAuditReport so it only uses the article's
+  // ## References section (parsed from content) for numbering integrity checks.
+  // Passing DB refs causes false "mismatch" findings when DB refs have different
+  // titles/authors than the article's ## References entries (common after compose
+  // backfills authors from project-level refs).
+  // The DB refs (globalRefs) are still used below for the LLM deep-audit batches.
+  const report = buildAuditReport(article.content, []);
 
   // --- LLM adversarial check (optional, deep mode) ---
   // Batch suspect + unsupported citations and ask the LLM to adjudicate.
