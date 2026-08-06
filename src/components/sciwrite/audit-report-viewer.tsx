@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   ScanSearch,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -142,6 +143,18 @@ export function AuditReportViewer({ projectId }: { projectId: string }) {
         <span className="text-emerald-600 dark:text-emerald-400">
           {totalFixed} auto-fixed
         </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-5 px-1.5 text-[9px] gap-0.5 ml-auto"
+          onClick={() =>
+            window.open(`/api/projects/${projectId}/audit-reports/export`, "_blank")
+          }
+          title="Export all audit reports as CSV"
+        >
+          <Download className="h-2.5 w-2.5" />
+          CSV
+        </Button>
       </div>
 
       <div className="space-y-1 max-h-[400px] overflow-y-auto scroll-academic">

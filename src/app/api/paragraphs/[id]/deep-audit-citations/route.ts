@@ -28,6 +28,27 @@ export async function POST(
   const references = paragraph.references;
   const contentHash = crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
 
+  // IMPROVEMENT 4: Incremental audit — if the content hasn't changed since
+  // the last audit (same contentHash), skip the expensive LLM calls and
+  // return the cached result. This avoids re-auditing unchanged paragraphs
+  // when the batch audit runs after generation.
+  const forceParam = new URL(req.url).searchParams.get("force");
+  if (forceParam !== "true") {
+    const lastAudit = await db.citationAuditReport.findFirst({
+      where: { paragraphId: id, contentHash },
+      orderBy: { createdAt: "desc" },
+    });
+    if (lastAudit) {
+      const cachedReport = JSON.parse(lastAudit.reportJson);
+      return NextResponse.json({
+        ...cachedReport,
+        reportId: lastAudit.id,
+        cached: true,
+        message: `Cached result (content unchanged since last audit at ${new Date(lastAudit.createdAt).toLocaleString()}). Use ?force=true to re-audit.`,
+      });
+    }
+  }
+
   const { body } = splitBodyAndReferences(content);
 
   // Extract all [n] citations with their sentences
@@ -200,6 +221,97 @@ N|$REF|reason`;
     }
   } catch (err: any) {
     console.error("[deep-audit] correction suggestion failed:", err?.message);
+  }
+
+  // IMPROVEMENT 2: Cross-paragraph reference search for [$REF] corrections.
+  // When the LLM suggests [$REF] (no match in this paragraph's refs), search
+  // ALL references in the project for a better match. If found, link it to
+  // this paragraph and replace [$REF] with the new ref's index.
+  const refCorrections = corrections.filter((c) => c.newN === "$REF");
+  if (refCorrections.length > 0) {
+    // Fetch all project-level references (not just this paragraph's)
+    const projectRefs = await db.reference.findMany({
+      where: { projectId: paragraph.projectId },
+      orderBy: { createdAt: "asc" },
+    });
+    // Exclude refs already in this paragraph
+    const existingIds = new Set(references.map((r) => r.id));
+    const candidateRefs = projectRefs.filter((r) => !existingIds.has(r.id));
+
+    if (candidateRefs.length > 0) {
+      const candidateList = candidateRefs
+        .slice(0, 50) // limit to 50 to control prompt size
+        .map((r, i) => `[C${i + 1}] ${r.authors || "Anon"} (${r.year || "n.d."}) ${r.title}`)
+        .join("\n");
+
+      const refMismatchText = refCorrections
+        .map((rc) => {
+          const cite = citations.find((c) => c.n === rc.oldN);
+          return `Citation [${rc.oldN}] — Sentence: "${cite?.sentence || ""}"`;
+        })
+        .join("\n\n");
+
+      const crossPrompt = `You are a citation matching assistant. For each claim below, find the BEST matching reference from the candidate list. If a good match exists, respond with the candidate number. If no match, respond with NONE.
+
+CANDIDATE REFERENCES:
+${candidateList}
+
+CLAIMS NEEDING REFERENCES:
+${refMismatchText}
+
+Respond with ONE line per claim:
+N|C_NUM|reason
+N|NONE|reason`;
+
+      try {
+        const crossResponse = await chat(crossPrompt, {
+          system: "You are a citation matching assistant.",
+          temperature: 0,
+        });
+        const crossLines = crossResponse.split("\n");
+        for (const line of crossLines) {
+          const lm = line.trim().match(/^(\d+)\s*\|\s*(C(\d+)|NONE)\s*\|\s*(.+)$/i);
+          if (lm) {
+            const oldN = parseInt(lm[1]);
+            const candidateNum = lm[3] ? parseInt(lm[3]) : null;
+            const reason = lm[4].trim();
+            if (candidateNum && candidateNum <= candidateRefs.length) {
+              // Found a cross-paragraph match! Link it to this paragraph.
+              const matchedRef = candidateRefs[candidateNum - 1];
+              // Add the reference to this paragraph
+              const newOrder = references.length;
+              await db.reference.create({
+                data: {
+                  type: matchedRef.type,
+                  externalId: matchedRef.externalId,
+                  title: matchedRef.title,
+                  authors: matchedRef.authors,
+                  journal: matchedRef.journal,
+                  year: matchedRef.year,
+                  url: matchedRef.url,
+                  doi: matchedRef.doi,
+                  abstract: matchedRef.abstract,
+                  projectId: paragraph.projectId,
+                  paragraphId: id,
+                  citationOrder: newOrder,
+                },
+              });
+              // Update the correction: [$REF] → [newOrder+1]
+              const corrIdx = corrections.findIndex((c) => c.oldN === oldN);
+              if (corrIdx >= 0) {
+                corrections[corrIdx] = {
+                  oldN,
+                  newN: newOrder + 1,
+                  reason: `Cross-paragraph match: ${reason}`,
+                };
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        console.error("[deep-audit] cross-paragraph search failed:", err?.message);
+      }
+    }
   }
 
   // Apply corrections

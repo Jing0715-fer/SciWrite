@@ -1546,6 +1546,55 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         }
         log(`compose: updated ${renumberedContents.length} paragraphs with globally renumbered citations`);
 
+        // ============ STEP 7.5: Batch deep citation audit ============
+        // After ALL sections are generated + composed, run the deep citation
+        // audit on each paragraph in BATCH mode. This is better than per-
+        // paragraph auditing during generation because:
+        //  1. The user sees progress faster (generation completes first)
+        //  2. Global citation renumbering is already applied (so [n] matches)
+        //  3. The audit can cross-reference the full reference list
+        // The audit is non-blocking: failures don't abort the pipeline.
+        if (generatedParagraphs.length > 0) {
+          send("step", {
+            step: "audit",
+            status: "started",
+            message: `Auto-auditing citations for ${generatedParagraphs.length} sections...`,
+          });
+          log(`audit: starting batch deep audit for ${generatedParagraphs.length} paragraphs`);
+          let auditChecked = 0;
+          let auditIssues = 0;
+          let auditFixed = 0;
+          for (let i = 0; i < generatedParagraphs.length; i++) {
+            const p = generatedParagraphs[i];
+            try {
+              const auditRes = await fetch(
+                `http://localhost:3000/api/paragraphs/${p.id}/deep-audit-citations?trigger=auto`,
+                { method: "POST", signal: AbortSignal.timeout(120000) }
+              );
+              if (auditRes.ok) {
+                const data = await auditRes.json();
+                auditChecked += data.checked || 0;
+                auditIssues += data.issues || 0;
+                auditFixed += data.fixed || 0;
+              }
+            } catch (e: any) {
+              log(`audit: paragraph ${i + 1} failed: ${e?.message?.slice(0, 80) || "unknown"}`);
+            }
+            send("step", {
+              step: "audit",
+              status: "progress",
+              message: `Audited ${i + 1}/${generatedParagraphs.length} sections (${auditIssues} issues, ${auditFixed} auto-fixed)...`,
+            });
+          }
+          send("step", {
+            step: "audit",
+            status: "done",
+            message: `Citation audit complete: ${auditChecked} checked, ${auditIssues} issues found, ${auditFixed} auto-fixed.`,
+            auditChecked, auditIssues, auditFixed,
+          });
+          log(`audit: DONE — checked ${auditChecked}, issues ${auditIssues}, fixed ${auditFixed}`);
+        }
+
         // ============ STEP 8 (both mode only): Translate each section EN → ZH ============
         let articleContentZh: string | null = null;
         if (isBothMode) {

@@ -21,20 +21,25 @@ export async function GET(
     where,
     orderBy: { createdAt: "desc" },
     take: Math.min(limit, 200),
-    include: {
-      paragraph: {
-        select: { id: true, title: true, order: true },
-      },
-    },
   });
+
+  // Fetch paragraph titles separately (no Prisma relation).
+  const paragraphIds = [...new Set(reports.map((r) => r.paragraphId))];
+  const paragraphs = await db.paragraph.findMany({
+    where: { id: { in: paragraphIds } },
+    select: { id: true, title: true, order: true },
+  });
+  const paraMap = new Map(paragraphs.map((p) => [p.id, p]));
 
   return NextResponse.json({
     projectId: id,
-    reports: reports.map((r) => ({
+    reports: reports.map((r) => {
+      const para = paraMap.get(r.paragraphId);
+      return {
       id: r.id,
       paragraphId: r.paragraphId,
-      paragraphTitle: r.paragraph?.title || "(deleted)",
-      paragraphOrder: r.paragraph?.order ?? 0,
+      paragraphTitle: para?.title || "(deleted)",
+      paragraphOrder: para?.order ?? 0,
       trigger: r.trigger,
       checkedCount: r.checkedCount,
       issueCount: r.issueCount,
@@ -43,6 +48,7 @@ export async function GET(
       contentHash: r.contentHash,
       createdAt: r.createdAt,
       report: JSON.parse(r.reportJson),
-    })),
+      };
+    }),
   });
 }
