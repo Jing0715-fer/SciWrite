@@ -1289,6 +1289,43 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             // ~790 words", "A note on the full text...") from appearing in the UI.
             chunkContent = sanitizeSectionContent(chunkContent);
 
+            // AUTO-RETRY: if sanitization detected meta-commentary or bullet-point
+            // outline (returns a "[Content generation issue..." placeholder), retry
+            // the LLM call ONCE with a stronger instruction to write actual prose.
+            if (chunkContent.startsWith("[Content generation issue")) {
+              log(`generate: section ${sectionNum} chunk ${chunkNum} — meta-commentary detected, retrying...`);
+              send("step", {
+                step: "generate",
+                status: "progress",
+                section: sectionNum,
+                total: sections.length,
+                message: `Section ${sectionNum} chunk ${chunkNum}: retrying (meta-commentary detected)...`,
+              });
+              try {
+                const retryPrompt = prompt + "\n\nCRITICAL: Your previous output was a SUMMARY or OUTLINE, not actual article text. You MUST write real academic prose paragraphs — NOT bullet points, NOT P1 labels, NOT a description of what you wrote. Start directly with the first sentence of the section.";
+                let retryContent = chunkCount > 1
+                  ? await chatWithSessionStream(projectId, retryPrompt, {
+                      system, temperature: 0.65, thinking: false,
+                      taskType: "generate", maxTokens,
+                      metadata: { step: "generate", section: sectionNum, chunk: chunkNum, retry: true },
+                    })
+                  : await chatWithSession(projectId, retryPrompt, {
+                      system, temperature: 0.65, taskType: "generate", maxTokens,
+                      metadata: { step: "generate", section: sectionNum, retry: true },
+                    });
+                // Sanitize the retry output
+                const sanitizedRetry = sanitizeSectionContent(retryContent);
+                if (!sanitizedRetry.startsWith("[Content generation issue")) {
+                  chunkContent = sanitizedRetry;
+                  log(`generate: section ${sectionNum} chunk ${chunkNum} — retry succeeded (${chunkContent.length} chars)`);
+                } else {
+                  log(`generate: section ${sectionNum} chunk ${chunkNum} — retry also failed, using placeholder`);
+                }
+              } catch (retryErr: any) {
+                log(`generate: section ${sectionNum} chunk ${chunkNum} — retry failed: ${retryErr?.message?.slice(0, 80)}`);
+              }
+            }
+
             fullSectionContent += (chunk > 0 ? "\n\n" : "") + chunkContent;
 
             send("step", {

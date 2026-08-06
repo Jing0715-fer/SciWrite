@@ -182,21 +182,28 @@ export async function POST(req: NextRequest) {
       // Build deduplicated references list.
       // FIX: paragraph-level refs may have empty authors/journal/year (they
       // were created as copies with minimal fields). Backfill from project-
-      // level refs by matching type+externalId or title.
+      // level refs by matching type+externalId OR title (since externalId
+      // may differ between para-level and project-level copies).
       const projectLevelRefs = await db.reference.findMany({
         where: { projectId: body.projectId, paragraphId: null },
       });
-      const projectRefMap = new Map<string, any>();
+      // Build lookup by both externalId key AND title key
+      const projectRefById = new Map<string, any>();
+      const projectRefByTitle = new Map<string, any>();
       for (const pr of projectLevelRefs) {
-        const key = `${(pr.type || "manual").toLowerCase()}:${pr.externalId || pr.title}`;
-        projectRefMap.set(key, pr);
+        const idKey = `${(pr.type || "manual").toLowerCase()}:${pr.externalId || ""}`;
+        projectRefById.set(idKey, pr);
+        projectRefByTitle.set((pr.title || "").toLowerCase().trim(), pr);
       }
 
       const refList = globalRefs
         .map((r, i) => {
-          // Backfill missing fields from project-level refs
-          const key = `${(r.type || "manual").toLowerCase()}:${r.externalId || r.title}`;
-          const pr = projectRefMap.get(key);
+          // Try matching by type+externalId first, then by title
+          const idKey = `${(r.type || "manual").toLowerCase()}:${r.externalId || ""}`;
+          let pr = projectRefById.get(idKey);
+          if (!pr) {
+            pr = projectRefByTitle.get((r.title || "").toLowerCase().trim());
+          }
           const authors = r.authors || pr?.authors || "";
           const year = r.year || pr?.year || "";
           const journal = r.journal || pr?.journal || "";

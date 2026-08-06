@@ -2461,6 +2461,16 @@ function AnalysisTab({
   projectId: string;
 }) {
   const [subTab, setSubTab] = React.useState<"insights" | "audit">("insights");
+
+  // Listen for the "open-audit-trail" custom event dispatched by the
+  // CitationHealthDashboard's "Review N warnings" button. When received,
+  // switch to the Audit Trail sub-tab so the user can review the issues.
+  React.useEffect(() => {
+    const handler = () => setSubTab("audit");
+    window.addEventListener("open-audit-trail", handler);
+    return () => window.removeEventListener("open-audit-trail", handler);
+  }, []);
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* Sub-tab bar */}
