@@ -76,6 +76,9 @@ export async function POST(req: NextRequest) {
         if (citIdx >= 0) content = content.slice(0, citIdx).trim();
         // Sanitize stray ]] symbols
         content = content.replace(/\]\]/g, "]");
+        // Replace [$REF] placeholders with a reader-friendly note so the
+        // final composed article doesn't contain raw "[$REF]" text.
+        content = content.replace(/\[\$REF\]/g, "[citation needed]");
         return { ...p, cleanContent: content };
       });
 
@@ -179,11 +182,15 @@ export async function POST(req: NextRequest) {
       // Build deduplicated references list
       const refList = globalRefs
         .map((r, i) => {
-          const auth = r.authors || "Anonymous";
-          const yr = r.year ? ` (${r.year})` : "";
+          // Show authors if available; omit "Anonymous" when missing (just
+          // start with the title — cleaner than showing "Anonymous").
+          const auth = r.authors ? `${r.authors} ` : "";
+          const yr = r.year ? `(${r.year})` : "";
+          const yrAuth = auth || yr ? `${auth}${yr ? (auth ? "" : "") + yr : ""}` : "";
           const jour = r.journal ? `, ${r.journal}` : "";
           const url = r.url ? ` — ${r.url}` : "";
-          return `[${i + 1}] ${auth}${yr}${jour}. ${r.title}.${url}`;
+          const prefix = yrAuth ? `${yrAuth}${jour}. ` : jour ? `${jour.slice(2)}. ` : "";
+          return `[${i + 1}] ${prefix}${r.title}.${url}`;
         })
         .join("\n");
 

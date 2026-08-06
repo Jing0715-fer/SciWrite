@@ -5,6 +5,7 @@ import {
   buildAuditReport,
   prepareLlmBatches,
   parseLlmAdjudication,
+  parseReferenceList,
   type AuditRef,
   type CitationFinding,
 } from "@/lib/citation-audit";
@@ -73,6 +74,9 @@ export async function POST(
   // Build the DB reference list in GLOBAL order (matching the article's
   // composed [n] numbering). The compose step dedups references by
   // type:externalId across paragraphs, so we replicate that here.
+  // FALLBACK: if articleParagraph is empty or has no references, parse the
+  // article's ## References section directly (buildAuditReport does this
+  // internally, but we need globalRefs for the LLM deep-audit batches).
   const globalRefMap = new Map<string, AuditRef>();
   const globalRefs: AuditRef[] = [];
   for (const ap of article.articleParagraph) {
@@ -95,6 +99,28 @@ export async function POST(
         globalRefMap.set(key, auditRef);
         globalRefs.push(auditRef);
       }
+    }
+  }
+
+  // If no DB refs found (e.g. article was composed but paragraphs lost their
+  // ref links), parse the ## References section from the article content.
+  // buildAuditReport will still work (it parses internally), but we need
+  // globalRefs populated for the LLM deep-audit batches.
+  if (globalRefs.length === 0) {
+    const parsed = parseReferenceList(
+      article.content.slice(article.content.indexOf("## References"))
+    );
+    for (const [num, ref] of parsed) {
+      globalRefs.push({
+        type: ref.type,
+        externalId: ref.externalId,
+        title: ref.title,
+        authors: ref.authors,
+        journal: ref.journal,
+        year: ref.year,
+        url: ref.url,
+        doi: ref.doi,
+      });
     }
   }
 
