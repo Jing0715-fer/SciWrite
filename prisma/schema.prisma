@@ -166,6 +166,24 @@ model ComparisonMatrixCache {
   @@index([projectId])
 }
 
+model CitationAuditReport {
+  id            String   @id @default(cuid())
+  paragraphId   String
+  projectId     String
+  trigger       String   @default("manual")
+  checkedCount  Int      @default(0)
+  issueCount    Int      @default(0)
+  fixedCount    Int      @default(0)
+  bodyUpdated   Boolean  @default(false)
+  reportJson    String
+  contentHash   String?
+  createdAt     DateTime @default(now())
+
+  @@index([paragraphId])
+  @@index([projectId])
+  @@index([createdAt])
+}
+
 model Article {
   id               String              @id @default(cuid())
   projectId        String

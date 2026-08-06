@@ -46,6 +46,8 @@ import {
   Database,
   ClipboardCheck,
   Upload,
+  RefreshCw,
+  ScanSearch,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -90,6 +92,7 @@ import { EnrichReferencesDialog } from "./enrich-references-dialog";
 import { SubmissionCheckDialog } from "./submission-check-dialog";
 import { ImportReferencesDialog } from "./import-references-dialog";
 import { CitationAuditBanner } from "./citation-audit-banner";
+import { AuditReportViewer } from "./audit-report-viewer";
 import { api } from "@/lib/api-client";
 import { useI18n } from "@/lib/i18n";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -368,15 +371,30 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
   }, [paragraphs]);
 
   // Fetch source relationships
+  // Load saved relationship analysis from DB (GET). Only re-analyze (POST)
+  // when the user explicitly clicks a "re-analyze" button. This prevents the
+  // Relationships tab from being empty every time the user switches to it —
+  // the saved analysis is loaded instantly.
   const relQ = useQuery({
     queryKey: ["source-relationships", projectId],
     queryFn: () =>
+      fetch(`/api/ai/source-relationships?projectId=${projectId}`).then((r) =>
+        r.json()
+      ),
+    enabled: !!projectId,
+  });
+
+  // Re-analyze mutation — triggered by a button, not on tab switch.
+  const relReanalyzeMut = useMutation({
+    mutationFn: () =>
       fetch(`/api/ai/source-relationships`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId }),
       }).then((r) => r.json()),
-    enabled: !!projectId,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["source-relationships", projectId] });
+    },
   });
 
   // Fetch data sources for relationships view
@@ -655,7 +673,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
               </TabsTrigger>
               <TabsTrigger value="insights" className="text-xs gap-1">
                 <Sparkles className="h-3 w-3" />
-                {t("articleViewer.insights") || "Insights"}
+                {t("articleViewer.insights") || "Analysis"}
               </TabsTrigger>
             </TabsList>
             <div className="flex items-center gap-2">
@@ -1086,29 +1104,58 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
 
           {/* Relationships tab - source relationship network */}
           <TabsContent value="relationships" className="flex-1 mt-0 min-h-0">
-            <RelationshipView
-              data={relQ.data}
-              isLoading={relQ.isLoading}
-              dataSources={dataSources}
-              noDataMessage={t("articleViewer.noRelData")}
-              sectionsLabel={t("articleViewer.sources")}
-              connectionsLabel={t("articleViewer.connections")}
-              themesLabel={t("articleViewer.themes")}
-              thematicClustersLabel={t("articleViewer.thematicClusters")}
-              summaryLabel={t("articleViewer.relSummary")}
-              keyInsightsLabel={t("articleViewer.keyInsights")}
-              contradictionsLabel={t("articleViewer.contradictions")}
-              sourceConnectionsLabel={t("articleViewer.sourceConnections")}
-            />
+            <div className="h-full flex flex-col overflow-hidden">
+              {/* Re-analyze button — lets the user re-run the relationship
+                  analysis LLM call. The result is persisted to DB so the
+                  next tab switch loads the saved data instantly. */}
+              <div className="shrink-0 flex items-center justify-between px-4 py-1.5 border-b border-border/40 bg-muted/20">
+                <span className="text-[10px] text-muted-foreground">
+                  {relQ.data?.createdAt
+                    ? `Last analyzed: ${new Date(relQ.data.createdAt).toLocaleString()}`
+                    : "No saved analysis"}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[10px] gap-1"
+                  disabled={relReanalyzeMut.isPending}
+                  onClick={() => relReanalyzeMut.mutate()}
+                >
+                  {relReanalyzeMut.isPending ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-3 w-3" />
+                  )}
+                  {relReanalyzeMut.isPending ? "Analyzing..." : "Re-analyze"}
+                </Button>
+              </div>
+              <div className="flex-1 min-h-0">
+                <RelationshipView
+                  data={relQ.data}
+                  isLoading={relQ.isLoading || relReanalyzeMut.isPending}
+                  dataSources={dataSources}
+                  noDataMessage={t("articleViewer.noRelData")}
+                  sectionsLabel={t("articleViewer.sources")}
+                  connectionsLabel={t("articleViewer.connections")}
+                  themesLabel={t("articleViewer.themes")}
+                  thematicClustersLabel={t("articleViewer.thematicClusters")}
+                  summaryLabel={t("articleViewer.relSummary")}
+                  keyInsightsLabel={t("articleViewer.keyInsights")}
+                  contradictionsLabel={t("articleViewer.contradictions")}
+                  sourceConnectionsLabel={t("articleViewer.sourceConnections")}
+                />
+              </div>
+            </div>
           </TabsContent>
 
           {/* Insights tab - word frequency, keyword cloud, article metrics */}
-          <TabsContent value="insights" className="flex-1 mt-0 min-h-0">
-            <ArticleInsights
+          <TabsContent value="insights" className="flex-1 mt-0 min-h-0 overflow-hidden">
+            <AnalysisTab
               article={article}
               paragraphs={paragraphs}
               viewLang={viewLang}
               contentRef={composedContentRef}
+              projectId={projectId}
             />
           </TabsContent>
         </Tabs>
@@ -1392,6 +1439,22 @@ function KeyboardShortcutsHelp({
 function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articleTitle: string }) {
   const { t } = useI18n();
   const [reviewData, setReviewData] = React.useState<any>(null);
+
+  // Load saved review on mount — this prevents the Review tab from being
+  // empty every time the user switches to it. If a saved review exists,
+  // it's loaded instantly; the user can click "Run review" to re-review.
+  const savedReviewQ = useQuery({
+    queryKey: ["saved-review", articleId],
+    queryFn: () => fetch(`/api/reviews?articleId=${articleId}`).then((r) => r.json()),
+    enabled: !!articleId,
+  });
+
+  // When saved review loads, populate reviewData.
+  React.useEffect(() => {
+    if (savedReviewQ.data && !savedReviewQ.data.notFound && !reviewData) {
+      setReviewData(savedReviewQ.data);
+    }
+  }, [savedReviewQ.data, reviewData]);
 
   const reviewMut = useMutation({
     mutationFn: () => api.aiReview({ mode: "review", articleId }),
@@ -2378,3 +2441,83 @@ function ArticleSearchBar({
   );
 }
 
+
+/**
+ * AnalysisTab — combines Insights + Audit Report into a single tab with
+ * sub-tabs. This reduces the top-level tab count from 6 to 5, preventing
+ * tab overflow/truncation on smaller screens.
+ */
+function AnalysisTab({
+  article,
+  paragraphs,
+  viewLang,
+  contentRef,
+  projectId,
+}: {
+  article: any;
+  paragraphs: any[];
+  viewLang: any;
+  contentRef: React.RefObject<HTMLDivElement>;
+  projectId: string;
+}) {
+  const [subTab, setSubTab] = React.useState<"insights" | "audit">("insights");
+  return (
+    <div className="h-full flex flex-col overflow-hidden">
+      {/* Sub-tab bar */}
+      <div className="shrink-0 flex items-center gap-1 px-4 py-1.5 border-b border-border/40 bg-muted/20">
+        <button
+          onClick={() => setSubTab("insights")}
+          className={`text-[10px] px-2.5 py-1 rounded-md font-medium transition-colors ${
+            subTab === "insights"
+              ? "bg-card shadow-sm text-primary"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+          }`}
+        >
+          <Sparkles className="h-2.5 w-2.5 inline mr-1" />
+          Metrics
+        </button>
+        <button
+          onClick={() => setSubTab("audit")}
+          className={`text-[10px] px-2.5 py-1 rounded-md font-medium transition-colors ${
+            subTab === "audit"
+              ? "bg-card shadow-sm text-primary"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+          }`}
+        >
+          <ScanSearch className="h-2.5 w-2.5 inline mr-1" />
+          Audit Trail
+        </button>
+      </div>
+      {/* Sub-tab content */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {subTab === "insights" && (
+          <ArticleInsights
+            article={article}
+            paragraphs={paragraphs}
+            viewLang={viewLang}
+            contentRef={contentRef}
+          />
+        )}
+        {subTab === "audit" && (
+          <ScrollArea className="h-full scroll-academic">
+            <div className="px-6 py-5 max-w-3xl mx-auto">
+              <div className="flex items-center gap-2 mb-3">
+                <ScanSearch className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                <h3 className="text-sm font-semibold">
+                  Citation Audit Report History
+                </h3>
+              </div>
+              <p className="text-[11px] text-muted-foreground mb-4">
+                Every citation audit (auto-triggered after generation, or
+                manually triggered via the Audit button) is recorded here.
+                Expand a report to see which citations were checked, which
+                were mismatches, and what corrections were applied.
+              </p>
+              <AuditReportViewer projectId={projectId} />
+            </div>
+          </ScrollArea>
+        )}
+      </div>
+    </div>
+  );
+}
