@@ -98,7 +98,7 @@ export async function POST(
     batches.push(citations.slice(i, i + BATCH_SIZE));
   }
 
-  const verdicts: { n: number; sentence: string; refTitle: string; verdict: "yes" | "no" | "partial"; reason: string }[] = [];
+  const verdicts: { n: number; sentence: string; refTitle: string; verdict: "yes" | "no" | "partial"; confidence: number; reason: string }[] = [];
 
   for (const batch of batches) {
     const pairsText = batch
@@ -118,11 +118,11 @@ Be STRICT: if the reference's content does not clearly relate to the claim, answ
 ${pairsText}
 
 Respond with ONE line per citation, in this exact format:
-N|YES|reason
-N|NO|reason
-N|PARTIAL|reason
+N|YES|CONFIDENCE|reason
+N|NO|CONFIDENCE|reason
+N|PARTIAL|CONFIDENCE|reason
 
-Where N is the citation number, and reason is a brief explanation (max 20 words).`;
+Where N is the citation number, CONFIDENCE is your confidence score (0-100, where 100 = absolutely certain), and reason is a brief explanation (max 20 words).`;
 
     try {
       const response = await chat(prompt, {
@@ -132,11 +132,13 @@ Where N is the citation number, and reason is a brief explanation (max 20 words)
 
       const lines = response.split("\n");
       for (const line of lines) {
-        const lm = line.trim().match(/^(\d+)\s*\|\s*(YES|NO|PARTIAL)\s*\|\s*(.+)$/i);
+        // Parse: N|VERDICT|CONFIDENCE|reason
+        const lm = line.trim().match(/^(\d+)\s*\|\s*(YES|NO|PARTIAL)\s*\|\s*(\d+)\s*\|\s*(.+)$/i);
         if (lm) {
           const n = parseInt(lm[1]);
           const verdict = lm[2].toUpperCase() as "YES" | "NO" | "PARTIAL";
-          const reason = lm[3].trim();
+          const confidence = Math.min(100, Math.max(0, parseInt(lm[3]) || 50));
+          const reason = lm[4].trim();
           const cite = batch.find((c) => c.n === n);
           const ref = refMap.get(n);
           if (cite) {
@@ -144,6 +146,7 @@ Where N is the citation number, and reason is a brief explanation (max 20 words)
               n, sentence: cite.sentence,
               refTitle: ref?.title || "(not found)",
               verdict: verdict.toLowerCase() as any,
+              confidence,
               reason,
             });
           }
@@ -347,13 +350,18 @@ N|NONE|reason`;
   }
 
   // Save audit report to DB
+  // IMPROVEMENT 4: include beforeBody + afterBody so the user can see the diff.
   const reportData = {
     message: `Deep audit complete. Checked ${citations.length} citations, found ${mismatches.length} mismatches, fixed ${fixCount}.`,
     checked: citations.length, issues: mismatches.length, fixed: fixCount,
     bodyUpdated: bodyChanged, trigger, contentHash,
-    verdicts: verdicts.map((v) => ({ n: v.n, sentence: v.sentence, refTitle: v.refTitle, verdict: v.verdict, reason: v.reason })),
-    mismatches: mismatches.map((mm) => ({ n: mm.n, sentence: mm.sentence, refTitle: mm.refTitle, verdict: mm.verdict, reason: mm.reason })),
+    verdicts: verdicts.map((v) => ({ n: v.n, sentence: v.sentence, refTitle: v.refTitle, verdict: v.verdict, confidence: v.confidence, reason: v.reason })),
+    mismatches: mismatches.map((mm) => ({ n: mm.n, sentence: mm.sentence, refTitle: mm.refTitle, verdict: mm.verdict, confidence: mm.confidence, reason: mm.reason })),
     corrections,
+    // Before/after body for diff comparison (truncated to 2000 chars to
+    // control DB size — the full body is in the paragraph itself).
+    beforeBody: bodyChanged ? body.slice(0, 2000) : undefined,
+    afterBody: bodyChanged ? updatedBody.slice(0, 2000) : undefined,
   };
 
   try {

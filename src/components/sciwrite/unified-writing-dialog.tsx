@@ -764,6 +764,24 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
             });
             setStepProgress((prev) => ({ ...prev, [event]: data.message }));
           }
+          // When the batch citation audit completes, show a toast notification
+          // so the user knows the audit ran and what it found/fixed.
+          if (data.step === "audit" && data.status === "done") {
+            const checked = data.auditChecked || 0;
+            const issues = data.auditIssues || 0;
+            const fixed = data.auditFixed || 0;
+            if (issues > 0) {
+              toast.info(
+                `Citation audit: ${checked} checked, ${issues} issues found, ${fixed} auto-fixed.`,
+                { duration: 8000 }
+              );
+            } else {
+              toast.success(
+                `Citation audit: all ${checked} citations passed verification.`,
+                { duration: 5000 }
+              );
+            }
+          }
           if (event === "generate" && data.status === "streaming" && data.accumulatedTail) {
             setLivePreview(data.accumulatedTail);
           } else if (event === "translate" && data.status === "streaming" && data.accumulatedTail) {

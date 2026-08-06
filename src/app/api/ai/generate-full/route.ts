@@ -1546,46 +1546,57 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         }
         log(`compose: updated ${renumberedContents.length} paragraphs with globally renumbered citations`);
 
-        // ============ STEP 7.5: Batch deep citation audit ============
+        // ============ STEP 7.5: Batch deep citation audit (parallel) ============
         // After ALL sections are generated + composed, run the deep citation
-        // audit on each paragraph in BATCH mode. This is better than per-
-        // paragraph auditing during generation because:
-        //  1. The user sees progress faster (generation completes first)
-        //  2. Global citation renumbering is already applied (so [n] matches)
-        //  3. The audit can cross-reference the full reference list
+        // audit on each paragraph. Uses PARALLEL execution (3 at a time) to
+        // reduce total audit time from N×60s to ~N/3×60s.
         // The audit is non-blocking: failures don't abort the pipeline.
         if (generatedParagraphs.length > 0) {
           send("step", {
             step: "audit",
             status: "started",
-            message: `Auto-auditing citations for ${generatedParagraphs.length} sections...`,
+            message: `Auto-auditing citations for ${generatedParagraphs.length} sections (3 parallel)...`,
           });
-          log(`audit: starting batch deep audit for ${generatedParagraphs.length} paragraphs`);
+          log(`audit: starting parallel batch deep audit for ${generatedParagraphs.length} paragraphs`);
           let auditChecked = 0;
           let auditIssues = 0;
           let auditFixed = 0;
-          for (let i = 0; i < generatedParagraphs.length; i++) {
-            const p = generatedParagraphs[i];
-            try {
-              const auditRes = await fetch(
-                `http://localhost:3000/api/paragraphs/${p.id}/deep-audit-citations?trigger=auto`,
-                { method: "POST", signal: AbortSignal.timeout(120000) }
-              );
-              if (auditRes.ok) {
-                const data = await auditRes.json();
-                auditChecked += data.checked || 0;
-                auditIssues += data.issues || 0;
-                auditFixed += data.fixed || 0;
-              }
-            } catch (e: any) {
-              log(`audit: paragraph ${i + 1} failed: ${e?.message?.slice(0, 80) || "unknown"}`);
-            }
+          let auditDone = 0;
+
+          // Process paragraphs in batches of 3 (parallel within each batch)
+          const PARALLEL_SIZE = 3;
+          for (let i = 0; i < generatedParagraphs.length; i += PARALLEL_SIZE) {
+            const batch = generatedParagraphs.slice(i, i + PARALLEL_SIZE);
+            const batchNum = Math.floor(i / PARALLEL_SIZE) + 1;
+            const totalBatches = Math.ceil(generatedParagraphs.length / PARALLEL_SIZE);
             send("step", {
               step: "audit",
               status: "progress",
-              message: `Audited ${i + 1}/${generatedParagraphs.length} sections (${auditIssues} issues, ${auditFixed} auto-fixed)...`,
+              message: `Auditing batch ${batchNum}/${totalBatches} (${auditDone}/${generatedParagraphs.length} done, ${auditIssues} issues, ${auditFixed} fixed)...`,
             });
+
+            // Run this batch in parallel
+            const results = await Promise.allSettled(
+              batch.map((p) =>
+                fetch(
+                  `http://localhost:3000/api/paragraphs/${p.id}/deep-audit-citations?trigger=auto`,
+                  { method: "POST", signal: AbortSignal.timeout(120000) }
+                ).then((r) => r.ok ? r.json() : null)
+              )
+            );
+
+            for (const result of results) {
+              auditDone++;
+              if (result.status === "fulfilled" && result.value) {
+                auditChecked += result.value.checked || 0;
+                auditIssues += result.value.issues || 0;
+                auditFixed += result.value.fixed || 0;
+              } else if (result.status === "rejected") {
+                log(`audit: paragraph failed: ${result.reason?.message?.slice(0, 80) || "unknown"}`);
+              }
+            }
           }
+
           send("step", {
             step: "audit",
             status: "done",
