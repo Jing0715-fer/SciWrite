@@ -158,13 +158,31 @@ export async function POST(req: NextRequest) {
               }
             }
             if (!ref) return null;
-            const key = `${ref.type}:${ref.externalId || ref.title}`;
-            if (!globalRefMap.has(key)) {
-              const globalNum = globalRefs.length + 1;
-              globalRefMap.set(key, globalNum);
-              globalRefs.push(ref);
+            // Dedup key: prefer type+externalId, but also check title for
+            // refs that have the same paper but different externalId (e.g.
+            // one paragraph uses PMID, another uses DOI for the same paper).
+            const primaryKey = `${ref.type}:${ref.externalId || ref.title}`;
+            const titleKey = (ref.title || "").toLowerCase().trim();
+            // Check if we already have this ref by primary key OR by title
+            let existingNum = globalRefMap.get(primaryKey);
+            if (!existingNum && titleKey) {
+              // Search by title in the globalRefs array
+              const existingIdx = globalRefs.findIndex(
+                (gr: any) => (gr.title || "").toLowerCase().trim() === titleKey
+              );
+              if (existingIdx >= 0) {
+                existingNum = existingIdx + 1;
+                // Map this key to the existing entry so future lookups are fast
+                globalRefMap.set(primaryKey, existingNum);
+              }
             }
-            return globalRefMap.get(key)!;
+            if (!existingNum) {
+              const globalNum = globalRefs.length + 1;
+              globalRefMap.set(primaryKey, globalNum);
+              globalRefs.push(ref);
+              return globalNum;
+            }
+            return existingNum;
           }).filter(Boolean);
 
           if (globalNums.length === 0) return match;
