@@ -274,6 +274,14 @@ export async function POST(req: NextRequest) {
     const refLines = references.length
       ? references.map((r, i) => {
           const n = i + 1;
+          // Export validation: warn about missing fields (logged server-side)
+          const missing: string[] = [];
+          if (!r.authors) missing.push("authors");
+          if (!r.year) missing.push("year");
+          if (!r.journal) missing.push("journal");
+          if (missing.length > 0) {
+            console.warn(`[export] Reference [${n}] "${(r.title || "").slice(0, 50)}" missing: ${missing.join(", ")}`);
+          }
           const authors = r.authors || "Anonymous";
           const year = r.year || "n.d.";
           // For export: strip PDB-specific info from journal name (keep only the publication journal)

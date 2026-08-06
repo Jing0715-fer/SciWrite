@@ -274,6 +274,24 @@ export async function POST(req: NextRequest) {
         include: { articleParagraph: true },
       });
 
+      // Save a version snapshot of the newly composed article so the user
+      // can restore it if a subsequent compose overwrites paragraph content.
+      // This protects against the "compose overwrites user edits" problem.
+      try {
+        await db.articleVersion.create({
+          data: {
+            articleId: article.id,
+            content: articleContent,
+            contentZh: null,
+            title: body.title,
+            label: "auto-saved on compose",
+            wordCount,
+          },
+        });
+      } catch (e) {
+        console.warn("[compose] Failed to save version snapshot:", e);
+      }
+
       send("step", { status: "done", message: `Article composed: ${wordCount} words, ${globalRefs.length} references.` });
       send("complete", {
         article,
