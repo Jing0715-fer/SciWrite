@@ -548,7 +548,15 @@ export const api = {
         const t = await res.text();
         throw new Error(t || `Export failed (${res.status})`);
       }
-      return res.blob();
+      const blob = await res.blob();
+      // Extract export validation warnings from the response header
+      const warningHeader = res.headers.get("X-Export-Warnings");
+      if (warningHeader) {
+        try {
+          (blob as any).__exportWarnings = decodeURIComponent(warningHeader);
+        } catch {}
+      }
+      return blob;
     }),
 
   /* Project insights */

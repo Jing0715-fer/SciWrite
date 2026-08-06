@@ -114,9 +114,15 @@ export function ExportMenu({
     onSettled: () => {
       setPending(null);
     },
-    onSuccess: (_d, { format, language }) => {
+    onSuccess: (blob: any, { format, language }) => {
       const langLabel = language === "zh" ? " (中文)" : language === "both" ? " (EN+中文)" : "";
       toast.success(t("export.exportedAs", { fmt: format.toUpperCase() }) + langLabel);
+      // Show export validation warnings if any references had missing fields
+      if (blob?.__exportWarnings) {
+        toast.warning(`Some references have incomplete metadata: ${blob.__exportWarnings}`, {
+          duration: 10000,
+        });
+      }
     },
     onError: (e: Error) => toast.error(e.message),
   });

@@ -508,6 +508,23 @@ export async function POST(req: NextRequest) {
     const langSuffix = language === "zh" ? "-zh" : language === "both" ? "-bilingual" : "";
     const filenameTitle = exportTitle;
 
+    // Export validation: check each reference for missing fields (authors,
+    // year, journal). Collect warnings to return as a response header so the
+    // frontend can show a toast to the user.
+    const exportWarnings: string[] = [];
+    references.forEach((r, i) => {
+      const missing: string[] = [];
+      if (!r.authors) missing.push("authors");
+      if (!r.year) missing.push("year");
+      if (!r.journal) missing.push("journal");
+      if (missing.length > 0) {
+        exportWarnings.push(`[${i + 1}] ${(r.title || "").slice(0, 40)}: missing ${missing.join(", ")}`);
+      }
+    });
+    const warningHeader = exportWarnings.length > 0
+      ? encodeURIComponent(exportWarnings.slice(0, 5).join("; "))
+      : "";
+
     if (body.format === "markdown") {
       const fullContent = cleanContent + (fullAppendix ? "\n\n" + fullAppendix.trim() : "");
       const md = buildMarkdown(exportTitle, abstract, fullContent, refLines, body.includeAnnotations ? annotations : undefined);
@@ -515,6 +532,7 @@ export async function POST(req: NextRequest) {
         headers: {
           "Content-Type": "text/markdown; charset=utf-8",
           "Content-Disposition": `attachment; filename="${buildFilename(filenameTitle, "md", langSuffix)}"`,
+          ...(warningHeader ? { "X-Export-Warnings": warningHeader } : {}),
         },
       });
     }
@@ -533,6 +551,7 @@ export async function POST(req: NextRequest) {
           "Content-Type":
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
           "Content-Disposition": `attachment; filename="${buildFilename(filenameTitle, "docx", langSuffix)}"`,
+          ...(warningHeader ? { "X-Export-Warnings": warningHeader } : {}),
         },
       });
     }
@@ -549,6 +568,7 @@ export async function POST(req: NextRequest) {
         headers: {
           "Content-Type": "application/pdf",
           "Content-Disposition": `attachment; filename="${buildFilename(filenameTitle, "pdf", langSuffix)}"`,
+          ...(warningHeader ? { "X-Export-Warnings": warningHeader } : {}),
         },
       });
     }
