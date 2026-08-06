@@ -390,6 +390,8 @@ export function sanitizeSectionContent(content: string): string {
   // what it WOULD have written instead of the actual content. Signs:
   //   - Content starts with "The section above covers..."
   //   - Content starts with "This section covers/discusses/provides..."
+  //   - Content starts with "The section has been written as..."
+  //   - Content starts with bullet-point outlines like "P1 — ...", "P2 — ..."
   //   - Content mentions "could not be written" or "permission restrictions"
   //   - Content mentions "content is provided inline above"
   // In these cases, we can't recover the actual content — return a placeholder
@@ -397,11 +399,24 @@ export function sanitizeSectionContent(content: string): string {
   const isMetaSummary =
     /^(The section above (covers|discusses|summarizes|provides))/i.test(cleaned) ||
     /^(This section (covers|discusses|provides|presents|examines|summarizes))/i.test(cleaned) ||
+    /^(The section has been written)/i.test(cleaned) ||
+    /^(The section above has been written)/i.test(cleaned) ||
     /could not be (written|saved|created)/i.test(cleaned) ||
     /permission restriction/i.test(cleaned) ||
     /content is provided inline above/i.test(cleaned);
   if (isMetaSummary) {
     return "[Content generation issue — this section contains a summary instead of article text. Please use the regenerate button to regenerate this section.]\n\nOriginal LLM output:\n" + cleaned.slice(0, 500) + "...";
+  }
+
+  // Step 0b: Detect bullet-point outline format — when the LLM outputs
+  // "P1 — ...", "P2 — ...", "- P1 — ..." etc. instead of actual paragraphs.
+  // This is a common failure mode where the LLM describes what each paragraph
+  // would contain rather than writing the actual text.
+  const outlinePattern = /^[\s]*[-•]?\s*P\d+\s*[—–\-:]/m;
+  const outlineLines = cleaned.split("\n").filter((l) => outlinePattern.test(l));
+  if (outlineLines.length >= 2) {
+    // At least 2 "P1 — ...", "P2 — ..." lines → this is an outline, not text
+    return "[Content generation issue — this section contains a bullet-point outline instead of article text. Please use the regenerate button to regenerate this section.]\n\nOriginal LLM output:\n" + cleaned.slice(0, 500) + "...";
   }
 
   // Step 1: Remove "### Citations" block and everything after it

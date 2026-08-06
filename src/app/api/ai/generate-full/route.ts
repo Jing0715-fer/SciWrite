@@ -1148,6 +1148,12 @@ PARAGRAPH FORMAT (MANDATORY — critical for consistent document export):
 - Do NOT add a preamble such as "Here is the section:", "Now I will write...",
   "Below is the draft for section N:" — start with the actual content.
 - Do NOT add a postscript such as "Word count: ~790" or "Citations used: [1],[2]".
+- CRITICAL: Do NOT output a summary or description of what you wrote. Do NOT write
+  "The section has been written as 4 cohesive paragraphs..." or "P1 — ..." bullet
+  points. Output ONLY the actual article text — real academic prose paragraphs
+  that a reader would see in a published review article.
+- Do NOT use "P1 —", "P2 —", "Paragraph 1 —" or similar outline labels. Write
+  actual flowing paragraphs, not bullet-point descriptions of paragraphs.
 - Write the section as 2-5 cohesive paragraphs of prose, separated by a single
   blank line. Each paragraph should be 120-250 words.
 - Use **bold** for key protein/gene names only on first mention; otherwise plain text.
