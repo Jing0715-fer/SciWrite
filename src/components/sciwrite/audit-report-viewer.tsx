@@ -26,6 +26,7 @@ interface AuditVerdict {
   sentence: string;
   refTitle: string;
   verdict: "yes" | "no" | "partial";
+  confidence?: number;
   reason: string;
 }
 
@@ -56,7 +57,10 @@ interface AuditReport {
     trigger?: string;
     verdicts?: AuditVerdict[];
     mismatches?: AuditVerdict[];
+    lowConfidenceMismatches?: AuditVerdict[];
     corrections?: AuditCorrection[];
+    beforeBody?: string;
+    afterBody?: string;
   };
 }
 
@@ -241,12 +245,19 @@ export function AuditReportViewer({ projectId }: { projectId: string }) {
                       <p className="text-[9px] font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wide">
                         Mismatches ({mismatches.length})
                       </p>
-                      {mismatches.map((mm, i) => (
+                      {mismatches.map((mm, i) => {
+                        const isLowConf = (mm.confidence || 50) < 70;
+                        return (
                         <div
                           key={i}
-                          className="rounded bg-amber-50/40 dark:bg-amber-950/15 px-1.5 py-1 text-[10px]"
+                          className={cn(
+                            "rounded px-1.5 py-1 text-[10px]",
+                            isLowConf
+                              ? "bg-orange-50/50 dark:bg-orange-950/20 ring-1 ring-orange-300/30"
+                              : "bg-amber-50/40 dark:bg-amber-950/15"
+                          )}
                         >
-                          <div className="flex items-center gap-1 mb-0.5">
+                          <div className="flex items-center gap-1 mb-0.5 flex-wrap">
                             <span className="font-mono font-semibold text-amber-700 dark:text-amber-400">
                               [{mm.n}]
                             </span>
@@ -256,6 +267,24 @@ export function AuditReportViewer({ projectId }: { projectId: string }) {
                             >
                               {mm.verdict}
                             </Badge>
+                            {mm.confidence !== undefined && (
+                              <span className={cn(
+                                "text-[7px] font-mono px-1 rounded",
+                                mm.confidence >= 70
+                                  ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/15"
+                                  : "text-orange-600 dark:text-orange-400 bg-orange-50/40 dark:bg-orange-950/15"
+                              )}>
+                                {mm.confidence}%
+                              </span>
+                            )}
+                            {isLowConf && (
+                              <Badge
+                                variant="outline"
+                                className="h-3 px-0.5 text-[7px] uppercase border-orange-300/60 text-orange-700 dark:text-orange-400"
+                              >
+                                manual review
+                              </Badge>
+                            )}
                           </div>
                           <p className="text-muted-foreground leading-snug">
                             <span className="text-foreground/70">Claim:</span>{" "}
@@ -270,7 +299,31 @@ export function AuditReportViewer({ projectId }: { projectId: string }) {
                             {mm.reason}
                           </p>
                         </div>
-                      ))}
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Body diff — show before/after when body was updated */}
+                  {report.beforeBody && report.afterBody && (
+                    <div className="space-y-1">
+                      <p className="text-[9px] font-semibold text-violet-600 dark:text-violet-400 uppercase tracking-wide">
+                        Body Changes (diff)
+                      </p>
+                      <div className="rounded border border-border/40 overflow-hidden text-[9px]">
+                        <div className="bg-red-50/40 dark:bg-red-950/15 px-1.5 py-0.5 border-b border-border/30">
+                          <span className="text-red-600 dark:text-red-400 font-mono">- Before:</span>
+                        </div>
+                        <pre className="px-1.5 py-1 text-red-700 dark:text-red-400 whitespace-pre-wrap break-words max-h-24 overflow-y-auto">
+                          {report.beforeBody}
+                        </pre>
+                        <div className="bg-emerald-50/40 dark:bg-emerald-950/15 px-1.5 py-0.5 border-y border-border/30">
+                          <span className="text-emerald-600 dark:text-emerald-400 font-mono">+ After:</span>
+                        </div>
+                        <pre className="px-1.5 py-1 text-emerald-700 dark:text-emerald-400 whitespace-pre-wrap break-words max-h-24 overflow-y-auto">
+                          {report.afterBody}
+                        </pre>
+                      </div>
                     </div>
                   )}
 

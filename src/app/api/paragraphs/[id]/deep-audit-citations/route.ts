@@ -115,6 +115,8 @@ export async function POST(
 
 Be STRICT: if the reference's content does not clearly relate to the claim, answer NO. If it partially relates, answer PARTIAL. Only answer YES if the reference directly supports the claim.
 
+IMPORTANT: The claim/sentence may be in Chinese (中文) or English. Reference titles are typically in English. Judge the match based on semantic meaning, not language. You can understand both Chinese and English scientific text.
+
 ${pairsText}
 
 Respond with ONE line per citation, in this exact format:
@@ -122,7 +124,7 @@ N|YES|CONFIDENCE|reason
 N|NO|CONFIDENCE|reason
 N|PARTIAL|CONFIDENCE|reason
 
-Where N is the citation number, CONFIDENCE is your confidence score (0-100, where 100 = absolutely certain), and reason is a brief explanation (max 20 words).`;
+Where N is the citation number, CONFIDENCE is your confidence score (0-100, where 100 = absolutely certain), and reason is a brief explanation (max 20 words, in the same language as the claim).`;
 
     try {
       const response = await chat(prompt, {
@@ -317,11 +319,26 @@ N|NONE|reason`;
     }
   }
 
-  // Apply corrections
+  // Apply corrections — but ONLY for high-confidence mismatches.
+  // IMPROVEMENT: Low-confidence verdicts (confidence < 70) are NOT auto-
+  // corrected. They are recorded in the report as "needs manual review"
+  // so the user can decide whether the LLM's judgment is correct.
+  // This prevents the LLM from making wrong corrections when it's unsure.
+  const CONFIDENCE_THRESHOLD = 70;
   let updatedBody = body;
   let fixCount = 0;
+  const lowConfidenceMismatches: typeof mismatches = [];
+
+  // Build a set of oldN values that are low-confidence (skip correction)
+  for (const mm of mismatches) {
+    if ((mm.confidence || 50) < CONFIDENCE_THRESHOLD) {
+      lowConfidenceMismatches.push(mm);
+    }
+  }
+  const lowConfidenceOldNs = new Set(lowConfidenceMismatches.map((m) => m.n));
+
   const sortedCorrections = corrections
-    .filter((c) => c.newN !== c.oldN)
+    .filter((c) => c.newN !== c.oldN && !lowConfidenceOldNs.has(c.oldN))
     .sort((a, b) => b.oldN - a.oldN);
 
   for (const corr of sortedCorrections) {
@@ -352,14 +369,13 @@ N|NONE|reason`;
   // Save audit report to DB
   // IMPROVEMENT 4: include beforeBody + afterBody so the user can see the diff.
   const reportData = {
-    message: `Deep audit complete. Checked ${citations.length} citations, found ${mismatches.length} mismatches, fixed ${fixCount}.`,
+    message: `Deep audit complete. Checked ${citations.length} citations, found ${mismatches.length} mismatches, fixed ${fixCount}.${lowConfidenceMismatches.length > 0 ? ` ${lowConfidenceMismatches.length} low-confidence (needs manual review).` : ""}`,
     checked: citations.length, issues: mismatches.length, fixed: fixCount,
     bodyUpdated: bodyChanged, trigger, contentHash,
     verdicts: verdicts.map((v) => ({ n: v.n, sentence: v.sentence, refTitle: v.refTitle, verdict: v.verdict, confidence: v.confidence, reason: v.reason })),
     mismatches: mismatches.map((mm) => ({ n: mm.n, sentence: mm.sentence, refTitle: mm.refTitle, verdict: mm.verdict, confidence: mm.confidence, reason: mm.reason })),
+    lowConfidenceMismatches: lowConfidenceMismatches.map((mm) => ({ n: mm.n, sentence: mm.sentence, refTitle: mm.refTitle, verdict: mm.verdict, confidence: mm.confidence, reason: mm.reason })),
     corrections,
-    // Before/after body for diff comparison (truncated to 2000 chars to
-    // control DB size — the full body is in the paragraph itself).
     beforeBody: bodyChanged ? body.slice(0, 2000) : undefined,
     afterBody: bodyChanged ? updatedBody.slice(0, 2000) : undefined,
   };
