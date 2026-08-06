@@ -87,9 +87,12 @@ export function ExportMenu({
   const { t } = useI18n();
   const [includeAnn, setIncludeAnn] = React.useState(true);
   const [pending, setPending] = React.useState<string | null>(null);
+  const [exportProgress, setExportProgress] = React.useState<string | null>(null);
 
   const exportMut = useMutation({
     mutationFn: async ({ format, language }: { format: ExportFormat; language: ExportLang }) => {
+      const meta = FORMAT_META.find((f) => f.format === format)!;
+      setExportProgress(`Preparing ${meta.ext.toUpperCase()}...`);
       const blob = await api.exportDoc({
         type,
         id,
@@ -97,8 +100,8 @@ export function ExportMenu({
         includeAnnotations: hasAnnotations ? includeAnn : false,
         language,
       });
+      setExportProgress("Downloading...");
       const langSuffix = LANG_META[language].suffix;
-      const meta = FORMAT_META.find((f) => f.format === format)!;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -107,12 +110,14 @@ export function ExportMenu({
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      setExportProgress(null);
     },
     onMutate: (vars) => {
       setPending(`${vars.format}:${vars.language}`);
     },
     onSettled: () => {
       setPending(null);
+      setExportProgress(null);
     },
     onSuccess: (blob: any, { format, language }) => {
       const langLabel = language === "zh" ? " (中文)" : language === "both" ? " (EN+中文)" : "";
@@ -145,7 +150,10 @@ export function ExportMenu({
         <Icon className={`h-3.5 w-3.5 ${iconColor}`} />
         <span className="text-xs">{label}</span>
         {isLoading && (
-          <Loader2 className="h-3 w-3 animate-spin ml-auto" />
+          <span className="ml-auto flex items-center gap-1">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            <span className="text-[9px] text-muted-foreground">{exportProgress}</span>
+          </span>
         )}
       </DropdownMenuItem>
     );
