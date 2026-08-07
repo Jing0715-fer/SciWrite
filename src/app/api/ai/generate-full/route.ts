@@ -1134,6 +1134,9 @@ CITATION FORMAT (MANDATORY):
   specific claim you are making. Before citing [n], ask yourself: "Does reference [n]'s
   title/abstract actually discuss this specific topic?" If NO, do NOT cite it — use [$REF]
   instead. Citing an unrelated reference is WORSE than leaving a [$REF] placeholder.
+- However, do NOT avoid citing entirely. If a claim needs support and the closest reference
+  in the list is partially relevant, cite it rather than leaving [$REF]. Use [$REF] ONLY
+  when NO reference in the list is even partially relevant to the claim.
 - Do NOT cite a reference just because it appears in the list. Each citation must be
   semantically justified by the reference's actual content.
 - Do NOT use numbers greater than ${sectionRefCount}. Use [$REF] as placeholder if needed.
@@ -1481,6 +1484,42 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
 
         // ============ STEP 7: Compose the final English article ============
         send("step", { step: "compose", status: "started", message: "Composing final English article with global citation renumbering..." });
+
+        // Merge short paragraphs (< 120 words) into the previous paragraph
+        // to avoid tiny sections that look unprofessional in the final article.
+        if (generatedParagraphs.length > 1) {
+          const merged: typeof generatedParagraphs = [];
+          for (const p of generatedParagraphs) {
+            if (p.wordCount < 120 && merged.length > 0) {
+              const prev = merged[merged.length - 1];
+              log(`compose: merging short paragraph "${p.title}" (${p.wordCount}w) into "${prev.title}"`);
+              // Merge content into previous paragraph in DB
+              const prevPara = await db.paragraph.findUnique({ where: { id: prev.id } });
+              const curPara = await db.paragraph.findUnique({ where: { id: p.id } });
+              if (prevPara && curPara) {
+                const mergedContent = prevPara.content + "\n\n" + curPara.content;
+                await db.paragraph.update({
+                  where: { id: prev.id },
+                  data: { content: mergedContent, wordCount: countWords(mergedContent) },
+                });
+                // Delete the short paragraph
+                await db.paragraph.delete({ where: { id: p.id } });
+                // Update the merged entry
+                merged[merged.length - 1] = {
+                  ...prev,
+                  wordCount: prev.wordCount + p.wordCount,
+                  contentLength: (prev.contentLength || 0) + (p.contentLength || 0),
+                };
+              }
+            } else {
+              merged.push(p);
+            }
+          }
+          if (merged.length < generatedParagraphs.length) {
+            log(`compose: merged ${generatedParagraphs.length - merged.length} short paragraph(s), ${merged.length} remaining`);
+            generatedParagraphs = merged;
+          }
+        }
 
         const allParagraphData = await Promise.all(
           generatedParagraphs.map(async (p) => {

@@ -274,10 +274,24 @@ N|C_NUM|reason
 N|NONE|reason`;
 
       try {
-        const crossResponse = await chat(crossPrompt, {
-          system: "You are a citation matching assistant.",
-          temperature: 0,
-        });
+        let crossResponse: string;
+        try {
+          crossResponse = await chat(crossPrompt, {
+            system: "You are a citation matching assistant.",
+            temperature: 0,
+          });
+        } catch (retryErr: any) {
+          // 429 rate limit — wait 5s and retry once
+          if (retryErr?.message?.includes("429") || retryErr?.message?.includes("Too many")) {
+            await new Promise((r) => setTimeout(r, 5000));
+            crossResponse = await chat(crossPrompt, {
+              system: "You are a citation matching assistant.",
+              temperature: 0,
+            });
+          } else {
+            throw retryErr;
+          }
+        }
         const crossLines = crossResponse.split("\n");
         for (const line of crossLines) {
           const lm = line.trim().match(/^(\d+)\s*\|\s*(C(\d+)|NONE)\s*\|\s*(.+)$/i);
