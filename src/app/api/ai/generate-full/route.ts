@@ -1570,7 +1570,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           cleanBody = cleanBody.slice(0, bareMatch.index).trim();
         }
 
-        const articleContent = cleanBody + "\n\n## References\n\n" + refList;
+        let articleContent = cleanBody + "\n\n## References\n\n" + refList;
 
         // Update each paragraph's content in the database with the globally
         // renumbered citations. This ensures that when users view paragraphs
@@ -1647,6 +1647,25 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             auditChecked, auditIssues, auditFixed,
           });
           log(`audit: DONE — checked ${auditChecked}, issues ${auditIssues}, fixed ${auditFixed}`);
+
+          // After audit, rebuild articleContent from the updated paragraph
+          // contents (the audit may have changed [n] → [m] or [$REF] in
+          // the paragraphs). Also clean [$REF] → [citation needed].
+          const updatedParagraphs = await db.paragraph.findMany({
+            where: { id: { in: generatedParagraphs.map((p) => p.id) } },
+            orderBy: { order: "asc" },
+          });
+          const updatedBody = updatedParagraphs
+            .map((p) => `## ${p.title}\n\n${(p.content || "").replace(/\[\$REF\]/g, "[citation needed]")}`)
+            .join("\n\n");
+          // Strip any existing ## References section from the updated body
+          let cleanUpdatedBody = updatedBody.trim();
+          const updatedRefMatch = cleanUpdatedBody.match(/^#{0,6}\s*\*{0,2}(References|REFERENCES)\*{0,2}\s*:?\s*$/m);
+          if (updatedRefMatch && updatedRefMatch.index !== undefined) {
+            cleanUpdatedBody = cleanUpdatedBody.slice(0, updatedRefMatch.index).trim();
+          }
+          articleContent = cleanUpdatedBody + "\n\n## References\n\n" + refList;
+          log(`compose: rebuilt articleContent after audit (${articleContent.length} chars)`);
         }
 
         // ============ STEP 8 (both mode only): Translate each section EN → ZH ============
