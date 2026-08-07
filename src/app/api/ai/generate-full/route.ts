@@ -1130,9 +1130,12 @@ CITATION FORMAT (MANDATORY):
 - Number citations starting from [1] for THIS section. Each [n] refers to the n-th entry
   in the REFERENCE LIST above (${sectionRefCount} entries, [1] to [${sectionRefCount}]).
 - Cite AT LEAST 3 different references per ~500 words.
-- CRITICAL: Only cite a reference if its content is DIRECTLY relevant to this section's
-  focus. Do NOT cite a source just because it appears in the list — if a ref is about a
-  different protein/function/tissue than what this section covers, skip it.
+- CRITICAL: Only cite a reference if its title or abstract is DIRECTLY relevant to the
+  specific claim you are making. Before citing [n], ask yourself: "Does reference [n]'s
+  title/abstract actually discuss this specific topic?" If NO, do NOT cite it — use [$REF]
+  instead. Citing an unrelated reference is WORSE than leaving a [$REF] placeholder.
+- Do NOT cite a reference just because it appears in the list. Each citation must be
+  semantically justified by the reference's actual content.
 - Do NOT use numbers greater than ${sectionRefCount}. Use [$REF] as placeholder if needed.
 - Do NOT use [SOURCE:ID] format in body.
 - Do NOT write empty brackets [].
@@ -1154,8 +1157,9 @@ PARAGRAPH FORMAT (MANDATORY — critical for consistent document export):
   that a reader would see in a published review article.
 - Do NOT use "P1 —", "P2 —", "Paragraph 1 —" or similar outline labels. Write
   actual flowing paragraphs, not bullet-point descriptions of paragraphs.
-- Write the section as 2-5 cohesive paragraphs of prose, separated by a single
-  blank line. Each paragraph should be 120-250 words.
+- Write the section as 2-4 cohesive paragraphs of prose, separated by a single
+  blank line. Target ${chunkWords} words total for this section (±10%).
+  Do NOT write significantly more or fewer words than the target.
 - Use **bold** for key protein/gene names only on first mention; otherwise plain text.
 - Use *italics* for species names (e.g. *C. elegans*, *Mus musculus*).
 - Match the tone, depth, and paragraph density of the PREVIOUS SECTIONS above.
