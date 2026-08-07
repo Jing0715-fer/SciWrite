@@ -1592,13 +1592,14 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         // ============ STEP 7.5: Batch deep citation audit (parallel) ============
         // After ALL sections are generated + composed, run the deep citation
         // audit on each paragraph. Uses PARALLEL execution (3 at a time) to
-        // reduce total audit time from N×60s to ~N/3×60s.
+        // reduce total audit time. Uses 2-parallel (down from 3 to avoid 429
+        // rate limits) with a 3s delay between batches.
         // The audit is non-blocking: failures don't abort the pipeline.
         if (generatedParagraphs.length > 0) {
           send("step", {
             step: "audit",
             status: "started",
-            message: `Auto-auditing citations for ${generatedParagraphs.length} sections (3 parallel)...`,
+            message: `Auto-auditing citations for ${generatedParagraphs.length} sections (2 parallel)...`,
           });
           log(`audit: starting parallel batch deep audit for ${generatedParagraphs.length} paragraphs`);
           let auditChecked = 0;
@@ -1606,8 +1607,9 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           let auditFixed = 0;
           let auditDone = 0;
 
-          // Process paragraphs in batches of 3 (parallel within each batch)
-          const PARALLEL_SIZE = 3;
+          // Process paragraphs in batches of 2 (parallel within each batch)
+          // to avoid 429 rate limits from the LLM provider.
+          const PARALLEL_SIZE = 2;
           for (let i = 0; i < generatedParagraphs.length; i += PARALLEL_SIZE) {
             const batch = generatedParagraphs.slice(i, i + PARALLEL_SIZE);
             const batchNum = Math.floor(i / PARALLEL_SIZE) + 1;
@@ -1638,6 +1640,10 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                 log(`audit: paragraph failed: ${result.reason?.message?.slice(0, 80) || "unknown"}`);
               }
             }
+            // 3s delay between batches to avoid 429 rate limits
+            if (i + PARALLEL_SIZE < generatedParagraphs.length) {
+              await new Promise((r) => setTimeout(r, 3000));
+            }
           }
 
           send("step", {
@@ -1650,11 +1656,25 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
 
           // After audit, rebuild articleContent from the updated paragraph
           // contents (the audit may have changed [n] → [m] or [$REF] in
-          // the paragraphs). Also clean [$REF] → [citation needed].
+          // the paragraphs). Also clean [$REF] → [citation needed] in BOTH
+          // the article content AND the paragraph DB records so they stay
+          // consistent.
           const updatedParagraphs = await db.paragraph.findMany({
             where: { id: { in: generatedParagraphs.map((p) => p.id) } },
             orderBy: { order: "asc" },
           });
+
+          // Update each paragraph's DB content to replace [$REF] → [citation needed]
+          for (const p of updatedParagraphs) {
+            if (p.content && p.content.includes("[$REF]")) {
+              const cleanedContent = p.content.replace(/\[\$REF\]/g, "[citation needed]");
+              await db.paragraph.update({
+                where: { id: p.id },
+                data: { content: cleanedContent, wordCount: countWords(cleanedContent) },
+              });
+            }
+          }
+
           const updatedBody = updatedParagraphs
             .map((p) => `## ${p.title}\n\n${(p.content || "").replace(/\[\$REF\]/g, "[citation needed]")}`)
             .join("\n\n");
@@ -1665,7 +1685,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             cleanUpdatedBody = cleanUpdatedBody.slice(0, updatedRefMatch.index).trim();
           }
           articleContent = cleanUpdatedBody + "\n\n## References\n\n" + refList;
-          log(`compose: rebuilt articleContent after audit (${articleContent.length} chars)`);
+          log(`compose: rebuilt articleContent after audit (${articleContent.length} chars), paragraphs synced`);
         }
 
         // ============ STEP 8 (both mode only): Translate each section EN → ZH ============
@@ -1900,6 +1920,23 @@ ${cleanEn}`;
             },
           },
         });
+
+        // Save a version snapshot so the user can restore if needed.
+        try {
+          await db.articleVersion.create({
+            data: {
+              articleId: article.id,
+              content: articleContent,
+              contentZh: articleContentZh || null,
+              title: project.topic,
+              label: "auto-saved on generate-full",
+              wordCount: countWords(articleContent),
+            },
+          });
+          log(`compose: version snapshot saved for article ${article.id}`);
+        } catch (e) {
+          console.warn("[generate-full] Failed to save version snapshot:", e);
+        }
 
         send("step", {
           step: "compose",
