@@ -913,7 +913,7 @@ Output JSON only.`;
         // per section using keyword overlap between the section focus/title
         // and each ref's title/abstract. This keeps only topically relevant
         // sources in the prompt, dramatically reducing miscitation.
-        const generatedParagraphs: any[] = [];
+        let generatedParagraphs: any[] = [];
         const failedSections: number[] = []; // track which sections failed
         let previousSectionsDigest = ""; // running style/flow reference
         for (let i = 0; i < sections.length; i++) {
