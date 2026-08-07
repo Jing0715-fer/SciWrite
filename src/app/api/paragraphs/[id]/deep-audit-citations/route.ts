@@ -245,8 +245,13 @@ N|$REF|reason`;
 
     if (candidateRefs.length > 0) {
       const candidateList = candidateRefs
-        .slice(0, 50) // limit to 50 to control prompt size
-        .map((r, i) => `[C${i + 1}] ${r.authors || "Anon"} (${r.year || "n.d."}) ${r.title}`)
+        .slice(0, 80) // limit to 80 candidates (increased from 50)
+        .map((r, i) => {
+          const auth = r.authors || "Anon";
+          const yr = r.year || "n.d.";
+          const abs = r.abstract ? ` — ${r.abstract.slice(0, 100)}` : "";
+          return `[C${i + 1}] ${auth} (${yr}) ${r.title}${abs}`;
+        })
         .join("\n");
 
       const refMismatchText = refCorrections
@@ -324,7 +329,7 @@ N|NONE|reason`;
   // corrected. They are recorded in the report as "needs manual review"
   // so the user can decide whether the LLM's judgment is correct.
   // This prevents the LLM from making wrong corrections when it's unsure.
-  const CONFIDENCE_THRESHOLD = 70;
+  const CONFIDENCE_THRESHOLD = 60;
   let updatedBody = body;
   let fixCount = 0;
   const lowConfidenceMismatches: typeof mismatches = [];

@@ -139,12 +139,12 @@ export async function GET(
         } else if (ref) {
           const refText = `${ref.title || ""} ${ref.abstract || ""}`;
           score = topicalityScore(sentence, refText);
-          if (score < 0.03) {
+          if (score < 0.02) {
             status = "suspect";
             suggestion = `Very low topical overlap (${Math.round(
               score * 100
             )}%) between the citing sentence and the reference. The reference may not support this claim — verify manually.`;
-          } else if (score < 0.1) {
+          } else if (score < 0.05) {
             status = "suspect";
             suggestion = `Weak topical overlap (${Math.round(
               score * 100

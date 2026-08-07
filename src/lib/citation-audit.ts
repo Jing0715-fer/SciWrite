@@ -370,7 +370,7 @@ export function validateCitationsInline(
     // Topicality check (cheap heuristic)
     const refText = `${ref.title || ""} ${ref.abstract || ""}`;
     const score = topicalityScore(sentence, refText);
-    if (score < 0.03) {
+    if (score < 0.02) {
       findings.push({
         n,
         marker,
@@ -383,7 +383,7 @@ export function validateCitationsInline(
         )}%) between the citing sentence and the reference's title/abstract. The reference may not support this claim — verify manually.`,
         refIdentity: refIdentity(ref),
       });
-    } else if (score < 0.1) {
+    } else if (score < 0.05) {
       findings.push({
         n,
         marker,
@@ -517,7 +517,7 @@ export function buildAuditReport(
     if (ref) {
       const refText = `${ref.title || ""} ${ref.abstract || ""}`;
       const score = topicalityScore(sentence, refText);
-      if (score < 0.03) {
+      if (score < 0.02) {
         findings.push({
           n,
           marker,
@@ -530,7 +530,7 @@ export function buildAuditReport(
           )}%) — the reference's title/abstract does not share key terms with the citing sentence. This citation may be incorrect.`,
           refIdentity: refIdentity(ref),
         });
-      } else if (score < 0.1) {
+      } else if (score < 0.05) {
         findings.push({
           n,
           marker,

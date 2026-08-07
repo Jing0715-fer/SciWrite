@@ -129,7 +129,7 @@ export async function GET(
             // Bug #5 fix: topicality check on in-range citations.
             const refText = `${ref.title || ""} ${ref.abstract || ""}`;
             const score = topicalityScore(sentence, refText);
-            if (score < 0.1) {
+            if (score < 0.05) {
               suspectCount++;
             } else {
               validCount++;
