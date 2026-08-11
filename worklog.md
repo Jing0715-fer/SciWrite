@@ -3370,3 +3370,99 @@ Stage Summary:
 - v58-2 memory guard 未触发 (内存足够), 但 audit timeout 是新问题。
 - 主要遗留: 短段落合并过于激进 (v59 最高优先级)。
 - 代码已 push 到 GitHub。
+
+---
+Task ID: v59
+Agent: main (Z.ai Code — v59 improvements + real generate-full test)
+Task: 根据 v58 改进意见进行开发，再执行真实 generate-full 测试验证。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (47 commits, 无丢失)。
+- 实施了 3 项 v59 改进:
+
+1. v59-1 Dynamic short-paragraph merge threshold:
+   - v58 问题: 固定 120w 阈值导致 600w 文章的 5 个 sections (100-117w) 全被
+     合并到 §1, 最终只剩 1 paragraph。
+   - 修复: 阈值改为 avg section target 的 50% (min 80w)。
+     600w/6 sections = 100w avg, 50% = 50w, min(80, 50) = 80w 阈值。
+     100-170w 的 sections 不再被合并。
+
+2. v59-2 Audit timeout 300s + window count skip:
+   - v58 问题: audit 1 个 paragraph 就 120s 超时。
+   - 修复: timeout 从 120/240s 提高到 300s。
+   - 新增: 如果 window count >= 20 (接近 quota 上限), 跳过该 paragraph 的 audit。
+
+3. v59-3 Word-count injection:
+   - v58 问题: word-count retry 未触发 (0.85 阈值太宽), 短段落无法改善。
+   - 修复: 如果 retry 后仍 < 85% target, 追加 "Further context" 句子引用
+     1-2 个 uncited topically-relevant refs。每个 ref 加 ~30-50 words。
+     比 LLM retry 便宜, 比填充更自然。
+
+v59 真实 generate-full 测试结果:
+- 项目: cmso1hjl90001ryumx14zm8uk (TMC1/TMC2, 800词目标, 6 DB queries)
+- 总耗时: ~226s (section generation) + audit (crashed at window count 20)
+- 6/6 sections 生成成功 ✅
+- 6/6 paragraphs 保留 (v58 只有 1!) ✅✅ — v59-1 修复成功!
+- Total: 885w, 15 unique refs, 35 citation links, 0 placeholders
+
+Section 详情:
+- §1 Introduction: 128w, 5 refs (no retry needed)
+- §2 Discovery/Localization: 170w, 5 refs (DENSITY RETRY 2→3 + injection +2)
+- §3 Structural Biology: 142w, 5 refs (DENSITY RETRY 2→4 + injection +1)
+- §4 Functional Properties: 157w, 8 refs (WC RETRY rejected + WC INJECTION +2) ✅
+- §5 Regulatory Complexes: 157w, 5 refs (WC INJECTION +2) ✅
+- §6 Clinical Implications: 131w, 7 refs (no retry needed)
+
+Retry 统计:
+- DENSITY RETRY: 2 次 (§2: 2→3, §3: 2→4) — budget 2/3 used
+- WORD-COUNT RETRY: 1 次 (§4: 122→108w, rejected -11% < +20%)
+- WORD-COUNT INJECTION: 2 次 (§4: 122→157w, §5: 122→157w) ✅ 新功能!
+- POST-AUDIT INJECTION: 2 次 (§2: 3→5, §3: 4→5)
+- CITATION CAP: 0 次 (no section > 8 except §4=8 exactly)
+- POST-COMPOSE BLOCKING-FIX: applied (max global ref=15, 0 blocking) ✅
+- MERGE THRESHOLD: 80w (avg 133w × 50%) — 0 merged ✅
+
+v59 vs v58 vs v57 对比:
+| 指标               | v57    | v58    | v59    | v59 vs v58 |
+|--------------------|--------|--------|--------|------------|
+| 总词数             | 653w   | 543w   | 885w   | +63% ✅     |
+| 目标词数           | 800w   | 600w   | 800w   | 持平        |
+| 达标率             | 82%    | 91%    | 111%   | +20% ✅✅  |
+| Paragraphs 保留    | 5      | 1      | 6      | +5 ✅✅    |
+| [$REF] 占位符      | 0      | 0      | 0      | 持平 ✅     |
+| blocking errors    | 0      | 0      | 0      | 持平 ✅     |
+| unique refs        | 14     | 5      | 15     | +10 ✅      |
+| DENSITY RETRY      | 3      | 3      | 2      | -1          |
+| WC INJECTION       | N/A    | N/A    | 2      | 新功能 ✅   |
+| 总耗时             | ~209s  | ~329s  | ~226s  | -31% ✅     |
+
+不足之处 / v60 改进建议:
+1. Audit 仍崩溃: window count 达到 20 时服务器 OOM。v59-2 的 skip-at-20
+   逻辑可能没及时触发 (audit 调用已在进行中)。需要:
+   - 在 audit 循环每次迭代开始时检查 window count, 如果 >= 18 就 break
+     整个 audit 循环 (而非只跳过当前 paragraph)
+   - 或在 audit 前主动等待 cool-down 完成
+
+2. §4 有 8 citations (达到 CITATION_MAX 上限): 如果 LLM 再多 cite 1 个,
+   CITATION CAP 就会触发截断。8 是合理的上限, 但可以考虑提高到 10
+   (允许更丰富的引用)。
+
+3. Word-count retry 拒绝率仍高 (1/1 rejected): §4 retry 产生了 108w
+   (比原文 122w 还短!)。retry prompt 可能需要更强的 "EXPAND not shrink"
+   指令。
+
+4. 总引用 35 links / 15 unique: 平均每个 ref 被 cite 2.3 次。可以接受,
+   但 plan 阶段可以确保不同 sections 优先引用不同的 refs (增加多样性)。
+
+5. 达标率 111% (超标): 885w vs 800w target。WC INJECTION 加了 ~70w
+   (§4 +35w, §5 +35w)。可以接受, 但如果需要精确控制字数, 可以在
+   compose 阶段做 word-count trim。
+
+Stage Summary:
+- v59 3 项改进全部实施并提交 (commit e2f6fab)。
+- 真实测试成功: 6/6 paragraphs 保留 (v58 只有 1!), 885w (111% target),
+  0 blocking, 0 placeholders, 15 unique refs。
+- v59-1 (dynamic merge threshold) 是本轮最大改进: 修复了 v58 的致命问题。
+- v59-3 (word-count injection) 新功能验证有效: §4 122→157w, §5 122→157w。
+- Audit 仍因 OOM 崩溃 (window count 20), v60 需要改进 audit 循环退出逻辑。
+- 代码待 push 到 GitHub。
