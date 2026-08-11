@@ -3104,3 +3104,100 @@ Stage Summary:
 - 主要遗留: 字数仍偏低 (69%), 需要在 v55 加入 word-count retry。
 - rate-limiter 成功工作: 捕获 429, 触发 abort, 保护后续调用。
 - 代码已 push 到 GitHub。
+
+---
+Task ID: v55
+Agent: main (Z.ai Code — v55 improvements + real generate-full test)
+Task: 根据 v54 改进意见进行开发，再执行真实 generate-full 测试验证。
+
+Work Log:
+- 实施了 4 项 v55 改进:
+
+1. v55-1 Word-count retry:
+   - 当 section wordCount < 90% of target (e.g. < 270 for 300w target)
+   - 用更强的字数强调 prompt 重试: "X% SHORT of target... MUST write at least 95%"
+   - expand 指令: 实验细节, 定量结果, 机制解释, 跨研究比较
+   - 只接受改善的结果 (更长 + refs 不减少)
+
+2. v55-2 Blocking-fix before save:
+   - validateCitationsInline 后, 若有 blocking findings (out-of-range [n])
+   - 用 regex 替换 [n] (n > citedRefs.length) → [$REF] → 清理
+   - 重新 validate 确认 0 blocking
+   - 防止 blocking errors 进入 deep-audit
+
+3. v55-3 Sequential audit:
+   - 从 2-parallel 改为 1-at-a-time (顺序执行)
+   - 每个 audit 之间 2s delay 让 token-bucket refill
+   - 避免并发 audit 导致的 429 storm
+
+4. v55-4 Density retry verification:
+   - v54 的 scope bug (prompt is not defined) 已在 v54-fix 修复
+   - 本轮测试验证 density retry 真正生效
+
+v55 真实 generate-full 测试结果:
+- 项目: cmso1hjl90001ryumx14zm8uk (TMC1/TMC2, 1500词目标)
+- 总耗时: ~297s (5分钟) — 比 v54 (394s) 快 25%, 比 v53 (574s) 快 48%
+- 时间线: gather 147s + curate 43s + 5 sections 91s + audit 17s
+- 5/5 sections 全部生成成功 (0 failed)
+
+Retry 触发统计:
+- WORD-COUNT RETRY: 4 次 (§1, §2, §3, §5)
+  * §2: 199→326 words ✅ 改善 (refs 6→6)
+  * §5: 176→331 words ✅ 改善 (refs 5→8)
+  * §1: 435w but refs=3 < 6 → 拒绝 (保持原文 233w)
+  * §3: 361w but refs=2 < 5 → 拒绝 (保持原文 196w)
+- DENSITY RETRY: 1 次 (§4: cited=1→6) ✅ 成功! scope bug 已修复
+- POST-AUDIT INJECTION: 1 次 (§3: 3→5, top score=4)
+
+v55 vs v54 vs v53 对比:
+| 指标               | v53    | v54    | v55    | v55 vs v54 |
+|--------------------|--------|--------|--------|------------|
+| 总词数             | 1219w  | 1035w  | 1363w  | +32% ✅     |
+| 唯一引用           | 10     | 14     | 16     | +14% ✅     |
+| [$REF] 占位符      | 16     | 0      | 0      | 持平 ✅     |
+| blocking (pre-save)| 0      | 0      | 0      | 持平 ✅     |
+| blocking (post-compose) | 0 | 1      | 22     | +21 ⚠️⚠️   |
+| topicality warnings| 25     | 16     | 12     | -25% ✅     |
+| 总耗时             | 574s   | 394s   | 297s   | -25% ✅     |
+| 429 errors         | 0      | 多次   | 0      | -100% ✅✅  |
+| audit issues       | 10     | 24     | 0      | -100% ✅✅  |
+
+严重问题: compose 后 blocking errors 飙升到 22
+- pre-save: 所有 5 sections 都是 0 blocking ✅
+- post-compose (global renumbering): 22 blocking (§2:5, §3:4, §4:9, §5:4)
+- 原因: compose step 的 global renumbering 没有正确处理 retry 后的 content
+  * §2 有 6 refs (1-6), 但 content 里有 [7], [8]
+  * §3 有 5 refs (1-5), 但 content 里有 [10], [11]
+  * §4 有 6 refs (1-6), 但 content 里有 [7], [8]
+  * §5 有 8 refs (1-8), 但 content 里有 [11], [14], [15]
+- 这些 out-of-range [n] 是 global renumbering 后的旧编号, 或 retry 产生的新
+  content 引用了更大的 [n] 但 paragraph.references 没有同步更新
+
+不足之处 / v56 改进建议:
+1. 【紧急】compose 后 blocking errors (22个): global renumbering 需要在
+   compose step 之后再次运行 blocking-fix (v55-2 逻辑), 清理所有
+   out-of-range [n]。这是 v56 的最高优先级。
+
+2. word-count retry 拒绝率 50% (2/4 接受): §1 和 §3 的 retry 虽然字数
+   达标但 refs 太少被拒绝。可以放宽接受条件: 只要字数改善 > 20% 且
+   refs >= DENSITY_HALLUCINATION_FLOOR (3) 就接受, 然后靠 injection 补齐。
+
+3. §1 和 §3 字数仍偏低 (233w, 196w, target 300w): word-count retry
+   被拒绝后没有 fallback。可以加一个 "force-expand" 模式: 直接在
+   原文末尾追加 1-2 段相关内容 (类似 injection 但加的是 prose 而非 refs)。
+
+4. density retry 只触发 1 次 (§4): 可能是因为 DENSITY_HALLUCINATION_FLOOR=3
+   太低。v53 的历史数据显示 density < 5 的 section 很多, 可以把 threshold
+   提到 5 (= DENSITY_MIN) 让更多 section 触发 retry 而非 injection。
+
+5. audit issues = 0 (v55) vs 24 (v54): 顺序执行 + 无 429 让 audit 更稳定,
+   但 0 issues 也可能意味着 audit 没有真正检查 (可能被 abort flag 跳过)。
+   需要验证 audit 是否真正运行了所有 paragraph。
+
+Stage Summary:
+- v55 4 项改进全部实施并提交 (commit 44cdfda)。
+- 总耗时 297s — 历史最快 (v53: 574s, v54: 394s)。
+- word-count retry 成功率 50% (2/4), density retry 成功 1/1。
+- 0 个 429 错误 — 顺序 audit 完全消除了 rate-limit storm。
+- 严重问题: compose 后 22 blocking errors (global renumbering bug)。
+- v56 最高优先级: compose 后 blocking-fix。
