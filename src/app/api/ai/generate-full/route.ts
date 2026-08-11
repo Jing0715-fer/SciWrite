@@ -43,7 +43,7 @@ const DENSITY_MIN = 5;                  // v32-1: post-audit injection 阈值
 const DENSITY_HALLUCINATION_FLOOR = 5;  // v56-3: raised from 3→5 — more sections trigger LLM retry (vs just injection)
 const WORD_COUNT_RETRY_THRESHOLD = 0.85; // v58-3: lowered from 0.9→0.85 — small sections (150w) need more tolerance
 const RETRY_BUDGET = 3;                 // v57-2: max total LLM retries (density+wordcount) per pipeline
-const CITATION_MAX = 8;                 // v58-1: programmatic citation cap (LLM may ignore prompt instruction)
+const CITATION_MAX = 10;                 // v60-3: raised from 8→10 — allows richer citation density for longer sections
 
 interface GenerateFullBody {
   projectId: string;
@@ -1218,7 +1218,7 @@ CITATION FORMAT (MANDATORY):
   in the REFERENCE LIST above (${sectionRefCount} entries, [1] to [${sectionRefCount}]).
 - Cite AT LEAST 3 different references per ~500 words (so a 300-word section needs ≥3
   citations; a 600-word section needs ≥5).
-- Cite AT MOST 8 different references per section — do NOT over-cite. Each citation
+- Cite AT MOST 10 different references per section — do NOT over-cite. Each citation
   must add unique value; if two refs make the same point, cite only the more
   authoritative one. Quality over quantity.
 - CRITICAL: Only cite a reference if its title or abstract is DIRECTLY relevant to the
@@ -1554,7 +1554,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             });
             log(`generate: section ${sectionNum} WORD-COUNT RETRY (words=${currentWordCount} < ${Math.floor(wordCountTarget * WORD_COUNT_RETRY_THRESHOLD)})`);
             try {
-              const wcRetryPrompt = `${lastChunkPrompt}\n\nCRITICAL WORD-COUNT RETRY: Your previous output was only ${currentWordCount} words — that is ${Math.round((1 - currentWordCount / wordCountTarget) * 100)}% SHORT of the ${wordCountTarget}-word target. You MUST write at least ${Math.floor(wordCountTarget * 0.95)} words. Expand each paragraph with: (1) specific experimental details (sample size, methodology, controls), (2) quantitative results (fold-changes, p-values, effect sizes), (3) mechanistic explanations linking findings to function, (4) comparisons across multiple studies. Do NOT repeat content — add NEW depth. Write ${Math.ceil(wordCountTarget / 75)} substantial paragraphs of ~75-100 words each.`;
+              const wcRetryPrompt = `${lastChunkPrompt}\n\nCRITICAL WORD-COUNT RETRY: Your previous output was only ${currentWordCount} words — that is ${Math.round((1 - currentWordCount / wordCountTarget) * 100)}% SHORT of the ${wordCountTarget}-word target. You MUST write at least ${Math.floor(wordCountTarget * 0.95)} words.\n\nEXPAND, DO NOT SHRINK: Your retry MUST be LONGER than ${currentWordCount} words. Do NOT summarize or condense — EXPAND each point with: (1) specific experimental details (sample size, methodology, controls), (2) quantitative results (fold-changes, p-values, effect sizes), (3) mechanistic explanations linking findings to function, (4) comparisons across multiple studies. Do NOT repeat content — add NEW depth. Write ${Math.ceil(wordCountTarget / 75)} substantial paragraphs of ~75-100 words each. The minimum acceptable length is ${Math.floor(wordCountTarget * 0.95)} words — anything shorter is a FAILURE.`;
               const { chatWithSessionStream: wcRetryStream } = await import("@/lib/llm-session");
               let wcRetryLastEmit = 0;
               const wcRetryContent = await wcRetryStream(
@@ -2222,23 +2222,24 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               message: `Auditing section ${batchNum}/${totalBatches} (${auditDone}/${generatedParagraphs.length} done, ${auditIssues} issues, ${auditFixed} fixed)...`,
             });
 
-            // v59-2: Increased audit timeout from 120s/240s to 300s. The v58
-            // test showed that audit timed out at 120s even for a single
-            // paragraph, because the rate-limiter cool-down (60s per call)
-            // + multiple LLM batch adjudications per paragraph easily exceed
-            // 120s. 300s gives enough headroom for cool-down + 3-4 LLM calls.
-            // Also skip audit entirely if window count >= 20 (near quota limit).
+            // v60-1: Audit loop early-exit — if window count >= 18 (near quota
+            // limit), BREAK the entire audit loop instead of just skipping the
+            // current paragraph. The v59 test showed that continuing to audit
+            // at window count 20 caused OOM/server crash because each audit
+            // call triggers multiple LLM calls during 60s cool-downs. Breaking
+            // at 18 leaves a small buffer before the hard limit at 20.
             const wc = getWindowCount();
-            if (wc >= 20) {
-              log(`audit: SKIPPED for paragraph ${batchNum} — window count ${wc} >= 20 (near quota limit)`);
-              const results = [null];
-              for (const r of results) {
-                auditDone++;
-              }
-              if (i + 1 < generatedParagraphs.length) {
-                await new Promise((r) => setTimeout(r, 2000));
-              }
-              continue;
+            if (wc >= 18) {
+              log(`audit: BREAKING loop at paragraph ${batchNum}/${totalBatches} — window count ${wc} >= 18 (near quota limit). ${auditDone}/${generatedParagraphs.length} audited, rest skipped.`);
+              send("step", {
+                step: "audit",
+                status: "progress",
+                message: `Audit stopped early at section ${batchNum}/${totalBatches} — rate limit window at ${wc}/20. ${generatedParagraphs.length - auditDone} section(s) not audited (can run manually later).`,
+                earlyExit: true,
+                audited: auditDone,
+                skipped: generatedParagraphs.length - auditDone,
+              });
+              break;
             }
             const auditTimeoutMs = 300000; // v59-2: fixed 300s (was 120/240s)
             let result: any = null;
