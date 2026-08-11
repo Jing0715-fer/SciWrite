@@ -42,7 +42,8 @@ export const maxDuration = 1800; // 30 minutes — streaming keeps connection al
 const DENSITY_MIN = 5;                  // v32-1: post-audit injection 阈值
 const DENSITY_HALLUCINATION_FLOOR = 5;  // v56-3: raised from 3→5 — more sections trigger LLM retry (vs just injection)
 const WORD_COUNT_RETRY_THRESHOLD = 0.85; // v58-3: lowered from 0.9→0.85 — small sections (150w) need more tolerance
-const RETRY_BUDGET = 3;                 // v57-2: max total LLM retries (density+wordcount) per pipeline
+const RETRY_BUDGET_DENSITY = 3;           // v61-2: separate budget for density retries (was shared 3)
+const RETRY_BUDGET_WC = 2;               // v61-2: separate budget for word-count retries (was shared 3)
 const CITATION_MAX = 10;                 // v60-3: raised from 8→10 — allows richer citation density for longer sections
 
 interface GenerateFullBody {
@@ -953,7 +954,8 @@ Output JSON only.`;
         const failedSections: number[] = []; // track which sections failed
         let previousSectionsDigest = ""; // running style/flow reference
         let abortedDueToRateLimit = false; // v53-恢复: track rate-limit abort
-        let retryBudgetUsed = 0; // v57-2: track total LLM retries (density+wordcount)
+        let retryBudgetDensityUsed = 0; // v61-2: track density retries separately
+        let retryBudgetWcUsed = 0;     // v61-2: track word-count retries separately
 
         // v53-恢复: Pre-flight quota check — if the cached quota state says
         // we have 0 calls left today, bail out BEFORE doing any LLM work.
@@ -1468,9 +1470,9 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             citedRefs.length < DENSITY_HALLUCINATION_FLOOR &&
             sectionRefs.length >= DENSITY_HALLUCINATION_FLOOR &&
             !isAborted() &&
-            retryBudgetUsed < RETRY_BUDGET // v57-2: stop retrying after budget exhausted
+            retryBudgetDensityUsed < RETRY_BUDGET_DENSITY // v61-2: separate density budget
           ) {
-            retryBudgetUsed++; // v57-2: consume one retry from the budget
+            retryBudgetDensityUsed++; // v61-2: consume from density budget
             send("step", {
               step: "generate",
               status: "progress",
@@ -1541,9 +1543,9 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           if (
             currentWordCount < Math.floor(wordCountTarget * WORD_COUNT_RETRY_THRESHOLD) &&
             !isAborted() &&
-            retryBudgetUsed < RETRY_BUDGET // v57-2: stop retrying after budget exhausted
+            retryBudgetWcUsed < RETRY_BUDGET_WC // v61-2: separate WC budget
           ) {
-            retryBudgetUsed++; // v57-2: consume one retry from the budget
+            retryBudgetWcUsed++; // v61-2: consume from WC budget
             send("step", {
               step: "generate",
               status: "progress",
@@ -1591,17 +1593,15 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               const wcRetryCleaned = sanitizeSectionContent(wcRetryContent);
               const wcRetryResult = renumberByAppearance(wcRetryCleaned, sectionRefs);
               const wcRetryWordCount = countWords(wcRetryResult.content);
-              // v56-2: Relaxed acceptance — accept the retry if:
-              //   1. Word count improved by > 20% (was: just "longer"), AND
-              //   2. Refs >= DENSITY_HALLUCINATION_FLOOR (3) — was: >= citedRefs.length.
-              //      This allows accepting a retry that has fewer refs than the
-              //      original, as long as it has at least 3 (the post-audit
-              //      injection will top it up to DENSITY_MIN=5).
-              //   This fixes v55's 50% rejection rate (§1: 435w/3refs rejected,
-              //   §3: 361w/2refs rejected) — those retries were long enough but
-              //   had fewer refs than the original.
+              // v61-3: Further relaxed WC retry acceptance — accept if:
+              //   1. Word count improved by > 20%, AND
+              //   2. Refs >= 3 (hard floor, was DENSITY_HALLUCINATION_FLOOR=5).
+              //      The v60 test showed §2 retry (170w, refs=1) was rejected
+              //      even though it was +35% longer. With refs>=3 accepted,
+              //      post-audit injection only needs to add 2 more to reach 5.
+              //      This dramatically improves retry acceptance rate.
               const wcImprovementPct = (wcRetryWordCount - currentWordCount) / currentWordCount;
-              const wcRefsAcceptable = wcRetryResult.references.length >= DENSITY_HALLUCINATION_FLOOR;
+              const wcRefsAcceptable = wcRetryResult.references.length >= 3; // v61-3: lowered from 5 to 3
               if (
                 wcImprovementPct > 0.2 &&
                 wcRefsAcceptable
@@ -2222,19 +2222,19 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               message: `Auditing section ${batchNum}/${totalBatches} (${auditDone}/${generatedParagraphs.length} done, ${auditIssues} issues, ${auditFixed} fixed)...`,
             });
 
-            // v60-1: Audit loop early-exit — if window count >= 18 (near quota
-            // limit), BREAK the entire audit loop instead of just skipping the
-            // current paragraph. The v59 test showed that continuing to audit
-            // at window count 20 caused OOM/server crash because each audit
-            // call triggers multiple LLM calls during 60s cool-downs. Breaking
-            // at 18 leaves a small buffer before the hard limit at 20.
+            // v61-1: Audit loop early-exit — break at window count >= 15
+            // (lowered from 18). The v60 test showed that the server crashed
+            // at window count 16-17 because the audit LLM call was already
+            // in-flight when the count crossed 15. Breaking at 15 (before
+            // cool-down starts at 15) ensures we exit BEFORE the rate-limiter
+            // starts imposing 60s cool-downs that cause memory buildup.
             const wc = getWindowCount();
-            if (wc >= 18) {
-              log(`audit: BREAKING loop at paragraph ${batchNum}/${totalBatches} — window count ${wc} >= 18 (near quota limit). ${auditDone}/${generatedParagraphs.length} audited, rest skipped.`);
+            if (wc >= 15) {
+              log(`audit: BREAKING loop at paragraph ${batchNum}/${totalBatches} — window count ${wc} >= 15 (cool-down threshold). ${auditDone}/${generatedParagraphs.length} audited, rest skipped.`);
               send("step", {
                 step: "audit",
                 status: "progress",
-                message: `Audit stopped early at section ${batchNum}/${totalBatches} — rate limit window at ${wc}/20. ${generatedParagraphs.length - auditDone} section(s) not audited (can run manually later).`,
+                message: `Audit stopped early at section ${batchNum}/${totalBatches} — rate limit window at ${wc}/15. ${generatedParagraphs.length - auditDone} section(s) not audited (can run manually later).`,
                 earlyExit: true,
                 audited: auditDone,
                 skipped: generatedParagraphs.length - auditDone,
