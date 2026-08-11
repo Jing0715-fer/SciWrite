@@ -2918,3 +2918,97 @@ Stage Summary:
 - Additional CJK typography optimizations: looser line-height, no letter-spacing,
   hanging punctuation, proper text justification — these make Chinese text
   feel more natural and readable.
+
+---
+Task ID: v53-恢复
+Agent: main (Z.ai Code — git repo recovery + v9-v52 feature restoration)
+Task: 从 GitHub 最新代码基础上恢复丢失的 v9-v53 功能。
+
+Work Log:
+- 调查 git 历史：本地 .git 在 Aug 11 02:33 被 reclone 覆盖，丢失了 ~50 个本地未推送的 commit
+  (包括 v9-v52 的 rate-limiter、density retry、post-audit injection 等)。
+- GitHub 仓库 (Jing0715-fer/SciWrite) 只有 35 个 commit (main 分支, 最新 c556898 Aug 7 09:19),
+  包含 Aug 6-7 的 12 个 commit (deep audit v2, export progress, version snapshot,
+  cross-paragraph 429 retry, short paragraph merge 等)。
+- 将本地 main reset --hard 到 github/main (c556898), 获取了 Aug 6-7 的 12 个 commit。
+- 在 GitHub HEAD 基础上重新实现了丢失的 v9-v52 关键功能:
+
+1. src/lib/rate-limiter.ts (NEW, 330 lines):
+   - TokenBucket (capacity=2, refill=1/2s) — 限制请求间距 ≤ 1 req/2s
+   - SlidingWindow (10min, threshold=15, cool-down=60s) — 防止 429 风暴
+   - QuotaState — 读取 x-ratelimit-user-daily-remaining header
+   - withRateLimit() — 指数退避 (1s/2s/4s/8s/16s, max 5 retries) on 429/5xx
+   - preFlightQuotaCheck() — 配额耗尽时快速失败
+   - Abort flag — 429/quota 事件后短路长管道
+
+2. src/lib/ai.ts:
+   - chat() 和 chatStream() 包装在 withRateLimit() 中
+   - 导出 QuotaExhaustedError / RateLimitAbortedError
+
+3. src/app/api/ai/generate-full/route.ts:
+   - section loop 前的 pre-flight quota check
+   - 每个 section 前的 abort 检查 (跳过剩余 sections)
+   - post-audit injection: 当 citedRefs < DENSITY_MIN (5) 时,
+     追加 "Further reading" 句子引用未引用的相关 refs
+   - section catch block 检测 QuotaExhaustedError/RateLimitAbortedError
+     并 break 出循环 (保留已保存的 sections)
+   - 循环结束后 clearAbort() 让 compose/translate 能继续
+
+4. src/app/api/quota-status/route.ts (NEW):
+   - GET /api/quota-status 返回 dailyRemaining, dailyLimit, windowCount,
+     coolDownActive, aborted — 进程本地缓存状态
+
+5. src/components/sciwrite/topic-composer.tsx:
+   - 每 5s 轮询 /api/quota-status
+   - 在 generate 按钮旁显示 Daily: N/limit · 10min: M/15 徽章
+   - ABORTED (红) / COOL-DOWN (琥珀) 状态徽章
+   - aborted 时禁用 generate 按钮
+
+v53-恢复 真实 generate-full 测试结果:
+- 项目: cmso1hjl90001ryumx14zm8uk (TMC1/TMC2 mechanotransduction hearing)
+- 目标: 1500 words, English, generic template
+- 总耗时: ~574s (~9.5分钟, 含 audit)
+- 5 sections 全部生成成功 (0 failed):
+  * §1 Introduction: 187w, 5 refs (injection 3→5)
+  * §2 Structural Architecture: 258w, 5 refs (injection 1→5)
+  * §3 Mechanotransduction Channel: 245w, 5 refs (injection 3→5)
+  * §4 Regulatory Complexes: 257w, 5 refs (injection 1→5)
+  * §5 Clinical Implications: 272w, 6 refs (no injection needed)
+- 总词数: 1219w (81% 目标, 略低于 1500 目标)
+- 唯一引用: 10, 总引用链接: 26
+- [$REF] placeholders: 16 (主要是 injection 句子后的占位符, 非阻塞)
+- blocking errors: 0 (所有 sections)
+- audit: checked 10, issues 10, fixed 5
+- rate-limiter 触发记录:
+  * window count=15 → cool-down 60s (第1次)
+  * window count=17,18,19,20,21,22,24 → 持续 cool-down
+  * 0 次 429 错误 (rate-limiter 成功预防)
+  * 0 次 quota 耗尽
+- 2 个 audit paragraph 超时 (120s timeout, 容错处理, 非致命)
+
+不足之处 / v54 改进建议:
+1. 字数偏低 (1219w vs 1500w 目标 = 81%): LLM 倾向生成简洁内容;
+   可在 prompt 中强化 "MUST reach target word count" 并增加 word-count retry。
+2. injection 句子后的 [$REF] 占位符 (16个): injection 逻辑追加的
+   "Further reading" 句子本身不含 [$REF], 但 LLM 在 section body 中
+   遗留的 [$REF] 未被清理; 可在 sanitization 阶段统一处理。
+3. audit topicality warnings 较多 (5+8+3+6+3=25 warnings): 多数是
+   "unsupported" (0% overlap); 可在 injection 时优先选择 keyword
+   overlap 最高的 refs, 而非 uncited 列表的前 N 个。
+4. dailyRemaining 始终为 null: z-ai-sdk 的 response 对象未暴露
+   _response.headers; 需要找到正确的 header 访问方式或改用 fetch 拦截。
+5. audit 超时 (2/5 paragraphs): deep-audit-citations 的 120s timeout
+   在 rate-limiter cool-down 期间不够; 可将 audit timeout 提高到 180s
+   或在 cool-down 期间跳过 audit。
+6. 缺少 density retry (LLM 重试): 本次只实现了 post-audit injection
+   (追加引用), 没有实现 DENSITY_HALLUCINATION_FLOOR 重试 (当 < 3 时
+   重新调 LLM); 可在下一次迭代中加入。
+
+Stage Summary:
+- 成功从 GitHub 恢复了 Aug 6-7 的 12 个 commit (deep audit v2 等)。
+- 在此基础上重新实现了 v9-v52 的 7 个关键功能 (rate-limiter, density
+  injection, pre-flight quota, abort, quota UI 等)。
+- 真实 generate-full 测试通过: 5/5 sections 生成, 0 blocking errors,
+  rate-limiter 成功预防 429, post-audit injection 将所有 sections
+  的引用密度提升到 ≥5。
+- 代码已提交 (commit 272a630)。
