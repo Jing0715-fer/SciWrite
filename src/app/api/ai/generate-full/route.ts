@@ -41,8 +41,9 @@ export const maxDuration = 1800; // 30 minutes — streaming keeps connection al
  */
 const DENSITY_MIN = 5;                  // v32-1: post-audit injection 阈值
 const DENSITY_HALLUCINATION_FLOOR = 5;  // v56-3: raised from 3→5 — more sections trigger LLM retry (vs just injection)
-const WORD_COUNT_RETRY_THRESHOLD = 0.9; // v55-1: word-count retry 触发阈值 (90% of target)
+const WORD_COUNT_RETRY_THRESHOLD = 0.85; // v58-3: lowered from 0.9→0.85 — small sections (150w) need more tolerance
 const RETRY_BUDGET = 3;                 // v57-2: max total LLM retries (density+wordcount) per pipeline
+const CITATION_MAX = 8;                 // v58-1: programmatic citation cap (LLM may ignore prompt instruction)
 
 interface GenerateFullBody {
   projectId: string;
@@ -1679,6 +1680,46 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             log(`generate: section ${sectionNum} cleaned ${refPlaceholderCount} [\$REF] placeholder(s)`);
           }
 
+          // v58-1: Programmatic citation cap — the prompt says "at most 8" but
+          // the LLM may ignore it (v57 test: §1 had 9 citations). If citedRefs
+          // exceeds CITATION_MAX, truncate it AND remove the excess [n] markers
+          // from the body. This keeps only [1]..[CITATION_MAX] in the content.
+          let citationCapped = false;
+          if (citedRefs.length > CITATION_MAX) {
+            const excessStart = CITATION_MAX + 1;
+            const excessEnd = citedRefs.length;
+            // Remove [n] where n > CITATION_MAX from the body (singly or in lists)
+            const capRegex = /\[(\d+(?:[,\-–]\s*\d+)*)\]/g;
+            renumberedContent = renumberedContent.replace(capRegex, (match, inner: string) => {
+              const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
+                const rangeMatch = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+                if (rangeMatch) {
+                  const arr = [];
+                  for (let n = parseInt(rangeMatch[1]); n <= parseInt(rangeMatch[2]); n++) arr.push(n);
+                  return arr;
+                }
+                const n = parseInt(s);
+                return isNaN(n) ? [] : [n];
+              });
+              const kept = nums.filter((n: number) => n <= CITATION_MAX);
+              if (kept.length === 0) return ""; // drop citation entirely
+              if (kept.length < nums.length) return `[${kept.join(",")}]`;
+              return match;
+            });
+            // Truncate citedRefs to CITATION_MAX
+            citedRefs = citedRefs.slice(0, CITATION_MAX);
+            citationCapped = true;
+            log(`generate: section ${sectionNum} CITATION CAP: removed [${excessStart}-${excessEnd}], kept [1-${CITATION_MAX}]`);
+            send("step", {
+              step: "generate",
+              status: "progress",
+              section: sectionNum,
+              total: sections.length,
+              message: `Section ${sectionNum}: capped citations to ${CITATION_MAX} (was ${excessEnd}).`,
+              citationCapped: true,
+            });
+          }
+
           // Layer 1 — adversarial pre-save audit on the renumbered section.
           // Logs topicality warnings (suspect/unsupported) for the audit trail
           // without blocking the save. Blocking findings (out-of-range /
@@ -2080,7 +2121,25 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         // which triggered abort and left some paragraphs un-audited.
         // Sequential execution is slower but much more reliable.
         // The audit is non-blocking: failures don't abort the pipeline.
-        if (generatedParagraphs.length > 0) {
+        //
+        // v58-2: Memory guard — the audit phase makes multiple LLM calls per
+        // paragraph (batch adjudication), which can cause OOM in low-memory
+        // environments (3.9Gi RAM). Skip audit if available memory < 500MiB
+        // to prevent server crash. The article is still saved; audit can be
+        // run manually later via the UI.
+        const osModule = await import("os");
+        const memAvailable = osModule.freemem();
+        const MEM_THRESHOLD = 500 * 1024 * 1024; // 500 MiB
+        if (generatedParagraphs.length > 0 && memAvailable < MEM_THRESHOLD) {
+          log(`audit: SKIPPED — low memory (available=${Math.round(memAvailable / 1024 / 1024)}MiB < ${MEM_THRESHOLD / 1024 / 1024}MiB threshold)`);
+          send("step", {
+            step: "audit",
+            status: "skipped",
+            message: `Citation audit skipped due to low memory (${Math.round(memAvailable / 1024 / 1024)}MiB available). You can run it manually from the Citation Health tab.`,
+            skipped: true,
+            reason: "low-memory",
+          });
+        } else if (generatedParagraphs.length > 0) {
           send("step", {
             step: "audit",
             status: "started",
