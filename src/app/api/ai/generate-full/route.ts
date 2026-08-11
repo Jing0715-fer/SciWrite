@@ -24,9 +24,12 @@ export const maxDuration = 1800; // 30 minutes — streaming keeps connection al
  *  - DENSITY_HALLUCINATION_FLOOR: 当 < 3 时认为 LLM 没好好生成，触发重试。
  *  - ABORT_ON_RATE_LIMIT: 当 QuotaExhaustedError / RateLimitAbortedError
  *    被抛出时，立即停止后续 section 生成并保存已生成内容。
+ *  - WORD_COUNT_RETRY_THRESHOLD: v55-1 — 当 section 实际词数 < 目标的 90%
+ *    时, 用更强的字数强调 prompt 重试一次。只接受改善的结果。
  */
 const DENSITY_MIN = 5;                  // v32-1: post-audit injection 阈值
 const DENSITY_HALLUCINATION_FLOOR = 3;  // v40-1: density retry 触发阈值
+const WORD_COUNT_RETRY_THRESHOLD = 0.9; // v55-1: word-count retry 触发阈值 (90% of target)
 
 interface GenerateFullBody {
   projectId: string;
@@ -1507,6 +1510,83 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             }
           }
 
+          // v55-1: Word-count retry — if the section is significantly shorter
+          // than target (< 90% of sectionTargetWords), retry with a stronger
+          // word-count-emphasis prompt. Only accept the retry if it's longer.
+          // This addresses the v54 test finding where sections averaged 207w
+          // against a 300w target (69%).
+          let wordCountRetried = false;
+          const currentWordCount = countWords(renumberedContent);
+          const wordCountTarget = sectionTargetWords;
+          if (
+            currentWordCount < Math.floor(wordCountTarget * WORD_COUNT_RETRY_THRESHOLD) &&
+            !isAborted()
+          ) {
+            send("step", {
+              step: "generate",
+              status: "progress",
+              section: sectionNum,
+              total: sections.length,
+              message: `Section ${sectionNum}: word count ${currentWordCount} < ${Math.floor(wordCountTarget * WORD_COUNT_RETRY_THRESHOLD)} (90% of ${wordCountTarget}) — retrying with stronger word-count emphasis...`,
+              wordCountRetry: true,
+            });
+            log(`generate: section ${sectionNum} WORD-COUNT RETRY (words=${currentWordCount} < ${Math.floor(wordCountTarget * WORD_COUNT_RETRY_THRESHOLD)})`);
+            try {
+              const wcRetryPrompt = `${lastChunkPrompt}\n\nCRITICAL WORD-COUNT RETRY: Your previous output was only ${currentWordCount} words — that is ${Math.round((1 - currentWordCount / wordCountTarget) * 100)}% SHORT of the ${wordCountTarget}-word target. You MUST write at least ${Math.floor(wordCountTarget * 0.95)} words. Expand each paragraph with: (1) specific experimental details (sample size, methodology, controls), (2) quantitative results (fold-changes, p-values, effect sizes), (3) mechanistic explanations linking findings to function, (4) comparisons across multiple studies. Do NOT repeat content — add NEW depth. Write ${Math.ceil(wordCountTarget / 75)} substantial paragraphs of ~75-100 words each.`;
+              const { chatWithSessionStream: wcRetryStream } = await import("@/lib/llm-session");
+              let wcRetryLastEmit = 0;
+              const wcRetryContent = await wcRetryStream(
+                projectId,
+                wcRetryPrompt,
+                {
+                  system: lastChunkSystem,
+                  temperature: 0.65,
+                  thinking: false,
+                  taskType: "generate",
+                  maxTokens,
+                  metadata: {
+                    step: "generate-wordcount-retry",
+                    section: sectionNum,
+                    sectionTitle: section.title,
+                  },
+                },
+                (delta, accumulated) => {
+                  const now = Date.now();
+                  if (now - wcRetryLastEmit > 100) {
+                    wcRetryLastEmit = now;
+                    send("step", {
+                      step: "generate",
+                      status: "streaming",
+                      section: sectionNum,
+                      total: sections.length,
+                      delta: delta.slice(-200),
+                      accumulatedLength: accumulated.length,
+                      message: `Section ${sectionNum} word-count-retry streaming... (${accumulated.length} chars)`,
+                    });
+                  }
+                },
+              );
+              const wcRetryCleaned = sanitizeSectionContent(wcRetryContent);
+              const wcRetryResult = renumberByAppearance(wcRetryCleaned, sectionRefs);
+              const wcRetryWordCount = countWords(wcRetryResult.content);
+              // Only accept the retry if it's meaningfully longer AND has at least
+              // as many citations (don't sacrifice density for length).
+              if (
+                wcRetryWordCount > currentWordCount &&
+                wcRetryResult.references.length >= citedRefs.length
+              ) {
+                log(`generate: section ${sectionNum} WORD-COUNT RETRY improved ${currentWordCount}→${wcRetryWordCount} words (refs ${citedRefs.length}→${wcRetryResult.references.length})`);
+                renumberedContent = wcRetryResult.content;
+                citedRefs = wcRetryResult.references;
+                wordCountRetried = true;
+              } else {
+                log(`generate: section ${sectionNum} WORD-COUNT RETRY did not improve enough (${wcRetryWordCount} words, refs=${wcRetryResult.references.length}) — keeping original`);
+              }
+            } catch (wcRetryErr: any) {
+              log(`generate: section ${sectionNum} WORD-COUNT RETRY failed: ${wcRetryErr?.message?.slice(0, 100)}`);
+            }
+          }
+
           if (
             citedRefs.length < DENSITY_MIN &&
             sectionRefs.length > citedRefs.length
@@ -1574,29 +1654,64 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           // without blocking the save. Blocking findings (out-of-range /
           // missing) should not occur here because sanitization already
           // replaced them with [$REF], but we check defensively.
-          const sectionFindings = validateCitationsInline(
+          let sectionFindings = validateCitationsInline(
             renumberedContent,
             citedRefs as any
           );
           if (sectionFindings.length > 0) {
-            const blocking = sectionFindings.filter(
+            let blocking = sectionFindings.filter(
               (f) => f.verdict === "out-of-range" || f.verdict === "missing"
             ).length;
             const suspect = sectionFindings.filter(
               (f) => f.verdict === "suspect" || f.verdict === "unsupported"
             ).length;
+
+            // v55-2: If there are blocking findings (out-of-range [n] or
+            // missing citations), fix them BEFORE saving. Out-of-range [n]
+            // markers (where n > citedRefs.length) are replaced with [$REF]
+            // and then cleaned. This prevents blocking errors from reaching
+            // the deep-audit stage (which would fail to find the paragraph
+            // or produce spurious mismatches).
+            if (blocking > 0) {
+              log(`generate: section ${sectionNum} fixing ${blocking} blocking finding(s) before save`);
+              // Replace any [n] where n > citedRefs.length with [$REF]
+              const maxRefIdx = citedRefs.length;
+              renumberedContent = renumberedContent.replace(
+                /\[(\d+)\]/g,
+                (match, numStr) => {
+                  const n = parseInt(numStr, 10);
+                  if (n > maxRefIdx || n < 1) {
+                    return "[$REF]";
+                  }
+                  return match;
+                },
+              );
+              // Clean the [$REF] placeholders
+              renumberedContent = renumberedContent.replace(/\s*\[\$REF\]/g, "");
+              // Re-validate to confirm blocking is resolved
+              sectionFindings = validateCitationsInline(
+                renumberedContent,
+                citedRefs as any
+              );
+              const newBlocking = sectionFindings.filter(
+                (f) => f.verdict === "out-of-range" || f.verdict === "missing"
+              ).length;
+              log(`generate: section ${sectionNum} after blocking-fix: ${blocking}→${newBlocking} blocking`);
+              blocking = newBlocking;
+            }
+
             log(
-              `generate: section ${sectionNum} citation audit — ${blocking} blocking, ${suspect} topicality warning(s) (density=${citedRefs.length}${densityRetried ? ", retried" : ""}${refPlaceholderCount > 0 ? `, cleaned ${refPlaceholderCount} [\$REF]` : ""})`
+              `generate: section ${sectionNum} citation audit — ${blocking} blocking, ${suspect} topicality warning(s) (density=${citedRefs.length}${densityRetried ? ", retried" : ""}${wordCountRetried ? ", wc-retried" : ""}${refPlaceholderCount > 0 ? `, cleaned ${refPlaceholderCount} [\$REF]` : ""})`
             );
             send("step", {
               step: "generate",
               status: "progress",
               section: sectionNum,
               total: sections.length,
-              message: `Section ${sectionNum} audit: ${blocking} blocking, ${suspect} warning(s). Density: ${citedRefs.length} citations${densityRetried ? " (after retry)" : ""}.`,
+              message: `Section ${sectionNum} audit: ${blocking} blocking, ${suspect} warning(s). Density: ${citedRefs.length} citations${densityRetried ? " (density-retried)" : ""}${wordCountRetried ? " (wc-retried)" : ""}.`,
             });
           } else {
-            log(`generate: section ${sectionNum} audit clean (density=${citedRefs.length}${densityRetried ? ", retried" : ""})`);
+            log(`generate: section ${sectionNum} audit clean (density=${citedRefs.length}${densityRetried ? ", retried" : ""}${wordCountRetried ? ", wc-retried" : ""})`);
           }
 
           const paragraph = await db.paragraph.create({
@@ -1881,65 +1996,71 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         }
         log(`compose: updated ${renumberedContents.length} paragraphs with globally renumbered citations`);
 
-        // ============ STEP 7.5: Batch deep citation audit (parallel) ============
+        // ============ STEP 7.5: Batch deep citation audit ============
         // After ALL sections are generated + composed, run the deep citation
-        // audit on each paragraph. Uses PARALLEL execution (3 at a time) to
-        // reduce total audit time. Uses 2-parallel (down from 3 to avoid 429
-        // rate limits) with a 3s delay between batches.
+        // audit on each paragraph.
+        // v55-3: Changed from 2-parallel to SEQUENTIAL (1 at a time) to avoid
+        // 429 storms. The v54 test showed that 2-parallel audit + the rate-
+        // limiter's token-bucket (1 req/2s) caused 429 storms during audit,
+        // which triggered abort and left some paragraphs un-audited.
+        // Sequential execution is slower but much more reliable.
         // The audit is non-blocking: failures don't abort the pipeline.
         if (generatedParagraphs.length > 0) {
           send("step", {
             step: "audit",
             status: "started",
-            message: `Auto-auditing citations for ${generatedParagraphs.length} sections (2 parallel)...`,
+            message: `Auto-auditing citations for ${generatedParagraphs.length} sections (sequential)...`,
           });
-          log(`audit: starting parallel batch deep audit for ${generatedParagraphs.length} paragraphs`);
+          log(`audit: starting sequential deep audit for ${generatedParagraphs.length} paragraphs`);
           let auditChecked = 0;
           let auditIssues = 0;
           let auditFixed = 0;
           let auditDone = 0;
 
-          // Process paragraphs in batches of 2 (parallel within each batch)
-          // to avoid 429 rate limits from the LLM provider.
-          const PARALLEL_SIZE = 2;
-          for (let i = 0; i < generatedParagraphs.length; i += PARALLEL_SIZE) {
-            const batch = generatedParagraphs.slice(i, i + PARALLEL_SIZE);
-            const batchNum = Math.floor(i / PARALLEL_SIZE) + 1;
-            const totalBatches = Math.ceil(generatedParagraphs.length / PARALLEL_SIZE);
+          // v55-3: Process paragraphs SEQUENTIALLY (1 at a time) to avoid 429.
+          // Each deep-audit-citations call internally makes multiple LLM calls
+          // (batch adjudication), so parallelism at this level multiplies the
+          // LLM load and overwhelms the rate limiter.
+          for (let i = 0; i < generatedParagraphs.length; i++) {
+            const p = generatedParagraphs[i];
+            const batchNum = i + 1;
+            const totalBatches = generatedParagraphs.length;
             send("step", {
               step: "audit",
               status: "progress",
-              message: `Auditing batch ${batchNum}/${totalBatches} (${auditDone}/${generatedParagraphs.length} done, ${auditIssues} issues, ${auditFixed} fixed)...`,
+              message: `Auditing section ${batchNum}/${totalBatches} (${auditDone}/${generatedParagraphs.length} done, ${auditIssues} issues, ${auditFixed} fixed)...`,
             });
 
-            // Run this batch in parallel
             // v54-4: When rate-limiter cool-down is active (>15 calls in 10min),
             // each audit call may wait up to 60s before even starting. Bump the
             // timeout from 120s to 240s during cool-down to avoid spurious
             // "aborted due to timeout" failures that waste the audit.
             const auditTimeoutMs = getWindowCount() >= 15 ? 240000 : 120000;
-            const results = await Promise.allSettled(
-              batch.map((p) =>
-                fetch(
-                  `http://localhost:3000/api/paragraphs/${p.id}/deep-audit-citations?trigger=auto`,
-                  { method: "POST", signal: AbortSignal.timeout(auditTimeoutMs) }
-                ).then((r) => r.ok ? r.json() : null)
-              )
-            );
+            let result: any = null;
+            try {
+              const r = await fetch(
+                `http://localhost:3000/api/paragraphs/${p.id}/deep-audit-citations?trigger=auto`,
+                { method: "POST", signal: AbortSignal.timeout(auditTimeoutMs) }
+              );
+              if (r.ok) result = await r.json();
+            } catch (auditErr: any) {
+              log(`audit: paragraph ${batchNum} failed: ${auditErr?.message?.slice(0, 80) || "unknown"}`);
+            }
+            const results = result ? [result] : [null];
 
-            for (const result of results) {
+            for (const r of results) {
               auditDone++;
-              if (result.status === "fulfilled" && result.value) {
-                auditChecked += result.value.checked || 0;
-                auditIssues += result.value.issues || 0;
-                auditFixed += result.value.fixed || 0;
-              } else if (result.status === "rejected") {
-                log(`audit: paragraph failed: ${result.reason?.message?.slice(0, 80) || "unknown"}`);
+              if (r) {
+                auditChecked += r.checked || 0;
+                auditIssues += r.issues || 0;
+                auditFixed += r.fixed || 0;
               }
             }
-            // 3s delay between batches to avoid 429 rate limits
-            if (i + PARALLEL_SIZE < generatedParagraphs.length) {
-              await new Promise((r) => setTimeout(r, 3000));
+            // v55-3: Small delay between sequential audits to let the rate-
+            // limiter's token bucket refill (1 token / 2s). This keeps the
+            // window count from spiking and triggering 60s cool-downs.
+            if (i + 1 < generatedParagraphs.length) {
+              await new Promise((r) => setTimeout(r, 2000));
             }
           }
 
