@@ -3466,3 +3466,98 @@ Stage Summary:
 - v59-3 (word-count injection) 新功能验证有效: §4 122→157w, §5 122→157w。
 - Audit 仍因 OOM 崩溃 (window count 20), v60 需要改进 audit 循环退出逻辑。
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v60
+Agent: main (Z.ai Code — v60 improvements + real generate-full test)
+Task: 根据 v59 改进意见进行开发，再执行真实 generate-full 测试验证。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (49 commits, 无丢失)。
+- 实施了 3 项 v60 改进:
+
+1. v60-1 Audit loop early-exit@18:
+  - v59 问题: window count 达到 20 时服务器 OOM 崩溃, v59-2 的 skip-at-20
+    (continue) 没及时触发。
+  - 修复: 改为 break-at-18 — 当 window count >= 18 时, break 整个 audit
+    循环 (而非只跳过当前 paragraph)。发送 'earlyExit' 事件, 报告
+    audited/skipped 数量。
+
+2. v60-2 WC retry expand-not-shrink prompt:
+  - v59 问题: §4 retry 产生了 108w (比原文 122w 还短!)。
+  - 修复: prompt 新增 "EXPAND, DO NOT SHRINK: Your retry MUST be LONGER
+    than X words" + "minimum acceptable length is X words — anything
+    shorter is a FAILURE"。
+
+3. v60-3 CITATION_MAX 8→10:
+  - v59 §4 有 8 citations (达到旧上限)。
+  - 修复: 提高到 10, prompt 也更新为 "at most 10"。
+
+v60 真实 generate-full 测试结果:
+- 项目: cmso1hjl90001ryumx14zm8uk (TMC1/TMC2, 800词目标, 6 DB queries)
+- 总耗时: ~181s (section generation) + audit (crashed at window 16-17)
+- 5/5 sections 生成成功 ✅
+- 5/5 paragraphs 保留 ✅
+- Total: 785w (98% target), 12 unique refs, 26 citation links, 0 placeholders
+
+Section 详情:
+- §1 Introduction: 133w, 6 refs (DENSITY RETRY 1→6)
+- §2 Structural Biology: 161w, 5 refs (DENSITY RETRY 1→3 + WC RETRY rejected + WC INJECTION +2)
+- §3 Mechanism: 152w, 5 refs (POST-AUDIT INJECTION +4)
+- §4 Regulatory Complexes: 168w, 5 refs (WC INJECTION +2 + POST-AUDIT INJECTION +2)
+- §5 Functional Implications: 171w, 5 refs (WC INJECTION +2 + POST-AUDIT INJECTION +1)
+
+Retry 统计:
+- DENSITY RETRY: 2 次 (§1: 1→6, §2: 1→3) — budget 2/3 used
+- WORD-COUNT RETRY: 1 次 (§2: 126→170w +35%, rejected refs=1<5)
+  * v60-2 expand prompt 生效: retry 170w > original 126w (v59 §4 retry 108w < 122w)
+- WORD-COUNT INJECTION: 3 次 (§2: 126→161w, §4: 117→155w, §5: 124→162w) ✅
+- POST-AUDIT INJECTION: 3 次 (§3: 1→5, §4: 3→5, §5: 4→5)
+- CITATION CAP: 0 次 (max was §1=6, well under 10) ✅
+- POST-COMPOSE BLOCKING-FIX: applied (max global ref=12, 0 blocking) ✅
+- MERGE THRESHOLD: 80w (avg 160w × 50%) — 0 merged ✅
+
+v60 vs v59 vs v58 对比:
+| 指标               | v58    | v59    | v60    | v60 vs v59 |
+|--------------------|--------|--------|--------|------------|
+| 总词数             | 543w   | 885w   | 785w   | -11%        |
+| 目标词数           | 600w   | 800w   | 800w   | 持平        |
+| 达标率             | 91%    | 111%   | 98%    | -13%        |
+| Paragraphs 保留    | 1      | 6      | 5      | -1          |
+| [$REF] 占位符      | 0      | 0      | 0      | 持平 ✅     |
+| blocking errors    | 0      | 0      | 0      | 持平 ✅     |
+| unique refs        | 5      | 15     | 12     | -3          |
+| DENSITY RETRY      | 3      | 2      | 2      | 持平        |
+| WC INJECTION       | N/A    | 2      | 3      | +1 ✅       |
+| WC RETRY 改善      | N/A    | -11%   | +35%   | v60-2 ✅    |
+| 总耗时             | ~329s  | ~226s  | ~181s  | -20% ✅     |
+
+不足之处 / v61 改进建议:
+1. Audit 仍崩溃 (window 16-17): v60-1 break-at-18 没机会触发, 因为
+   服务器在 window 16→17 的 audit LLM 调用期间 OOM。需要:
+   - 降低 break 阈值到 15 (在 cool-down 开始前就退出)
+   - 或在 audit 循环开始前检查 window count, 如果 > 10 就直接跳过整个 audit
+
+2. 达标率 98% (785w vs 800w): 接近目标但略低。§1 (133w) 和 §3 (152w)
+   低于 160w target。可以在 compose 阶段做 word-count balancing。
+
+3. unique refs 12 (v59 有 15): 可能是 DB queries 减少 (6 vs 8) 导致
+   refs pool 更小。不影响质量, 但多样性略低。
+
+4. WC RETRY 仍被拒绝 (1/1): §2 retry 170w +35% 但 refs=1 < 5 被拒。
+   v60-2 expand prompt 让 retry 更长了 (170w vs v59 的 108w), 但 refs
+   仍不足。可以放宽接受条件: refs >= 3 (而非 5), 让 injection 补齐。
+
+5. §3 POST-AUDIT INJECTION +4 refs (1→5): 说明 §3 的 LLM 输出几乎没
+   cite 任何 ref (只有 1)。DENSITY RETRY 没触发因为 budget 已用 2/3。
+   可以考虑给 DENSITY RETRY 更高的 budget 优先级 (e.g. 3 次 density +
+   2 次 word-count, 而非共享 3 次)。
+
+Stage Summary:
+- v60 3 项改进全部实施并提交 (commit 375b6b9)。
+- 真实测试成功: 785w (98% target), 5/5 paragraphs, 0 blocking, 0 placeholders。
+- v60-2 (expand-not-shrink prompt) 验证有效: retry 170w > original 126w
+  (v59 §4 retry 108w < 122w original)。
+- v60-1 (break-at-18) 未触发 (服务器在 window 16-17 崩溃), v61 需降低阈值。
+- v60-3 (CITATION_MAX=10) 未触发 (max 6 citations), 但留了更多 headroom。
+- 代码待 push 到 GitHub。
