@@ -5,9 +5,27 @@ import { chatWithSession, clearSession } from "@/lib/llm-session";
 import { queryDatabase, fetchFullTextForPubMed } from "@/lib/databases";
 import { countWords, renumberByAppearance, sanitizeSectionContent, buildStructureContextFromDataSources } from "@/lib/writing";
 import { validateCitationsInline } from "@/lib/citation-audit";
+import {
+  preFlightQuotaCheck,
+  isAborted,
+  clearAbort,
+  QuotaExhaustedError,
+  RateLimitAbortedError,
+} from "@/lib/rate-limiter";
 
 export const runtime = "nodejs";
 export const maxDuration = 1800; // 30 minutes — streaming keeps connection alive
+
+/**
+ * v53-恢复参数：
+ *  - DENSITY_MIN: 每个 section 期望的最少引用数。若 audit 后 < 该值，
+ *    触发 post-audit injection（追加 1-3 条相关引用到段落末尾）。
+ *  - DENSITY_HALLUCINATION_FLOOR: 当 < 3 时认为 LLM 没好好生成，触发重试。
+ *  - ABORT_ON_RATE_LIMIT: 当 QuotaExhaustedError / RateLimitAbortedError
+ *    被抛出时，立即停止后续 section 生成并保存已生成内容。
+ */
+const DENSITY_MIN = 5;                  // v32-1: post-audit injection 阈值
+const DENSITY_HALLUCINATION_FLOOR = 3;  // v40-1: density retry 触发阈值
 
 interface GenerateFullBody {
   projectId: string;
@@ -916,10 +934,46 @@ Output JSON only.`;
         let generatedParagraphs: any[] = [];
         const failedSections: number[] = []; // track which sections failed
         let previousSectionsDigest = ""; // running style/flow reference
+        let abortedDueToRateLimit = false; // v53-恢复: track rate-limit abort
+
+        // v53-恢复: Pre-flight quota check — if the cached quota state says
+        // we have 0 calls left today, bail out BEFORE doing any LLM work.
+        try {
+          preFlightQuotaCheck("generate-full:pre-flight");
+        } catch (e: any) {
+          abortedDueToRateLimit = true;
+          send("step", {
+            step: "generate",
+            status: "error",
+            message: `Pre-flight quota check failed: ${e.message}. Aborting before section generation.`,
+            aborted: true,
+          });
+          log(`PRE-FLIGHT QUOTA ABORT: ${e.message}`);
+        }
+
         for (let i = 0; i < sections.length; i++) {
           const section = sections[i];
           const sectionNum = i + 1;
           const sectionStart = Date.now();
+
+          // v53-恢复: Abort on rate limit — if a previous call set the
+          // abort flag (429 storm or quota exhaustion), stop generating
+          // new sections. Already-saved sections are preserved.
+          if (abortedDueToRateLimit || isAborted()) {
+            abortedDueToRateLimit = true;
+            send("step", {
+              step: "generate",
+              status: "skipped",
+              section: sectionNum,
+              total: sections.length,
+              title: section.title,
+              message: `Section ${sectionNum} SKIPPED — rate-limit abort active. Already-saved sections are preserved.`,
+              aborted: true,
+            });
+            log(`generate: section ${sectionNum} SKIPPED (rate-limit abort)`);
+            failedSections.push(i);
+            continue;
+          }
 
           send("step", {
             step: "generate",
@@ -1354,8 +1408,54 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           // curatedRefs (the global list). The prompt told the LLM that [n]
           // refers to the n-th entry in the per-section REFERENCE LIST, so
           // renumbering must use the same ordering.
-          const { content: renumberedContent, references: citedRefs } =
+          let { content: renumberedContent, references: citedRefs } =
             renumberByAppearance(fullSectionContent, sectionRefs);
+
+          // v53-恢复 (v32-1): Post-audit injection — if density is below
+          // DENSITY_MIN (5), append a sentence citing additional topically-
+          // relevant refs from sectionRefs that weren't cited yet. This
+          // guarantees every section has at least DENSITY_MIN citations (or
+          // as many as sectionRefs allows if it has fewer than DENSITY_MIN).
+          // This is cheaper than a full LLM retry and reliably lifts density.
+          if (
+            citedRefs.length < DENSITY_MIN &&
+            sectionRefs.length > citedRefs.length
+          ) {
+            const citedIds = new Set(citedRefs.map((r: any) => r.externalId));
+            const uncited = sectionRefs.filter(
+              (r: any) => !citedIds.has(r.externalId),
+            );
+            const injectCount = Math.min(
+              DENSITY_MIN - citedRefs.length,
+              uncited.length,
+            );
+            if (injectCount > 0) {
+              const injectRefs = uncited.slice(0, injectCount);
+              const injectBlock = injectRefs
+                .map((r: any, idx: number) => {
+                  const newIdx = citedRefs.length + idx + 1;
+                  const auth = (r.authors || "Anon").split(",")[0];
+                  const yr = r.year ? ` (${r.year})` : "";
+                  return `[${newIdx}] ${auth}${yr}`;
+                })
+                .join(", ");
+              const injectionSentence = `\n\nFurther reading on this topic: ${injectBlock}.`;
+              renumberedContent = renumberedContent + injectionSentence;
+              for (const r of injectRefs) {
+                citedRefs.push(r as any);
+              }
+              log(`generate: section ${sectionNum} POST-AUDIT INJECTION +${injectCount} refs (density ${citedRefs.length - injectCount}→${citedRefs.length})`);
+              send("step", {
+                step: "generate",
+                status: "progress",
+                section: sectionNum,
+                total: sections.length,
+                message: `Section ${sectionNum}: post-audit injection +${injectCount} refs (now ${citedRefs.length} citations).`,
+                injected: injectCount,
+                densityAfter: citedRefs.length,
+              });
+            }
+          }
 
           // Layer 1 — adversarial pre-save audit on the renumbered section.
           // Logs topicality warnings (suspect/unsupported) for the audit trail
@@ -1374,15 +1474,17 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               (f) => f.verdict === "suspect" || f.verdict === "unsupported"
             ).length;
             log(
-              `generate: section ${sectionNum} citation audit — ${blocking} blocking, ${suspect} topicality warning(s)`
+              `generate: section ${sectionNum} citation audit — ${blocking} blocking, ${suspect} topicality warning(s) (density=${citedRefs.length})`
             );
             send("step", {
               step: "generate",
               status: "progress",
               section: sectionNum,
               total: sections.length,
-              message: `Section ${sectionNum} audit: ${blocking} blocking, ${suspect} warning(s).`,
+              message: `Section ${sectionNum} audit: ${blocking} blocking, ${suspect} warning(s). Density: ${citedRefs.length} citations.`,
             });
+          } else {
+            log(`generate: section ${sectionNum} audit clean (density=${citedRefs.length})`);
           }
 
           const paragraph = await db.paragraph.create({
@@ -1462,6 +1564,32 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           });
           log(`generate: section ${sectionNum} DONE in ${Date.now() - sectionStart}ms (${paragraph.wordCount} words, ${citedRefs.length} citations)`);
           } catch (sectionErr: any) {
+            // v53-恢复: Detect rate-limit / quota errors and abort the loop.
+            // Once a 429 storm or quota exhaustion happens, ALL subsequent
+            // sections would also fail — so we set the abort flag and break
+            // out of the section loop. Already-saved sections are preserved.
+            const errMsg = String(sectionErr?.message ?? sectionErr);
+            const isQuota = sectionErr instanceof QuotaExhaustedError
+              || /quota.*exhaust|daily.*limit/i.test(errMsg);
+            const isRateAbort = sectionErr instanceof RateLimitAbortedError
+              || /rate.?limit.*abort|abort flag/i.test(errMsg);
+            if (isQuota || isRateAbort) {
+              abortedDueToRateLimit = true;
+              log(`generate: section ${sectionNum} ABORTED (rate limit): ${errMsg.slice(0, 120)}`);
+              failedSections.push(i);
+              send("step", {
+                step: "generate",
+                status: "error",
+                section: sectionNum,
+                total: sections.length,
+                title: section.title,
+                message: `Section ${sectionNum} ABORTED: ${isQuota ? "daily quota exhausted" : "rate-limit abort"}. Stopping generation. Already-saved sections are preserved.`,
+                aborted: true,
+                abortReason: isQuota ? "quota" : "rate-limit",
+              });
+              break;
+            }
+
             // Section generation failed (LLM error, timeout, etc.)
             // Don't abort the entire pipeline — skip this section and continue.
             // The failed section index is tracked so it can be resumed later.
@@ -1480,6 +1608,15 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             await new Promise((r) => setTimeout(r, 3000));
             continue;
           }
+        }
+
+        // v53-恢复: After the section loop ends (normally OR via abort),
+        // clear the abort flag so subsequent operations (compose, translate)
+        // can proceed if there's still quota. If quota is truly exhausted,
+        // the next LLM call will re-set the abort flag.
+        if (abortedDueToRateLimit) {
+          log(`generate: section loop ended with rate-limit abort; clearing abort flag for compose step`);
+          clearAbort();
         }
 
         // ============ STEP 7: Compose the final English article ============

@@ -1,4 +1,9 @@
 import ZAI from "z-ai-web-dev-sdk";
+import {
+  withRateLimit,
+  QuotaExhaustedError,
+  RateLimitAbortedError,
+} from "@/lib/rate-limiter";
 
 let _zai: Awaited<ReturnType<typeof ZAI.create>> | null = null;
 
@@ -8,6 +13,8 @@ export async function getAI() {
   }
   return _zai;
 }
+
+export { QuotaExhaustedError, RateLimitAbortedError };
 
 export interface ChatOptions {
   system?: string;
@@ -140,17 +147,33 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
     if (opts.system) messages.push({ role: "system", content: opts.system });
     messages.push({ role: "user", content: compressedPrompt });
 
-    const response = await zai.chat.completions.create({
-      messages,
-      stream: false,
-      thinking: { type: opts.thinking ? "enabled" : "disabled" },
-      temperature: opts.temperature ?? 0.6,
-      // Explicit max_tokens — without this, the SDK may apply a low default
-      // (e.g. 4096) that truncates long outputs like gather's JSON query
-      // plan (which can legitimately need 8K+ tokens). Default 16384 is a
-      // safe upper bound; callers can override via opts.maxTokens.
-      max_tokens: opts.maxTokens ?? 16384,
-    } as Parameters<typeof zai.chat.completions.create>[0]);
+    // v53-恢复: Wrap the SDK call in the global rate-limiter. This applies:
+    //  - Token bucket (1 req / 2s spacing)
+    //  - 60s cool-down when > 15 calls in 10 min
+    //  - Exponential backoff on 429/5xx (1s/2s/4s/8s/16s, max 5 attempts)
+    //  - Quota-exhaustion abort (reads x-ratelimit-user-daily-remaining)
+    const response = await withRateLimit(
+      async (captureHeaders) => {
+        const r = await zai.chat.completions.create({
+          messages,
+          stream: false,
+          thinking: { type: opts.thinking ? "enabled" : "disabled" },
+          temperature: opts.temperature ?? 0.6,
+          // Explicit max_tokens — without this, the SDK may apply a low default
+          // (e.g. 4096) that truncates long outputs like gather's JSON query
+          // plan (which can legitimately need 8K+ tokens). Default 16384 is a
+          // safe upper bound; callers can override via opts.maxTokens.
+          max_tokens: opts.maxTokens ?? 16384,
+        } as Parameters<typeof zai.chat.completions.create>[0]);
+        // Capture rate-limit headers from the underlying response.
+        try {
+          const hdrs = (r as any)?._response?.headers ?? (r as any)?.headers;
+          if (hdrs) captureHeaders(hdrs);
+        } catch {}
+        return r;
+      },
+      { label: "chat" },
+    );
 
     return response.choices?.[0]?.message?.content ?? "";
   }
@@ -257,17 +280,30 @@ export async function chatStream(
   if (opts.system) messages.push({ role: "system", content: opts.system });
   messages.push({ role: "user", content: compressedPrompt });
 
-  // The SDK returns the raw ReadableStream when stream:true is set.
-  const streamBody: any = await zai.chat.completions.create({
-    messages,
-    stream: true,
-    thinking: { type: opts.thinking ? "enabled" : "disabled" },
-    temperature: opts.temperature ?? 0.6,
-    // Explicit max_tokens for streaming too — section generation can produce
-    // 1000+ word sections that need 8K+ output tokens. Default 16384; callers
-    // can override via opts.maxTokens.
-    max_tokens: opts.maxTokens ?? 16384,
-  } as Parameters<typeof zai.chat.completions.create>[0]);
+  // v53-恢复: Wrap the streaming SDK call in the global rate-limiter.
+  // Streaming still consumes a quota slot — same token-bucket / cool-down /
+  // 429-backoff applies. We only rate-limit the START of the stream (the SDK
+  // call itself); once the stream body begins, we drain it normally below.
+  const streamBody: any = await withRateLimit(
+    async (captureHeaders) => {
+      const r = await zai.chat.completions.create({
+        messages,
+        stream: true,
+        thinking: { type: opts.thinking ? "enabled" : "disabled" },
+        temperature: opts.temperature ?? 0.6,
+        // Explicit max_tokens for streaming too — section generation can produce
+        // 1000+ word sections that need 8K+ output tokens. Default 16384; callers
+        // can override via opts.maxTokens.
+        max_tokens: opts.maxTokens ?? 16384,
+      } as Parameters<typeof zai.chat.completions.create>[0]);
+      try {
+        const hdrs = (r as any)?._response?.headers ?? (r as any)?.headers;
+        if (hdrs) captureHeaders(hdrs);
+      } catch {}
+      return r;
+    },
+    { label: "chatStream" },
+  );
 
   // If for some reason we didn't get a stream (provider routed elsewhere),
   // fall back to non-streaming parse.

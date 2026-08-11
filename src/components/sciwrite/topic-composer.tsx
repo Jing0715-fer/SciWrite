@@ -40,7 +40,7 @@ import {
   PARAGRAPH_FORMATS,
   PARAGRAPH_SCENARIOS,
 } from "@/lib/constants";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useI18n } from "@/lib/i18n";
 import { JOURNAL_TEMPLATES } from "@/lib/journal-templates";
 import { MarkdownCitations } from "./markdown-citations";
@@ -79,6 +79,27 @@ export function TopicComposer({
   const [generated, setGenerated] = React.useState<string | null>(null);
   const [streamText, setStreamText] = React.useState("");
   const qc = useQueryClient();
+
+  // v53-恢复: Poll the LLM quota status every 5s while the composer is open.
+  // Shows dailyRemaining / windowCount / coolDownActive next to the generate
+  // button so the user knows whether the pipeline is likely to succeed.
+  const quotaQ = useQuery({
+    queryKey: ["quota-status"],
+    queryFn: async () => {
+      const r = await fetch("/api/quota-status");
+      if (!r.ok) return null;
+      return (await r.json()) as {
+        dailyRemaining: number | null;
+        dailyLimit: number | null;
+        windowCount: number;
+        windowThreshold: number;
+        coolDownActive: boolean;
+        aborted: boolean;
+      };
+    },
+    refetchInterval: open ? 5000 : false,
+    staleTime: 2000,
+  });
 
   React.useEffect(() => {
     if (open) {
@@ -462,9 +483,46 @@ export function TopicComposer({
                   ))}
                 </div>
               )}
+              {/* v53-恢复: LLM quota status badge — shows dailyRemaining / windowCount */}
+              {quotaQ.data && genMode === "full" && (
+                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                  {quotaQ.data.aborted ? (
+                    <Badge variant="destructive" className="text-[9px] px-1.5 py-0 h-4">
+                      ABORTED
+                    </Badge>
+                  ) : quotaQ.data.coolDownActive ? (
+                    <Badge
+                      variant="secondary"
+                      className="text-[9px] px-1.5 py-0 h-4 bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
+                    >
+                      COOL-DOWN
+                    </Badge>
+                  ) : null}
+                  {quotaQ.data.dailyRemaining !== null ? (
+                    <span>
+                      Daily: <span className={
+                        (quotaQ.data.dailyRemaining ?? 0) < 50
+                          ? "text-amber-600 dark:text-amber-400 font-medium"
+                          : "text-emerald-600 dark:text-emerald-400 font-medium"
+                      }>{quotaQ.data.dailyRemaining}</span>
+                      {quotaQ.data.dailyLimit ? `/${quotaQ.data.dailyLimit}` : ""}
+                    </span>
+                  ) : (
+                    <span>Daily: <span className="text-muted-foreground">unknown</span></span>
+                  )}
+                  <span className="text-muted-foreground/60">·</span>
+                  <span>
+                    10min: <span className={
+                      quotaQ.data.windowCount >= quotaQ.data.windowThreshold
+                        ? "text-amber-600 dark:text-amber-400 font-medium"
+                        : "text-foreground font-medium"
+                    }>{quotaQ.data.windowCount}</span>/{quotaQ.data.windowThreshold}
+                  </span>
+                </div>
+              )}
               <Button
                 onClick={() => writeMut.mutate()}
-                disabled={writeMut.isPending || !topic.trim()}
+                disabled={writeMut.isPending || !topic.trim() || (quotaQ.data?.aborted ?? false)}
                 className="gap-2"
               >
                 {writeMut.isPending ? (
