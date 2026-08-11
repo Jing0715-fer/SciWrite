@@ -28,7 +28,7 @@ export const maxDuration = 1800; // 30 minutes — streaming keeps connection al
  *    时, 用更强的字数强调 prompt 重试一次。只接受改善的结果。
  */
 const DENSITY_MIN = 5;                  // v32-1: post-audit injection 阈值
-const DENSITY_HALLUCINATION_FLOOR = 3;  // v40-1: density retry 触发阈值
+const DENSITY_HALLUCINATION_FLOOR = 5;  // v56-3: raised from 3→5 — more sections trigger LLM retry (vs just injection)
 const WORD_COUNT_RETRY_THRESHOLD = 0.9; // v55-1: word-count retry 触发阈值 (90% of target)
 
 interface GenerateFullBody {
@@ -1569,18 +1569,27 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               const wcRetryCleaned = sanitizeSectionContent(wcRetryContent);
               const wcRetryResult = renumberByAppearance(wcRetryCleaned, sectionRefs);
               const wcRetryWordCount = countWords(wcRetryResult.content);
-              // Only accept the retry if it's meaningfully longer AND has at least
-              // as many citations (don't sacrifice density for length).
+              // v56-2: Relaxed acceptance — accept the retry if:
+              //   1. Word count improved by > 20% (was: just "longer"), AND
+              //   2. Refs >= DENSITY_HALLUCINATION_FLOOR (3) — was: >= citedRefs.length.
+              //      This allows accepting a retry that has fewer refs than the
+              //      original, as long as it has at least 3 (the post-audit
+              //      injection will top it up to DENSITY_MIN=5).
+              //   This fixes v55's 50% rejection rate (§1: 435w/3refs rejected,
+              //   §3: 361w/2refs rejected) — those retries were long enough but
+              //   had fewer refs than the original.
+              const wcImprovementPct = (wcRetryWordCount - currentWordCount) / currentWordCount;
+              const wcRefsAcceptable = wcRetryResult.references.length >= DENSITY_HALLUCINATION_FLOOR;
               if (
-                wcRetryWordCount > currentWordCount &&
-                wcRetryResult.references.length >= citedRefs.length
+                wcImprovementPct > 0.2 &&
+                wcRefsAcceptable
               ) {
-                log(`generate: section ${sectionNum} WORD-COUNT RETRY improved ${currentWordCount}→${wcRetryWordCount} words (refs ${citedRefs.length}→${wcRetryResult.references.length})`);
+                log(`generate: section ${sectionNum} WORD-COUNT RETRY improved ${currentWordCount}→${wcRetryWordCount} words (+${Math.round(wcImprovementPct * 100)}%), refs ${citedRefs.length}→${wcRetryResult.references.length} (injection will top up if needed)`);
                 renumberedContent = wcRetryResult.content;
                 citedRefs = wcRetryResult.references;
                 wordCountRetried = true;
               } else {
-                log(`generate: section ${sectionNum} WORD-COUNT RETRY did not improve enough (${wcRetryWordCount} words, refs=${wcRetryResult.references.length}) — keeping original`);
+                log(`generate: section ${sectionNum} WORD-COUNT RETRY did not meet acceptance (wc ${currentWordCount}→${wcRetryWordCount} +${Math.round(wcImprovementPct * 100)}%, refs=${wcRetryResult.references.length} need≥${DENSITY_HALLUCINATION_FLOOR}) — keeping original`);
               }
             } catch (wcRetryErr: any) {
               log(`generate: section ${sectionNum} WORD-COUNT RETRY failed: ${wcRetryErr?.message?.slice(0, 100)}`);
@@ -1931,13 +1940,58 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                 globalRefs.push(ref);
               }
               return globalRefMap.get(key)!;
-            }).filter(Boolean);
+            }).filter(Boolean) as number[];
 
-            if (globalNums.length === 0) return match;
+            // v56-1: If ALL numbers in this citation were out-of-range (e.g.
+            // [7] when refs.length=6), globalNums will be empty. Previously
+            // this kept the original [n] in the content, which caused
+            // "out-of-range" blocking errors after compose. Now we DROP the
+            // citation entirely (return empty string) so no broken [n] markers
+            // reach the database or the deep-audit.
+            if (globalNums.length === 0) return "";
             return `[${globalNums.join(",")}]`;
           });
           return result;
         });
+
+        // v56-1: Post-compose blocking-fix — after global renumbering, some
+        // paragraphs may still have stray [n] markers that weren't caught by
+        // the citeRe regex (e.g. [n] inside other text, or [SOURCE:ID] format).
+        // Run a final cleanup pass on each renumberedContent:
+        //  1. Remove any remaining [n] where n > globalRefs.length (out-of-range
+        //     for the GLOBAL reference list, not the per-section one).
+        //  2. Remove any [$REF] placeholders.
+        //  3. Clean up double spaces / dangling commas left by removals.
+        const maxGlobalRef = globalRefs.length;
+        for (let i = 0; i < renumberedContents.length; i++) {
+          let cleaned = renumberedContents[i];
+          // Remove [$REF] placeholders
+          cleaned = cleaned.replace(/\s*\[\$REF\]/g, "");
+          // Remove [n] where n > maxGlobalRef or n < 1 (out-of-range for global list)
+          cleaned = cleaned.replace(/\[(\d+(?:[,\-–]\s*\d+)*)\]/g, (match, inner: string) => {
+            const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
+              const rangeMatch = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+              if (rangeMatch) {
+                const arr = [];
+                for (let n = parseInt(rangeMatch[1]); n <= parseInt(rangeMatch[2]); n++) arr.push(n);
+                return arr;
+              }
+              const n = parseInt(s);
+              return isNaN(n) ? [] : [n];
+            });
+            const valid = nums.filter((n: number) => n >= 1 && n <= maxGlobalRef);
+            if (valid.length === 0) return ""; // drop the entire citation
+            if (valid.length < nums.length) {
+              return `[${valid.join(",")}]`; // keep only valid numbers
+            }
+            return match; // all valid, keep as-is
+          });
+          // Clean up artifacts from citation removal: " , " → " ", " ." → "."
+          cleaned = cleaned.replace(/\s+([,.;:])/g, "$1");
+          cleaned = cleaned.replace(/\s{2,}/g, " ");
+          renumberedContents[i] = cleaned;
+        }
+        log(`compose: post-compose blocking-fix applied (max global ref=${maxGlobalRef})`);
 
         // Always use direct assembly — LLM composition causes truncation when
         // the total content exceeds the model's max output tokens.
