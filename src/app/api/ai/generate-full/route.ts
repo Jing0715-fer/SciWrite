@@ -993,6 +993,11 @@ Output JSON only.`;
           const chunkCount = needsChunking ? Math.ceil(sectionTargetWords / 1000) : 1;
 
           let fullSectionContent = "";
+          // v54-5: save the last chunk's prompt + system so the density-retry
+          // block (which runs AFTER the chunk loop) can reuse them. Without
+          // this, `prompt` is out of scope in the retry block.
+          let lastChunkPrompt = "";
+          let lastChunkSystem = "";
 
           // ---- Per-section reference & data-source filtering ----
           // Filter the global curatedRefs + savedDataSources down to only
@@ -1238,6 +1243,10 @@ Write in ${generationLanguage}, using formal, precise academic prose (third pers
 Compose ONE cohesive section. The section title is provided separately — start the body with actual content, NOT a restatement of the title.
 ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided, USE the specific computed numeric values (resolution, % helix/sheet, ligand chain:resSeq, Ramachandran % favoured, B-factor mean, SASA % exposed, H-bond count, pI, BSA) — they are REAL values from the actual PDB file. Quote them precisely and connect them to biological function. NEVER fabricate structural metrics." : ""}`;
 
+            // v54-5: Save prompt + system for the density-retry block.
+            lastChunkPrompt = prompt;
+            lastChunkSystem = system;
+
             // STREAMING + SESSION CONTEXT:
             // Use chatWithSessionStream() — this is the streaming variant of
             // chatWithSession(). It (1) loads the project's conversation
@@ -1449,14 +1458,14 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             });
             log(`generate: section ${sectionNum} DENSITY RETRY (cited=${citedRefs.length} < ${DENSITY_HALLUCINATION_FLOOR})`);
             try {
-              const retryPrompt = `${prompt}\n\nCRITICAL RETRY: Your previous output had only ${citedRefs.length} citation(s). You MUST cite at least ${DENSITY_MIN} different references from the list above. Re-read the reference list and INTEGRATE specific findings from at least ${DENSITY_MIN} sources into your prose. Every claim about a fact, method, or result must be followed by a [n] citation.`;
+              const retryPrompt = `${lastChunkPrompt}\n\nCRITICAL RETRY: Your previous output had only ${citedRefs.length} citation(s). You MUST cite at least ${DENSITY_MIN} different references from the list above. Re-read the reference list and INTEGRATE specific findings from at least ${DENSITY_MIN} sources into your prose. Every claim about a fact, method, or result must be followed by a [n] citation.`;
               const { chatWithSessionStream: retryStream } = await import("@/lib/llm-session");
               let retryLastEmit = 0;
               const retryContent = await retryStream(
                 projectId,
                 retryPrompt,
                 {
-                  system,
+                  system: lastChunkSystem,
                   temperature: 0.7,
                   thinking: false,
                   taskType: "generate",
