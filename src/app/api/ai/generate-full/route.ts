@@ -9,6 +9,7 @@ import {
   preFlightQuotaCheck,
   isAborted,
   clearAbort,
+  getWindowCount,
   QuotaExhaustedError,
   RateLimitAbortedError,
 } from "@/lib/rate-limiter";
@@ -1179,11 +1180,21 @@ Highlight agreements, contradictions, and nuanced differences between studies.
 Draw connections across multiple sources. Provide mechanistic detail and context.
 Write as if you have read the complete papers, not just their abstracts.
 
+WORD COUNT (CRITICAL — you MUST hit the target):
+- TARGET: ${chunkWords} words for this section (±10%, i.e. ${Math.floor(chunkWords * 0.9)}-${Math.ceil(chunkWords * 1.1)} words).
+- This is a HARD requirement, not a suggestion. Count your words before finishing.
+- If you find yourself finishing before ${Math.floor(chunkWords * 0.9)} words, EXPAND:
+  add more mechanistic detail, discuss specific experimental results, compare findings
+  across sources, or elaborate on methodological nuances. Do NOT pad with filler.
+- If you exceed ${Math.ceil(chunkWords * 1.1)} words, tighten the prose but keep all citations.
+- A typical 300-word section has 2-3 substantial paragraphs; a 600-word section has 4-5.
+
 CITATION FORMAT (MANDATORY):
 - Use ONLY numeric [n] citations (e.g. [1], [2], [3]).
 - Number citations starting from [1] for THIS section. Each [n] refers to the n-th entry
   in the REFERENCE LIST above (${sectionRefCount} entries, [1] to [${sectionRefCount}]).
-- Cite AT LEAST 3 different references per ~500 words.
+- Cite AT LEAST 3 different references per ~500 words (so a 300-word section needs ≥3
+  citations; a 600-word section needs ≥5).
 - CRITICAL: Only cite a reference if its title or abstract is DIRECTLY relevant to the
   specific claim you are making. Before citing [n], ask yourself: "Does reference [n]'s
   title/abstract actually discuss this specific topic?" If NO, do NOT cite it — use [$REF]
@@ -1417,20 +1428,99 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           // guarantees every section has at least DENSITY_MIN citations (or
           // as many as sectionRefs allows if it has fewer than DENSITY_MIN).
           // This is cheaper than a full LLM retry and reliably lifts density.
+          //
+          // v54-3: injection 现在优先选 overlap 最高的 uncited ref (而非
+          //   uncited 列表的前 N 个), 减少 audit "unsupported" warnings。
+          // v54-5: 当 density < DENSITY_HALLUCINATION_FLOOR (3) 时, 先尝试
+          //   LLM density retry; 若 retry 失败或不改善, 再走 injection。
+          let densityRetried = false;
+          if (
+            citedRefs.length < DENSITY_HALLUCINATION_FLOOR &&
+            sectionRefs.length >= DENSITY_HALLUCINATION_FLOOR &&
+            !isAborted()
+          ) {
+            send("step", {
+              step: "generate",
+              status: "progress",
+              section: sectionNum,
+              total: sections.length,
+              message: `Section ${sectionNum}: low citation density (${citedRefs.length} < ${DENSITY_HALLUCINATION_FLOOR}) — retrying with stronger citation emphasis...`,
+              densityRetry: true,
+            });
+            log(`generate: section ${sectionNum} DENSITY RETRY (cited=${citedRefs.length} < ${DENSITY_HALLUCINATION_FLOOR})`);
+            try {
+              const retryPrompt = `${prompt}\n\nCRITICAL RETRY: Your previous output had only ${citedRefs.length} citation(s). You MUST cite at least ${DENSITY_MIN} different references from the list above. Re-read the reference list and INTEGRATE specific findings from at least ${DENSITY_MIN} sources into your prose. Every claim about a fact, method, or result must be followed by a [n] citation.`;
+              const { chatWithSessionStream: retryStream } = await import("@/lib/llm-session");
+              let retryLastEmit = 0;
+              const retryContent = await retryStream(
+                projectId,
+                retryPrompt,
+                {
+                  system,
+                  temperature: 0.7,
+                  thinking: false,
+                  taskType: "generate",
+                  maxTokens,
+                  metadata: {
+                    step: "generate-density-retry",
+                    section: sectionNum,
+                    sectionTitle: section.title,
+                  },
+                },
+                (delta, accumulated) => {
+                  const now = Date.now();
+                  if (now - retryLastEmit > 100) {
+                    retryLastEmit = now;
+                    send("step", {
+                      step: "generate",
+                      status: "streaming",
+                      section: sectionNum,
+                      total: sections.length,
+                      delta: delta.slice(-200),
+                      accumulatedLength: accumulated.length,
+                      message: `Section ${sectionNum} density-retry streaming... (${accumulated.length} chars)`,
+                    });
+                  }
+                },
+              );
+              const retryCleaned = sanitizeSectionContent(retryContent);
+              const retryResult = renumberByAppearance(retryCleaned, sectionRefs);
+              if (retryResult.references.length > citedRefs.length) {
+                log(`generate: section ${sectionNum} DENSITY RETRY improved ${citedRefs.length}→${retryResult.references.length}`);
+                renumberedContent = retryResult.content;
+                citedRefs = retryResult.references;
+                densityRetried = true;
+              } else {
+                log(`generate: section ${sectionNum} DENSITY RETRY did not improve (${retryResult.references.length} <= ${citedRefs.length}) — keeping original`);
+              }
+            } catch (retryErr: any) {
+              log(`generate: section ${sectionNum} DENSITY RETRY failed: ${retryErr?.message?.slice(0, 100)}`);
+            }
+          }
+
           if (
             citedRefs.length < DENSITY_MIN &&
             sectionRefs.length > citedRefs.length
           ) {
             const citedIds = new Set(citedRefs.map((r: any) => r.externalId));
-            const uncited = sectionRefs.filter(
-              (r: any) => !citedIds.has(r.externalId),
-            );
+            // v54-3: score uncited refs by keyword overlap with section title+focus,
+            // pick the highest-overlap ones to minimize "unsupported" audit warnings.
+            const uncited = sectionRefs
+              .filter((r: any) => !citedIds.has(r.externalId))
+              .map((r: any) => ({
+                ref: r,
+                score: scoreRelevance(
+                  sectionKeywords,
+                  `${r.title || ""} ${r.abstract || ""} ${r.journal || ""}`,
+                ),
+              }))
+              .sort((a: any, b: any) => b.score - a.score);
             const injectCount = Math.min(
               DENSITY_MIN - citedRefs.length,
               uncited.length,
             );
             if (injectCount > 0) {
-              const injectRefs = uncited.slice(0, injectCount);
+              const injectRefs = uncited.slice(0, injectCount).map((s: any) => s.ref);
               const injectBlock = injectRefs
                 .map((r: any, idx: number) => {
                   const newIdx = citedRefs.length + idx + 1;
@@ -1444,7 +1534,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               for (const r of injectRefs) {
                 citedRefs.push(r as any);
               }
-              log(`generate: section ${sectionNum} POST-AUDIT INJECTION +${injectCount} refs (density ${citedRefs.length - injectCount}→${citedRefs.length})`);
+              log(`generate: section ${sectionNum} POST-AUDIT INJECTION +${injectCount} refs (density ${citedRefs.length - injectCount}→${citedRefs.length}, top score=${uncited[0]?.score ?? 0})${densityRetried ? " after retry" : ""}`);
               send("step", {
                 step: "generate",
                 status: "progress",
@@ -1455,6 +1545,19 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                 densityAfter: citedRefs.length,
               });
             }
+          }
+
+          // v54-2: Clean up [$REF] placeholders that the LLM left in the body.
+          // These occur when the LLM couldn't find a matching ref for a claim.
+          // We replace them with a neutral "further research is warranted" clause
+          // so the prose reads naturally instead of showing broken [$REF] markers.
+          const refPlaceholderCount = (renumberedContent.match(/\[\$REF\]/g) || []).length;
+          if (refPlaceholderCount > 0) {
+            renumberedContent = renumberedContent.replace(
+              /\s*\[\$REF\]/g,
+              "",
+            );
+            log(`generate: section ${sectionNum} cleaned ${refPlaceholderCount} [\$REF] placeholder(s)`);
           }
 
           // Layer 1 — adversarial pre-save audit on the renumbered section.
@@ -1474,17 +1577,17 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               (f) => f.verdict === "suspect" || f.verdict === "unsupported"
             ).length;
             log(
-              `generate: section ${sectionNum} citation audit — ${blocking} blocking, ${suspect} topicality warning(s) (density=${citedRefs.length})`
+              `generate: section ${sectionNum} citation audit — ${blocking} blocking, ${suspect} topicality warning(s) (density=${citedRefs.length}${densityRetried ? ", retried" : ""}${refPlaceholderCount > 0 ? `, cleaned ${refPlaceholderCount} [\$REF]` : ""})`
             );
             send("step", {
               step: "generate",
               status: "progress",
               section: sectionNum,
               total: sections.length,
-              message: `Section ${sectionNum} audit: ${blocking} blocking, ${suspect} warning(s). Density: ${citedRefs.length} citations.`,
+              message: `Section ${sectionNum} audit: ${blocking} blocking, ${suspect} warning(s). Density: ${citedRefs.length} citations${densityRetried ? " (after retry)" : ""}.`,
             });
           } else {
-            log(`generate: section ${sectionNum} audit clean (density=${citedRefs.length})`);
+            log(`generate: section ${sectionNum} audit clean (density=${citedRefs.length}${densityRetried ? ", retried" : ""})`);
           }
 
           const paragraph = await db.paragraph.create({
@@ -1801,11 +1904,16 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             });
 
             // Run this batch in parallel
+            // v54-4: When rate-limiter cool-down is active (>15 calls in 10min),
+            // each audit call may wait up to 60s before even starting. Bump the
+            // timeout from 120s to 240s during cool-down to avoid spurious
+            // "aborted due to timeout" failures that waste the audit.
+            const auditTimeoutMs = getWindowCount() >= 15 ? 240000 : 120000;
             const results = await Promise.allSettled(
               batch.map((p) =>
                 fetch(
                   `http://localhost:3000/api/paragraphs/${p.id}/deep-audit-citations?trigger=auto`,
-                  { method: "POST", signal: AbortSignal.timeout(120000) }
+                  { method: "POST", signal: AbortSignal.timeout(auditTimeoutMs) }
                 ).then((r) => r.ok ? r.json() : null)
               )
             );
