@@ -3201,3 +3201,90 @@ Stage Summary:
 - 0 个 429 错误 — 顺序 audit 完全消除了 rate-limit storm。
 - 严重问题: compose 后 22 blocking errors (global renumbering bug)。
 - v56 最高优先级: compose 后 blocking-fix。
+
+---
+Task ID: v56
+Agent: main (Z.ai Code — v56 improvements + partial test)
+Task: 根据 v55 改进意见进行开发，再执行真实 generate-full 测试验证。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (42 commits, 无丢失)。
+- 实施了 3 项 v56 改进:
+
+1. v56-1 Post-compose blocking-fix (最高优先级 — 修复 v55 的 22 blocking):
+   - 根因: global renumbering 时, 当 localNum > refs.length, 旧代码 return match
+     (保留原始 [n]), 导致 [7] with refs.length=6 留在 content 中 → out-of-range blocking。
+   - 修复 1: global renumbering 的 globalNums.length === 0 时 return "" (删除 citation)
+     而非 return match (保留 [n])。
+   - 修复 2: compose 后新增 cleanup pass — 移除所有 [n] where n > globalRefs.length,
+     移除 [$REF], 保留 multi-citation 中的有效数字 (e.g. [7,8] → [6] 或 "")。
+   - 修复 3: 清理 citation 移除后的 artifacts (", " → " ", " ." → ".")。
+
+2. v56-2 Word-count retry 接受条件放宽:
+   - 旧: wcRetryWordCount > currentWordCount AND refs >= citedRefs.length
+     (v55 拒绝率 50%: §1 435w/3refs, §3 361w/2refs 都被拒绝)
+   - 新: improvement > 20% AND refs >= DENSITY_HALLUCINATION_FLOOR (5)
+   - 理由: post-audit injection 会把 refs 补到 DENSITY_MIN=5, 所以接受更长但更稀疏的
+     retry 比保留短但密集的原文更好。
+
+3. v56-3 DENSITY_HALLUCINATION_FLOOR 从 3 提高到 5:
+   - v55 只触发 1 次 density retry (§4 cited=1)。很多 cited=3 或 4 的 section
+     直接走了 injection 没有 LLM retry。
+   - 提高到 5 (= DENSITY_MIN) 意味着任何低于目标密度的 section 先 LLM retry,
+     injection 现在是 retry 失败或不改善时的 fallback。
+
+v56 部分测试结果 (OOM 中断, 只完成 4/5 sections):
+- 项目: cmso1hjl90001ryumx14zm8uk (TMC1/TMC2, 800词目标, 6 DB queries)
+- §1 Introduction: 0 blocking, 5 citations (density-retried) ✅
+- §2 Structural Architecture: 0 blocking, 5 citations (density-retried + injection +1) ✅
+- §3 Mechanotransduction: 0 blocking, 8 citations (no retry needed) ✅
+- §4 Localization: 0 blocking, 6 citations (density-retried) ✅
+- §5 Clinical: 开始但 OOM 中断 ⚠️
+
+v56 功能验证 (从部分测试):
+- DENSITY RETRY (v56-3 threshold=5): 触发 3 次 (§1, §2, §4) — v55 只触发 1 次!
+  全部成功提升 density, 0 blocking。
+- POST-AUDIT INJECTION: 触发 1 次 (§2: +1 ref) — 比 v55 少, 因为更多 section
+  通过 retry 解决了低密度问题。
+- WORD-COUNT RETRY (v56-2 relaxed): 在之前 v55 测试的 §4 日志中可见:
+  "WORD-COUNT RETRY did not meet acceptance (wc 124→143 +15%, refs=1 need≥5)"
+  — 新条件正确拒绝了不达标的 retry (improvement 15% < 20%)。
+- POST-COMPOSE BLOCKING-FIX (v56-1): 未能在完整测试中验证 (OOM), 但代码逻辑:
+  global renumbering 现在删除 out-of-range [n] 而非保留, compose 后有 cleanup pass。
+
+环境问题:
+- 3.9Gi 内存 (无 swap) 不足以运行 Next.js 16 Turbopack dev 模式 + 2828 行的
+  generate-full 路由编译。多次 OOM kill 导致测试中断。
+- v55 测试能完成是因为 .next 缓存完好; v56 期间缓存被破坏后无法恢复。
+- 建议: 生产环境用 next build + next start (而非 dev 模式), 或增加内存/swap。
+
+不足之处 / v57 改进建议:
+1. 【环境】OOM 问题: generate-full 路由文件 2828 行, Turbopack dev 编译消耗
+   ~2.5GB RSS。需要:
+   - 拆分路由文件 (将 helper 函数移到 src/lib/)
+   - 或用 next build 替代 dev 模式
+   - 或增加服务器内存到 8Gi+
+
+2. 【验证】v56-1 post-compose blocking-fix 未完整验证: 需要一次完整的
+   generate-full 测试 (5 sections + compose + audit) 来确认 0 blocking errors。
+   部分测试只验证了 pre-save blocking (0), 没验证 post-compose。
+
+3. 【数据】§3 有 8 citations (远超 DENSITY_MIN=5): 可能是 LLM 过度引用。
+   可以在 prompt 中加 "cite at most 8 different references per section" 限制。
+
+4. 【性能】density retry 增加 LLM 调用: v56 触发 3 次 retry (v55 只 1 次),
+   每次 retry = 1 次额外 LLM 调用。在 quota 有限时可能不划算。
+   可以加一个 "retry budget" (e.g. 整个 pipeline 最多 3 次 retry)。
+
+5. 【质量】warnings 仍较多 (§2 有 7 warnings): 多数是 "unsupported" (0% overlap)。
+   injection 的 refs 虽然用了 overlap 排序, 但 LLM retry 产生的新 citations
+   可能仍有 topicality 问题。可以在 retry prompt 中强调 "only cite if DIRECTLY relevant"。
+
+Stage Summary:
+- v56 3 项改进全部实施并提交 (commit db8ea68)。
+- 部分测试 (4/5 sections) 验证了 v56-3 (density threshold 5) 成功触发 3 次
+  retry (v55 只 1 次), 所有 4 sections 0 blocking。
+- v56-1 (compose blocking-fix) 和 v56-2 (relaxed wc-retry) 代码逻辑正确,
+  但需完整测试验证。
+- 环境限制 (3.9Gi RAM, OOM) 阻止了完整测试。建议增加内存或用 next build。
+- 代码已 push 到 GitHub (commit db8ea68)。
