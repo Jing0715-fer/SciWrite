@@ -1600,10 +1600,13 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               //      even though it was +35% longer. With refs>=3 accepted,
               //      post-audit injection only needs to add 2 more to reach 5.
               //      This dramatically improves retry acceptance rate.
+              // v62-1: Lowered WC retry improvement threshold from +20% to +15%.
+              // The v61 test rejected §2 retry (91→108w, +19%) even though it
+              // was longer. +15% accepts retries that add meaningful length.
               const wcImprovementPct = (wcRetryWordCount - currentWordCount) / currentWordCount;
               const wcRefsAcceptable = wcRetryResult.references.length >= 3; // v61-3: lowered from 5 to 3
               if (
-                wcImprovementPct > 0.2 &&
+                wcImprovementPct > 0.15 && // v62-1: lowered from 0.2 to 0.15
                 wcRefsAcceptable
               ) {
                 log(`generate: section ${sectionNum} WORD-COUNT RETRY improved ${currentWordCount}→${wcRetryWordCount} words (+${Math.round(wcImprovementPct * 100)}%), refs ${citedRefs.length}→${wcRetryResult.references.length} (injection will top up if needed)`);
@@ -1611,7 +1614,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                 citedRefs = wcRetryResult.references;
                 wordCountRetried = true;
               } else {
-                log(`generate: section ${sectionNum} WORD-COUNT RETRY did not meet acceptance (wc ${currentWordCount}→${wcRetryWordCount} +${Math.round(wcImprovementPct * 100)}%, refs=${wcRetryResult.references.length} need≥${DENSITY_HALLUCINATION_FLOOR}) — keeping original`);
+                log(`generate: section ${sectionNum} WORD-COUNT RETRY did not meet acceptance (wc ${currentWordCount}→${wcRetryWordCount} +${Math.round(wcImprovementPct * 100)}%, refs=${wcRetryResult.references.length} need≥3) — keeping original`);
               }
             } catch (wcRetryErr: any) {
               log(`generate: section ${sectionNum} WORD-COUNT RETRY failed: ${wcRetryErr?.message?.slice(0, 100)}`);
@@ -1732,13 +1735,19 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
 
           // v58-1: Programmatic citation cap — the prompt says "at most 8" but
           // the LLM may ignore it (v57 test: §1 had 9 citations). If citedRefs
-          // exceeds CITATION_MAX, truncate it AND remove the excess [n] markers
-          // from the body. This keeps only [1]..[CITATION_MAX] in the content.
+          // exceeds the dynamic cap, truncate it AND remove the excess [n] markers
+          // from the body. This keeps only [1]..[cap] in the content.
+          // v62-3: Dynamic cap — 1 citation per 15 words, clamped to [5, 10].
+          // A 100w section allows max 6 citations; a 300w section allows 10.
+          // This prevents over-citing in short sections (v61 §1 had 10 citations
+          // for 93w = 1 per 9 words, which is excessive).
+          const sectionWordCount = countWords(renumberedContent);
+          const dynamicCitationCap = Math.max(DENSITY_MIN, Math.min(CITATION_MAX, Math.floor(sectionWordCount / 15)));
           let citationCapped = false;
-          if (citedRefs.length > CITATION_MAX) {
-            const excessStart = CITATION_MAX + 1;
+          if (citedRefs.length > dynamicCitationCap) {
+            const excessStart = dynamicCitationCap + 1;
             const excessEnd = citedRefs.length;
-            // Remove [n] where n > CITATION_MAX from the body (singly or in lists)
+            // Remove [n] where n > dynamicCitationCap from the body (singly or in lists)
             const capRegex = /\[(\d+(?:[,\-–]\s*\d+)*)\]/g;
             renumberedContent = renumberedContent.replace(capRegex, (match, inner: string) => {
               const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
@@ -1751,21 +1760,21 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                 const n = parseInt(s);
                 return isNaN(n) ? [] : [n];
               });
-              const kept = nums.filter((n: number) => n <= CITATION_MAX);
+              const kept = nums.filter((n: number) => n <= dynamicCitationCap);
               if (kept.length === 0) return ""; // drop citation entirely
               if (kept.length < nums.length) return `[${kept.join(",")}]`;
               return match;
             });
-            // Truncate citedRefs to CITATION_MAX
-            citedRefs = citedRefs.slice(0, CITATION_MAX);
+            // Truncate citedRefs to dynamicCitationCap
+            citedRefs = citedRefs.slice(0, dynamicCitationCap);
             citationCapped = true;
-            log(`generate: section ${sectionNum} CITATION CAP: removed [${excessStart}-${excessEnd}], kept [1-${CITATION_MAX}]`);
+            log(`generate: section ${sectionNum} CITATION CAP: removed [${excessStart}-${excessEnd}], kept [1-${dynamicCitationCap}] (dynamic cap = ${sectionWordCount}w / 15 = ${dynamicCitationCap})`);
             send("step", {
               step: "generate",
               status: "progress",
               section: sectionNum,
               total: sections.length,
-              message: `Section ${sectionNum}: capped citations to ${CITATION_MAX} (was ${excessEnd}).`,
+              message: `Section ${sectionNum}: capped citations to ${dynamicCitationCap} (was ${excessEnd}, ${sectionWordCount}w → 1 per 15w).`,
               citationCapped: true,
             });
           }
@@ -1965,6 +1974,26 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         if (abortedDueToRateLimit) {
           log(`generate: section loop ended with rate-limit abort; clearing abort flag for compose step`);
           clearAbort();
+        }
+
+        // v62-2: Post-generate cool-down wait — if the rate-limiter window
+        // count is high (>= 10), wait 60s before starting compose/audit to let
+        // the sliding window expire some entries. The v61 test showed audit
+        // broke immediately at window count 15 (0 audited). Waiting 60s lets
+        // ~5-7 entries expire (1 entry per ~10s), bringing window count down
+        // to ~8-10, so audit can run 3-5 paragraphs before hitting 15.
+        const postGenWindowCount = getWindowCount();
+        if (postGenWindowCount >= 10) {
+          log(`generate: post-generate cool-down — window count ${postGenWindowCount} >= 10, waiting 60s before compose/audit`);
+          send("step", {
+            step: "compose",
+            status: "progress",
+            message: `Waiting 60s for rate-limit cool-down (window at ${postGenWindowCount}/15) before composing and auditing...`,
+            coolDownWait: true,
+            windowCount: postGenWindowCount,
+          });
+          await new Promise((r) => setTimeout(r, 60000));
+          log(`generate: post-generate cool-down done — window count now ${getWindowCount()}`);
         }
 
         // ============ STEP 7: Compose the final English article ============
