@@ -4251,3 +4251,82 @@ Stage Summary:
 - v71-3 cool-down 90s: 总耗时 339s (历史最快!)。
 - 连续三次 PASS (v67, v70, v71) — 稳定性确认!
 - 代码已 push 到 GitHub。
+
+---
+Task ID: v72
+Agent: main (Z.ai Code — v72 injection title + cool-down 60s + real test)
+Task: 进一步优化 injection, 减少 cool-down, 真实测试验证。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (70 commits, 无丢失)。
+- 实施了 2 项 v72 改进 (v72-3 skipped):
+
+1. v72-1 Injection title snippet:
+  - injection 句子从 "[1] Author (2024)" 改为
+    "[1] Author (2024) — Title snippet (50 chars)"
+  - 给读者提供 context, 减少 "unsupported" warnings
+  - 分隔符从 ", " 改为 "; " (与 title snippet 更清晰)
+
+2. v72-2 Cool-down 90s→60s:
+  - v71 的 gap-fill 已消除 blocking, cool-down 不再关键
+  - 60s + pre-auto-fix 60s = 120s total (was 150s)
+  - 节省 30s
+
+v72 真实 generate-full 测试结果:
+- 项目: cmsq7zs4m048htm4cae0qy9z9 (TMC1/TMC2, 600词目标, 5 DB queries)
+- 总耗时: ~324s (5.4分钟) — 历史最快!
+- 5/5 sections 生成成功 ✅
+- 5/5 paragraphs 保留 ✅
+- Total: 618w (103% target), 15 unique refs, 53 citation links
+- **0 placeholders** ✅✅
+- **0 blocking errors** ✅✅
+- **9 warnings** (v71: 10, v70: 19! 持续减少!) ✅
+- **citation-health: PASS** ✅✅ (连续第四次! v67, v70, v71, v72)
+- 服务器存活 ✅ — 完整完成!
+
+关键验证:
+- **v72-1 title snippet**: §4 warnings 4→1 ✅, §1 warnings 2→0 ✅
+  * §1 达到 0 warnings! 完美!
+  * §4 从 v71 的 4 warnings 降到 1 (title snippet 帮助了 §4)
+- **v72-2 cool-down 60s**: 总耗时 324s (v71: 339s, -4%) ✅
+- **v70-1 gap-fill**: 继续生效, 0 blocking ✅
+- **audit: checked 44, issues 0** ✅
+
+v72 vs v71 vs v70 对比:
+| 指标               | v70    | v71    | v72    | v72 vs v71 |
+|--------------------|--------|--------|--------|------------|
+| 总词数             | 634w   | 664w   | 618w   | -7% (更精确)|
+| 达标率             | 106%   | 111%   | 103%   | -8% (更精确)|
+| [$REF]/placeholders| 0      | 0      | 0      | 持平 ✅     |
+| blocking errors    | 0      | 0      | 0      | 持平 ✅     |
+| **warnings**       | 19     | 10     | 9      | **-10% ✅** |
+| citation-health    | PASS   | PASS   | PASS   | 持平 ✅     |
+| 服务器存活         | 是     | 是     | 是     | 持平 ✅     |
+| 总耗时             | 379s   | 339s   | 324s   | -4% ✅      |
+
+连续四次 citation-health: PASS (v67, v70, v71, v72)!
+达标率 103% — 历史最精确! (v71: 111%, v70: 106%)
+
+不足之处 / v73 改进建议:
+1. 9 warnings 仍有改进空间: §2 和 §5 各 3 个。可以进一步优化
+   prompt 或在 generate 阶段加 citation relevance check。
+
+2. 总耗时 324s: 60s cool-down + 60s pre-auto-fix = 120s 非 LLM 时间
+   (37% of total)。可以进一步减少或移除 pre-auto-fix (gap-fill 已
+   解决 blocking, auto-fix 通常 0 fixed)。
+
+3. §3 只有 5 refs (最少): gap-fill 填充了 [1]-[5]。其他 sections
+   有 9-15 refs。不影响质量。
+
+4. 53 citation links (v71: 51, v70: 57): 稳定范围。
+
+5. 103% 达标率: 接近完美! 不需要 trim。
+
+Stage Summary:
+- v72 2 项改进全部实施并验证 (commit 9707e4f)。
+- 真实测试完美成功: 618w (103%), 0 blocking, 0 placeholders,
+  9 warnings, citation-health: PASS!
+- v72-1 title snippet 帮助减少了 warnings (§1: 0, §4: 1)。
+- v72-2 cool-down 60s: 总耗时 324s (历史最快!)。
+- 连续四次 PASS (v67, v70, v71, v72) — 高度稳定!
+- 代码待 push 到 GitHub。
