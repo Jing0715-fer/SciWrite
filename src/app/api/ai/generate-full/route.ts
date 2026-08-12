@@ -2079,6 +2079,10 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         //     for the GLOBAL reference list, not the per-section one).
         //  2. Remove any [$REF] placeholders.
         //  3. Clean up double spaces / dangling commas left by removals.
+        // v66-3: Also update each paragraph's references list in DB to match
+        // the globally renumbered citations. The v65 test showed 31 blocking
+        // errors because paragraph.references still had the old per-section
+        // refs while content had global numbers. Now we sync them.
         const maxGlobalRef = globalRefs.length;
         for (let i = 0; i < renumberedContents.length; i++) {
           let cleaned = renumberedContents[i];
@@ -2109,6 +2113,59 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           renumberedContents[i] = cleaned;
         }
         log(`compose: post-compose blocking-fix applied (max global ref=${maxGlobalRef})`);
+
+        // v66-3: Sync paragraph references with globally renumbered content.
+        // After global renumbering, the paragraph's references list in DB still
+        // has the old per-section refs. We need to replace them with the global
+        // refs that actually appear in the content. This prevents the
+        // citation-health check from reporting false blocking errors.
+        for (let i = 0; i < renumberedContents.length && i < generatedParagraphs.length; i++) {
+          const paraId = generatedParagraphs[i].id;
+          const content = renumberedContents[i];
+          // Extract all [n] from content to find which global refs are cited
+          const citedGlobalNums = new Set<number>();
+          const citeRe = /\[(\d+(?:[,\-–]\s*\d+)*)\]/g;
+          let citeMatch;
+          while ((citeMatch = citeRe.exec(content)) !== null) {
+            const nums = citeMatch[1].split(/[,;]\s*/).flatMap((s: string) => {
+              const rangeMatch = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+              if (rangeMatch) {
+                const arr = [];
+                for (let n = parseInt(rangeMatch[1]); n <= parseInt(rangeMatch[2]); n++) arr.push(n);
+                return arr;
+              }
+              const n = parseInt(s);
+              return isNaN(n) ? [] : [n];
+            });
+            for (const n of nums) {
+              if (n >= 1 && n <= maxGlobalRef) citedGlobalNums.add(n);
+            }
+          }
+          // Delete old per-section references and insert global ones
+          await db.reference.deleteMany({ where: { paragraphId: paraId } });
+          for (const globalNum of citedGlobalNums) {
+            const ref = globalRefs[globalNum - 1];
+            if (ref) {
+              await db.reference.create({
+                data: {
+                  type: ref.type || "pubmed",
+                  externalId: ref.externalId,
+                  title: ref.title,
+                  authors: ref.authors,
+                  journal: ref.journal,
+                  year: ref.year,
+                  url: ref.url,
+                  doi: ref.doi,
+                  abstract: ref.abstract,
+                  projectId,
+                  paragraphId: paraId,
+                  citationOrder: globalNum - 1,
+                },
+              });
+            }
+          }
+        }
+        log(`compose: synced paragraph references with global renumbering (${generatedParagraphs.length} paragraphs updated)`);
 
         // Always use direct assembly — LLM composition causes truncation when
         // the total content exceeds the model's max output tokens.
@@ -2283,24 +2340,39 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           // This runs AFTER the deep audit, so it catches both pre-audit
           // issues and any new issues the audit itself introduced.
           // The auto-fix only ADDS references — it does NOT modify content.
-          // v65-1: Raised threshold from <10 to <15 — the v64 test showed
-          // auto-fix was skipped at window 12 (>= 10), but the user's core
-          // request is "auto-fix citation issues, deliver error-free version".
-          // The batch-auto-fix API handles its own rate limiting internally
-          // (sequential per-paragraph), so it's safe to run at window < 15.
+          // v66-1: FORCED auto-fix — removed window count check entirely.
+          // The v65 test showed auto-fix was still skipped at window 17
+          // (>= 15), defeating the user's core request for "error-free
+          // delivery". The batch-auto-fix API handles its own rate limiting
+          // internally (sequential per-paragraph with delays), so it's safe
+          // to run regardless of window count. The user explicitly wants
+          // auto-fix to always run and deliver a corrected version.
+          // v66-2: If window count is high (>= 12), wait 60s before auto-fix
+          // to let some entries expire and reduce cool-down during auto-fix.
           const preFixWindowCount = getWindowCount();
-          if (preFixWindowCount < 15) {
+          if (preFixWindowCount >= 12) {
+            log(`audit: pre-auto-fix cool-down — window count ${preFixWindowCount} >= 12, waiting 60s`);
             send("step", {
               step: "audit",
               status: "progress",
-              message: `Auto-fixing citation issues (window at ${preFixWindowCount}/15)...`,
+              message: `Waiting 60s before auto-fix (rate limit window at ${preFixWindowCount}/15)...`,
+              preAutoFixCoolDown: true,
+            });
+            await new Promise((r) => setTimeout(r, 60000));
+            log(`audit: pre-auto-fix cool-down done — window now ${getWindowCount()}`);
+          }
+          {
+            send("step", {
+              step: "audit",
+              status: "progress",
+              message: `Auto-fixing citation issues (window at ${getWindowCount()}/15)...`,
               autoFixStarted: true,
             });
-            log(`audit: starting auto-fix (window count ${preFixWindowCount})`);
+            log(`audit: starting auto-fix (window count ${getWindowCount()})`);
             try {
               const fixRes = await fetch(
                 `http://localhost:3000/api/projects/${projectId}/batch-auto-fix-citations`,
-                { method: "POST", signal: AbortSignal.timeout(240000) }
+                { method: "POST", signal: AbortSignal.timeout(300000) }
               );
               if (fixRes.ok) {
                 const fixData = await fixRes.json();
@@ -2351,14 +2423,6 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             } catch (fixErr: any) {
               log(`audit: auto-fix error: ${fixErr?.message?.slice(0, 100) || "unknown"}`);
             }
-          } else {
-            log(`audit: SKIPPED auto-fix — window count ${preFixWindowCount} >= 15 (rate limit risk)`);
-            send("step", {
-              step: "audit",
-              status: "progress",
-              message: `Auto-fix skipped (rate limit window at ${preFixWindowCount}/15). Run manually from Citation Health tab.`,
-              autoFixSkipped: true,
-            });
           }
 
           // After audit, rebuild articleContent from the updated paragraph
