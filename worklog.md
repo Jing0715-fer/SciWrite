@@ -3757,3 +3757,85 @@ Stage Summary:
 - v63-1 (移除 citation cap) 确认生效: §5 保留 9 citations (v62 会截断到 7)。
 - v63-3 (audit break@12) 确认生效: 服务器存活, 没有进入 cool-down 风暴。
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v65
+Agent: main (Z.ai Code — v65 auto-fix improvements + real test)
+Task: 让 auto-fix 真正运行 (v64 被跳过), 继续 v64 改进, 真实测试验证。
+
+Work Log:
+- 检查远程仓库: 本地领先 1 commit (v64), push 到 GitHub (a6c9b83..3eea592)。
+- v64 测试日志分析: 5 sections 0 blocking, 但 auto-fix 被 SKIPPED (window 12 >= 10)。
+- 实施了 3 项 v65 改进:
+
+1. v65-1 auto-fix 阈值 <10 → <15:
+  - v64 问题: auto-fix 在 window 12 被跳过 (>= 10 阈值太保守)。
+  - 修复: 提高到 < 15, batch-auto-fix API 内部已做 sequential rate limiting。
+
+2. v65-2 audit break 12 → 14:
+  - v64 问题: break@12 在第一个 paragraph 就退出 (0 audited)。
+  - 修复: 提高到 14, 给 audit 2 more calls headroom, auto-fix 在 audit 后仍运行。
+
+3. v65-3 post-auto-fix validation:
+  - 新增: auto-fix 后查询 citation-health 确认 0 blocking。
+  - 发送 errorFree: true/false 事件让 UI 显示是否真正无错误。
+
+v65 真实 generate-full 测试结果:
+- 项目: cmspopzpl00gbtm4c2f3qhcuj (TMC1/TMC2, 600词目标, 5 DB queries)
+- 总耗时: ~490s (8.2分钟, 含 180s cool-down)
+- 5/5 sections 生成成功 ✅, 627w (105% target)
+- 0 [$REF] placeholders ✅
+- compose: post-compose blocking-fix applied (max global ref=16)
+- audit: break@14 at paragraph 2 (1/5 audited, window 17)
+  * checked 12, issues 7, fixed 0
+- **auto-fix SKIPPED** — window 17 >= 15 ⚠️ (v65-1 阈值仍不够)
+
+手动验证 auto-fix 效果:
+- 手动调用 batch-auto-fix-citations API (2.8min)
+- **blocking 从 31 降到 5** ✅✅ — auto-fix 修复了 26 个 blocking errors!
+- §1: 0 blocking ✅, §2: 5 blocking (残留), §3-§5: 0 blocking ✅
+- 但 §4/§5 citations 降到 1 (auto-fix 可能过度清理)
+
+关键发现:
+- **auto-fix 代码本身是有效的** — 手动运行修复了 84% 的 blocking errors (26/31)
+- 问题是 **pipeline 中 auto-fix 被 window count 跳过** — 180s cool-down 不够
+  (window 13→13 没下降), audit 跑了 1 个 paragraph 后 window 升到 17
+
+v65 vs v64 对比:
+| 指标               | v64    | v65    | 变化      |
+|--------------------|--------|--------|-----------|
+| 总词数             | 596w   | 627w   | +5%       |
+| Paragraphs 保留    | 5      | 5      | 持平 ✅   |
+| [$REF] 占位符      | 0      | 0      | 持平 ✅   |
+| pre-audit blocking | 0      | 0      | 持平 ✅   |
+| post-compose blocking | ?   | 31     | ⚠️        |
+| audit audited      | 0      | 1      | +1 ✅     |
+| auto-fix 运行      | 跳过   | 跳过   | 持平 ⚠️   |
+| 手动 auto-fix 后   | N/A    | 5      | 31→5 ✅   |
+| 总耗时             | ~298s  | ~490s  | +65%      |
+
+不足之处 / v66 改进建议:
+1. 【紧急】auto-fix 仍被跳过: window 17 >= 15。需要:
+   - 强制运行 auto-fix (忽略 window count) — 用户核心需求是"交付无错误版本"
+   - 或在 auto-fix 前再等一个 cool-down (60-120s)
+
+2. cool-down 180s 不够: window 13→13 没下降。原因: sliding window 是 10min,
+   180s 只清除 ~18 entries, 但 generate 阶段加了 ~13 entries, compose 又加了
+   ~3-5。需要更长的 cool-down (300s+) 或在 generate 阶段减少 LLM 调用。
+
+3. auto-fix 过度清理: §4/§5 citations 降到 1。auto-fix 可能把 valid citations
+   也清掉了。需要检查 auto-fix-citations 的逻辑, 只清理真正的 blocking errors。
+
+4. post-compose blocking 31 个: global renumbering 引入了 out-of-range [n]。
+   v56-1 的 post-compose blocking-fix 应该处理这些, 但可能有遗漏。需要
+   加强 blocking-fix 的 cleanup pass。
+
+5. audit 只 audited 1/5: window 17 太高。可以在 audit 前主动 sleep 60s
+   让 window 降一些, 或把 audit 完全移到后台 (pipeline 完成后异步运行)。
+
+Stage Summary:
+- v65 3 项改进全部实施并提交 (commit e29b4d4)。
+- 真实测试完成: 627w (105%), 5/5 paragraphs, 0 placeholders。
+- auto-fix 代码验证有效 (手动运行: 31→5 blocking, 修复 84%)。
+- 但 pipeline 中 auto-fix 仍被 window count 跳过 — v66 最高优先级。
+- 代码待 push 到 GitHub。
