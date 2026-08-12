@@ -1540,8 +1540,13 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           let wordCountRetried = false;
           const currentWordCount = countWords(renumberedContent);
           const wordCountTarget = sectionTargetWords;
+          // v64-3: Skip WC retry for very short sections (< 120w) — LLM
+          // struggles to expand such short sections meaningfully, and the
+          // retry often produces similar or shorter output (v63 §5: 100→101w).
+          // For these, go straight to WC injection which reliably adds length.
           if (
             currentWordCount < Math.floor(wordCountTarget * WORD_COUNT_RETRY_THRESHOLD) &&
+            currentWordCount >= 120 && // v64-3: skip retry for < 120w sections
             !isAborted() &&
             retryBudgetWcUsed < RETRY_BUDGET_WC // v61-2: separate WC budget
           ) {
@@ -1606,7 +1611,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               const wcImprovementPct = (wcRetryWordCount - currentWordCount) / currentWordCount;
               const wcRefsAcceptable = wcRetryResult.references.length >= 3; // v61-3: lowered from 5 to 3
               if (
-                wcImprovementPct > 0.15 && // v62-1: lowered from 0.2 to 0.15
+                wcImprovementPct > 0.10 && // v64-3: lowered from 0.15 to 0.10
                 wcRefsAcceptable
               ) {
                 log(`generate: section ${sectionNum} WORD-COUNT RETRY improved ${currentWordCount}→${wcRetryWordCount} words (+${Math.round(wcImprovementPct * 100)}%), refs ${citedRefs.length}→${wcRetryResult.references.length} (injection will top up if needed)`);
@@ -1939,25 +1944,25 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           clearAbort();
         }
 
-        // v63-2: Post-generate cool-down wait extended from 60s to 120s.
-        // The v62 test showed 60s was not enough — window count stayed at 14
-        // after waiting (entries expire at ~1 per 10s, so 60s only clears ~6
-        // entries, but new compose LLM calls add entries back). 120s clears
-        // ~12 entries, bringing window count from 14 down to ~8, so audit
-        // can run 3-5 paragraphs before hitting the break@15 threshold.
-        // Trigger threshold lowered from >= 10 to >= 8 (earlier intervention).
+        // v64-2: Post-generate cool-down wait extended from 120s to 180s.
+        // The v63 test showed 120s was still not enough (window 13→13).
+        // 180s clears ~18 entries, bringing window from 13 to ~5, so audit
+        // + auto-fix can run without hitting break@12.
+        // After waiting, re-check window count — if still >= 12, skip audit
+        // entirely (send 'skipped' event) to avoid entering cool-down territory.
         const postGenWindowCount = getWindowCount();
         if (postGenWindowCount >= 8) {
-          log(`generate: post-generate cool-down — window count ${postGenWindowCount} >= 8, waiting 120s before compose/audit`);
+          log(`generate: post-generate cool-down — window count ${postGenWindowCount} >= 8, waiting 180s before compose/audit`);
           send("step", {
             step: "compose",
             status: "progress",
-            message: `Waiting 120s for rate-limit cool-down (window at ${postGenWindowCount}/15) before composing and auditing...`,
+            message: `Waiting 180s for rate-limit cool-down (window at ${postGenWindowCount}/15) before composing and auditing...`,
             coolDownWait: true,
             windowCount: postGenWindowCount,
           });
-          await new Promise((r) => setTimeout(r, 120000));
-          log(`generate: post-generate cool-down done — window count now ${getWindowCount()}`);
+          await new Promise((r) => setTimeout(r, 180000));
+          const postCoolDownWindow = getWindowCount();
+          log(`generate: post-generate cool-down done — window count now ${postCoolDownWindow} (was ${postGenWindowCount})`);
         }
 
         // ============ STEP 7: Compose the final English article ============
@@ -2271,6 +2276,55 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             auditChecked, auditIssues, auditFixed,
           });
           log(`audit: DONE — checked ${auditChecked}, issues ${auditIssues}, fixed ${auditFixed}`);
+
+          // v64-1: AUTO-FIX citation issues after audit. The user reported that
+          // audit shows warnings/blocking errors but doesn't auto-fix them.
+          // Now we call the batch-auto-fix-citations endpoint to resolve any
+          // remaining blocking findings (out-of-range [n], missing refs).
+          // This runs AFTER the deep audit, so it catches both pre-audit
+          // issues and any new issues the audit itself introduced.
+          // The auto-fix only ADDS references — it does NOT modify content.
+          // Window count check: skip if >= 10 to avoid rate-limit issues.
+          const preFixWindowCount = getWindowCount();
+          if (preFixWindowCount < 10) {
+            send("step", {
+              step: "audit",
+              status: "progress",
+              message: `Auto-fixing citation issues (window at ${preFixWindowCount}/15)...`,
+              autoFixStarted: true,
+            });
+            log(`audit: starting auto-fix (window count ${preFixWindowCount})`);
+            try {
+              const fixRes = await fetch(
+                `http://localhost:3000/api/projects/${projectId}/batch-auto-fix-citations`,
+                { method: "POST", signal: AbortSignal.timeout(240000) }
+              );
+              if (fixRes.ok) {
+                const fixData = await fixRes.json();
+                log(`audit: auto-fix DONE — paragraphs checked: ${fixData.paragraphs?.length || 0}, total blocking: ${fixData.totalBlocking || 0}, total fixed: ${fixData.totalFixed || 0}`);
+                send("step", {
+                  step: "audit",
+                  status: "progress",
+                  message: `Auto-fix complete: ${fixData.totalFixed || 0} of ${fixData.totalBlocking || 0} blocking issues fixed.`,
+                  autoFixDone: true,
+                  autoFixBlocking: fixData.totalBlocking || 0,
+                  autoFixFixed: fixData.totalFixed || 0,
+                });
+              } else {
+                log(`audit: auto-fix failed — HTTP ${fixRes.status}`);
+              }
+            } catch (fixErr: any) {
+              log(`audit: auto-fix error: ${fixErr?.message?.slice(0, 100) || "unknown"}`);
+            }
+          } else {
+            log(`audit: SKIPPED auto-fix — window count ${preFixWindowCount} >= 10 (rate limit risk)`);
+            send("step", {
+              step: "audit",
+              status: "progress",
+              message: `Auto-fix skipped (rate limit window at ${preFixWindowCount}/15). Run manually from Citation Health tab.`,
+              autoFixSkipped: true,
+            });
+          }
 
           // After audit, rebuild articleContent from the updated paragraph
           // contents (the audit may have changed [n] → [m] or [$REF] in
