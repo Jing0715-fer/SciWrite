@@ -4004,3 +4004,79 @@ Stage Summary:
 - v68-2 over-cleaning guard 未触发 (说明 sync refs 已足够)。
 - 但 auto-fix 429 中断导致 §3 有 7 blocking, citation-health FAIL。
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v69
+Agent: main (Z.ai Code — v69 auto-fix improvements + real test)
+Task: 修复 auto-fix 429 中断, 加 fallback cleanup, 真实测试验证。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (64 commits, 无丢失)。
+- 实施了 3 项 v69 改进:
+
+1. v69-1 clearAbort before auto-fix + pre-fix threshold 10:
+  - v68 问题: auto-fix 遇到 429 后 rate-limiter 触发 abort, 后续 LLM 调用全跳过。
+  - 修复: auto-fix 前 clearAbort(), pre-fix 60s sleep 阈值从 12 降到 10。
+
+2. v69-2 Fallback cleanup:
+  - auto-fix 后如果仍有 blocking, 移除 out-of-range [n], 重新 sync refs。
+  - 保证最终交付 0 blocking。
+
+3. v69-3 Re-validate after fallback:
+  - fallback 后重新查询 citation-health 获取准确 blocking 数。
+
+v69 真实 generate-full 测试结果:
+- 项目: cmsq1fbn402intm4chq58b1u5 (TMC1/TMC2, 600词目标, 5 DB queries)
+- 总耗时: ~374s (6.2分钟)
+- 5/5 sections 生成成功 ✅, 636w (106% target) ✅
+- 0 placeholders ✅
+- compose + sync refs 完成 ✅
+- audit: 429 中断, auto-fix 全部失败 (RateLimitAbortedError)
+- **fallback cleanup 触发** ✅ — "removing out-of-range [n] (15 blocking)"
+- **但 fallback removed 0** ⚠️ — blocking 是 out-of-range [8]-[15],
+  但 fallback 检查 n <= maxGlobalRef(15), 认为 [8]-[15] 是 valid
+- 最终: 15 blocking, 13 warnings, citation-health: FAIL
+
+根本问题分析:
+- paragraph content 有 [8], [9], [10] 等 global 编号
+- paragraph references 只有 5-7 个 refs (per-section 编号)
+- citation-health 检查 [n] vs paragraph refs (per-section), 发现 [8] > 7 = out-of-range
+- fallback cleanup 检查 [n] vs maxGlobalRef(15), 认为 [8] <= 15 = valid
+- **不一致**: fallback 用 global 范围, citation-health 用 per-paragraph 范围
+
+v69 vs v68 对比:
+| 指标               | v68    | v69    | 变化      |
+|--------------------|--------|--------|-----------|
+| 总词数             | 578w   | 636w   | +10% ✅   |
+| 达标率             | 96%    | 106%   | +10% ✅   |
+| [$REF]/placeholders| 0      | 0      | 持平 ✅   |
+| blocking errors    | 7      | 15     | +8 ⚠️     |
+| auto-fix 运行      | 部分   | 全失败 | ⚠️        |
+| fallback 触发      | N/A    | 是     | ✅ (但 removed 0) |
+| 服务器存活         | 是     | 是     | 持平 ✅   |
+| 总耗时             | 746s   | 374s   | -50% ✅   |
+
+不足之处 / v70 改进建议:
+1. 【紧急】fallback cleanup 逻辑错误: 用 global 范围 (maxGlobalRef=15) 检查,
+   但 citation-health 用 per-paragraph 范围 (refs.length=5-7)。需要:
+   - fallback 改为检查 [n] vs paragraph's refs.length (而非 maxGlobalRef)
+   - 或在 sync refs 时确保 paragraph refs 包含所有 content 中引用的 [n]
+
+2. auto-fix 429 问题未解决: clearAbort 后 rate-limiter 在 auto-fix 调用中
+   又触发了 abort。需要在 auto-fix 的每个 paragraph 调用前都 clearAbort()。
+
+3. sync refs 不完整: content 有 [8]-[15] 但 paragraph refs 只有 5-7 个。
+   v66-3 的 sync 逻辑可能只保存了部分 refs。需要检查 sync 逻辑。
+
+4. 总耗时 374s (6.2min) — 比 v68 的 746s 快 50%! 因为 auto-fix 快速失败
+   (429 中断), 节省了 90s auto-fix + 60s pre-auto-fix = 150s。
+
+5. 636w (106%) — 词数最高! 5 sections 都有 5-8 citations, 内容丰富。
+
+Stage Summary:
+- v69 3 项改进全部实施并提交 (commit a1348b0)。
+- 真实测试完成: 636w (106%), 0 placeholders, 服务器存活。
+- v69-1 clearAbort 生效 (log: "clearing abort flag before auto-fix")。
+- v69-2 fallback 触发但 removed 0 (逻辑错误, v70 修复)。
+- 根本问题: fallback 用 global 范围, citation-health 用 per-paragraph 范围。
+- 代码待 push 到 GitHub。
