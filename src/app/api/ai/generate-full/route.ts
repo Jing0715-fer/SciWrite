@@ -1944,23 +1944,23 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           clearAbort();
         }
 
-        // v64-2: Post-generate cool-down wait extended from 120s to 180s.
-        // The v63 test showed 120s was still not enough (window 13→13).
-        // 180s clears ~18 entries, bringing window from 13 to ~5, so audit
-        // + auto-fix can run without hitting break@12.
-        // After waiting, re-check window count — if still >= 12, skip audit
-        // entirely (send 'skipped' event) to avoid entering cool-down territory.
+        // v68-3: Post-generate cool-down wait reduced from 180s to 120s.
+        // The v67 test showed 180s didn't help much (window 13→13) and added
+        // 3 minutes to total time. 120s is a better tradeoff — enough to let
+        // some entries expire while not wasting too much time. The auto-fix
+        // has its own pre-fix 60s sleep (v66-2) which provides additional
+        // cool-down right before the most LLM-intensive phase.
         const postGenWindowCount = getWindowCount();
         if (postGenWindowCount >= 8) {
-          log(`generate: post-generate cool-down — window count ${postGenWindowCount} >= 8, waiting 180s before compose/audit`);
+          log(`generate: post-generate cool-down — window count ${postGenWindowCount} >= 8, waiting 120s before compose/audit`);
           send("step", {
             step: "compose",
             status: "progress",
-            message: `Waiting 180s for rate-limit cool-down (window at ${postGenWindowCount}/15) before composing and auditing...`,
+            message: `Waiting 120s for rate-limit cool-down (window at ${postGenWindowCount}/15) before composing and auditing...`,
             coolDownWait: true,
             windowCount: postGenWindowCount,
           });
-          await new Promise((r) => setTimeout(r, 180000));
+          await new Promise((r) => setTimeout(r, 120000));
           const postCoolDownWindow = getWindowCount();
           log(`generate: post-generate cool-down done — window count now ${postCoolDownWindow} (was ${postGenWindowCount})`);
         }
@@ -2377,6 +2377,68 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               if (fixRes.ok) {
                 const fixData = await fixRes.json();
                 log(`audit: auto-fix DONE — paragraphs checked: ${fixData.paragraphs?.length || 0}, total blocking: ${fixData.totalBlocking || 0}, total fixed: ${fixData.totalFixed || 0}`);
+
+                // v68-2: Guard against auto-fix over-cleaning. The v66/v67
+                // tests showed auto-fix sometimes removes valid citations
+                // (e.g. §5 went from 6 refs to 1). After auto-fix, re-sync
+                // paragraph references with content: if content has [n] that
+                // matches a global ref, ensure that ref exists in the paragraph's
+                // reference list. This prevents auto-fix from accidentally
+                // removing valid citation-ref links.
+                try {
+                  const postFixParagraphs = await db.paragraph.findMany({
+                    where: { id: { in: generatedParagraphs.map((p) => p.id) } },
+                    include: { references: true },
+                  });
+                  let resyncedCount = 0;
+                  for (const pf of postFixParagraphs) {
+                    if (!pf.content) continue;
+                    // Find all [n] in content
+                    const citedNums = new Set<number>();
+                    const citeRe = /\[(\d+(?:[,\-–]\s*\d+)*)\]/g;
+                    let m;
+                    while ((m = citeRe.exec(pf.content)) !== null) {
+                      const nums = m[1].split(/[,;]\s*/).flatMap((s: string) => {
+                        const rm = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+                        if (rm) { const a = []; for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) a.push(n); return a; }
+                        const n = parseInt(s); return isNaN(n) ? [] : [n];
+                      });
+                      for (const n of nums) if (n >= 1 && n <= maxGlobalRef) citedNums.add(n);
+                    }
+                    // Check which cited global refs are missing from paragraph.references
+                    const existingGlobalNums = new Set(pf.references.map((r: any) => (r.citationOrder ?? 0) + 1));
+                    for (const globalNum of citedNums) {
+                      if (!existingGlobalNums.has(globalNum)) {
+                        const ref = globalRefs[globalNum - 1];
+                        if (ref) {
+                          await db.reference.create({
+                            data: {
+                              type: ref.type || "pubmed",
+                              externalId: ref.externalId,
+                              title: ref.title,
+                              authors: ref.authors,
+                              journal: ref.journal,
+                              year: ref.year,
+                              url: ref.url,
+                              doi: ref.doi,
+                              abstract: ref.abstract,
+                              projectId,
+                              paragraphId: pf.id,
+                              citationOrder: globalNum - 1,
+                            },
+                          });
+                          resyncedCount++;
+                        }
+                      }
+                    }
+                  }
+                  if (resyncedCount > 0) {
+                    log(`audit: auto-fix over-cleaning guard — re-added ${resyncedCount} valid citation-ref links`);
+                  }
+                } catch (resyncErr: any) {
+                  log(`audit: over-cleaning guard error: ${resyncErr?.message?.slice(0, 80) || "unknown"}`);
+                }
+
                 send("step", {
                   step: "audit",
                   status: "progress",
@@ -2476,6 +2538,28 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           }
           articleContent = cleanUpdatedBody + "\n\n## References\n\n" + refList;
           log(`compose: rebuilt articleContent after audit+autofix (${articleContent.length} chars), [$REF]/[citation needed] removed`);
+
+          // v68-1: Post-cleanup word-count check. The cleanup (removing
+          // [$REF] and [citation needed]) may have reduced word count below
+          // target. If total words < 90% of target, log a warning so the
+          // user knows. We don't do LLM retry here (too many LLM calls
+          // already), but we log it for visibility.
+          const postCleanupWordCount = finalParagraphs.reduce((sum: number, p: any) => sum + (p.wordCount || 0), 0);
+          const wordCountPct = Math.round((postCleanupWordCount / targetWords) * 100);
+          if (postCleanupWordCount < Math.floor(targetWords * 0.9)) {
+            log(`compose: WARNING — post-cleanup word count ${postCleanupWordCount}w is ${wordCountPct}% of target ${targetWords}w (below 90%). Placeholders removal reduced word count.`);
+            send("step", {
+              step: "compose",
+              status: "progress",
+              message: `Note: Final word count ${postCleanupWordCount}w is ${wordCountPct}% of target (placeholders were removed). You can regenerate or manually expand sections.`,
+              wordCountWarning: true,
+              finalWords: postCleanupWordCount,
+              targetWords,
+              pct: wordCountPct,
+            });
+          } else {
+            log(`compose: post-cleanup word count ${postCleanupWordCount}w is ${wordCountPct}% of target ${targetWords}w (OK)`);
+          }
         }
 
         // ============ STEP 8 (both mode only): Translate each section EN → ZH ============
