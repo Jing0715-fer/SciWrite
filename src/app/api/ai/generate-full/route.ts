@@ -1708,9 +1708,12 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                   const newIdx = citedRefs.length + idx + 1;
                   const auth = (r.authors || "Anon").split(",")[0];
                   const yr = r.year ? ` (${r.year})` : "";
-                  return `[${newIdx}] ${auth}${yr}`;
+                  // v72-1: Include title snippet in injection to provide context
+                  // and reduce "unsupported" warnings (reader can verify relevance).
+                  const titleSnippet = r.title ? ` — ${r.title.slice(0, 50)}` : "";
+                  return `[${newIdx}] ${auth}${yr}${titleSnippet}`;
                 })
-                .join(", ");
+                .join("; ");
               const injectionSentence = `\n\nFurther reading on this topic: ${injectBlock}.`;
               renumberedContent = renumberedContent + injectionSentence;
               for (const r of injectRefs) {
@@ -1948,22 +1951,22 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           clearAbort();
         }
 
-        // v71-3: Post-generate cool-down wait reduced from 120s to 90s.
-        // The v70 test showed 120s didn't help (window 13→13) and wasted 2 min.
-        // 90s + pre-auto-fix 60s = 150s total cool-down. Since v70's gap-fill
-        // eliminates most blocking errors without needing auto-fix, the
-        // cool-down is less critical now. 90s saves 30s vs 120s.
+        // v72-2: Post-generate cool-down wait reduced from 90s to 60s.
+        // v71 test showed gap-fill eliminates blocking without needing auto-fix,
+        // and audit had 0 issues. The cool-down is mainly to let the token
+        // bucket refill for audit LLM calls. 60s is enough for ~30 entries
+        // to expire (1 per 2s). Combined with pre-auto-fix 60s = 120s total.
         const postGenWindowCount = getWindowCount();
         if (postGenWindowCount >= 8) {
-          log(`generate: post-generate cool-down — window count ${postGenWindowCount} >= 8, waiting 90s before compose/audit`);
+          log(`generate: post-generate cool-down — window count ${postGenWindowCount} >= 8, waiting 60s before compose/audit`);
           send("step", {
             step: "compose",
             status: "progress",
-            message: `Waiting 90s for rate-limit cool-down (window at ${postGenWindowCount}/15) before composing and auditing...`,
+            message: `Waiting 60s for rate-limit cool-down (window at ${postGenWindowCount}/15) before composing and auditing...`,
             coolDownWait: true,
             windowCount: postGenWindowCount,
           });
-          await new Promise((r) => setTimeout(r, 90000));
+          await new Promise((r) => setTimeout(r, 60000));
           const postCoolDownWindow = getWindowCount();
           log(`generate: post-generate cool-down done — window count now ${postCoolDownWindow} (was ${postGenWindowCount})`);
         }
