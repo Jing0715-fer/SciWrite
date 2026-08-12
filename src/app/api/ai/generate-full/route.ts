@@ -2119,11 +2119,17 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         // has the old per-section refs. We need to replace them with the global
         // refs that actually appear in the content. This prevents the
         // citation-health check from reporting false blocking errors.
+        // v70-1: CRITICAL FIX — citation-health checks [n] <= refs.length,
+        // so if content has [5] but paragraph only has 3 refs (because [2]
+        // and [4] weren't cited), [5] is flagged as out-of-range. Fix: insert
+        // ALL global refs from 1 to max(citedNums), not just the cited ones.
+        // This ensures refs.length >= max([n]) for every paragraph.
         for (let i = 0; i < renumberedContents.length && i < generatedParagraphs.length; i++) {
           const paraId = generatedParagraphs[i].id;
           const content = renumberedContents[i];
           // Extract all [n] from content to find which global refs are cited
           const citedGlobalNums = new Set<number>();
+          let maxCitedNum = 0;
           const citeRe = /\[(\d+(?:[,\-–]\s*\d+)*)\]/g;
           let citeMatch;
           while ((citeMatch = citeRe.exec(content)) !== null) {
@@ -2138,12 +2144,18 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               return isNaN(n) ? [] : [n];
             });
             for (const n of nums) {
-              if (n >= 1 && n <= maxGlobalRef) citedGlobalNums.add(n);
+              if (n >= 1 && n <= maxGlobalRef) {
+                citedGlobalNums.add(n);
+                if (n > maxCitedNum) maxCitedNum = n;
+              }
             }
           }
           // Delete old per-section references and insert global ones
           await db.reference.deleteMany({ where: { paragraphId: paraId } });
-          for (const globalNum of citedGlobalNums) {
+          // v70-1: Insert ALL refs from 1 to maxCitedNum (not just cited ones)
+          // to ensure refs.length >= max([n]) in content. Non-cited refs fill
+          // the gaps so citation-health's [n] <= refs.length check passes.
+          for (let globalNum = 1; globalNum <= maxCitedNum; globalNum++) {
             const ref = globalRefs[globalNum - 1];
             if (ref) {
               await db.reference.create({
@@ -2165,7 +2177,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             }
           }
         }
-        log(`compose: synced paragraph references with global renumbering (${generatedParagraphs.length} paragraphs updated)`);
+        log(`compose: synced paragraph references with global renumbering (${generatedParagraphs.length} paragraphs, v70-1 gap-fill)`);
 
         // Always use direct assembly — LLM composition causes truncation when
         // the total content exceeds the model's max output tokens.
@@ -2517,10 +2529,13 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                         log(`audit: fallback cleanup done — removed ${fallbackFixed} out-of-range citation(s)`);
 
                         // Re-sync paragraph references after fallback cleanup
+                        // v70-2: Use gap-fill logic (same as v70-1) — insert ALL
+                        // refs from 1 to maxCitedNum, not just cited ones.
                         for (const fp of fallbackParagraphs) {
                           const paraId = fp.id;
                           const content = (await db.paragraph.findUnique({ where: { id: paraId } }))?.content || "";
                           const citedNums = new Set<number>();
+                          let maxCitedNumFallback = 0;
                           const citeRe = /\[(\d+(?:[,\-–]\s*\d+)*)\]/g;
                           let m;
                           while ((m = citeRe.exec(content)) !== null) {
@@ -2529,10 +2544,16 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                               if (rm) { const a = []; for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) a.push(n); return a; }
                               const n = parseInt(s); return isNaN(n) ? [] : [n];
                             });
-                            for (const n of nums) if (n >= 1 && n <= maxGlobalRef) citedNums.add(n);
+                            for (const n of nums) {
+                              if (n >= 1 && n <= maxGlobalRef) {
+                                citedNums.add(n);
+                                if (n > maxCitedNumFallback) maxCitedNumFallback = n;
+                              }
+                            }
                           }
                           await db.reference.deleteMany({ where: { paragraphId: paraId } });
-                          for (const globalNum of citedNums) {
+                          // v70-2: Gap-fill — insert ALL refs from 1 to maxCitedNum
+                          for (let globalNum = 1; globalNum <= maxCitedNumFallback; globalNum++) {
                             const ref = globalRefs[globalNum - 1];
                             if (ref) {
                               await db.reference.create({
@@ -2554,7 +2575,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                             }
                           }
                         }
-                        log(`audit: fallback re-sync done — paragraph references updated`);
+                        log(`audit: fallback re-sync done — paragraph references updated (v70-2 gap-fill)`);
 
                         // Re-validate
                         const healthRes2 = await fetch(
