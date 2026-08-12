@@ -2220,20 +2220,19 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               message: `Auditing section ${batchNum}/${totalBatches} (${auditDone}/${generatedParagraphs.length} done, ${auditIssues} issues, ${auditFixed} fixed)...`,
             });
 
-            // v63-3: Audit loop early-exit — break at window count >= 12
-            // (lowered from 15). The v62 test showed that even with break@15,
-            // the audit LLM call already in-flight at window 15 triggered
-            // cool-downs (window 16, 17...) that consumed memory. Breaking
-            // at 12 leaves a 3-call buffer before cool-down starts at 15,
-            // ensuring the in-flight audit call can complete without entering
-            // cool-down territory.
+            // v65-2: Audit break threshold raised from 12 to 14. The v64 test
+            // showed break@12 exited at the first paragraph (0 audited) because
+            // window was already 12 after 180s cool-down. Raising to 14 gives
+            // audit 2 more calls of headroom — enough to audit 1-2 paragraphs
+            // before breaking. The auto-fix (v64-1) runs after audit regardless,
+            // so even if audit breaks early, auto-fix will still clean up.
             const wc = getWindowCount();
-            if (wc >= 12) {
-              log(`audit: BREAKING loop at paragraph ${batchNum}/${totalBatches} — window count ${wc} >= 12 (pre-cool-down buffer). ${auditDone}/${generatedParagraphs.length} audited, rest skipped.`);
+            if (wc >= 14) {
+              log(`audit: BREAKING loop at paragraph ${batchNum}/${totalBatches} — window count ${wc} >= 14 (near cool-down). ${auditDone}/${generatedParagraphs.length} audited, rest skipped.`);
               send("step", {
                 step: "audit",
                 status: "progress",
-                message: `Audit stopped early at section ${batchNum}/${totalBatches} — rate limit window at ${wc}/15. ${generatedParagraphs.length - auditDone} section(s) not audited (can run manually later).`,
+                message: `Audit stopped early at section ${batchNum}/${totalBatches} — rate limit window at ${wc}/15. ${generatedParagraphs.length - auditDone} section(s) not audited (auto-fix will still run).`,
                 earlyExit: true,
                 audited: auditDone,
                 skipped: generatedParagraphs.length - auditDone,
@@ -2284,9 +2283,13 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           // This runs AFTER the deep audit, so it catches both pre-audit
           // issues and any new issues the audit itself introduced.
           // The auto-fix only ADDS references — it does NOT modify content.
-          // Window count check: skip if >= 10 to avoid rate-limit issues.
+          // v65-1: Raised threshold from <10 to <15 — the v64 test showed
+          // auto-fix was skipped at window 12 (>= 10), but the user's core
+          // request is "auto-fix citation issues, deliver error-free version".
+          // The batch-auto-fix API handles its own rate limiting internally
+          // (sequential per-paragraph), so it's safe to run at window < 15.
           const preFixWindowCount = getWindowCount();
-          if (preFixWindowCount < 10) {
+          if (preFixWindowCount < 15) {
             send("step", {
               step: "audit",
               status: "progress",
@@ -2310,6 +2313,38 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                   autoFixBlocking: fixData.totalBlocking || 0,
                   autoFixFixed: fixData.totalFixed || 0,
                 });
+
+                // v65-3: Re-validate after auto-fix to confirm 0 blocking.
+                // Query the citation-health endpoint to get the final blocking
+                // count. If still > 0, log a warning (user may need manual fix).
+                try {
+                  const healthRes = await fetch(
+                    `http://localhost:3000/api/projects/${projectId}/citation-health`,
+                    { signal: AbortSignal.timeout(30000) }
+                  );
+                  if (healthRes.ok) {
+                    const healthData = await healthRes.json();
+                    let remainingBlocking = 0;
+                    let remainingWarnings = 0;
+                    for (const ph of (healthData.paragraphs || [])) {
+                      remainingBlocking += ph.blockingCount || 0;
+                      remainingWarnings += ph.warningCount || 0;
+                    }
+                    log(`audit: post-auto-fix validation — ${remainingBlocking} blocking, ${remainingWarnings} warnings remaining`);
+                    send("step", {
+                      step: "audit",
+                      status: "done",
+                      message: remainingBlocking === 0
+                        ? `Citation audit + auto-fix complete: 0 blocking errors, ${remainingWarnings} warnings. Article is ready.`
+                        : `Auto-fix complete but ${remainingBlocking} blocking errors remain. Run auto-fix manually from Citation Health tab.`,
+                      finalBlocking: remainingBlocking,
+                      finalWarnings: remainingWarnings,
+                      errorFree: remainingBlocking === 0,
+                    });
+                  }
+                } catch (healthErr: any) {
+                  log(`audit: post-auto-fix validation failed: ${healthErr?.message?.slice(0, 80) || "unknown"}`);
+                }
               } else {
                 log(`audit: auto-fix failed — HTTP ${fixRes.status}`);
               }
@@ -2317,7 +2352,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               log(`audit: auto-fix error: ${fixErr?.message?.slice(0, 100) || "unknown"}`);
             }
           } else {
-            log(`audit: SKIPPED auto-fix — window count ${preFixWindowCount} >= 10 (rate limit risk)`);
+            log(`audit: SKIPPED auto-fix — window count ${preFixWindowCount} >= 15 (rate limit risk)`);
             send("step", {
               step: "audit",
               status: "progress",
