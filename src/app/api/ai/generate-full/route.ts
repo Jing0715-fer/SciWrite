@@ -2425,20 +2425,33 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             }
           }
 
-          // After audit, rebuild articleContent from the updated paragraph
-          // contents (the audit may have changed [n] → [m] or [$REF] in
-          // the paragraphs). Also clean [$REF] → [citation needed] in BOTH
-          // the article content AND the paragraph DB records so they stay
-          // consistent.
+          // After audit + auto-fix, rebuild articleContent from the updated
+          // paragraph contents. The audit/auto-fix may have changed [n] → [m]
+          // or introduced [$REF] placeholders (when auto-fix couldn't resolve
+          // a citation).
+          // v67-1: Instead of replacing [$REF] → "[citation needed]" (which
+          // leaves ugly placeholders), REMOVE the [$REF] markers entirely and
+          // clean up the surrounding prose. This delivers a clean, error-free
+          // article as the user requested. The [$REF] markers were only there
+          // as temporary indicators during generation — they should not appear
+          // in the final delivered version.
+          // v67-2: Also clean up any "[citation needed]" that may have been
+          // left by previous runs.
           const updatedParagraphs = await db.paragraph.findMany({
             where: { id: { in: generatedParagraphs.map((p) => p.id) } },
             orderBy: { order: "asc" },
           });
 
-          // Update each paragraph's DB content to replace [$REF] → [citation needed]
+          // Update each paragraph's DB content to remove [$REF] and [citation needed]
           for (const p of updatedParagraphs) {
-            if (p.content && p.content.includes("[$REF]")) {
-              const cleanedContent = p.content.replace(/\[\$REF\]/g, "[citation needed]");
+            if (p.content && (p.content.includes("[$REF]") || p.content.includes("[citation needed]"))) {
+              let cleanedContent = p.content;
+              // Remove [$REF] and [citation needed] markers entirely
+              cleanedContent = cleanedContent.replace(/\s*\[\$REF\]/g, "");
+              cleanedContent = cleanedContent.replace(/\s*\[citation needed\]/g, "");
+              // Clean up artifacts: " , " → " ", " ." → ".", double spaces
+              cleanedContent = cleanedContent.replace(/\s+([,.;:])/g, "$1");
+              cleanedContent = cleanedContent.replace(/\s{2,}/g, " ");
               await db.paragraph.update({
                 where: { id: p.id },
                 data: { content: cleanedContent, wordCount: countWords(cleanedContent) },
@@ -2446,8 +2459,14 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             }
           }
 
-          const updatedBody = updatedParagraphs
-            .map((p) => `## ${p.title}\n\n${(p.content || "").replace(/\[\$REF\]/g, "[citation needed]")}`)
+          // v67-3: Re-fetch updated paragraphs and rebuild articleContent
+          // to ensure the final article matches the cleaned paragraph content.
+          const finalParagraphs = await db.paragraph.findMany({
+            where: { id: { in: generatedParagraphs.map((p) => p.id) } },
+            orderBy: { order: "asc" },
+          });
+          const updatedBody = finalParagraphs
+            .map((p) => `## ${p.title}\n\n${(p.content || "").replace(/\[\$REF\]/g, "").replace(/\[citation needed\]/g, "")}`)
             .join("\n\n");
           // Strip any existing ## References section from the updated body
           let cleanUpdatedBody = updatedBody.trim();
@@ -2456,7 +2475,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             cleanUpdatedBody = cleanUpdatedBody.slice(0, updatedRefMatch.index).trim();
           }
           articleContent = cleanUpdatedBody + "\n\n## References\n\n" + refList;
-          log(`compose: rebuilt articleContent after audit (${articleContent.length} chars), paragraphs synced`);
+          log(`compose: rebuilt articleContent after audit+autofix (${articleContent.length} chars), [$REF]/[citation needed] removed`);
         }
 
         // ============ STEP 8 (both mode only): Translate each section EN → ZH ============
