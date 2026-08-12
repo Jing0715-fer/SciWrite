@@ -1220,9 +1220,9 @@ CITATION FORMAT (MANDATORY):
   in the REFERENCE LIST above (${sectionRefCount} entries, [1] to [${sectionRefCount}]).
 - Cite AT LEAST 3 different references per ~500 words (so a 300-word section needs ≥3
   citations; a 600-word section needs ≥5).
-- Cite AT MOST 10 different references per section — do NOT over-cite. Each citation
-  must add unique value; if two refs make the same point, cite only the more
-  authoritative one. Quality over quantity.
+- There is NO upper limit on citations — cite every reference that is directly relevant
+  to your claims. Do NOT artificially limit the number of citations; each relevant
+  source adds value to the review. The goal is comprehensive coverage.
 - CRITICAL: Only cite a reference if its title or abstract is DIRECTLY relevant to the
   specific claim you are making. Before citing [n], ask yourself: "Does reference [n]'s
   title/abstract actually discuss this specific topic?" If NO, do NOT cite it — use [$REF]
@@ -1733,51 +1733,14 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             log(`generate: section ${sectionNum} cleaned ${refPlaceholderCount} [\$REF] placeholder(s)`);
           }
 
-          // v58-1: Programmatic citation cap — the prompt says "at most 8" but
-          // the LLM may ignore it (v57 test: §1 had 9 citations). If citedRefs
-          // exceeds the dynamic cap, truncate it AND remove the excess [n] markers
-          // from the body. This keeps only [1]..[cap] in the content.
-          // v62-3: Dynamic cap — 1 citation per 15 words, clamped to [5, 10].
-          // A 100w section allows max 6 citations; a 300w section allows 10.
-          // This prevents over-citing in short sections (v61 §1 had 10 citations
-          // for 93w = 1 per 9 words, which is excessive).
-          const sectionWordCount = countWords(renumberedContent);
-          const dynamicCitationCap = Math.max(DENSITY_MIN, Math.min(CITATION_MAX, Math.floor(sectionWordCount / 15)));
-          let citationCapped = false;
-          if (citedRefs.length > dynamicCitationCap) {
-            const excessStart = dynamicCitationCap + 1;
-            const excessEnd = citedRefs.length;
-            // Remove [n] where n > dynamicCitationCap from the body (singly or in lists)
-            const capRegex = /\[(\d+(?:[,\-–]\s*\d+)*)\]/g;
-            renumberedContent = renumberedContent.replace(capRegex, (match, inner: string) => {
-              const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
-                const rangeMatch = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
-                if (rangeMatch) {
-                  const arr = [];
-                  for (let n = parseInt(rangeMatch[1]); n <= parseInt(rangeMatch[2]); n++) arr.push(n);
-                  return arr;
-                }
-                const n = parseInt(s);
-                return isNaN(n) ? [] : [n];
-              });
-              const kept = nums.filter((n: number) => n <= dynamicCitationCap);
-              if (kept.length === 0) return ""; // drop citation entirely
-              if (kept.length < nums.length) return `[${kept.join(",")}]`;
-              return match;
-            });
-            // Truncate citedRefs to dynamicCitationCap
-            citedRefs = citedRefs.slice(0, dynamicCitationCap);
-            citationCapped = true;
-            log(`generate: section ${sectionNum} CITATION CAP: removed [${excessStart}-${excessEnd}], kept [1-${dynamicCitationCap}] (dynamic cap = ${sectionWordCount}w / 15 = ${dynamicCitationCap})`);
-            send("step", {
-              step: "generate",
-              status: "progress",
-              section: sectionNum,
-              total: sections.length,
-              message: `Section ${sectionNum}: capped citations to ${dynamicCitationCap} (was ${excessEnd}, ${sectionWordCount}w → 1 per 15w).`,
-              citationCapped: true,
-            });
-          }
+          // v63-1: REMOVED citation cap — user requested no truncation so that
+          // the most real citation situation is reflected and important
+          // references are not lost. The previous v58-1/v60-3/v62-3 cap logic
+          // (fixed 8, then 10, then dynamic 1/15w) has been removed entirely.
+          // The LLM is now free to cite as many refs as it deems relevant.
+          // The prompt still says "do NOT over-cite" as a soft guideline, but
+          // there is no programmatic enforcement.
+          const citationCapped = false;
 
           // Layer 1 — adversarial pre-save audit on the renumbered section.
           // Logs topicality warnings (suspect/unsupported) for the audit trail
@@ -1976,23 +1939,24 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           clearAbort();
         }
 
-        // v62-2: Post-generate cool-down wait — if the rate-limiter window
-        // count is high (>= 10), wait 60s before starting compose/audit to let
-        // the sliding window expire some entries. The v61 test showed audit
-        // broke immediately at window count 15 (0 audited). Waiting 60s lets
-        // ~5-7 entries expire (1 entry per ~10s), bringing window count down
-        // to ~8-10, so audit can run 3-5 paragraphs before hitting 15.
+        // v63-2: Post-generate cool-down wait extended from 60s to 120s.
+        // The v62 test showed 60s was not enough — window count stayed at 14
+        // after waiting (entries expire at ~1 per 10s, so 60s only clears ~6
+        // entries, but new compose LLM calls add entries back). 120s clears
+        // ~12 entries, bringing window count from 14 down to ~8, so audit
+        // can run 3-5 paragraphs before hitting the break@15 threshold.
+        // Trigger threshold lowered from >= 10 to >= 8 (earlier intervention).
         const postGenWindowCount = getWindowCount();
-        if (postGenWindowCount >= 10) {
-          log(`generate: post-generate cool-down — window count ${postGenWindowCount} >= 10, waiting 60s before compose/audit`);
+        if (postGenWindowCount >= 8) {
+          log(`generate: post-generate cool-down — window count ${postGenWindowCount} >= 8, waiting 120s before compose/audit`);
           send("step", {
             step: "compose",
             status: "progress",
-            message: `Waiting 60s for rate-limit cool-down (window at ${postGenWindowCount}/15) before composing and auditing...`,
+            message: `Waiting 120s for rate-limit cool-down (window at ${postGenWindowCount}/15) before composing and auditing...`,
             coolDownWait: true,
             windowCount: postGenWindowCount,
           });
-          await new Promise((r) => setTimeout(r, 60000));
+          await new Promise((r) => setTimeout(r, 120000));
           log(`generate: post-generate cool-down done — window count now ${getWindowCount()}`);
         }
 
@@ -2251,15 +2215,16 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               message: `Auditing section ${batchNum}/${totalBatches} (${auditDone}/${generatedParagraphs.length} done, ${auditIssues} issues, ${auditFixed} fixed)...`,
             });
 
-            // v61-1: Audit loop early-exit — break at window count >= 15
-            // (lowered from 18). The v60 test showed that the server crashed
-            // at window count 16-17 because the audit LLM call was already
-            // in-flight when the count crossed 15. Breaking at 15 (before
-            // cool-down starts at 15) ensures we exit BEFORE the rate-limiter
-            // starts imposing 60s cool-downs that cause memory buildup.
+            // v63-3: Audit loop early-exit — break at window count >= 12
+            // (lowered from 15). The v62 test showed that even with break@15,
+            // the audit LLM call already in-flight at window 15 triggered
+            // cool-downs (window 16, 17...) that consumed memory. Breaking
+            // at 12 leaves a 3-call buffer before cool-down starts at 15,
+            // ensuring the in-flight audit call can complete without entering
+            // cool-down territory.
             const wc = getWindowCount();
-            if (wc >= 15) {
-              log(`audit: BREAKING loop at paragraph ${batchNum}/${totalBatches} — window count ${wc} >= 15 (cool-down threshold). ${auditDone}/${generatedParagraphs.length} audited, rest skipped.`);
+            if (wc >= 12) {
+              log(`audit: BREAKING loop at paragraph ${batchNum}/${totalBatches} — window count ${wc} >= 12 (pre-cool-down buffer). ${auditDone}/${generatedParagraphs.length} audited, rest skipped.`);
               send("step", {
                 step: "audit",
                 status: "progress",
