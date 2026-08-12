@@ -3655,3 +3655,105 @@ Stage Summary:
 - v61-1 (audit break@15) 是关键突破: 解决了 v59/v60 的 audit OOM 崩溃。
 - 总耗时 163s — 历史最快!
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v63
+Agent: main (Z.ai Code — v63 improvements + real generate-full test)
+Task: 移除 citation cap (用户要求), 继续 v62 改进意见开发, 真实测试验证。
+
+Work Log:
+- 检查远程仓库: 本地领先 1 commit (v62), push 到 GitHub (8998a4a..b68e9d0)。
+- 实施了 3 项 v63 改进:
+
+1. v63-1 REMOVED citation cap (用户要求):
+  - 用户指示: "不要设置引用上限, 最真实反映引用情况, 避免截断丢失重要文献引用"
+  - 移除了 v58-1/v60-3/v62-3 的所有 cap 逻辑 (固定 8, 10, dynamic 1/15w)
+  - prompt 从 "at most 10" 改为 "NO upper limit — cite every relevant reference"
+  - 程序化截断代码完全删除, citationCapped = false (保留变量供 log 引用)
+
+2. v63-2 cool-down wait 120s (从 60s 延长):
+  - v62 问题: 60s 不够, window 14→14 没下降。
+  - 修复: 120s 清除 ~12 entries, trigger 阈值从 >=10 降到 >=8。
+
+3. v63-3 audit break@12 (从 15 降低):
+  - v62 问题: break@15 时 in-flight 的 audit 调用仍触发 cool-down (window 16, 17)。
+  - 修复: break@12 留 3-call buffer, 确保 in-flight 调用完成前不进 cool-down。
+
+v63 真实 generate-full 测试结果:
+- 项目: cmspg800j0000tzr1kf6h7nit (TMC1/TMC2, 600词目标, 5 DB queries)
+- 总耗时: ~298s (5分钟, 含 120s cool-down wait)
+- 5/5 sections 生成成功 ✅
+- 5/5 paragraphs 保留 ✅
+- Total: 622w (104% target), 15 unique refs, 29 citation links, 0 placeholders
+- 0 blocking errors ✅
+- 服务器存活 ✅ — 完整完成!
+
+Section 详情:
+- §1 Introduction: 124w, 5 refs (DENSITY RETRY 1→5)
+- §2 Structural Biology: 112w, 5 refs (no retry)
+- §3 Localization: 134w, 5 refs (DENSITY RETRY 1→3 + INJECTION +2)
+- §4 Functional Properties: 117w, 5 refs (no retry)
+- §5 Clinical Implications: 135w, 9 refs (WC RETRY rejected + WC INJECTION +2)
+  * §5 有 9 citations — 没有被截断! v63-1 确认生效! ✅
+
+关键验证:
+- **v63-1 citation cap removed**: §5 有 9 citations, v62 会截断到 7 (107w/15),
+  v63 保留全部 9 个 ✅
+- **v63-2 cool-down 120s**: window 13→13 (120s 仍不够, 但 compose 完成了)
+- **v63-3 audit break@12**: "BREAKING at paragraph 1/5 — window count 13 >= 12"
+  服务器存活, 没有进入 cool-down 风暴! ✅
+- compose: rebuilt + version snapshot — 完整完成!
+
+Retry 统计:
+- DENSITY RETRY: 2 次 (§1: 1→5, §3: 1→3) — budget 2/3
+- WORD-COUNT RETRY: 1 次 (§5: 100→101w +1% < +15% rejected)
+- WORD-COUNT INJECTION: 1 次 (§5: 100→135w)
+- POST-AUDIT INJECTION: 1 次 (§3: 3→5)
+- CITATION CAP: 0 次 (已移除) ✅
+- POST-COMPOSE BLOCKING-FIX: applied (max global ref=15, 0 blocking) ✅
+
+v63 vs v62 vs v61 对比:
+| 指标               | v61    | v62    | v63    | v63 vs v62 |
+|--------------------|--------|--------|--------|------------|
+| 总词数             | 646w   | ~632w  | 622w   | -2%         |
+| 目标词数           | 600w   | 600w   | 600w   | 持平        |
+| 达标率             | 108%   | 105%   | 104%   | -1%         |
+| Paragraphs 保留    | 6      | 5      | 5      | 持平        |
+| [$REF] 占位符      | 0      | 0      | 0      | 持平 ✅     |
+| blocking errors    | 0      | 0      | 0      | 持平 ✅     |
+| unique refs        | 16     | ~15    | 15     | 持平        |
+| citation cap 触发  | 0      | 1 (§2) | 0 (removed) | v63-1 ✅ |
+| audit break        | @15    | @15    | @12    | v63-3 ✅    |
+| 服务器存活         | 是     | 是     | 是 ✅  | 持平 ✅     |
+| 总耗时             | 163s   | ~298s  | ~298s  | 持平 (含120s cool-down) |
+
+不足之处 / v64 改进建议:
+1. cool-down 120s 仍不够: window 13→13 没下降。原因: sliding window 是 10min,
+   entries 每 ~10s 过期一个, 但 compose 的 LLM 调用又加了新 entries。
+   120s 清除 ~12 entries, 但 compose 加了 ~3-5 entries, 净清除只有 ~7-9。
+   可以: cool-down wait 延长到 180s, 或在 cool-down 后重新检查 window count,
+   如果仍 >= 12 就跳过整个 audit。
+
+2. audit 0 audited: break@12 在第一个 paragraph 就退出了。说明 generate 阶段
+   用掉了 13 次 LLM 调用, cool-down 没拉低 enough。需要更激进的 cool-down
+   (180s+) 或在 generate 阶段减少 LLM 调用 (减少 retry budget)。
+
+3. WC RETRY +1% (§5: 100→101w): retry 几乎没改善。可能是 prompt 不够强,
+   或 LLM 对短 section (100w) 难以 expand。可以:
+   - WC retry 阈值从 +15% 降到 +10% (接受 +10% 以上的改善)
+   - 或对 < 120w 的 section 直接用 WC injection (跳过 retry)
+
+4. §5 有 9 citations (最多): 移除 cap 后 LLM 自由 cite, 9 个 refs 对 135w
+   来说偏多 (1 per 15w)。但用户要求不截断, 所以这是预期行为。质量靠
+   prompt 的 "only cite if DIRECTLY relevant" 软约束。
+
+5. DENSITY RETRY §3 只改善到 3 (1→3): retry 没达到 DENSITY_MIN=5, 需要
+   injection 补齐。retry prompt 可以更强, 或提高 retry budget (当前 3)。
+
+Stage Summary:
+- v63 3 项改进全部实施并提交 (commit 809c54e)。
+- 真实测试完整完成: 622w (104% target), 5/5 paragraphs, 0 blocking,
+  0 placeholders, 服务器存活!
+- v63-1 (移除 citation cap) 确认生效: §5 保留 9 citations (v62 会截断到 7)。
+- v63-3 (audit break@12) 确认生效: 服务器存活, 没有进入 cool-down 风暴。
+- 代码待 push 到 GitHub。
