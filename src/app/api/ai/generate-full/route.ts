@@ -1227,6 +1227,10 @@ CITATION FORMAT (MANDATORY):
   specific claim you are making. Before citing [n], ask yourself: "Does reference [n]'s
   title/abstract actually discuss this specific topic?" If NO, do NOT cite it — use [$REF]
   instead. Citing an unrelated reference is WORSE than leaving a [$REF] placeholder.
+  v71-1: To reduce topicality warnings, verify the MATCH before citing: the citing
+  sentence and the reference's title/abstract should share at least 2 key terms
+  (e.g. "TMC1", "mechanotransduction", "hair cell"). If they share 0-1 terms,
+  the citation is likely "unsupported" — find a better match or use [$REF].
 - However, do NOT avoid citing entirely. If a claim needs support and the closest reference
   in the list is partially relevant, cite it rather than leaving [$REF]. Use [$REF] ONLY
   when NO reference in the list is even partially relevant to the claim.
@@ -1944,23 +1948,22 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           clearAbort();
         }
 
-        // v68-3: Post-generate cool-down wait reduced from 180s to 120s.
-        // The v67 test showed 180s didn't help much (window 13→13) and added
-        // 3 minutes to total time. 120s is a better tradeoff — enough to let
-        // some entries expire while not wasting too much time. The auto-fix
-        // has its own pre-fix 60s sleep (v66-2) which provides additional
-        // cool-down right before the most LLM-intensive phase.
+        // v71-3: Post-generate cool-down wait reduced from 120s to 90s.
+        // The v70 test showed 120s didn't help (window 13→13) and wasted 2 min.
+        // 90s + pre-auto-fix 60s = 150s total cool-down. Since v70's gap-fill
+        // eliminates most blocking errors without needing auto-fix, the
+        // cool-down is less critical now. 90s saves 30s vs 120s.
         const postGenWindowCount = getWindowCount();
         if (postGenWindowCount >= 8) {
-          log(`generate: post-generate cool-down — window count ${postGenWindowCount} >= 8, waiting 120s before compose/audit`);
+          log(`generate: post-generate cool-down — window count ${postGenWindowCount} >= 8, waiting 90s before compose/audit`);
           send("step", {
             step: "compose",
             status: "progress",
-            message: `Waiting 120s for rate-limit cool-down (window at ${postGenWindowCount}/15) before composing and auditing...`,
+            message: `Waiting 90s for rate-limit cool-down (window at ${postGenWindowCount}/15) before composing and auditing...`,
             coolDownWait: true,
             windowCount: postGenWindowCount,
           });
-          await new Promise((r) => setTimeout(r, 120000));
+          await new Promise((r) => setTimeout(r, 90000));
           const postCoolDownWindow = getWindowCount();
           log(`generate: post-generate cool-down done — window count now ${postCoolDownWindow} (was ${postGenWindowCount})`);
         }
