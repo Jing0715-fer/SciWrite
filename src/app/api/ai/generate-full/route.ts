@@ -2349,9 +2349,17 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           // auto-fix to always run and deliver a corrected version.
           // v66-2: If window count is high (>= 12), wait 60s before auto-fix
           // to let some entries expire and reduce cool-down during auto-fix.
+          // v69-1: Also clearAbort() before auto-fix — the audit phase may
+          // have triggered a 429 abort (v68 test), which would cause all
+          // auto-fix LLM calls to be skipped. Clearing the abort flag gives
+          // auto-fix a fresh start.
           const preFixWindowCount = getWindowCount();
-          if (preFixWindowCount >= 12) {
-            log(`audit: pre-auto-fix cool-down — window count ${preFixWindowCount} >= 12, waiting 60s`);
+          if (isAborted()) {
+            log(`audit: clearing abort flag before auto-fix (was set during audit)`);
+            clearAbort();
+          }
+          if (preFixWindowCount >= 10) {
+            log(`audit: pre-auto-fix cool-down — window count ${preFixWindowCount} >= 10, waiting 60s`);
             send("step", {
               step: "audit",
               status: "progress",
@@ -2465,6 +2473,111 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                       remainingWarnings += ph.warningCount || 0;
                     }
                     log(`audit: post-auto-fix validation — ${remainingBlocking} blocking, ${remainingWarnings} warnings remaining`);
+
+                    // v69-3: Fallback cleanup — if auto-fix was interrupted by
+                    // 429 (v68 test showed this), there may still be blocking
+                    // errors (out-of-range [n]). As a last resort, remove any
+                    // [n] where n > maxGlobalRef from all paragraph contents.
+                    // This guarantees 0 blocking in the final delivered version.
+                    if (remainingBlocking > 0) {
+                      log(`audit: fallback cleanup — removing out-of-range [n] from ${generatedParagraphs.length} paragraphs (auto-fix left ${remainingBlocking} blocking)`);
+                      try {
+                        const fallbackParagraphs = await db.paragraph.findMany({
+                          where: { id: { in: generatedParagraphs.map((p) => p.id) } },
+                        });
+                        let fallbackFixed = 0;
+                        for (const fp of fallbackParagraphs) {
+                          if (!fp.content) continue;
+                          let cleaned = fp.content;
+                          // Remove [n] where n > maxGlobalRef (out-of-range for global list)
+                          cleaned = cleaned.replace(/\[(\d+(?:[,\-–]\s*\d+)*)\]/g, (match, inner: string) => {
+                            const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
+                              const rm = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+                              if (rm) { const a = []; for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) a.push(n); return a; }
+                              const n = parseInt(s); return isNaN(n) ? [] : [n];
+                            });
+                            const valid = nums.filter((n: number) => n >= 1 && n <= maxGlobalRef);
+                            if (valid.length === 0) { fallbackFixed++; return ""; }
+                            if (valid.length < nums.length) { fallbackFixed++; return `[${valid.join(",")}]`; }
+                            return match;
+                          });
+                          // Remove [$REF] and [citation needed]
+                          cleaned = cleaned.replace(/\s*\[\$REF\]/g, "");
+                          cleaned = cleaned.replace(/\s*\[citation needed\]/g, "");
+                          // Clean artifacts
+                          cleaned = cleaned.replace(/\s+([,.;:])/g, "$1");
+                          cleaned = cleaned.replace(/\s{2,}/g, " ");
+                          if (cleaned !== fp.content) {
+                            await db.paragraph.update({
+                              where: { id: fp.id },
+                              data: { content: cleaned, wordCount: countWords(cleaned) },
+                            });
+                          }
+                        }
+                        log(`audit: fallback cleanup done — removed ${fallbackFixed} out-of-range citation(s)`);
+
+                        // Re-sync paragraph references after fallback cleanup
+                        for (const fp of fallbackParagraphs) {
+                          const paraId = fp.id;
+                          const content = (await db.paragraph.findUnique({ where: { id: paraId } }))?.content || "";
+                          const citedNums = new Set<number>();
+                          const citeRe = /\[(\d+(?:[,\-–]\s*\d+)*)\]/g;
+                          let m;
+                          while ((m = citeRe.exec(content)) !== null) {
+                            const nums = m[1].split(/[,;]\s*/).flatMap((s: string) => {
+                              const rm = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+                              if (rm) { const a = []; for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) a.push(n); return a; }
+                              const n = parseInt(s); return isNaN(n) ? [] : [n];
+                            });
+                            for (const n of nums) if (n >= 1 && n <= maxGlobalRef) citedNums.add(n);
+                          }
+                          await db.reference.deleteMany({ where: { paragraphId: paraId } });
+                          for (const globalNum of citedNums) {
+                            const ref = globalRefs[globalNum - 1];
+                            if (ref) {
+                              await db.reference.create({
+                                data: {
+                                  type: ref.type || "pubmed",
+                                  externalId: ref.externalId,
+                                  title: ref.title,
+                                  authors: ref.authors,
+                                  journal: ref.journal,
+                                  year: ref.year,
+                                  url: ref.url,
+                                  doi: ref.doi,
+                                  abstract: ref.abstract,
+                                  projectId,
+                                  paragraphId: paraId,
+                                  citationOrder: globalNum - 1,
+                                },
+                              });
+                            }
+                          }
+                        }
+                        log(`audit: fallback re-sync done — paragraph references updated`);
+
+                        // Re-validate
+                        const healthRes2 = await fetch(
+                          `http://localhost:3000/api/projects/${projectId}/citation-health`,
+                          { signal: AbortSignal.timeout(30000) }
+                        );
+                        if (healthRes2.ok) {
+                          const healthData2 = await healthRes2.json();
+                          let finalBlocking2 = 0;
+                          let finalWarnings2 = 0;
+                          for (const ph of (healthData2.paragraphs || [])) {
+                            finalBlocking2 += ph.blockingCount || 0;
+                            finalWarnings2 += ph.warningCount || 0;
+                          }
+                          log(`audit: fallback validation — ${finalBlocking2} blocking, ${finalWarnings2} warnings`);
+                          remainingBlocking = finalBlocking2;
+                          remainingWarnings = finalWarnings2;
+                        }
+                      } catch (fallbackErr: any) {
+                        log(`audit: fallback cleanup error: ${fallbackErr?.message?.slice(0, 80) || "unknown"}`);
+                      }
+                    }
+
                     send("step", {
                       step: "audit",
                       status: "done",
