@@ -4080,3 +4080,90 @@ Stage Summary:
 - v69-2 fallback 触发但 removed 0 (逻辑错误, v70 修复)。
 - 根本问题: fallback 用 global 范围, citation-health 用 per-paragraph 范围。
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v70
+Agent: main (Z.ai Code — v70 gap-fill fix + real test)
+Task: 修复 fallback 范围检查, gap-fill paragraph refs, 真实测试验证。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (66 commits, 无丢失)。
+- v69 根本问题分析: citation-health 用 per-paragraph refs.length 检查 [n],
+  但 sync refs 只保存了 cited refs (非 gap-fill), 导致 [8] with 7 refs = out-of-range。
+- 实施了 v70 gap-fill 修复:
+
+v70-1: Gap-fill in compose sync refs:
+  - 之前: 只保存 content 中出现的 [n] 对应的 refs (e.g. [1],[3],[5] → 3 refs)
+  - 现在: 保存 ALL refs from 1 to max(citedNums) (e.g. [1]-[5] → 5 refs, 填补 [2],[4])
+  - 确保 refs.length >= max([n]) for every paragraph
+  - citation-health 的 [n] <= refs.length 检查不再 false positive
+
+v70-2: Gap-fill in fallback re-sync:
+  - 同样的 gap-fill 逻辑应用到 fallback cleanup path
+  - auto-fix 失败后 fallback re-sync 也用 gap-fill
+
+v70 真实 generate-full 测试结果:
+- 项目: cmsq228vv0344tm4caa2244p9 (TMC1/TMC2, 600词目标, 5 DB queries)
+- 总耗时: ~379s (6.3分钟)
+- 5/5 sections 生成成功 ✅
+- 5/5 paragraphs 保留 ✅
+- Total: 634w (106% target), 16 unique refs, 57 citation links
+- **0 placeholders** ✅✅
+- **0 blocking errors** ✅✅ (v69: 15 blocking!)
+- **19 warnings** (topicality, 非阻塞)
+- **citation-health: PASS** ✅✅ (v69: FAIL!)
+- 服务器存活 ✅ — 完整完成!
+
+关键验证:
+- **v70-1 gap-fill**: "synced (5 paragraphs, v70-1 gap-fill)" ✅
+  paragraph refs: §1=6, §2=10, §3=12, §4=13, §5=16 (v69: 5-7)
+- **audit: checked 40, issues 0** ✅ (v69: 44 issues) — gap-fill 消除了所有 false blocking!
+- **post-auto-fix: 0 blocking, 19 warnings** ✅✅
+- **634w (106%)** ✅ — 词数达标
+- **version snapshot saved** ✅
+
+v70 vs v69 vs v67 对比:
+| 指标               | v67    | v69    | v70    | v70 vs v69 |
+|--------------------|--------|--------|--------|------------|
+| 总词数             | 565w   | 636w   | 634w   | 持平 ✅     |
+| 达标率             | 94%    | 106%   | 106%   | 持平 ✅     |
+| [$REF]/placeholders| 0      | 0      | 0      | 持平 ✅     |
+| blocking errors    | 0      | 15     | 0      | -100% ✅✅ |
+| citation-health    | PASS   | FAIL   | PASS   | ✅✅       |
+| paragraph refs     | 5-7    | 5-7    | 6-16   | gap-fill ✅|
+| 服务器存活         | 是     | 是     | 是     | 持平 ✅     |
+| 总耗时             | 676s   | 374s   | 379s   | +1%         |
+
+历史性突破:
+- **citation-health: PASS** 第二次实现 (第一次是 v67)!
+- **0 blocking + 0 placeholders** — 无错误修正版!
+- **57 citation links** — 历史最多 (gap-fill 保留了更多 refs)!
+- **634w (106%)** — 词数超标!
+- 用户需求"交付无错误的修正版"再次实现!
+
+v70 的 gap-fill 修复了 v69 的根本问题:
+- v69: sync refs 只保存 cited refs → refs.length < max([n]) → false blocking
+- v70: sync refs 用 gap-fill → refs.length >= max([n]) → 0 blocking
+
+不足之处 / v71 改进建议:
+1. 19 warnings (topicality): 都是 "suspect"/"unsupported" (low overlap)。
+   可以通过 overlap-based injection 改善, 但非阻塞。
+
+2. auto-fix 没真正运行 (0 fixed): batch-auto-fix 返回 0 blocking, 0 fixed,
+   因为 gap-fill 已经消除了所有 blocking, auto-fix 无需修复。这是好事!
+
+3. §5 有 16 refs (最多): gap-fill 填充了 [1]-[16] 的所有 refs, 即便很多
+   没被 cite。这增加了 DB 数据量但确保了 citation-health 通过。
+
+4. 总耗时 379s: 比 v67 (676s) 快 44%。主要节省来自 auto-fix 快速完成
+   (0 blocking → 56ms vs v67 的 72s)。
+
+5. 警告 19 个: 可以在 prompt 中强调 "only cite if DIRECTLY relevant" 减少
+   topicality warnings。
+
+Stage Summary:
+- v70 gap-fill 修复提交 (commit b00a8d5)。
+- 真实测试完美成功: 634w (106%), 0 blocking, 0 placeholders, PASS!
+- v70-1 gap-fill 是关键修复: 消除了 v69 的 15 个 false blocking errors。
+- 用户需求"交付无错误的修正版"再次实现, 且更稳定 (v67 靠 auto-fix, v70 靠 gap-fill)。
+- 代码待 push 到 GitHub。
