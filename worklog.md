@@ -3925,3 +3925,82 @@ Stage Summary:
 - v67-1/2 (placeholder removal) 是关键: 从 12 个 placeholders 降到 0。
 - v66-3 (sync refs) + v66-1 (forced auto-fix) 在 v67 中发挥了作用。
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v68
+Agent: main (Z.ai Code — v68 improvements + real test)
+Task: 继续 v67 改进意见开发, 真实测试验证。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (62 commits, 无丢失)。
+- 实施了 3 项 v68 改进:
+
+1. v68-1 Post-cleanup word-count check:
+  - cleanup 后检查总词数是否 < 90% target, 如果是则发 wordCountWarning 事件。
+  - 不做 LLM retry (已太多 LLM 调用), 只 log + 通知用户。
+
+2. v68-2 Auto-fix over-cleaning guard:
+  - auto-fix 后重新检查每个 paragraph 的 content 中的 [n] citations,
+    如果有 [n] 匹配 global ref 但不在 paragraph.references 中, 重新添加。
+  - 防止 auto-fix 意外移除 valid citation-ref links。
+
+3. v68-3 Cool-down 180s→120s:
+  - v67 测试显示 180s 没帮助 (window 13→13), 浪费 3 分钟。
+  - 120s + pre-auto-fix 60s = 180s 总 cool-down, 足够。
+
+v68 真实 generate-full 测试结果:
+- 项目: cmspz2sfj01zhtm4cguh14zze (TMC1/TMC2, 600词目标, 5 DB queries)
+- 总耗时: ~746s (12.4分钟, 含 120s cool-down + 60s pre-auto-fix + 93s auto-fix)
+- 5/5 sections 生成成功 ✅
+- 5/5 paragraphs 保留 ✅
+- Total: 578w (96% target), 15 unique refs, 34 citation links
+- **0 placeholders** ✅✅ (v67 的清理延续)
+- **34 citation links** (v67: 26) — v68-2 guard 保留了更多 refs ✅
+- **v68-1 word-count check**: "578w is 96% of target 600w (OK)" ✅
+- 服务器存活 ✅ — 完整完成!
+
+但 citation-health: FAIL (7 blocking in §3):
+- §1: 0 blocking ✅, §2: 0 blocking ✅, §3: 7 blocking ⚠️, §4: 0 blocking ✅, §5: 0 blocking ✅
+- 原因: auto-fix 遇到 429 rate limit, rate-limiter 触发 abort, auto-fix 中断
+  没有完全修复 §3 的 blocking errors。
+
+v68 vs v67 对比:
+| 指标               | v67    | v68    | 变化      |
+|--------------------|--------|--------|-----------|
+| 总词数             | 565w   | 578w   | +2% ✅    |
+| 达标率             | 94%    | 96%    | +2% ✅    |
+| Paragraphs 保留    | 5      | 5      | 持平 ✅   |
+| [$REF]/placeholders| 0      | 0      | 持平 ✅   |
+| citation links     | 26     | 34     | +31% ✅   |
+| blocking errors    | 0      | 7      | +7 ⚠️     |
+| citation-health    | PASS   | FAIL   | ⚠️        |
+| 服务器存活         | 是     | 是     | 持平 ✅   |
+| 总耗时             | 676s   | 746s   | +10%      |
+
+不足之处 / v69 改进建议:
+1. auto-fix 429 中断: rate-limiter 在 auto-fix 阶段触发 abort, 导致 §3
+   未修复。需要:
+   - auto-fix 阶段用更低的 rate limit 阈值 (e.g. window >= 10 就 sleep)
+   - 或 auto-fix 内部加 retry on 429 (当前 batch-auto-fix 不处理 429)
+
+2. §3 有 7 blocking: 需要检查具体是什么类型的 blocking (out-of-range? missing?)
+   可能是 global renumbering 后 [n] 与 paragraph refs 不匹配。
+
+3. v68-2 over-cleaning guard 未触发 (0 resynced): 说明 v66-3 sync refs
+   已经足够, auto-fix 没有过度清理。34 citation links (v67: 26) 说明
+   v68 的 generate 阶段产生了更多 citations (9+7+5+6+7=34 vs v67 的 26)。
+
+4. 总耗时 12.4分钟: cool-down (120s) + pre-auto-fix (60s) + auto-fix (93s)
+   = 273s 非 LLM 时间。可以并行化 auto-fix 或减少 cool-down。
+
+5. 429 rate limit 是根本问题: 整个 pipeline 约 20-25 次 LLM 调用,
+   加上 auto-fix 的 5-10 次, 容易触发 30 req/10min 限制。需要更智能
+   的 rate limiting (e.g. 动态调整 token bucket capacity)。
+
+Stage Summary:
+- v68 3 项改进全部实施并提交 (commit 9fa97a9)。
+- 真实测试完成: 578w (96%), 0 placeholders, 34 citation links (+31% vs v67)。
+- v68-1 word-count check 生效 (96% OK)。
+- v68-2 over-cleaning guard 未触发 (说明 sync refs 已足够)。
+- 但 auto-fix 429 中断导致 §3 有 7 blocking, citation-health FAIL。
+- 代码待 push 到 GitHub。
