@@ -485,45 +485,70 @@ export function TopicComposer({
           {!generated || generated === "__STREAMING__" ? (
             <>
               {generated === "__STREAMING__" && streamText && (
-                <div className="flex-1 max-h-24 overflow-y-auto scroll-academic rounded-md border border-border/40 bg-muted/20 p-2 space-y-0.5">
-                  {streamText.split("\n").slice(-6).map((line, i) => (
-                    <p key={i} className="text-[9px] text-muted-foreground font-mono">{line}</p>
-                  ))}
+                <div className="flex-1 max-h-32 overflow-y-auto scroll-academic rounded-lg border border-primary/20 bg-gradient-to-br from-primary/5 to-muted/30 p-3 space-y-1">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                    <span className="text-[10px] font-medium text-primary">Pipeline Progress</span>
+                  </div>
+                  {streamText.split("\n").slice(-8).map((line, i) => {
+                    const isStep = line.includes("[step]");
+                    const isError = line.toLowerCase().includes("error") || line.toLowerCase().includes("fail");
+                    const isDone = line.toLowerCase().includes("done") || line.toLowerCase().includes("complete");
+                    return (
+                      <p key={i} className={`text-[9px] font-mono leading-relaxed ${
+                        isError ? "text-red-500 dark:text-red-400" :
+                        isDone ? "text-emerald-600 dark:text-emerald-400" :
+                        isStep ? "text-primary/70" :
+                        "text-muted-foreground"
+                      }`}>{line}</p>
+                    );
+                  })}
                 </div>
               )}
               {/* v53-恢复: LLM quota status badge — shows dailyRemaining / windowCount */}
+              {/* v83-1: Enhanced UI with progress bar and better visual design */}
               {quotaQ.data && genMode === "full" && (
-                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/40 border border-border/40">
                   {quotaQ.data.aborted ? (
-                    <Badge variant="destructive" className="text-[9px] px-1.5 py-0 h-4">
+                    <Badge variant="destructive" className="text-[9px] px-2 py-0 h-5 gap-0.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
                       ABORTED
                     </Badge>
                   ) : quotaQ.data.coolDownActive ? (
                     <Badge
                       variant="secondary"
-                      className="text-[9px] px-1.5 py-0 h-4 bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
+                      className="text-[9px] px-2 py-0 h-5 gap-0.5 bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
                     >
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
                       COOL-DOWN
                     </Badge>
-                  ) : null}
+                  ) : (
+                    <Badge
+                      variant="secondary"
+                      className="text-[9px] px-2 py-0 h-5 gap-0.5 bg-emerald-100 text-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-300"
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                      ACTIVE
+                    </Badge>
+                  )}
                   {quotaQ.data.dailyRemaining !== null ? (
-                    <span>
+                    <span className="text-[10px]">
                       Daily: <span className={
                         (quotaQ.data.dailyRemaining ?? 0) < 50
-                          ? "text-amber-600 dark:text-amber-400 font-medium"
-                          : "text-emerald-600 dark:text-emerald-400 font-medium"
+                          ? "text-amber-600 dark:text-amber-400 font-semibold"
+                          : "text-emerald-600 dark:text-emerald-400 font-semibold"
                       }>{quotaQ.data.dailyRemaining}</span>
                       {quotaQ.data.dailyLimit ? `/${quotaQ.data.dailyLimit}` : ""}
                     </span>
                   ) : (
-                    <span>Daily: <span className="text-muted-foreground">unknown</span></span>
+                    <span className="text-[10px]">Daily: <span className="text-muted-foreground">unknown</span></span>
                   )}
                   <span className="text-muted-foreground/60">·</span>
-                  <span>
+                  <span className="text-[10px]">
                     10min: <span className={
                       quotaQ.data.windowCount >= quotaQ.data.windowThreshold
-                        ? "text-amber-600 dark:text-amber-400 font-medium"
-                        : "text-foreground font-medium"
+                        ? "text-amber-600 dark:text-amber-400 font-semibold"
+                        : "text-foreground font-semibold"
                     }>{quotaQ.data.windowCount}</span>/{quotaQ.data.windowThreshold}
                   </span>
                 </div>
