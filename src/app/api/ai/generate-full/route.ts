@@ -1026,6 +1026,10 @@ Output JSON only.`;
 
         // v53-恢复: Pre-flight quota check — if the cached quota state says
         // we have 0 calls left today, bail out BEFORE doing any LLM work.
+        // v91-2: Clear abort flag before pre-flight check. If a previous
+        // pipeline run set the abort flag (e.g. from a different session),
+        // the new run should start fresh.
+        clearAbort();
         try {
           preFlightQuotaCheck("generate-full:pre-flight");
         } catch (e: any) {
