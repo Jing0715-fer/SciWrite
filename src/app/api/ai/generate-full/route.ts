@@ -1231,10 +1231,9 @@ CITATION FORMAT (MANDATORY):
   sentence and the reference's title/abstract should share at least 2 key terms
   (e.g. "TMC1", "mechanotransduction", "hair cell"). If they share 0-1 terms,
   the citation is likely "unsupported" — find a better match or use [$REF].
-  v73-2: When multiple references could support a claim, choose the one whose
-  title/abstract has the HIGHEST keyword overlap with the citing sentence.
-  Avoid citing a reference just because it's "in the list" — prefer refs
-  that explicitly discuss the specific mechanism/protein/finding you mention.
+  v74-1: Reverted v73-2's "HIGHEST overlap" instruction — it caused LLM to
+  cite more refs (59 vs 53) which increased warnings (9→15). Keeping the
+  simpler v72 prompt that produced fewer warnings.
 - However, do NOT avoid citing entirely. If a claim needs support and the closest reference
   in the list is partially relevant, cite it rather than leaving [$REF]. Use [$REF] ONLY
   when NO reference in the list is even partially relevant to the claim.
@@ -1955,22 +1954,21 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           clearAbort();
         }
 
-        // v72-2: Post-generate cool-down wait reduced from 90s to 60s.
-        // v71 test showed gap-fill eliminates blocking without needing auto-fix,
-        // and audit had 0 issues. The cool-down is mainly to let the token
-        // bucket refill for audit LLM calls. 60s is enough for ~30 entries
-        // to expire (1 per 2s). Combined with pre-auto-fix 60s = 120s total.
+        // v74-2: Cool-down reduced from 60s to 45s. v73 showed audit had 0 issues
+        // and auto-fix ran in 62ms (gap-fill resolved everything). The cool-down
+        // only needs to let the token bucket refill for a few audit LLM calls.
+        // 45s lets ~22 entries expire. Saves 15s vs 60s.
         const postGenWindowCount = getWindowCount();
         if (postGenWindowCount >= 8) {
-          log(`generate: post-generate cool-down — window count ${postGenWindowCount} >= 8, waiting 60s before compose/audit`);
+          log(`generate: post-generate cool-down — window count ${postGenWindowCount} >= 8, waiting 45s before compose/audit`);
           send("step", {
             step: "compose",
             status: "progress",
-            message: `Waiting 60s for rate-limit cool-down (window at ${postGenWindowCount}/15) before composing and auditing...`,
+            message: `Waiting 45s for rate-limit cool-down (window at ${postGenWindowCount}/15) before composing and auditing...`,
             coolDownWait: true,
             windowCount: postGenWindowCount,
           });
-          await new Promise((r) => setTimeout(r, 60000));
+          await new Promise((r) => setTimeout(r, 45000));
           const postCoolDownWindow = getWindowCount();
           log(`generate: post-generate cool-down done — window count now ${postCoolDownWindow} (was ${postGenWindowCount})`);
         }
