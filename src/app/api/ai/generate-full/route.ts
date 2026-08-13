@@ -924,29 +924,35 @@ Output JSON only.`;
         // but LLM only writes ~320w per section). Force at least
         // ceil(targetWords / 300) sections. If LLM returned fewer, split
         // the excess word budget across existing sections or add sections.
+        // v84-2: If LLM returned fewer than minSections, ADD new sections
+        // with generic titles ("Additional Perspectives", "Future Directions",
+        // etc.) to reach the minimum. This gives more but smaller sections
+        // which LLM writes more reliably.
         const minSections = Math.max(5, Math.ceil(targetWords / 300));
         if (sections.length < minSections) {
-          log(`plan: LLM returned ${sections.length} sections, but minimum is ${minSections} (targetWords=${targetWords}/300). Adding ${minSections - sections.length} more sections.`);
-          // Evenly distribute target words across ALL sections (existing + new)
-          const perSectionTarget = Math.floor(targetWords / minSections);
-          // Adjust existing sections to the even target
+          const needed = minSections - sections.length;
+          log(`plan: LLM returned ${sections.length} sections, but minimum is ${minSections} (targetWords=${targetWords}/300). Adding ${needed} more sections.`);
+          // Generic section titles for the additional sections
+          const genericTitles = [
+            "Emerging Trends and Future Directions",
+            "Challenges and Limitations",
+            "Comparative Analysis and Perspectives",
+            "Technical Advances and Innovations",
+            "Translational Implications",
+          ];
+          for (let i = 0; i < needed && i < genericTitles.length; i++) {
+            sections.push({
+              title: genericTitles[i],
+              targetWords: Math.floor(targetWords / minSections),
+              focus: `Additional perspectives on ${project.topic}`,
+            });
+          }
+          // Evenly distribute target words across ALL sections
+          const perSectionTarget = Math.floor(targetWords / sections.length);
           for (const s of sections) {
             s.targetWords = perSectionTarget;
           }
-          // Add placeholder sections if needed (LLM didn't provide enough)
-          // We can't generate good titles without LLM, so just redistribute
-          // the word budget across existing sections to hit the target.
-          // This means fewer sections but each gets more words.
-          // Actually, let's just redistribute and keep LLM's sections:
-          const totalTarget = sections.reduce((sum: number, s: any) => sum + (s.targetWords || 0), 0);
-          if (totalTarget < targetWords) {
-            // Scale up each section's target proportionally
-            const scale = targetWords / totalTarget;
-            for (const s of sections) {
-              s.targetWords = Math.floor((s.targetWords || 0) * scale);
-            }
-          }
-          log(`plan: redistributed word targets across ${sections.length} sections (per section ~${perSectionTarget}w, total ~${sections.reduce((s: number, sec: any) => s + (sec.targetWords || 0), 0)}w)`);
+          log(`plan: added ${needed} sections, total ${sections.length} sections (per section ~${perSectionTarget}w, total ~${sections.reduce((s: number, sec: any) => s + (sec.targetWords || 0), 0)}w)`);
         }
 
         send("step", {

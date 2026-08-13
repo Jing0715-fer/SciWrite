@@ -134,6 +134,29 @@ export function TopicComposer({
             if (data.message) {
               setStreamText((prev) => prev + (prev ? "\n" : "") + `[${event}] ${data.message}`);
             }
+            // v84-1: Track current pipeline step for progress visualization
+            if (event === "step" && data.step) {
+              const stepMap: Record<string, number> = {
+                init: 1, gather: 2, curate: 3, plan: 4, generate: 5,
+                compose: 6, audit: 7, translate: 8, done: 9,
+              };
+              const stepNum = stepMap[data.step] || 0;
+              if (stepNum > 0) {
+                setStreamText((prev) => {
+                  // Update the last "step" line with a progress bar
+                  const lines = prev.split("\n");
+                  const lastStepLine = lines.findIndex((l) => l.includes("▰"));
+                  const progressBar = "▰".repeat(stepNum) + "▱".repeat(Math.max(0, 9 - stepNum));
+                  const stepLine = `[progress] ${progressBar} Step ${stepNum}/9: ${data.step}`;
+                  if (lastStepLine >= 0) {
+                    lines[lastStepLine] = stepLine;
+                  } else {
+                    lines.push(stepLine);
+                  }
+                  return lines.join("\n");
+                });
+              }
+            }
             // v73-3: Show final citation-health status to user
             if (event === "step" && data.errorFree !== undefined) {
               if (data.errorFree) {
@@ -556,7 +579,7 @@ export function TopicComposer({
               <Button
                 onClick={() => writeMut.mutate()}
                 disabled={writeMut.isPending || !topic.trim() || (quotaQ.data?.aborted ?? false)}
-                className="gap-2"
+                className={`gap-2 transition-all ${genMode === "full" ? "bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 shadow-md" : ""}`}
               >
                 {writeMut.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
