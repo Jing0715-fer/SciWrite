@@ -235,7 +235,7 @@ function SourcesList({
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Horizontal type tab bar — shows ALL types + counts at a glance */}
-      <div className="px-2 pt-1.5 pb-2 border-b border-border/40 shrink-0">
+      <div className="px-2 pt-1.5 pb-2 border-b border-border/40 shrink-0 bg-gradient-to-r from-muted/15 to-transparent">
         <div className="flex items-center gap-1 overflow-x-auto scrollbar-thin pb-1">
           {/* "All" tab */}
           <button
@@ -418,7 +418,7 @@ function SourceCard({
   const isRcsb = d.source === "rcsb" && d.externalId;
   const analyzed = isRcsb && extraObj?.analyzed === true;
   return (
-    <div className="rounded-md border border-border/60 bg-card p-2.5 space-y-1">
+    <div className="rounded-lg border border-border/60 bg-card p-2.5 space-y-1 transition-all hover:border-primary/30 hover:shadow-sm">
       <div className="flex items-start gap-1.5">
         {d.externalId && (
           <span className="text-[9px] font-mono text-muted-foreground">

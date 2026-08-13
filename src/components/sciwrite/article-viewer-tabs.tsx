@@ -570,7 +570,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
   return (
     <Dialog open={true} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-6xl h-[90vh] max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
-        <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 shrink-0">
+        <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 shrink-0 bg-gradient-to-r from-primary/5 via-muted/10 to-transparent">
           <div className="flex items-start gap-3">
             <div className="flex-1 min-w-0">
               <DialogTitle className="text-base font-serif-text">
@@ -653,26 +653,26 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
         </DialogHeader>
 
         <Tabs defaultValue="composed" className="flex-1 min-h-0 flex flex-col">
-          <div className="px-6 py-2 border-b border-border/60 shrink-0 flex items-center justify-between">
-            <TabsList className="h-8">
-              <TabsTrigger value="sections" className="text-xs gap-1">
-                <FileText className="h-3 w-3" />
+          <div className="px-6 py-2 border-b border-border/60 shrink-0 flex items-center justify-between bg-gradient-to-r from-muted/20 to-transparent">
+            <TabsList className="h-9 gap-0.5">
+              <TabsTrigger value="sections" className="text-xs gap-1 px-3 rounded-md transition-all">
+                <FileText className="h-3.5 w-3.5" />
                 {t("articleViewer.sections")}
               </TabsTrigger>
-              <TabsTrigger value="composed" className="text-xs gap-1">
-                <Layers className="h-3 w-3" />
+              <TabsTrigger value="composed" className="text-xs gap-1 px-3 rounded-md transition-all">
+                <Layers className="h-3.5 w-3.5" />
                 {t("articleViewer.composed")}
               </TabsTrigger>
-              <TabsTrigger value="review" className="text-xs gap-1">
-                <Gavel className="h-3 w-3" />
+              <TabsTrigger value="review" className="text-xs gap-1 px-3 rounded-md transition-all">
+                <Gavel className="h-3.5 w-3.5" />
                 {t("articleViewer.review")}
               </TabsTrigger>
-              <TabsTrigger value="relationships" className="text-xs gap-1">
-                <Network className="h-3 w-3" />
+              <TabsTrigger value="relationships" className="text-xs gap-1 px-3 rounded-md transition-all">
+                <Network className="h-3.5 w-3.5" />
                 {t("articleViewer.relationships")}
               </TabsTrigger>
-              <TabsTrigger value="insights" className="text-xs gap-1">
-                <Sparkles className="h-3 w-3" />
+              <TabsTrigger value="insights" className="text-xs gap-1 px-3 rounded-md transition-all">
+                <Sparkles className="h-3.5 w-3.5" />
                 {t("articleViewer.insights") || "Analysis"}
               </TabsTrigger>
             </TabsList>
