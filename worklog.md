@@ -4810,3 +4810,90 @@ Stage Summary:
 - v78-1 WC retry 改进生效 (1500w 超标到 110%)。
 - pipeline 在 1500w 规模同样有效, 总耗时仅 271s。
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v79
+Agent: main (Z.ai Code — v79 section balance prompt + 2000w test)
+Task: 强化 section 长度均衡, 用 2000w target 测试最大规模。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (82 commits, 无丢失)。
+- 实施了 v79-1 改进:
+
+1. v79-1 Section length balance prompt:
+  - 新增 "Keep sections BALANCED in length" 指令
+  - "If exceeding X words (115% of target), STOP and conclude"
+  - "Excess length in one section steals word budget from later sections"
+  - 目标: 解决 v78 §1=469w (其他 213-356w) 的不均衡问题
+
+v79 真实 generate-full 测试结果 (Alzheimer's, 2000w target):
+- 项目: cmsqyp9mg08eptm4ch6qlcink (Alzheimer's, 2000词目标, 8 DB queries)
+- 总耗时: ~330s (5.5分钟)
+- 5/5 sections 生成成功 ✅
+- 5/5 paragraphs 保留 ✅ (merge threshold 200w, 0 merged)
+- Total: 1589w (79% target) — 达标率偏低 ⚠️
+- **0 placeholders** ✅✅
+- **0 blocking errors** ✅✅
+- **43 warnings** (2000w 更多内容)
+- **citation-health: PASS** ✅✅ (连续第十一次!)
+- 服务器存活 ✅ — 完整完成!
+
+Section 详情 (2000w target):
+- §1 Introduction: 365w, 11 refs
+- §2 Amyloid-Beta: 350w, 8 refs
+- §3 Tau Pathology: 286w, 12 refs
+- §4 Interplay: 287w, 13 refs
+- §5 Neuroinflammation: 301w, 17 refs
+- 平均: 318w/section (目标 400w, 80%)
+
+v79-1 验证:
+- **长度均衡改善**: §1=365w (v78: 469w, -22%) ✅
+- §1 和 §2 接近 (365 vs 350), 不再有 §1 远超其他的问题 ✅
+- 但所有 sections 都低于 400w target (80%) ⚠️
+
+六个测试全部 PASS:
+| Topic | Field | Target | Words | % | Block | Health |
+|-------|-------|--------|-------|---|-------|--------|
+| TMC1 (v74) | structural-bio | 600w | 598w | 100% | 0 | PASS ✅ |
+| CRISPR (v75) | molecular-bio | 600w | 609w | 101% | 0 | PASS ✅ |
+| Alzheimer's (v76) | neuroscience | 600w | 603w | 100% | 0 | PASS ✅ |
+| Cancer PD-1 (v77) | immunology | 1000w | 953w | 95% | 0 | PASS ✅ |
+| CRISPR (v78) | molecular-bio | 1500w | 1645w | 110% | 0 | PASS ✅ |
+| Alzheimer's (v79) | neuroscience | 2000w | 1589w | 79% | 0 | PASS ✅ |
+
+**连续十一次 PASS — 跨四个领域 + 四个规模!**
+
+v79 vs v78 对比:
+| 指标 | v78 (CRISPR 1500w) | v79 (Alzheimer 2000w) |
+|------|---------------------|------------------------|
+| 总词数 | 1645w | 1589w (-3%) |
+| 达标率 | 110% | 79% |
+| blocking | 0 | 0 |
+| warnings | 46 | 43 |
+| citation links | 69 | 61 |
+| 总耗时 | 271s | 330s (+22%) |
+
+不足之处 / v80 改进建议:
+1. 【紧急】2000w 达标率 79%: 5 sections × 318w = 1589w, 但 target 是 2000w。
+   plan 阶段分配了 5 sections × 400w = 2000w, 但 LLM 每个 section 只写了
+   ~318w (80% of 400w)。需要:
+   - 在 plan 阶段分配更多 sections (7-8 × 250-300w 而非 5 × 400w)
+   - 或在 prompt 中更强调整 400w target ("MUST reach 380w minimum")
+
+2. v79-1 长度均衡改善: §1 从 469w 降到 365w (-22%) ✅, 但整体偏短。
+   可能是 "STOP and conclude" 指令太强, 导致 LLM 提前结束。
+
+3. 2000w 总耗时 330s: 比 1500w (271s) 多 59s (+22%)。主要因为 §5
+   遇到 rate-limiter cool-down (60s)。
+
+4. 43 warnings: 与 v78 (46) 相当。
+
+5. 61 citation links: 比 v78 (69) 少, 因为内容更短。
+
+Stage Summary:
+- v79 测试完成 (Alzheimer's, 2000w target — 最大规模)!
+- 1589w (79%), 0 blocking, 0 placeholders, PASS!
+- v79-1 长度均衡改善: §1 不再过长 ✅
+- 但 2000w 达标率偏低 (79%), 需要 v80 在 plan 阶段分配更多 sections。
+- 连续十一次 PASS — 跨四个领域 + 四个规模!
+- 代码待 push 到 GitHub。
