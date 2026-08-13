@@ -225,8 +225,8 @@ export function TopicComposer({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[88vh] flex flex-col gap-0 p-0">
-        <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60">
+      <DialogContent className="max-w-3xl max-h-[88vh] flex flex-col gap-0 p-0 rounded-xl overflow-hidden">
+        <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 bg-gradient-to-r from-primary/5 to-transparent">
           <DialogTitle className="flex items-center gap-2 text-base">
             <Sparkles className="h-4 w-4 text-primary" />
             {t("topic.title")}
@@ -238,42 +238,56 @@ export function TopicComposer({
 
         <ScrollArea className="flex-1 min-h-0 scroll-academic">
           <div className="px-6 py-4 space-y-4">
-            {/* Generation mode selector */}
-            <div className="flex gap-1 p-0.5 rounded-md bg-muted/50">
+            {/* Generation mode selector — v86-1: Enhanced with gradient + icons */}
+            <div className="flex gap-1 p-1 rounded-lg bg-muted/50 border border-border/30">
               <button
                 onClick={() => setGenMode("single")}
-                className={`flex-1 text-xs py-1.5 rounded transition-colors ${
-                  genMode === "single" ? "bg-card shadow-sm font-medium text-primary" : "text-muted-foreground hover:text-foreground"
+                className={`flex-1 text-xs py-2 rounded-md transition-all flex items-center justify-center gap-1.5 ${
+                  genMode === "single"
+                    ? "bg-card shadow-sm font-medium text-primary border border-primary/20"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
                 }`}
               >
-                <PenLine className="h-3 w-3 inline mr-1" />
+                <PenLine className="h-3.5 w-3.5" />
                 {t("topic.singleParagraph")}
               </button>
               <button
                 onClick={() => setGenMode("full")}
-                className={`flex-1 text-xs py-1.5 rounded transition-colors ${
-                  genMode === "full" ? "bg-card shadow-sm font-medium text-primary" : "text-muted-foreground hover:text-foreground"
+                className={`flex-1 text-xs py-2 rounded-md transition-all flex items-center justify-center gap-1.5 ${
+                  genMode === "full"
+                    ? "bg-gradient-to-r from-primary to-primary/80 shadow-md font-medium text-primary-foreground border border-primary/30"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
                 }`}
               >
-                <Zap className="h-3 w-3 inline mr-1" />
+                <Zap className="h-3.5 w-3.5" />
                 {t("topic.fullArticle")}
               </button>
             </div>
 
             {/* Full article mode: show target words + journal template */}
+            {/* v86-1: Enhanced with card-style container + gradient range track */}
             {genMode === "full" && (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-muted/20 border border-border/30">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t("topic.targetWords")}: {targetWords}</Label>
+                  <Label className="text-xs font-medium flex items-center gap-1">
+                    <span>{t("topic.targetWords")}:</span>
+                    <span className="text-primary font-bold tabular-nums">{targetWords}</span>
+                    <span className="text-muted-foreground">words</span>
+                  </Label>
                   <input
-                    type="range" min={1500} max={10000} step={500}
+                    type="range" min={500} max={10000} step={100}
                     value={targetWords}
                     onChange={(e) => setTargetWords(Number(e.target.value))}
-                    className="w-full h-2"
+                    className="w-full h-2 accent-primary cursor-pointer"
                   />
+                  <div className="flex justify-between text-[9px] text-muted-foreground">
+                    <span>500</span>
+                    <span>5000</span>
+                    <span>10000</span>
+                  </div>
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">{t("topic.journalTemplate")}</Label>
+                  <Label className="text-xs font-medium">{t("topic.journalTemplate")}</Label>
                   <Select value={journalTemplate} onValueChange={setJournalTemplate}>
                     <SelectTrigger className="text-xs h-9"><SelectValue /></SelectTrigger>
                     <SelectContent>
