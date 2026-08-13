@@ -5855,3 +5855,47 @@ Stage Summary:
 - v90-2 UI audit-report-viewer: rounded-lg + text-primary ✅
 - 真实测试因 LLM provider rate-limited 未完成。
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v91
+Agent: main (Z.ai Code — v91 UI + clearAbort fix + test)
+Task: UI 优化 data-gathering-dialog + citation-graph, 修复 clearAbort, 测试。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (105 commits, 无丢失)。
+- 实施了 3 项 v91 改进:
+
+1. v91-1 Data gathering dialog + citation graph UI:
+  - DialogContent: rounded-xl
+  - DialogHeader: gradient (from-primary/5 to-transparent)
+  - Citation graph: gradient bg, transition-all, hover:border-primary/30,
+    hover:shadow-sm, Network icon h-3.5 text-primary
+
+2. v91-2 clearAbort fix (CRITICAL):
+  - 在 preFlightQuotaCheck 前加 clearAbort()
+  - 修复了 v90 的 RateLimitAbortedError 问题: 之前 pipeline 的 abort
+    flag 没有被清除, 导致新 pipeline 立即被 abort
+  - 现在 clearAbort() 在 pre-flight check 前调用, 给每个新 pipeline
+    一个 fresh start
+
+v91 真实测试: clearAbort 修复生效, 但 LLM provider 仍 429!
+- clearAbort 修复确认: 没有 RateLimitAbortedError 了 ✅
+- 但 LLM provider 返回 429: "Too many requests, please try again later"
+- 这是 provider 级别的 rate limit (不是我们的 rate-limiter)
+- 需要等待 provider 恢复后重新测试
+
+十八个测试全部 PASS (v90-v91 因 provider rate-limit 未完成测试):
+连续二十一次 PASS (v67-v89)
+
+不足之处 / v92 改进建议:
+1. LLM provider rate-limited: 需要 10+ 分钟等待 provider 恢复。
+2. v91-2 clearAbort fix: 代码修复已验证 (没有 RateLimitAbortedError)。
+3. v91-1 UI: 代码已实现但未能在浏览器中验证。
+4. v90-1 plan truncation fix: 仍待真实测试验证。
+
+Stage Summary:
+- v91 代码改进全部实施并 lint 通过 (commits c32dd12 + 3701a7e)。
+- v91-1 UI: data-gathering-dialog + citation-graph ✅
+- v91-2 clearAbort fix: 修复了跨 session abort flag 问题 ✅
+- 真实测试因 LLM provider 429 未完成。
+- 代码待 push 到 GitHub。
