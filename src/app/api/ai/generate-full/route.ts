@@ -471,7 +471,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
               failed: true,
             });
           }
-          await new Promise((resolve) => setTimeout(resolve, 400)); // Rate limit
+          await new Promise((resolve) => setTimeout(resolve, 200)); // v76-1: Reduced rate limit delay from 400ms to 200ms (NCBI allows 3 req/s = 333ms gap, 200ms is safe with retry)
         }
 
         const dbQueryResults = [...otherResults, ...ncbiResults];
