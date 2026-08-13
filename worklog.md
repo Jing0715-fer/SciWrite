@@ -4997,3 +4997,86 @@ Stage Summary:
 - v80-2 移除 STOP prompt: sections 不再过早结束。
 - 连续十二次 PASS — 跨四个领域 + 四个规模!
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v81
+Agent: main (Z.ai Code — v81 evenly distribute word targets + protein folding test)
+Task: plan 阶段均匀分配 word targets, 第五个领域测试。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (86 commits, 无丢失)。
+- 实施了 v81-1 改进:
+
+1. v81-1 Plan evenly distribute word targets:
+  - plan prompt 新增 "Distribute word targets EVENLY across sections"
+  - 明确告诉 LLM 每个 section 应该 target 多少词
+  - "Do NOT make the last section much shorter than others"
+  - 效果: v81 每个 section 191-215w (目标 200w), 非常均匀!
+
+v81 真实 generate-full 测试结果 (Protein folding, 1000w target):
+- 项目: cmsr9qg6r0a75tm4cjsmxmoq8 (Protein folding, 1000词目标, 6 DB queries)
+- 总耗时: ~261s (4.4分钟)
+- 5/5 sections 生成成功 ✅
+- 5/5 paragraphs 保留 ✅ (merge threshold 100w, 0 merged)
+- Total: **1013w (101% target)** — v77 的 1000w 只有 95%, v81 提升到 101%! ✅✅
+- **0 placeholders** ✅✅
+- **0 blocking errors** ✅✅
+- **34 warnings** (protein folding 领域)
+- **citation-health: PASS** ✅✅ (连续第十三次!)
+- 服务器存活 ✅ — 完整完成!
+
+Section 详情 (1000w, 5 sections × 200w target — 非常均匀!):
+- §1 Introduction: 201w, 8 refs
+- §2 Chaperone Mechanisms: 210w, 9 refs
+- §3 Chaperone Complexes: 215w, 11 refs
+- §4 Misfolding & Disease: 196w, 13 refs
+- §5 Therapeutic Approaches: 191w, 15 refs
+- 平均: 203w/section (目标 200w, 101%) — 最均匀的分配!
+
+v81-1 验证:
+- **均匀分配**: 191-215w (range=24w), v80 的 184-394w (range=210w) ✅✅
+- **最后一个 section 不再偏短**: §5=191w (v80 §7=184w) ✅
+- **1013w (101%)**: 比 v77 的 95% 更好 ✅✅
+
+八个测试全部 PASS:
+| Topic | Field | Target | Words | % | Sections | Health |
+|-------|-------|--------|-------|---|----------|--------|
+| TMC1 (v74) | structural-bio | 600w | 598w | 100% | 5 | PASS ✅ |
+| CRISPR (v75) | molecular-bio | 600w | 609w | 101% | 5 | PASS ✅ |
+| Alzheimer's (v76) | neuroscience | 600w | 603w | 100% | 5 | PASS ✅ |
+| Cancer (v77) | immunology | 1000w | 953w | 95% | 5 | PASS ✅ |
+| CRISPR (v78) | molecular-bio | 1500w | 1645w | 110% | 5 | PASS ✅ |
+| Alzheimer's (v79) | neuroscience | 2000w | 1589w | 79% | 5 | PASS ✅ |
+| Alzheimer's (v80) | neuroscience | 2000w | 1904w | 95% | 7 | PASS ✅ |
+| Protein folding (v81) | biophysics | 1000w | 1013w | 101% | 5 | PASS ✅ |
+
+**连续十三次 PASS — 跨五个领域 + 四个规模!**
+
+v81 vs v77 对比 (同为 1000w):
+| 指标 | v77 (Cancer 1000w) | v81 (Protein 1000w) | 变化 |
+|------|---------------------|----------------------|------|
+| 总词数 | 953w | 1013w | +6% ✅ |
+| 达标率 | 95% | **101%** | +6% ✅ |
+| section 均匀度 | 102-216w (range=114) | **191-215w (range=24)** | **大幅改善 ✅✅** |
+| blocking | 0 | 0 | 持平 ✅ |
+| citation-health | PASS | PASS | 持平 ✅ |
+
+关键成就:
+1. 连续十三次 PASS — 跨五个领域 + 四个规模!
+2. v81-1 均匀分配: section range 24w (v80: 210w) — 最均匀!
+3. 1000w 达标率 101% (v77: 95%) — v81-1 改善了 6%!
+4. 0 blocking + 0 placeholders — 无错误修正版
+5. 第五个领域 (biophysics) 通过
+
+不足之处 / v82 改进建议:
+1. 34 warnings: §1 和 §5 各有 10 和 9 warnings。可以进一步优化 prompt。
+2. audit break@14 (0 audited): window 15, 但 gap-fill 保证 0 blocking。
+3. 总耗时 261s: 与 v75 (210s) 相当。
+4. 56 citation links: 与 v74 (53), v75 (59) 相当。
+
+Stage Summary:
+- v81 测试完美成功 (Protein folding, 1000w, 5 sections)!
+- 1013w (101%), 0 blocking, 0 placeholders, PASS!
+- v81-1 均匀分配是关键改进: section range 24w (v80: 210w)!
+- 连续十三次 PASS — 跨五个领域 + 四个规模!
+- 代码待 push 到 GitHub。
