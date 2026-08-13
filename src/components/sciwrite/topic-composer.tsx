@@ -134,6 +134,14 @@ export function TopicComposer({
             if (data.message) {
               setStreamText((prev) => prev + (prev ? "\n" : "") + `[${event}] ${data.message}`);
             }
+            // v73-3: Show final citation-health status to user
+            if (event === "step" && data.errorFree !== undefined) {
+              if (data.errorFree) {
+                toast.success(`✅ Article ready: 0 blocking errors, ${data.finalWarnings || 0} warnings`);
+              } else {
+                toast.warning(`⚠️ ${data.finalBlocking || 0} blocking errors remain. Run auto-fix from Citation Health tab.`);
+              }
+            }
           }
         );
         return { content: "Full article generated. Check the Article tab in the workspace.", __full: true, result };

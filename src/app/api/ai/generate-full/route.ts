@@ -1231,6 +1231,10 @@ CITATION FORMAT (MANDATORY):
   sentence and the reference's title/abstract should share at least 2 key terms
   (e.g. "TMC1", "mechanotransduction", "hair cell"). If they share 0-1 terms,
   the citation is likely "unsupported" — find a better match or use [$REF].
+  v73-2: When multiple references could support a claim, choose the one whose
+  title/abstract has the HIGHEST keyword overlap with the citing sentence.
+  Avoid citing a reference just because it's "in the list" — prefer refs
+  that explicitly discuss the specific mechanism/protein/finding you mention.
 - However, do NOT avoid citing entirely. If a claim needs support and the closest reference
   in the list is partially relevant, cite it rather than leaving [$REF]. Use [$REF] ONLY
   when NO reference in the list is even partially relevant to the claim.
@@ -2365,27 +2369,18 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           // internally (sequential per-paragraph with delays), so it's safe
           // to run regardless of window count. The user explicitly wants
           // auto-fix to always run and deliver a corrected version.
-          // v66-2: If window count is high (>= 12), wait 60s before auto-fix
-          // to let some entries expire and reduce cool-down during auto-fix.
-          // v69-1: Also clearAbort() before auto-fix — the audit phase may
-          // have triggered a 429 abort (v68 test), which would cause all
-          // auto-fix LLM calls to be skipped. Clearing the abort flag gives
+          // v69-1: clearAbort() before auto-fix — the audit phase may
+          // have triggered a 429 abort, which would cause all auto-fix
+          // LLM calls to be skipped. Clearing the abort flag gives
           // auto-fix a fresh start.
+          // v73-1: Removed pre-auto-fix 60s sleep. v72 test showed gap-fill
+          // eliminates blocking (0 issues), so auto-fix runs in ~50ms and
+          // doesn't need rate-limit headroom. The 60s sleep was wasting time
+          // for no benefit. clearAbort() is still kept (defensive).
           const preFixWindowCount = getWindowCount();
           if (isAborted()) {
             log(`audit: clearing abort flag before auto-fix (was set during audit)`);
             clearAbort();
-          }
-          if (preFixWindowCount >= 10) {
-            log(`audit: pre-auto-fix cool-down — window count ${preFixWindowCount} >= 10, waiting 60s`);
-            send("step", {
-              step: "audit",
-              status: "progress",
-              message: `Waiting 60s before auto-fix (rate limit window at ${preFixWindowCount}/15)...`,
-              preAutoFixCoolDown: true,
-            });
-            await new Promise((r) => setTimeout(r, 60000));
-            log(`audit: pre-auto-fix cool-down done — window now ${getWindowCount()}`);
           }
           {
             send("step", {
