@@ -41,9 +41,9 @@ export const maxDuration = 1800; // 30 minutes — streaming keeps connection al
  */
 const DENSITY_MIN = 5;                  // v32-1: post-audit injection 阈值
 const DENSITY_HALLUCINATION_FLOOR = 5;  // v56-3: raised from 3→5 — more sections trigger LLM retry (vs just injection)
-const WORD_COUNT_RETRY_THRESHOLD = 0.85; // v58-3: lowered from 0.9→0.85 — small sections (150w) need more tolerance
+const WORD_COUNT_RETRY_THRESHOLD = 0.90; // v78-1: raised from 0.85→0.90 — stricter, triggers retry when <90% (was <85%)
 const RETRY_BUDGET_DENSITY = 3;           // v61-2: separate budget for density retries (was shared 3)
-const RETRY_BUDGET_WC = 2;               // v61-2: separate budget for word-count retries (was shared 3)
+const RETRY_BUDGET_WC = 3;               // v78-1: raised from 2→3 — more retries for larger articles (1000w+)
 const CITATION_MAX = 10;                 // v60-3: raised from 8→10 — allows richer citation density for longer sections
 
 interface GenerateFullBody {
@@ -1551,9 +1551,13 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           // struggles to expand such short sections meaningfully, and the
           // retry often produces similar or shorter output (v63 §5: 100→101w).
           // For these, go straight to WC injection which reliably adds length.
+          // v78-1: Use dynamic threshold (50% of section target) instead of
+          // fixed 120w. For 600w target (120w sections), 50% = 60w. For 1000w
+          // target (200w sections), 50% = 100w. This scales with article size.
+          const wcRetryMinThreshold = Math.max(80, Math.floor(sectionTargetWords * 0.5));
           if (
             currentWordCount < Math.floor(wordCountTarget * WORD_COUNT_RETRY_THRESHOLD) &&
-            currentWordCount >= 120 && // v64-3: skip retry for < 120w sections
+            currentWordCount >= wcRetryMinThreshold && // v78-1: dynamic threshold (was fixed 120)
             !isAborted() &&
             retryBudgetWcUsed < RETRY_BUDGET_WC // v61-2: separate WC budget
           ) {
