@@ -864,6 +864,11 @@ ${curatedRefs.slice(0, 30).map((r: any, i: number) =>
 Plan a comprehensive review article. For ${targetWords} words, use ${Math.max(5, Math.ceil(targetWords / 500))}-${Math.max(8, Math.ceil(targetWords / 400))} sections.
 Each section should be 200-500 words (keep sections SMALL to avoid max token issues and ensure each section reaches its target).
 The sum of all section word counts should be approximately ${targetWords}.
+v81-1: Distribute word targets EVENLY across sections. Do NOT make the last
+section much shorter than others. Each section's targetWords should be
+approximately ${Math.floor(targetWords / Math.max(5, Math.ceil(targetWords / 500)))} words.
+For example, for ${targetWords} words with ${Math.max(5, Math.ceil(targetWords / 500))} sections,
+each section should target ~${Math.floor(targetWords / Math.max(5, Math.ceil(targetWords / 500)))} words.
 v80-1: For larger articles (1500w+), prefer MORE sections with SMALLER targets
 (200-300w each) rather than fewer sections with larger targets. This improves
 达标率 because LLM writes more reliably for 200-300w targets than 400w+.
