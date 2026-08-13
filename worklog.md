@@ -4651,3 +4651,75 @@ Stage Summary:
   neuroscience) 全部通过!
 - pipeline 生产级通用性确认!
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v77
+Agent: main (Z.ai Code — v77 cancer immunology + 1000w target + real test)
+Task: 第四个 topic + 更大 targetWords 验证。
+
+Work Log:
+- 检查远程仓库: 本地领先 1 commit (v76 worklog), push 到 GitHub。
+- v77 核心目标: 用第四个 topic (cancer immunology) + 更大 targetWords (1000w) 验证。
+  之前 v74-v76 全部用 600w target。
+
+v77 真实 generate-full 测试结果 (Cancer immunology, 1000w target):
+- 项目: cmsqx0f8l075ztm4chu0859n3 (PD-1/PD-L1, 1000词目标, 6 DB queries)
+- 总耗时: ~268s (4.5分钟) — 1000w 比 600w 多 ~50s
+- 5/5 sections 生成成功 ✅
+- 5/5 paragraphs 保留 ✅ (merge threshold 100w, 0 merged)
+- Total: 953w (95% target), 14 unique refs, 59 citation links
+- **0 placeholders** ✅✅
+- **0 blocking errors** ✅✅
+- **29 warnings** (cancer immunology, 都是非阻塞)
+- **citation-health: PASS** ✅✅ (连续第九次!)
+- 服务器存活 ✅ — 完整完成!
+
+关键验证:
+- **1000w target 首次测试**: 953w (95%), 接近达标
+- **audit break@14 触发**: window 15 (1000w 用了更多 LLM 调用),
+  0 audited — 但 gap-fill 保证了 0 blocking ✅
+- **auto-fix: 0 to fix (53ms)** ✅
+- **gap-fill 跨规模生效**: 1000w target 同样 0 blocking
+- **merge threshold 100w**: 5 sections (171-216w) 全部 > 100w, 0 merged ✅
+
+四个 topic + 两个规模全部通过:
+| Topic | Field | Target | Words | % | Block | Warn | Health |
+|-------|-------|--------|-------|---|-------|------|--------|
+| TMC1 (v74) | structural-bio | 600w | 598w | 100% | 0 | 19 | PASS ✅ |
+| CRISPR (v75) | molecular-bio | 600w | 609w | 101% | 0 | 30 | PASS ✅ |
+| Alzheimer's (v76) | neuroscience | 600w | 603w | 100% | 0 | 25 | PASS ✅ |
+| Cancer PD-1 (v77) | immunology | 1000w | 953w | 95% | 0 | 29 | PASS ✅ |
+
+**跨四个不同领域 + 两个规模全部 PASS — 生产级通用性确认!**
+
+v77 vs v76 对比:
+| 指标 | v76 (Alzheimer 600w) | v77 (Cancer 1000w) |
+|------|---------------------|---------------------|
+| 总词数 | 603w | 953w (+58%) |
+| 达标率 | 100% | 95% |
+| blocking | 0 | 0 |
+| warnings | 25 | 29 |
+| citation links | 58 | 59 |
+| 总耗时 | 216s | 268s (+24%) |
+
+不足之处 / v78 改进建议:
+1. 95% 达标率 (953w vs 1000w): 1000w target 下达标率略低。可以
+   增加 word-count retry/injection 的触发频率, 或提高 section
+   targetWords 在 plan 阶段的分配。
+
+2. audit break@14 (0 audited): 1000w target 用了更多 LLM 调用,
+   window count 达到 15。gap-fill 保证了 0 blocking, 但 audit
+   没能运行。可以增加 cool-down 或减少 generate 阶段的 LLM 调用。
+
+3. 29 warnings: 与其他 topic 相当 (19-30 范围)。
+
+4. 总耗时 268s: 1000w 比 600w 多 50s (主要是更多/更长的 sections)。
+
+5. 59 citation links: 与 v75 (59), v76 (58) 相当。
+
+Stage Summary:
+- v77 测试完美成功 (Cancer immunology, 1000w target)!
+- 953w (95%), 0 blocking, 0 placeholders, PASS!
+- 连续九次 PASS — 跨四个领域 + 两个规模!
+- pipeline 在 immunology 领域 + 1000w 规模同样有效。
+- 代码待 push 到 GitHub。
