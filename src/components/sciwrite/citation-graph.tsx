@@ -288,10 +288,10 @@ export function CitationGraph({ data, dataSources, themesLabel, connectionsLabel
   };
 
   return (
-    <div className="rounded-lg border border-border/60 bg-muted/10 p-3 space-y-2">
+    <div className="rounded-lg border border-border/60 bg-gradient-to-br from-muted/10 to-transparent p-3 space-y-2 transition-all hover:border-primary/30 hover:shadow-sm">
       <div className="flex items-center justify-between">
         <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
-          <Network className="h-3 w-3" />
+          <Network className="h-3.5 w-3.5 text-primary" />
           {themesLabel} × {connectionsLabel}
         </p>
         <div className="flex items-center gap-1">
