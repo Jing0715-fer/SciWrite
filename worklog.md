@@ -5899,3 +5899,52 @@ Stage Summary:
 - v91-2 clearAbort fix: 修复了跨 session abort flag 问题 ✅
 - 真实测试因 LLM provider 429 未完成。
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v92
+Agent: main (Z.ai Code — v92 UI dialogs + test)
+Task: UI 优化三个 dialog, 真实测试 (LLM provider 仍 rate-limited)。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (108 commits, 无丢失)。
+- 实施了 v92-1 UI 改进:
+
+1. v92-1 Three dialog UIs improved:
+  - insights-dialog: rounded-xl + gradient DialogHeader
+  - enrich-references-dialog: rounded-xl + gradient DialogHeader
+  - import-references-dialog: rounded-xl + gradient DialogHeader
+  - 所有 dialog 现在有一致的圆角 + 渐变 header 设计
+
+v92 真实测试: LLM provider 仍 rate-limited!
+- gather 阶段 LLM 调用触发 429 → rate-limiter 5次重试后 setAbort
+- 后续调用被 RateLimitAbortedError 阻止
+- 这是 provider 级别的 rate limit (30 req/10min + daily limit)
+- clearAbort 在 pipeline 开始时调用, 但 gather LLM 调用重新触发 abort
+- rate-limiter 工作正常 — 正确保护了 pipeline
+
+UI 改进汇总 (v83-v92):
+| 组件 | 改进 | 版本 |
+|------|------|------|
+| topic-composer | 渐变 header + mode switcher + range slider card + progress bar | v83-v86 |
+| citation-health-dashboard | 渐变 header + 彩色 pills + "0 blocking" pill + 渐变 progress bar | v85 |
+| article-viewer-tabs | 渐变 header + h-9 tabs + rounded-md transition-all | v87 |
+| article-insights | MetricCard 渐变 + hover + icon container + border-b | v88 |
+| export-menu | rounded-lg + shadow-md + font-semibold | v88 |
+| llm-config-dialog | 渐变 header + provider cards 渐变 + shadow-sm | v89 |
+| comments-panel | CommentCard 渐变 + hover:border-primary/30 | v89 |
+| audit-report-viewer | rounded-lg header + text-primary icon | v90 |
+| data-gathering-dialog | rounded-xl + 渐变 header | v91 |
+| citation-graph | 渐变 bg + hover:border-primary/30 + text-primary icon | v91 |
+| insights-dialog | rounded-xl + 渐变 header | v92 |
+| enrich-references-dialog | rounded-xl + 渐变 header | v92 |
+| import-references-dialog | rounded-xl + 渐变 header | v92 |
+
+所有 dialog 组件现在有一致的设计语言: rounded-xl + 渐变 header (from-primary/5 to-transparent)。
+
+连续二十一次 PASS (v67-v89), v90-v92 因 LLM provider rate-limited 未完成测试。
+
+Stage Summary:
+- v92 代码改进全部实施并 lint 通过 (commit bf9f744)。
+- v92-1 UI: 三个 dialog 渐变 header ✅
+- 真实测试因 LLM provider 429 未完成。
+- 代码待 push 到 GitHub。
