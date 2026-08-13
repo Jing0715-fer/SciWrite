@@ -173,13 +173,13 @@ export function ExportMenu({
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant={variant} size={size} className="gap-1.5 text-[11px]">
+          <Button variant={variant} size={size} className="gap-1.5 text-[11px] transition-all hover:shadow-sm">
             <Download className="h-3.5 w-3.5" />
             {label || t("common.export")}
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-52">
-          <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        <DropdownMenuContent align="end" className="w-52 rounded-lg border-border/60 shadow-md">
+          <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
             {t("export.format")}
           </DropdownMenuLabel>
           {renderSingleLangFormats("en")}

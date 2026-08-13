@@ -243,12 +243,16 @@ export function ArticleInsights({
   return (
     <ScrollArea className="h-full scroll-academic">
       <div className="px-8 py-5 max-w-4xl mx-auto space-y-5">
-        {/* Header */}
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-primary" />
-          <h3 className="text-sm font-semibold">
-            {t("articleViewer.insightsTitle") || "Article Insights"}
-          </h3>
+        {/* Header — v88-1: Enhanced with gradient + icon styling */}
+        <div className="flex items-center gap-2 pb-3 border-b border-border/40">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center h-7 w-7 rounded-lg bg-primary/10 border border-primary/20">
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+            </div>
+            <h3 className="text-sm font-semibold">
+              {t("articleViewer.insightsTitle") || "Article Insights"}
+            </h3>
+          </div>
           <Badge variant="outline" className="text-[9px] ml-auto">
             {viewLang === "zh" ? "中文" : viewLang === "parallel" ? "EN" : "EN"}
           </Badge>
@@ -625,15 +629,15 @@ export function MetricCard({
   return (
     <div
       title={title}
-      className="rounded-lg border border-border/60 p-2.5 space-y-1"
+      className="rounded-lg border border-border/60 p-2.5 space-y-1 transition-all hover:border-primary/30 hover:shadow-sm bg-gradient-to-br from-card to-muted/10"
     >
       <div className="flex items-center gap-1">
-        <Icon className={`h-3 w-3 ${color}`} />
-        <span className="text-[9px] uppercase tracking-wider text-muted-foreground">
+        <Icon className={`h-3.5 w-3.5 ${color}`} />
+        <span className="text-[9px] uppercase tracking-wider text-muted-foreground font-medium">
           {label}
         </span>
       </div>
-      <p className={`text-lg font-bold ${color}`}>{value}</p>
+      <p className={`text-lg font-bold ${color} tabular-nums`}>{value}</p>
     </div>
   );
 }
