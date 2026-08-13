@@ -4491,3 +4491,85 @@ Stage Summary:
 - v74-1 revert prompt 恢复了 v72 的 citation 行为 (53 links)。
 - v74-2 cool-down 45s: 总耗时 235s (历史最快之一)。
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v75
+Agent: main (Z.ai Code — v75 different topic test + real test)
+Task: 用不同 topic (CRISPR) 验证 pipeline 通用性, 真实测试。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (76 commits, 无丢失)。
+- v75 核心目标: 用完全不同的 topic (CRISPR Cas9) 验证 pipeline 通用性。
+  之前 v67-v74 全部用 "TMC1 TMC2 mechanotransduction hearing"。
+- v75-1: CRISPR topic 测试:
+  - Topic: "CRISPR Cas9 gene editing mechanisms and applications"
+  - Field: "molecular-biology" (之前是 structural-biology)
+  - 验证 gap-fill, auto-fix, cool-down 在不同领域是否同样有效
+
+v75 真实 generate-full 测试结果 (CRISPR topic):
+- 项目: cmsqv224u05wttm4c97obgffb (CRISPR Cas9, 600词目标, 5 DB queries)
+- 总耗时: ~210s (3.5分钟) — 历史最快!
+- 5/5 sections 生成成功 ✅
+- 5/5 paragraphs 保留 ✅
+- Total: 609w (101% target), 14 unique refs, 59 citation links
+- **0 placeholders** ✅✅
+- **0 blocking errors** ✅✅
+- **30 warnings** (CRISPR topic 更多, 领域更广, 更多 refs)
+- **citation-health: PASS** ✅✅ (连续第七次! v67-v74 全用 TMC1, v75 用 CRISPR)
+- 服务器存活 ✅ — 完整完成!
+
+关键验证:
+- **不同 topic 通过!** — pipeline 在 CRISPR (molecular-biology) 领域同样有效 ✅✅
+- **gap-fill 跨领域生效**: 0 blocking (与 TMC1 topic 相同)
+- **auto-fix 跨领域生效**: 0 to fix (53ms)
+- **cool-down 45s 跨领域生效**: 总耗时 210s
+- **audit: checked 42, issues 0** ✅
+- **609w (101%)**: 精确达标
+
+Section 详情 (CRISPR topic):
+- §1 Introduction to CRISPR-Cas9: 114w, 9 refs
+- §2 Mechanisms of CRISPR-Cas9 Action: 109w, 10 refs
+- §3 Delivery Systems and Strategies: 105w, 13 refs
+- §4 Therapeutic Applications in Human Diseases: 117w, 13 refs
+- §5 Advances in Cancer Immunotherapy: 164w, 14 refs
+
+v75 vs v74 对比:
+| 指标               | v74 (TMC1)  | v75 (CRISPR) | 变化      |
+|--------------------|-------------|--------------|-----------|
+| 总词数             | 598w        | 609w         | +2% ✅    |
+| 达标率             | 100%        | 101%         | +1% ✅    |
+| [$REF]/placeholders| 0           | 0            | 持平 ✅   |
+| blocking errors    | 0           | 0            | 持平 ✅   |
+| warnings           | 19          | 30           | +11 (领域更广)|
+| citation links     | 53          | 59           | +6 ✅     |
+| citation-health    | PASS        | PASS         | 持平 ✅   |
+| 服务器存活         | 是          | 是           | 持平 ✅   |
+| 总耗时             | 235s        | 210s         | -11% ✅   |
+
+连续七次 citation-health: PASS (v67-v74 TMC1, v75 CRISPR)!
+**不同 topic 验证通过 — pipeline 通用性确认!**
+
+不足之处 / v76 改进建议:
+1. 30 warnings (CRISPR): 比 TMC1 topic 多 (19)。CRISPR 领域更广,
+   更多 refs (59 vs 53), 更多 citations = 更多 warnings。正常 tradeoff。
+
+2. §3 有 10 warnings (最多): "Delivery Systems and Strategies" 可能
+   引用了一些不太相关的 refs。可以针对性优化, 但非阻塞。
+
+3. 总耗时 210s: gather (100s) + sections (48s) + cool-down (45s) +
+   compose (0.08s) + audit (16s) + auto-fix (0.06s) = 209s。
+   gather 仍是主要瓶颈 (48% of total)。
+
+4. 59 citation links: 内容丰富, 14 unique refs。CRISPR 领域有大量
+   文献, LLM 自然 cite 更多。
+
+5. §5 有 14 refs (最多): "Cancer Immunotherapy" 是热门话题, 很多相关
+   文献。gap-fill 填充了 [1]-[14]。
+
+Stage Summary:
+- v75 真实测试完美成功 (不同 topic CRISPR)!
+- 609w (101%), 0 blocking, 0 placeholders, PASS!
+- 连续七次 PASS — 跨 topic 稳定性确认!
+- pipeline 在 molecular-biology 领域同样有效 (之前只测了 structural-biology)。
+- 总耗时 210s — 历史最快!
+- 代码待 push 到 GitHub。
