@@ -4897,3 +4897,103 @@ Stage Summary:
 - 但 2000w 达标率偏低 (79%), 需要 v80 在 plan 阶段分配更多 sections。
 - 连续十一次 PASS — 跨四个领域 + 四个规模!
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v80
+Agent: main (Z.ai Code — v80 plan more sections + remove STOP + 2000w test)
+Task: plan 阶段分配更多 sections, 移除 STOP prompt, 2000w 重新测试。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (84 commits, 无丢失)。
+- 实施了 2 项 v80 改进:
+
+1. v80-1 Plan more sections for large articles:
+  - section count: targetWords/800→/500 (min), targetWords/600→/400 (max)
+  - section target: "400-1500 words" → "200-500 words"
+  - 新增 "For larger articles (1500w+), prefer MORE sections with SMALLER targets"
+  - 效果: 2000w 从 5 sections (v79) 增加到 7 sections (v80) ✅
+
+2. v80-2 Remove "STOP and conclude" prompt:
+  - v79-1 的 "STOP and conclude" 导致 LLM 提前结束 (avg 318w vs 400w = 80%)
+  - 替换为 "aim for the target but do not exceed by more than 15%"
+
+v80 真实 generate-full 测试结果 (Alzheimer's, 2000w target):
+- 项目: cmsr92kfj0992tm4c0nj43e6i (Alzheimer's, 2000词目标, 8 DB queries)
+- 总耗时: ~455s (7.6分钟) — 7 sections + rate-limiter cool-downs
+- **7/7 sections 生成成功** ✅ (v79 只有 5!)
+- **7/7 paragraphs 保留** ✅ (merge threshold 142w, 0 merged)
+- Total: **1904w (95% target)** — v79 只有 79%, v80 提升到 95%! ✅✅
+- **0 placeholders** ✅✅
+- **0 blocking errors** ✅✅
+- **74 warnings** (7 sections × ~10 warnings, 正常)
+- **98 citation links** — 历史最多! (7 sections × 14 avg)
+- **citation-health: PASS** ✅✅ (连续第十二次!)
+- 服务器存活 ✅ — 完整完成!
+
+Section 详情 (2000w, 7 sections):
+- §1 Introduction: 230w, 9 refs
+- §2 Amyloid-Beta: 394w, 16 refs (最长)
+- §3 Tau Pathology: 337w, 17 refs
+- §4 Aβ-Tau Interaction: 290w, 9 refs
+- §5 Neuroinflammation: 242w, 16 refs
+- §6 Therapeutic Approaches: 227w, 19 refs (最多 refs)
+- §7 Biomarkers & Future: 184w, 12 refs (最短)
+- 平均: 272w/section (目标 285w, 95%) — 比 v79 的 318w/400w=80% 好很多!
+
+v80 vs v79 对比 (同为 2000w Alzheimer's):
+| 指标 | v79 (5 sections) | v80 (7 sections) | 变化 |
+|------|------------------|-------------------|------|
+| 总词数 | 1589w | 1904w | +20% ✅ |
+| 达标率 | 79% | **95%** | +16% ✅✅ |
+| sections | 5 | **7** | +2 ✅ |
+| blocking | 0 | 0 | 持平 ✅ |
+| placeholders | 0 | 0 | 持平 ✅ |
+| warnings | 43 | 74 | +31 (更多 sections) |
+| citation links | 61 | **98** | +61% ✅ |
+| citation-health | PASS | PASS | 持平 ✅ |
+| 总耗时 | 330s | 455s | +38% (更多 sections) |
+
+七个测试全部 PASS:
+| Topic | Field | Target | Words | % | Sections | Health |
+|-------|-------|--------|-------|---|----------|--------|
+| TMC1 (v74) | structural-bio | 600w | 598w | 100% | 5 | PASS ✅ |
+| CRISPR (v75) | molecular-bio | 600w | 609w | 101% | 5 | PASS ✅ |
+| Alzheimer's (v76) | neuroscience | 600w | 603w | 100% | 5 | PASS ✅ |
+| Cancer (v77) | immunology | 1000w | 953w | 95% | 5 | PASS ✅ |
+| CRISPR (v78) | molecular-bio | 1500w | 1645w | 110% | 5 | PASS ✅ |
+| Alzheimer's (v79) | neuroscience | 2000w | 1589w | 79% | 5 | PASS ✅ |
+| Alzheimer's (v80) | neuroscience | 2000w | 1904w | 95% | **7** | PASS ✅ |
+
+**连续十二次 PASS — 跨四个领域 + 四个规模!**
+
+关键成就:
+1. v80-1 plan prompt 生效: 2000w 从 5→7 sections, 达标率 79%→95% ✅✅
+2. v80-2 移除 STOP prompt: sections 不再过早结束 ✅
+3. 98 citation links — 历史最多!
+4. 7 sections 全部保留 (merge threshold 142w, 0 merged)
+5. 0 blocking + 0 placeholders — 无错误修正版
+
+不足之处 / v81 改进建议:
+1. 74 warnings (最多): 7 sections × ~10 warnings/section。warnings 随
+   sections 数增加是正常的。warnings/citation ratio: 74/98 = 0.76
+   (v78: 46/69 = 0.67)。略高但可接受。
+
+2. 总耗时 455s: 7 sections + 2 次 rate-limiter cool-down (60s each)
+   = 120s 额外时间。可以在 generate 阶段减少 LLM 调用。
+
+3. §7 只有 184w (最短): 2000w 的最后一个 section 偏短。可以
+   在 plan 阶段更均匀分配 word targets。
+
+4. §2 有 21 warnings (最多): "Amyloid-Beta" 引用了 16 refs, 很多
+   可能不太相关。但非阻塞。
+
+5. 95% 达标率: 接近 100%。v80-1 的 plan prompt 改善了 16%
+   (79%→95%), 进一步优化可能需要 plan 阶段分配 8+ sections。
+
+Stage Summary:
+- v80 测试完美成功 (Alzheimer's, 2000w, 7 sections)!
+- 1904w (95%), 0 blocking, 0 placeholders, 98 citation links, PASS!
+- v80-1 plan prompt 是关键改进: 5→7 sections, 79%→95% 达标率。
+- v80-2 移除 STOP prompt: sections 不再过早结束。
+- 连续十二次 PASS — 跨四个领域 + 四个规模!
+- 代码待 push 到 GitHub。
