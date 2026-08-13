@@ -90,8 +90,8 @@ export function EnrichReferencesDialog({ open, onOpenChange, projectId }: Props)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
-        <DialogHeader className="px-5 pt-4 pb-3 border-b border-border/60 shrink-0">
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden rounded-xl">
+        <DialogHeader className="px-5 pt-4 pb-3 border-b border-border/60 shrink-0 bg-gradient-to-r from-primary/5 to-transparent">
           <DialogTitle className="flex items-center gap-2 text-sm">
             <Database className="h-4 w-4 text-cyan-600" />
             Enrich References (CrossRef)

@@ -149,8 +149,8 @@ export function ImportReferencesDialog({ open, onOpenChange, projectId }: Props)
         if (!v) handleReset();
       }}
     >
-      <DialogContent className="max-w-2xl max-h-[88vh] flex flex-col gap-0 p-0 overflow-hidden">
-        <DialogHeader className="px-5 pt-4 pb-3 border-b border-border/60 shrink-0">
+      <DialogContent className="max-w-2xl max-h-[88vh] flex flex-col gap-0 p-0 overflow-hidden rounded-xl">
+        <DialogHeader className="px-5 pt-4 pb-3 border-b border-border/60 shrink-0 bg-gradient-to-r from-primary/5 to-transparent">
           <DialogTitle className="flex items-center gap-2 text-sm">
             <Upload className="h-4 w-4 text-purple-600" />
             Import References
