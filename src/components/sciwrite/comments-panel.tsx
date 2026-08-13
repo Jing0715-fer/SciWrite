@@ -237,10 +237,10 @@ function CommentCard({
 
   return (
     <div
-      className={`rounded-md border p-2 space-y-1 ${
+      className={`rounded-lg border p-2.5 space-y-1 transition-all hover:shadow-sm ${
         comment.resolved
-          ? "border-emerald-300/40 bg-emerald-50/30 dark:bg-emerald-950/10"
-          : "border-border/50 bg-muted/20"
+          ? "border-emerald-300/40 bg-gradient-to-br from-emerald-50/40 to-emerald-50/10 dark:from-emerald-950/15 dark:to-emerald-950/5"
+          : "border-border/50 bg-gradient-to-br from-muted/20 to-transparent hover:border-primary/30"
       }`}
     >
       <div className="flex items-center gap-1.5">

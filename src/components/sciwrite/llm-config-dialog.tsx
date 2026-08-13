@@ -153,8 +153,8 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col gap-0 p-0">
-        <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 shrink-0">
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col gap-0 p-0 rounded-xl overflow-hidden">
+        <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 shrink-0 bg-gradient-to-r from-primary/5 to-transparent">
           <DialogTitle className="flex items-center gap-2 text-base">
             <Cpu className="h-4 w-4 text-primary" />
             {t("llmConfig.title")}
@@ -240,10 +240,10 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
                   type="button"
                   onClick={() => choose(cli.name)}
                   disabled={selecting === cli.name}
-                  className={`w-full text-left rounded-lg border p-3 space-y-1.5 transition-colors ${
+                  className={`w-full text-left rounded-lg border p-3 space-y-1.5 transition-all ${
                     isSelected
-                      ? "border-primary bg-primary/5 ring-1 ring-primary/30"
-                      : "border-border/60 hover:border-primary/40 hover:bg-muted/30"
+                      ? "border-primary bg-gradient-to-br from-primary/8 to-primary/3 ring-1 ring-primary/30 shadow-sm"
+                      : "border-border/60 hover:border-primary/40 hover:bg-muted/30 hover:shadow-sm"
                   } ${selecting === cli.name ? "opacity-60" : ""}`}
                 >
                   <div className="flex items-center gap-2">
