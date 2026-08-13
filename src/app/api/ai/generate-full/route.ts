@@ -861,9 +861,12 @@ ${curatedRefs.slice(0, 30).map((r: any, i: number) =>
   `[${i + 1}] ${r.authors || "Anon"} (${r.year || "n.d."}) ${r.title?.slice(0, 80) || ""}`
 ).join("\n")}
 
-Plan a comprehensive review article. For ${targetWords} words, use ${Math.max(5, Math.ceil(targetWords / 800))}-${Math.max(8, Math.ceil(targetWords / 600))} sections.
-Each section should be 400-1500 words (keep sections SMALL to avoid max token issues).
+Plan a comprehensive review article. For ${targetWords} words, use ${Math.max(5, Math.ceil(targetWords / 500))}-${Math.max(8, Math.ceil(targetWords / 400))} sections.
+Each section should be 200-500 words (keep sections SMALL to avoid max token issues and ensure each section reaches its target).
 The sum of all section word counts should be approximately ${targetWords}.
+v80-1: For larger articles (1500w+), prefer MORE sections with SMALLER targets
+(200-300w each) rather than fewer sections with larger targets. This improves
+达标率 because LLM writes more reliably for 200-300w targets than 400w+.
 
 Respond as STRICT JSON:
 {
@@ -1265,9 +1268,9 @@ PARAGRAPH FORMAT (MANDATORY — critical for consistent document export):
   Do NOT write significantly more or fewer words than the target.
   v79-1: Keep sections BALANCED in length — do NOT write an overly long
   first section. Each section should be approximately ${chunkWords} words.
-  If you find yourself exceeding ${Math.ceil(chunkWords * 1.15)} words,
-  STOP and conclude — do not write more. Excess length in one section
-  steals word budget from later sections.
+  v80-2: Removed the "STOP and conclude" instruction (v79-1) — it caused
+  LLM to end sections prematurely (v79: avg 318w vs 400w target = 80%).
+  Instead, aim for the target but do not exceed it by more than 15%.
 - Use **bold** for key protein/gene names only on first mention; otherwise plain text.
 - Use *italics* for species names (e.g. *C. elegans*, *Mus musculus*).
 - Match the tone, depth, and paragraph density of the PREVIOUS SECTIONS above.
