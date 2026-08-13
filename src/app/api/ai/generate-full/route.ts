@@ -1263,6 +1263,11 @@ PARAGRAPH FORMAT (MANDATORY — critical for consistent document export):
 - Write the section as 2-4 cohesive paragraphs of prose, separated by a single
   blank line. Target ${chunkWords} words total for this section (±10%).
   Do NOT write significantly more or fewer words than the target.
+  v79-1: Keep sections BALANCED in length — do NOT write an overly long
+  first section. Each section should be approximately ${chunkWords} words.
+  If you find yourself exceeding ${Math.ceil(chunkWords * 1.15)} words,
+  STOP and conclude — do not write more. Excess length in one section
+  steals word budget from later sections.
 - Use **bold** for key protein/gene names only on first mention; otherwise plain text.
 - Use *italics* for species names (e.g. *C. elegans*, *Mus musculus*).
 - Match the tone, depth, and paragraph density of the PREVIOUS SECTIONS above.
