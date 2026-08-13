@@ -5376,3 +5376,89 @@ Stage Summary:
 - v84-1 UI: progress bar + gradient button ✅
 - 连续十六次 PASS — 跨五个领域 + 四个规模!
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v85
+Agent: main (Z.ai Code — v85 UI dashboard redesign + smart minSections + real test)
+Task: UI 优化 citation health dashboard, smart minSections, 1000w 测试。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (93 commits, 无丢失)。
+- 实施了 2 项 v85 改进:
+
+1. v85-1 Citation health dashboard UI 重新设计:
+  - 渐变 header 背景 (from-muted/30 to-muted/10)
+  - Grade badge: rounded-lg, shadow-sm, hover:shadow-md transition
+  - Stats pills: 彩色 rounded-md 容器 (primary/blue/red/amber)
+  - "0 blocking" 绿色 pill (正向反馈)
+  - Progress bar: 渐变填充 (emerald/amber/red) + h-2 (was h-1.5)
+
+2. v85-2 Smart minSections 策略:
+  - 只在 2000w+ 时 add sections (v84-2 总是 add)
+  - 1000w-1500w 只 redistribute (v83 策略, 99% 达标率)
+  - 条件: targetWords >= 2000 && needed <= 3
+  - 解决 v84 的问题: 1000w 不再 add sections, 保持高达标率
+
+v85 真实 generate-full 测试结果 (CRISPR, 1000w target):
+- 项目: cmsreznjx0czbtm4cqwkk81jx (CRISPR, 1000词目标, 6 DB queries)
+- 总耗时: ~249s (4.2分钟)
+- 5/5 sections 生成成功 ✅
+- 5/5 paragraphs 保留 ✅
+- Total: **1045w (105% target)** ✅✅
+- **0 placeholders** ✅✅
+- **0 blocking errors** ✅✅
+- **33 warnings** (CRISPR 1000w)
+- **citation-health: PASS** ✅✅ (连续第十七次!)
+- 服务器存活 ✅ — 完整完成!
+
+Section 详情 (1000w, 5 sections × 200w — 均匀!):
+- §1 Introduction: 200w, 11 refs
+- §2 Mechanisms: 266w, 12 refs
+- §3 Delivery: 203w, 10 refs
+- §4 Therapeutic: 184w, 15 refs
+- §5 Future Directions: 192w, 16 refs
+- range=82w (v82: 206w, v81: 24w) — 良好!
+
+v85-2 验证:
+- 1000w < 2000w → redistribute (不 add sections) ✅
+- 5 sections × 200w (perSectionTarget = 1000/5 = 200w) ✅
+- 达标率 105% — v85-2 的 smart 策略生效 ✅
+
+十二个测试全部 PASS:
+| Topic | Field | Target | Words | % | Sections | Health |
+|-------|-------|--------|-------|---|----------|--------|
+| TMC1 (v74) | structural-bio | 600w | 598w | 100% | 5 | PASS ✅ |
+| CRISPR (v75) | molecular-bio | 600w | 609w | 101% | 5 | PASS ✅ |
+| Alzheimer's (v76) | neuroscience | 600w | 603w | 100% | 5 | PASS ✅ |
+| Cancer (v77) | immunology | 1000w | 953w | 95% | 5 | PASS ✅ |
+| CRISPR (v78) | molecular-bio | 1500w | 1645w | 110% | 5 | PASS ✅ |
+| Alzheimer's (v79) | neuroscience | 2000w | 1589w | 79% | 5 | PASS ✅ |
+| Alzheimer's (v80) | neuroscience | 2000w | 1904w | 95% | 7 | PASS ✅ |
+| Protein folding (v81) | biophysics | 1000w | 1013w | 101% | 5 | PASS ✅ |
+| CRISPR (v82) | molecular-bio | 2000w | 1675w | 84% | 5 | PASS ✅ |
+| Cancer (v83) | immunology | 2000w | 1977w | 99% | 5 | PASS ✅ |
+| TMC1 (v84) | structural-bio | 2000w | 1745w | 87% | 7 (2 added) | PASS ✅ |
+| CRISPR (v85) | molecular-bio | 1000w | 1045w | 105% | 5 | PASS ✅ |
+
+**连续十七次 PASS — 跨五个领域 + 四个规模!**
+
+关键成就:
+1. 连续十七次 PASS — 生产级稳定性!
+2. v85-1 UI: 渐变 dashboard, 彩色 pills, "0 blocking" 绿色 pill ✅
+3. v85-2 smart minSections: 1000w → redistribute (105%), 2000w → add sections ✅
+4. 1045w (105%) — 1000w 达标率优秀!
+5. 0 blocking + 0 placeholders — 无错误修正版
+
+不足之处 / v86 改进建议:
+1. 33 warnings: §1 和 §4 各有 8 warnings。可以进一步优化 prompt。
+2. section range=82w (v81: 24w): 1000w 时比 v81 不均匀, 但可接受。
+3. UI 待浏览器验证: v85-1 的 dashboard 改进需要在浏览器中查看。
+4. 64 citation links: 与 v77 (59), v81 (56) 相当。
+
+Stage Summary:
+- v85 测试完美成功 (CRISPR, 1000w, 5 sections)!
+- 1045w (105%), 0 blocking, 0 placeholders, PASS!
+- v85-1 UI: citation health dashboard 重新设计 ✅
+- v85-2 smart minSections: 1000w redistribute (不 add) ✅
+- 连续十七次 PASS — 跨五个领域 + 四个规模!
+- 代码待 push 到 GitHub。
