@@ -5548,3 +5548,85 @@ Stage Summary:
 - v86-2 agent-browser: UI 正确渲染 ✅
 - 连续十八次 PASS — 跨五个领域 + 四个规模!
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v87
+Agent: main (Z.ai Code — v87 UI article-viewer + knowledge-panel + real test)
+Task: UI 优化 article-viewer-tabs + knowledge-panel, 真实测试。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (97 commits, 无丢失)。
+- 实施了 2 项 v87 UI 改进:
+
+1. v87-1 Article viewer tabs UI:
+  - DialogHeader: 渐变背景 (from-primary/5 via-muted/10 to-transparent)
+  - TabsList: h-9 (was h-8), gap-0.5
+  - TabsTrigger: px-3 rounded-md transition-all
+  - Icons: h-3.5 w-3.5 (was h-3 w-3)
+  - Tab bar: 渐变背景
+
+2. v87-2 Knowledge panel UI:
+  - Type tab bar: 渐变背景
+  - SourceCard: rounded-lg, transition-all, hover:border-primary/30 hover:shadow-sm
+
+v87 真实 generate-full 测试结果 (TMC1, 600w target):
+- 项目: cmsrg7jrc0e8ltm4cjfqbmo89 (TMC1, 600词目标, 5 DB queries)
+- 总耗时: ~341s (5.7分钟) — gather 较长 (175s)
+- 5/5 sections 生成成功 ✅
+- 5/5 paragraphs 保留 ✅
+- Total: **599w (100% target)** — 完美达标! ✅✅
+- **0 placeholders** ✅✅
+- **0 blocking errors** ✅✅
+- **11 warnings** — 历史最少 for 600w! (§1: 0 warnings!)
+- **citation-health: PASS** ✅✅ (连续第十九次!)
+- 服务器存活 ✅ — 完整完成!
+
+Section 详情 (600w, 5 sections):
+- §1 Introduction: 124w, 5 refs, **0 warnings** ✅
+- §2 Structural Biology: 114w, 10 refs, 2 warnings
+- §3 Mechanotransduction: 132w, 11 refs, 2 warnings
+- §4 Functional Properties: 117w, 13 refs, 5 warnings
+- §5 Clinical: 112w, 10 refs, 2 warnings
+- range=20w (112-132w) — 非常均匀!
+
+十四个测试全部 PASS:
+| Topic | Field | Target | Words | % | Health |
+|-------|-------|--------|-------|---|--------|
+| TMC1 (v74) | structural-bio | 600w | 598w | 100% | PASS ✅ |
+| CRISPR (v75) | molecular-bio | 600w | 609w | 101% | PASS ✅ |
+| Alzheimer's (v76) | neuroscience | 600w | 603w | 100% | PASS ✅ |
+| Cancer (v77) | immunology | 1000w | 953w | 95% | PASS ✅ |
+| CRISPR (v78) | molecular-bio | 1500w | 1645w | 110% | PASS ✅ |
+| Alzheimer's (v79) | neuroscience | 2000w | 1589w | 79% | PASS ✅ |
+| Alzheimer's (v80) | neuroscience | 2000w | 1904w | 95% | PASS ✅ |
+| Protein folding (v81) | biophysics | 1000w | 1013w | 101% | PASS ✅ |
+| CRISPR (v82) | molecular-bio | 2000w | 1675w | 84% | PASS ✅ |
+| Cancer (v83) | immunology | 2000w | 1977w | 99% | PASS ✅ |
+| TMC1 (v84) | structural-bio | 2000w | 1745w | 87% | PASS ✅ |
+| CRISPR (v85) | molecular-bio | 1000w | 1045w | 105% | PASS ✅ |
+| Protein folding (v86) | biophysics | 600w | 625w | 104% | PASS ✅ |
+| TMC1 (v87) | structural-bio | 600w | 599w | 100% | PASS ✅ |
+
+**连续十九次 PASS — 跨五个领域 + 四个规模!**
+
+关键成就:
+1. 连续十九次 PASS — 生产级稳定性!
+2. 599w (100%) — 完美达标!
+3. 11 warnings — 历史最少 for 600w! §1 达到 0 warnings!
+4. v87-1 UI: article-viewer-tabs 渐变背景 + 更大图标
+5. v87-2 UI: knowledge-panel SourceCard hover 效果
+6. section range=20w — 非常均匀!
+
+不足之处 / v88 改进建议:
+1. gather 耗时 175s (51% of total): 仍是主要瓶颈。
+2. 11 warnings: §4 有 5 个 (最多)。可以针对性优化。
+3. UI 改进需要在浏览器中验证效果。
+4. 49 citation links: 与其他 600w 测试相当。
+
+Stage Summary:
+- v87 测试完美成功 (TMC1, 600w, 5 sections)!
+- 599w (100%), 0 blocking, 0 placeholders, 11 warnings (最少!), PASS!
+- v87-1 UI: article-viewer-tabs 渐变 + 更大图标 ✅
+- v87-2 UI: knowledge-panel SourceCard hover ✅
+- 连续十九次 PASS — 跨五个领域 + 四个规模!
+- 代码待 push 到 GitHub。
