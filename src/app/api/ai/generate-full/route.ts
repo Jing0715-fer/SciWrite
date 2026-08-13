@@ -913,10 +913,27 @@ Output JSON only.`;
           (s: any) => s.title && s.targetWords
         );
 
+        // v90-1: If LLM returned very few sections (< 3), the JSON was likely
+        // truncated. This happened in v89 (only 2 sections for 600w target).
+        // Log a warning and proceed — minSections enforcement will handle it.
+        if (sections.length < 3) {
+          log(`plan: WARNING — LLM returned only ${sections.length} sections (likely truncated JSON). Will enforce minSections.`);
+        }
+
         if (sections.length === 0) {
-          send("error", { error: "Could not plan article sections." });
-          safeClose();
-          return;
+          // v90-1: Fallback — if JSON parsing completely failed, create
+          // default sections based on targetWords
+          const fallbackCount = Math.max(5, Math.ceil(targetWords / 300));
+          const fallbackPerSection = Math.floor(targetWords / fallbackCount);
+          log(`plan: JSON parse failed, creating ${fallbackCount} fallback sections`);
+          sections = [];
+          for (let i = 0; i < fallbackCount; i++) {
+            sections.push({
+              title: i === 0 ? "Introduction" : i === fallbackCount - 1 ? "Future Directions" : `Section ${i + 1}`,
+              targetWords: fallbackPerSection,
+              focus: `Aspect ${i + 1} of ${project.topic}`,
+            });
+          }
         }
 
         // v83-2: Enforce minimum section count and even word distribution.
@@ -931,7 +948,8 @@ Output JSON only.`;
           const needed = minSections - sections.length;
           // v85-2: Only add sections for 2000w+ (where more sections are
           // clearly needed). For smaller articles, just redistribute.
-          const shouldAddSections = targetWords >= 2000 && needed <= 3;
+          // v90-1: Also add if sections.length < 3 (truncated JSON fallback).
+          const shouldAddSections = (targetWords >= 2000 && needed <= 3) || sections.length < 3;
           if (shouldAddSections) {
             log(`plan: LLM returned ${sections.length} sections, but minimum is ${minSections} (targetWords=${targetWords}/300). Adding ${needed} more sections.`);
             // Generic section titles for the additional sections

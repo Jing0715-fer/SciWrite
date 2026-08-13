@@ -132,13 +132,13 @@ export function AuditReportViewer({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2 flex-wrap text-[10px] text-muted-foreground">
-        <ScrollText className="h-3.5 w-3.5" />
-        <span className="font-semibold">{reports.length} audit runs</span>
-        <Badge variant="outline" className="h-3.5 px-1 text-[8px]">
+      <div className="flex items-center gap-2 flex-wrap text-[10px] text-muted-foreground px-2.5 py-1.5 rounded-lg bg-muted/20 border border-border/30">
+        <ScrollText className="h-3.5 w-3.5 text-primary" />
+        <span className="font-semibold text-foreground">{reports.length} audit runs</span>
+        <Badge variant="outline" className="h-4 px-1.5 text-[8px] rounded-md">
           {autoCount} auto
         </Badge>
-        <Badge variant="outline" className="h-3.5 px-1 text-[8px]">
+        <Badge variant="outline" className="h-4 px-1.5 text-[8px] rounded-md">
           {manualCount} manual
         </Badge>
         <span className="text-amber-600 dark:text-amber-400">
