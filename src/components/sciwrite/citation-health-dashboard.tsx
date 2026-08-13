@@ -407,14 +407,14 @@ export function CitationHealthDashboard({
       : 100;
 
   return (
-    <div className="px-5 py-1.5 border-b border-border/40 bg-muted/15 flex items-center gap-3 flex-wrap">
-      {/* Grade badge */}
+    <div className="px-5 py-2 border-b border-border/40 bg-gradient-to-r from-muted/30 to-muted/10 flex items-center gap-3 flex-wrap">
+      {/* Grade badge — v85-1: Enhanced with gradient background */}
       <TooltipProvider delayDuration={200}>
         <Tooltip>
           <TooltipTrigger asChild>
             <div
               className={cn(
-                "flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[11px] font-bold cursor-help",
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-help shadow-sm transition-all hover:shadow-md",
                 GRADE_COLORS[agg.grade]
               )}
             >
@@ -441,48 +441,53 @@ export function CitationHealthDashboard({
         </Tooltip>
       </TooltipProvider>
 
-      {/* Quick stats */}
-      <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-        <span className="flex items-center gap-1">
+      {/* Quick stats — v85-1: Enhanced with pill-shaped containers */}
+      <div className="flex items-center gap-2 text-[10px]">
+        <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/8 text-primary">
           <FileText className="h-3 w-3" />
-          <span className="font-semibold text-foreground/80">{agg.totalCitations}</span>
-          citations
+          <span className="font-semibold">{agg.totalCitations}</span>
+          <span className="opacity-70">citations</span>
         </span>
-        <span className="flex items-center gap-1">
+        <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-500/8 text-blue-600 dark:text-blue-400">
           <BookOpen className="h-3 w-3" />
-          <span className="font-semibold text-foreground/80">{agg.totalReferences}</span>
-          refs
+          <span className="font-semibold">{agg.totalReferences}</span>
+          <span className="opacity-70">refs</span>
         </span>
-        {agg.totalBlocking > 0 && (
-          <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
+        {agg.totalBlocking > 0 ? (
+          <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-500/10 text-red-600 dark:text-red-400">
             <CircleX className="h-3 w-3" />
             <span className="font-semibold">{agg.totalBlocking}</span>
-            blocking
+            <span className="opacity-70">blocking</span>
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            <span className="font-semibold">0 blocking</span>
           </span>
         )}
         {agg.totalWarnings > 0 && (
-          <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
+          <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400">
             <AlertTriangle className="h-3 w-3" />
             <span className="font-semibold">{agg.totalWarnings}</span>
-            warnings
+            <span className="opacity-70">warnings</span>
           </span>
         )}
       </div>
 
-      {/* Clean progress */}
-      <div className="flex items-center gap-2 min-w-[140px] flex-1 max-w-[260px]">
+      {/* Clean progress — v85-1: Enhanced with gradient + percentage label */}
+      <div className="flex items-center gap-2 min-w-[160px] flex-1 max-w-[280px]">
         <Progress
           value={cleanPct}
           className={cn(
-            "h-1.5 flex-1",
+            "h-2 flex-1 transition-all",
             cleanPct === 100
-              ? "[&>div]:bg-emerald-500"
+              ? "[&>div]:bg-gradient-to-r [&>div]:from-emerald-400 [&>div]:to-emerald-600"
               : cleanPct >= 60
-              ? "[&>div]:bg-amber-500"
-              : "[&>div]:bg-red-500"
+              ? "[&>div]:bg-gradient-to-r [&>div]:from-amber-400 [&>div]:to-amber-600"
+              : "[&>div]:bg-gradient-to-r [&>div]:from-red-400 [&>div]:to-red-600"
           )}
         />
-        <span className="text-[9px] text-muted-foreground font-mono tabular-nums shrink-0">
+        <span className="text-[9px] text-muted-foreground font-mono tabular-nums shrink-0 font-medium">
           {agg.paragraphsClean}/{agg.totalParagraphs} clean
         </span>
       </div>

@@ -920,32 +920,37 @@ Output JSON only.`;
         }
 
         // v83-2: Enforce minimum section count and even word distribution.
-        // LLM may choose too few sections (e.g. 5 for 2000w = 400w each,
-        // but LLM only writes ~320w per section). Force at least
-        // ceil(targetWords / 300) sections. If LLM returned fewer, split
-        // the excess word budget across existing sections or add sections.
-        // v84-2: If LLM returned fewer than minSections, ADD new sections
-        // with generic titles ("Additional Perspectives", "Future Directions",
-        // etc.) to reach the minimum. This gives more but smaller sections
-        // which LLM writes more reliably.
+        // v84-2: If LLM returned fewer than minSections, ADD new sections.
+        // v85-2: Only add sections for very large articles (2000w+).
+        //   For 1000w-1500w, redistribute is better (v83: 99% vs v84: 87%).
+        //   The tradeoff: add sections = more content but lower 达标率
+        //   (more LLM calls = more rate-limiter cool-downs).
+        //   redistribute = fewer sections but higher 达标率.
         const minSections = Math.max(5, Math.ceil(targetWords / 300));
         if (sections.length < minSections) {
           const needed = minSections - sections.length;
-          log(`plan: LLM returned ${sections.length} sections, but minimum is ${minSections} (targetWords=${targetWords}/300). Adding ${needed} more sections.`);
-          // Generic section titles for the additional sections
-          const genericTitles = [
-            "Emerging Trends and Future Directions",
-            "Challenges and Limitations",
-            "Comparative Analysis and Perspectives",
-            "Technical Advances and Innovations",
-            "Translational Implications",
-          ];
-          for (let i = 0; i < needed && i < genericTitles.length; i++) {
-            sections.push({
-              title: genericTitles[i],
-              targetWords: Math.floor(targetWords / minSections),
-              focus: `Additional perspectives on ${project.topic}`,
-            });
+          // v85-2: Only add sections for 2000w+ (where more sections are
+          // clearly needed). For smaller articles, just redistribute.
+          const shouldAddSections = targetWords >= 2000 && needed <= 3;
+          if (shouldAddSections) {
+            log(`plan: LLM returned ${sections.length} sections, but minimum is ${minSections} (targetWords=${targetWords}/300). Adding ${needed} more sections.`);
+            // Generic section titles for the additional sections
+            const genericTitles = [
+              "Emerging Trends and Future Directions",
+              "Challenges and Limitations",
+              "Comparative Analysis and Perspectives",
+              "Technical Advances and Innovations",
+              "Translational Implications",
+            ];
+            for (let i = 0; i < needed && i < genericTitles.length; i++) {
+              sections.push({
+                title: genericTitles[i],
+                targetWords: Math.floor(targetWords / minSections),
+                focus: `Additional perspectives on ${project.topic}`,
+              });
+            }
+          } else {
+            log(`plan: LLM returned ${sections.length} sections, minimum is ${minSections}. Redistributing (targetWords=${targetWords} < 2000, or needed=${needed} > 3).`);
           }
           // Evenly distribute target words across ALL sections
           const perSectionTarget = Math.floor(targetWords / sections.length);
