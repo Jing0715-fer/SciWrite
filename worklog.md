@@ -5080,3 +5080,85 @@ Stage Summary:
 - v81-1 均匀分配是关键改进: section range 24w (v80: 210w)!
 - 连续十三次 PASS — 跨五个领域 + 四个规模!
 - 代码待 push 到 GitHub。
+
+---
+Task ID: v82
+Agent: main (Z.ai Code — v82 2000w CRISPR retest with v80+v81 improvements)
+Task: 2000w + v81-1 均匀分配 重新测试 (CRISPR topic)。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (88 commits, 无丢失)。
+- 无代码改动, 直接测试 v80+v81 改进在 2000w CRISPR 上的效果。
+
+v82 真实 generate-full 测试结果 (CRISPR, 2000w target):
+- 项目: cmsraduy20avqtm4c1bre15uq (CRISPR, 2000词目标, 8 DB queries)
+- 总耗时: ~320s (5.3分钟)
+- 5/5 sections 生成成功 ✅
+- 5/5 paragraphs 保留 ✅
+- Total: 1675w (84% target) — 达标率偏低 ⚠️
+- **0 placeholders** ✅✅
+- **0 blocking errors** ✅✅
+- **37 warnings** (CRISPR 2000w)
+- **citation-health: PASS** ✅✅ (连续第十四次!)
+- 服务器存活 ✅ — 完整完成!
+
+Section 详情 (2000w, 5 sections — 不均匀):
+- §1 Introduction: 468w, 5 refs (最长, 占 28%)
+- §2 Mechanisms: 354w, 10 refs
+- §3 Delivery: 292w, 12 refs
+- §4 Therapeutic: 262w, 14 refs
+- §5 Precision: 299w, 17 refs
+- range=206w (v81 1000w: range=24w) — 2000w 均匀分配没生效
+
+v82 vs v80 对比 (同为 2000w):
+| 指标 | v80 (Alzheimer's) | v82 (CRISPR) |
+|------|-------------------|--------------|
+| 总词数 | 1904w | 1675w (-12%) |
+| 达标率 | 95% | 84% |
+| sections | 7 | 5 |
+| range | 210w | 206w |
+| blocking | 0 | 0 |
+| citation-health | PASS | PASS |
+
+关键发现:
+- v80-1 plan prompt 在 Alzheimer's 产生了 7 sections, CRISPR 只有 5
+- v81-1 均匀分配在 1000w 上极好 (range=24w), 但 2000w 上没生效 (range=206w)
+- LLM 在 2000w 时倾向选择更少 sections (5 vs 7), 且 §1 偏长 (468w)
+- 但 0 blocking + PASS — pipeline 稳定性不受影响
+
+九个测试全部 PASS:
+| Topic | Field | Target | Words | % | Sections | Health |
+|-------|-------|--------|-------|---|----------|--------|
+| TMC1 (v74) | structural-bio | 600w | 598w | 100% | 5 | PASS ✅ |
+| CRISPR (v75) | molecular-bio | 600w | 609w | 101% | 5 | PASS ✅ |
+| Alzheimer's (v76) | neuroscience | 600w | 603w | 100% | 5 | PASS ✅ |
+| Cancer (v77) | immunology | 1000w | 953w | 95% | 5 | PASS ✅ |
+| CRISPR (v78) | molecular-bio | 1500w | 1645w | 110% | 5 | PASS ✅ |
+| Alzheimer's (v79) | neuroscience | 2000w | 1589w | 79% | 5 | PASS ✅ |
+| Alzheimer's (v80) | neuroscience | 2000w | 1904w | 95% | 7 | PASS ✅ |
+| Protein folding (v81) | biophysics | 1000w | 1013w | 101% | 5 | PASS ✅ |
+| CRISPR (v82) | molecular-bio | 2000w | 1675w | 84% | 5 | PASS ✅ |
+
+**连续十四次 PASS — 跨五个领域 + 四个规模!**
+
+不足之处 / v83 改进建议:
+1. 2000w 达标率 84% (v82) vs 95% (v80): LLM 变异性导致不同 topic 的
+   section 数不同 (5 vs 7)。可以在代码中强制 section 数 =
+   Math.ceil(targetWords / 300), 而非让 LLM 决定。
+
+2. §1=468w (28% of total): v81-1 的 "EVENLY distribute" 在 2000w 上
+   没生效。可能需要在代码中覆盖 LLM 的 targetWords 分配。
+
+3. 37 warnings: 与 v80 (74) 相比较少 (5 sections vs 7)。
+
+4. 总耗时 320s: 与 v80 (455s) 相比较快 (5 vs 7 sections)。
+
+5. 58 citation links: 与 v78 (69), v80 (98) 相比较少。
+
+Stage Summary:
+- v82 测试完成 (CRISPR, 2000w, 5 sections)!
+- 1675w (84%), 0 blocking, 0 placeholders, PASS!
+- 连续十四次 PASS — 跨五个领域 + 四个规模!
+- v80-1 plan prompt 在不同 topic 上效果不同 (Alzheimer's=7, CRISPR=5)
+- v81-1 均匀分配在 1000w 极好但 2000w 没生效
+- 代码待 push 到 GitHub。
