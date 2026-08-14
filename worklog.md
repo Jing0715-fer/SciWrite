@@ -9251,3 +9251,75 @@ Stage Summary:
 - v101 修复通过 v100 文章对比验证 (DS=1→0, FC=4→0)
 - 真实测试因环境 OOM 中断, 待环境稳定后验证
 - 代码已 push 到 GitHub (66876a7)
+
+---
+
+Task ID: v103
+Agent: main (Z.ai Code — v103 UI summary/review/share-dialog + 600w test v101 fix VERIFIED)
+Task: UI 优化 3 dialogs + 600w 真实测试验证 v101 修复效果。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (v102 99625ce)。
+- 实施了 3 项 v103 UI 改进:
+
+1. v103-1 UI summary-dialog gradient header:
+  - DialogHeader 添加 bg-gradient-to-r from-primary/5 to-transparent
+  - 新增 7x7 icon container (bg-primary/10) 替代裸 Sparkles icon
+  - DialogContent 添加 rounded-xl
+
+2. v103-2 UI review-dialog gradient header:
+  - DialogHeader 添加 bg-gradient-to-r from-primary/5 to-transparent
+  - 新增 7x7 icon container (bg-primary/10) 替代裸 Gavel icon
+  - DialogContent 添加 rounded-xl overflow-hidden
+
+3. v103-3 UI share-dialog gradient header + copy link styling:
+  - DialogHeader 添加 gradient + border-b + 负 margin 撑满
+  - 新增 7x7 icon container
+  - Copy link 区域重新设计: p-1 rounded-lg bg-muted/40 border, input 透明无边框
+  - Copy 按钮: variant="default" (was outline) + "Copy" text label + hover:shadow-sm
+
+v103 真实测试 (Enzyme catalysis, structural-biology, 600w target):
+- 项目: cmst2jq9e0000pxmychaw3wfv
+- 5/5 sections 生成成功 ✅
+- Total: 756w (126% target) — 5 sections × ~150w each
+- **v101 修复端到端验证 PASS** ✅✅:
+  - All 5 paragraphs: **DS=0, FC=0** ✅✅ (v100 was DS=1, FC=4)
+  - [DS:N] markers: 0 (was 1) — v101-2 compose+rebuild cleanup works!
+  - Further context blocks: 0 (was 4) — v101-1 strip works!
+  - No citation number mismatch (root cause eliminated)
+- v99 改进再次验证:
+  - §2: "top score=5" — partial-match bonus (v99-3) working
+  - §5: "top score=4" — keyword extraction filtering fillers
+  - keywords: "active,conformational,catalytic,changes,dynamics" — NO generic fillers!
+- Article 未保存 (compose/audit 阶段 OOM 中断), 但 paragraphs 已清理
+
+Per-section 详情 (600w, 5 sections):
+- §1: 109w, 4 cit, DS=0, FC=0 ✅
+- §2: 176w, 7 cit, DS=0, FC=0 ✅ (density retry improved 2→3)
+- §3: 167w, 6 cit, DS=0, FC=0 ✅
+- §4: 162w, 5 cit, DS=0, FC=0 ✅
+- §5: 142w, 6 cit, DS=0, FC=0 ✅
+
+v101 修复端到端验证总结:
+| 指标 | v100 (修复前) | v103 (修复后) | 状态 |
+|------|---------------|---------------|------|
+| [DS:N] markers | 1 个 [DS:1] | 0 个 | ✅ PASS |
+| Further context blocks | 4 个 (含错位编号) | 0 个 | ✅ PASS |
+| 引用编号错位 | §3[6]=Muller≠列表[6]=Corey | 消除 (无 Further context) | ✅ PASS |
+| 段落清理度 | 0/5 clean | 5/5 DS=0 FC=0 | ✅ PASS |
+
+发现的不足 (v104 改进建议):
+1. **Article 未保存** — compose/audit 阶段 OOM 中断:
+   - v104-1: 考虑在 compose 阶段前保存 partial article (即使 audit 未完成)
+   - 或: audit phase 使用更轻量的验证 (减少 LLM 调用)
+2. **§1 只有 109w (91% target)** — 略低于 120w target:
+   - v104-2: word-count injection 阈值可从 90% 降到 85%
+3. **环境 OOM 持续** — 3.9GB RAM 无法完整运行 audit:
+   - v104-3: 考虑 audit phase batch mode (多个 paragraphs 一个 LLM call)
+
+Stage Summary:
+- v103 实施了 3 项 UI 改进 (summary-dialog, review-dialog, share-dialog)
+- **v101 修复端到端验证 PASS** — 5/5 paragraphs DS=0 FC=0 ✅✅
+- v99 改进再次验证 (partial-match, keyword extraction)
+- Article 未保存因 OOM, 但段落清理度确认 v101 修复有效
+- 代码待 push 到 GitHub。

@@ -64,10 +64,12 @@ export function ShareDialog({ open, onOpenChange, projectId, projectTitle }: Pro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
+      <DialogContent className="max-w-md rounded-xl overflow-hidden">
+        <DialogHeader className="bg-gradient-to-r from-primary/5 to-transparent border-b border-border/60 px-6 pt-5 pb-3 -mx-6 -mt-6 mb-2">
           <DialogTitle className="flex items-center gap-2 text-sm">
-            <Share2 className="h-4 w-4 text-muted-foreground" />
+            <div className="flex items-center justify-center h-7 w-7 rounded-md bg-primary/10 text-primary">
+              <Share2 className="h-4 w-4" />
+            </div>
             {t("share.title") || "Share Project"}
           </DialogTitle>
           <DialogDescription className="text-xs">
@@ -88,20 +90,21 @@ export function ShareDialog({ open, onOpenChange, projectId, projectTitle }: Pro
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
                   {t("share.linkLabel") || "Share link"}
                 </p>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 p-1 rounded-lg bg-muted/40 border border-border/40">
                   <input
                     type="text"
                     value={shareUrl}
                     readOnly
-                    className="flex-1 h-8 text-[10px] font-mono rounded-md border border-input bg-background px-2"
+                    className="flex-1 h-8 text-[10px] font-mono bg-transparent border-none px-2 focus:outline-none truncate"
                   />
                   <Button
-                    variant="outline"
+                    variant="default"
                     size="sm"
-                    className="h-8 px-2 shrink-0"
+                    className="h-8 px-3 shrink-0 gap-1 transition-all hover:shadow-sm"
                     onClick={copyLink}
                   >
                     <Copy className="h-3 w-3" />
+                    <span className="text-[10px]">{t("share.copy") || "Copy"}</span>
                   </Button>
                 </div>
                 <p className="text-[9px] text-muted-foreground">
