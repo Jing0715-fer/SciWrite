@@ -33,7 +33,7 @@ export function LanguageToggle() {
         <Button
           variant="ghost"
           size="sm"
-          className="h-8 gap-1.5 px-2 rounded-full"
+          className="h-8 gap-1.5 px-2.5 rounded-full transition-all hover:bg-primary/10 hover:text-primary"
           title={t("app.language")}
           aria-label={t("app.language")}
         >

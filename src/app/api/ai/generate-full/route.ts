@@ -3046,6 +3046,12 @@ ${cleanEn}`;
         });
 
         // ============ FINAL RESULT ============
+        // v95-1: Borrowed from deepseek-harness's session log pattern —
+        // emit a structured pipeline summary with timing breakdown for
+        // observability and debugging. Similar to dsh's append-only session
+        // events that record every step's metadata.
+        const pipelineEndTime = Date.now();
+        const pipelineDuration = pipelineEndTime - t0;
         send("complete", {
           success: true,
           articleId: article.id,
@@ -3062,6 +3068,14 @@ ${cleanEn}`;
             ...(articleContentZh ? { articleWordCountZh: countWords(articleContentZh) } : {}),
             globalReferenceCount: globalRefs.length,
             failedSections: failedSections.length,
+            // v95-1: Pipeline timing breakdown (dsh session log pattern)
+            pipelineDurationMs: pipelineDuration,
+            pipelineDurationSec: Math.round(pipelineDuration / 1000),
+            targetWords,
+            achievementRate: Math.round((countWords(articleContent) / targetWords) * 100),
+            retryBudgetDensityUsed,
+            retryBudgetWcUsed,
+            windowCount: getWindowCount(),
           },
           sections: generatedParagraphs,
           failedSectionIndices: failedSections,
