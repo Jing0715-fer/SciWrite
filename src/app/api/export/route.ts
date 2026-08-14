@@ -419,7 +419,13 @@ export async function POST(req: NextRequest) {
         "| # | Source | External ID | Title | Status |",
         "|---|--------|-------------|-------|--------|",
       ];
-      dataSources.forEach((ds, i) => {
+      // v101-3: For large data source lists (>100), cap the table at 100 rows
+      // to prevent markdown rendering issues and keep the appendix readable.
+      // Show a summary line for the remaining entries.
+      const maxTableRows = 100;
+      const showAll = dataSources.length <= maxTableRows;
+      const displaySources = showAll ? dataSources : dataSources.slice(0, maxTableRows);
+      displaySources.forEach((ds, i) => {
         const key = `${ds.source}:${ds.externalId || ds.title}`;
         const altKey = `${ds.source === "rcsb" || ds.source === "pdb" ? "pubmed" : ds.source}:${ds.externalId || ds.title}`;
         const isCited = citedRefKeys.has(key) || citedRefKeys.has(altKey);
@@ -428,7 +434,13 @@ export async function POST(req: NextRequest) {
         const title = (ds.title || "").replace(/\|/g, "\\|").slice(0, 80);
         lines.push(`| ${i + 1} | ${ds.source} | ${extId} | ${title} | ${status} |`);
       });
-      dataSourceAppendix = lines.join("\n");
+      // v101-3: Add summary line for truncated entries
+      if (!showAll) {
+        const remaining = dataSources.length - maxTableRows;
+        lines.push(`| ... | _${remaining} more entries omitted_ | | | |`);
+      }
+      // Ensure proper newline separation — join with explicit newlines
+      dataSourceAppendix = lines.join("\n") + "\n";
     }
 
     // Build the Citation Validation report. This is a short diagnostic section

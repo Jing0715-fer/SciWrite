@@ -2246,6 +2246,26 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         const maxGlobalRef = globalRefs.length;
         for (let i = 0; i < renumberedContents.length; i++) {
           let cleaned = renumberedContents[i];
+          // v101-1: Strip "Further context" blocks entirely. These blocks were
+          // injected during word-count padding (v59-3) and embed per-section
+          // local citation numbers with author/year text like:
+          //   "Further context on this topic is provided by [6] Muller MP (2019)..."
+          // After global renumbering, the [6] gets renumbered to a global number
+          // that may point to a DIFFERENT reference — so the text reads
+          // "[6] Muller MP (2019)" but global [6] is actually "Corey RA (2020)".
+          // The citation is already captured in the References list, so these
+          // verbose blocks are redundant AND become misleading after renumbering.
+          // Strip the entire sentence (from "Further context" to the next period
+          // or end of paragraph).
+          cleaned = cleaned.replace(
+            /\s*Further context on this topic is provided by[^\n]*(?:\.[^\n]*)*/gi,
+            ""
+          );
+          // v101-2: Remove [DS:N] residual markers. The LLM is given data sources
+          // labeled [DS:1], [DS:2]... in the prompt context. Sometimes the LLM
+          // leaks these markers into its output. The post-compose cleanup only
+          // handled [$REF] and [n], not [DS:N]. Strip them here.
+          cleaned = cleaned.replace(/\s*\[DS:\d+\]/g, "");
           // Remove [$REF] placeholders
           cleaned = cleaned.replace(/\s*\[\$REF\]/g, "");
           // Remove [n] where n > maxGlobalRef or n < 1 (out-of-range for global list)
@@ -2819,7 +2839,16 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             orderBy: { order: "asc" },
           });
           const updatedBody = finalParagraphs
-            .map((p) => `## ${p.title}\n\n${(p.content || "").replace(/\[\$REF\]/g, "").replace(/\[citation needed\]/g, "")}`)
+            .map((p) => `## ${p.title}\n\n${(p.content || "")
+              .replace(/\[\$REF\]/g, "")
+              .replace(/\[citation needed\]/g, "")
+              // v101-2: Also strip [DS:N] markers and Further context blocks
+              // from the final rebuilt article (defensive — should already be
+              // cleaned in the compose phase, but audit/auto-fix may re-introduce
+              // them if paragraphs were modified).
+              .replace(/\s*\[DS:\d+\]/g, "")
+              .replace(/\s*Further context on this topic is provided by[^\n]*(?:\.[^\n]*)*/gi, "")
+            }`)
             .join("\n\n");
           // Strip any existing ## References section from the updated body
           let cleanUpdatedBody = updatedBody.trim();

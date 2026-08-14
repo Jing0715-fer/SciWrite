@@ -21,6 +21,7 @@ import {
   RotateCw,
   ShieldCheck,
   Box,
+  Quote,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -348,6 +349,19 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
                 ? `${(paragraph as any).wordCountZh || 0}字`
                 : t("para.wordsCount", { n: paragraph.wordCount })}
             </span>
+            {/* v101-4: Citation count badge */}
+            {(() => {
+              const citCount = (displayContent?.match(/\[\d+(?:[,\-–\s]\d+)*\]/g) || []).length;
+              if (citCount > 0) {
+                return (
+                  <span className="inline-flex items-center gap-0.5 text-[9px] text-amber-600 dark:text-amber-400 font-medium bg-amber-500/10 px-1.5 py-0.5 rounded">
+                    <Quote className="h-2.5 w-2.5" />
+                    {citCount} cit
+                  </span>
+                );
+              }
+              return null;
+            })()}
             {hasZh && (
               <span className="text-[9px] text-fuchsia-600 dark:text-fuchsia-400 font-medium">
                 · 中文
