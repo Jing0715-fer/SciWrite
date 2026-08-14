@@ -107,11 +107,11 @@ interface HealthReport {
 }
 
 const GRADE_COLORS: Record<string, string> = {
-  A: "text-emerald-600 dark:text-emerald-400 bg-emerald-100/60 dark:bg-emerald-950/30 border-emerald-300/60",
-  B: "text-lime-600 dark:text-lime-400 bg-lime-100/60 dark:bg-lime-950/30 border-lime-300/60",
-  C: "text-amber-600 dark:text-amber-400 bg-amber-100/60 dark:bg-amber-950/30 border-amber-300/60",
-  D: "text-orange-600 dark:text-orange-400 bg-orange-100/60 dark:bg-orange-950/30 border-orange-300/60",
-  F: "text-red-600 dark:text-red-400 bg-red-100/60 dark:bg-red-950/30 border-red-300/60",
+  A: "text-emerald-600 dark:text-emerald-400 bg-gradient-to-br from-emerald-100/80 to-emerald-50/40 dark:from-emerald-950/40 dark:to-emerald-950/10 border-emerald-300/60 shadow-emerald-500/10",
+  B: "text-lime-600 dark:text-lime-400 bg-gradient-to-br from-lime-100/80 to-lime-50/40 dark:from-lime-950/40 dark:to-lime-950/10 border-lime-300/60 shadow-lime-500/10",
+  C: "text-amber-600 dark:text-amber-400 bg-gradient-to-br from-amber-100/80 to-amber-50/40 dark:from-amber-950/40 dark:to-amber-950/10 border-amber-300/60 shadow-amber-500/10",
+  D: "text-orange-600 dark:text-orange-400 bg-gradient-to-br from-orange-100/80 to-orange-50/40 dark:from-orange-950/40 dark:to-orange-950/10 border-orange-300/60 shadow-orange-500/10",
+  F: "text-red-600 dark:text-red-400 bg-gradient-to-br from-red-100/80 to-red-50/40 dark:from-red-950/40 dark:to-red-950/10 border-red-300/60 shadow-red-500/10",
 };
 
 const GRADE_LABELS: Record<string, string> = {
@@ -414,8 +414,9 @@ export function CitationHealthDashboard({
           <TooltipTrigger asChild>
             <div
               className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-help shadow-sm transition-all hover:shadow-md",
-                GRADE_COLORS[agg.grade]
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-help shadow-sm transition-all hover:shadow-md hover:scale-[1.02]",
+                GRADE_COLORS[agg.grade],
+                hasBlocking && "animate-pulse"
               )}
             >
               <Icon className="h-3.5 w-3.5" />

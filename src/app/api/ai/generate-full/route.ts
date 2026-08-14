@@ -23,6 +23,7 @@ import {
   inferFormat,
   safeParseJSON,
   extractKeywords,
+  extractSectionKeywords,
   scoreRelevance,
 } from "@/lib/generate-full-helpers";
 
@@ -1114,6 +1115,28 @@ Output JSON only.`;
           });
           log(`generate: section ${sectionNum}/${sections.length} starting — "${section.title}" targetWords=${section.targetWords}`);
 
+          // v99-4: Preemptive slow-down — if the sliding window count is
+          // approaching the threshold (>= 11 of 15), wait 25s before starting
+          // this section's LLM calls. This prevents hitting the 60s cool-down
+          // mid-section (which happened in v98 §5: window=15, 60s penalty).
+          // Cost: 25s × ~2 sections = ~50s extra. Benefit: avoids 60s cool-down.
+          {
+            const preemptiveWc = getWindowCount();
+            if (preemptiveWc >= 11 && i > 0) {
+              log(`generate: section ${sectionNum} preemptive slow-down — window count ${preemptiveWc}/15, waiting 25s`);
+              send("step", {
+                step: "generate",
+                status: "progress",
+                section: sectionNum,
+                total: sections.length,
+                message: `Pacing rate-limit window (${preemptiveWc}/15) — waiting 25s before section ${sectionNum}...`,
+                preemptiveSlowDown: true,
+                windowCount: preemptiveWc,
+              });
+              await new Promise((r) => setTimeout(r, 25000));
+            }
+          }
+
           // For sections with high target words, generate in sub-chunks
           const sectionTargetWords = section.targetWords || 600;
           const needsChunking = sectionTargetWords > 1200;
@@ -1137,7 +1160,7 @@ Output JSON only.`;
           // abstract. Keep the top sectionRefTopN refs (min sectionRefMinN)
           // and top sectionDsTopN data sources (min sectionDsMinN). These
           // thresholds are configurable via the UI's Advanced settings.
-          const sectionKeywords = extractKeywords(
+          const sectionKeywords = extractSectionKeywords(
             `${section.title} ${section.focus || ""}`,
           );
           const scoredRefs = curatedRefs.map((r: any, idx: number) => ({
@@ -1733,16 +1756,24 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               // was longer. +15% accepts retries that add meaningful length.
               const wcImprovementPct = (wcRetryWordCount - currentWordCount) / currentWordCount;
               const wcRefsAcceptable = wcRetryResult.references.length >= 3; // v61-3: lowered from 5 to 3
-              if (
-                wcImprovementPct > 0.10 && // v64-3: lowered from 0.15 to 0.10
-                wcRefsAcceptable
-              ) {
-                log(`generate: section ${sectionNum} WORD-COUNT RETRY improved ${currentWordCount}→${wcRetryWordCount} words (+${Math.round(wcImprovementPct * 100)}%), refs ${citedRefs.length}→${wcRetryResult.references.length} (injection will top up if needed)`);
+              // v99-1: Reject retry if it overshoots target by >125% — prevents
+              // the v98 §2 case (275w vs 200w target = 137%) where retry
+              // over-expanded and unbalanced the article.
+              const wcOvershootPct = wcRetryWordCount / sectionTargetWords;
+              const wcRetryAcceptable =
+                wcImprovementPct > 0.10 &&
+                wcRefsAcceptable &&
+                wcOvershootPct <= 1.25; // v99-1: reject overshoot > 125% target
+              if (wcRetryAcceptable) {
+                log(`generate: section ${sectionNum} WORD-COUNT RETRY improved ${currentWordCount}→${wcRetryWordCount} words (+${Math.round(wcImprovementPct * 100)}%), refs ${citedRefs.length}→${wcRetryResult.references.length} (injection will top up if needed)${wcOvershootPct > 1.10 ? ` [overshoot ${Math.round(wcOvershootPct * 100)}% within cap]` : ""}`);
                 renumberedContent = wcRetryResult.content;
                 citedRefs = wcRetryResult.references;
                 wordCountRetried = true;
               } else {
-                log(`generate: section ${sectionNum} WORD-COUNT RETRY did not meet acceptance (wc ${currentWordCount}→${wcRetryWordCount} +${Math.round(wcImprovementPct * 100)}%, refs=${wcRetryResult.references.length} need≥3) — keeping original`);
+                const reason = wcOvershootPct > 1.25
+                  ? `overshoot ${Math.round(wcOvershootPct * 100)}% > 125% cap`
+                  : `wc ${currentWordCount}→${wcRetryWordCount} +${Math.round(wcImprovementPct * 100)}%, refs=${wcRetryResult.references.length} need≥3`;
+                log(`generate: section ${sectionNum} WORD-COUNT RETRY did not meet acceptance (${reason}) — keeping original`);
               }
             } catch (wcRetryErr: any) {
               log(`generate: section ${sectionNum} WORD-COUNT RETRY failed: ${wcRetryErr?.message?.slice(0, 100)}`);
@@ -2424,13 +2455,19 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             // audit 2 more calls of headroom — enough to audit 1-2 paragraphs
             // before breaking. The auto-fix (v64-1) runs after audit regardless,
             // so even if audit breaks early, auto-fix will still clean up.
+            // v99-2: Removed hard break at window count >= 14. The previous
+            // logic broke the audit loop entirely when near cool-down, leaving
+            // 0/5 paragraphs audited (v98 test). Instead, let the rate-limiter
+            // handle it — each deep-audit-citations call will trigger its own
+            // 60s cool-down if needed, but the audit completes. Safety valve
+            // at 22 (1.5× threshold) for pathological cases.
             const wc = getWindowCount();
-            if (wc >= 14) {
-              log(`audit: BREAKING loop at paragraph ${batchNum}/${totalBatches} — window count ${wc} >= 14 (near cool-down). ${auditDone}/${generatedParagraphs.length} audited, rest skipped.`);
+            if (wc >= 22) {
+              log(`audit: BREAKING loop at paragraph ${batchNum}/${totalBatches} — window count ${wc} >= 22 (safety valve). ${auditDone}/${generatedParagraphs.length} audited, rest skipped.`);
               send("step", {
                 step: "audit",
                 status: "progress",
-                message: `Audit stopped early at section ${batchNum}/${totalBatches} — rate limit window at ${wc}/15. ${generatedParagraphs.length - auditDone} section(s) not audited (auto-fix will still run).`,
+                message: `Audit stopped at section ${batchNum}/${totalBatches} — rate limit window at ${wc}/15 (safety valve). ${generatedParagraphs.length - auditDone} section(s) not audited (auto-fix will still run).`,
                 earlyExit: true,
                 audited: auditDone,
                 skipped: generatedParagraphs.length - auditDone,

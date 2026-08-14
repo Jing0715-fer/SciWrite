@@ -272,6 +272,58 @@ export function extractKeywords(text: string): string[] {
 }
 
 /**
+ * v99-3: Enhanced keyword extraction for section ref filtering.
+ *
+ * The v98 test showed 46 topicality warnings (0% overlap between citing
+ * sentences and references). The root cause: `extractKeywords` returns ALL
+ * tokens, including generic words ("detailed", "explanation", "work") that
+ * dilute relevance scoring. This function:
+ *
+ * 1. Removes generic academic fillers ("overview", "discussion", "detailed",
+ *    "explanation", "current", "including", "work", "highlighting", etc.)
+ * 2. Ranks by frequency, keeps top 12 keywords (prevents over-matching)
+ *
+ * Used by generate-full's per-section ref filtering to score which refs
+ * are most relevant to a section's title+focus.
+ */
+const GENERIC_FILLERS = new Set([
+  "overview", "discussion", "detailed", "explanation", "current",
+  "including", "work", "highlighting", "background", "introduction",
+  "conclusion", "summary", "approach", "study", "studies", "research",
+  "analysis", "review", "chapter", "section", "topic", "focus",
+  "explore", "exploration", "examine", "examination", "investigate",
+  "investigation", "understand", "understanding", "provide", "provides",
+  "present", "presents", "show", "shows", "demonstrate", "demonstrates",
+  "reveal", "reveals", "describe", "describes", "discuss", "discusses",
+  "consider", "considers", "examine", "examines", "address", "addresses",
+  "cover", "covers", "include", "includes", "involve", "involves",
+  "related", "relevant", "important", "significant", "various", "several",
+  "many", "much", "also", "well", "more", "most", "such", "other",
+  "first", "second", "third", "new", "novel", "recent", "previous",
+  "prior", "early", "late", "main", "major", "minor", "general",
+  "specific", "particular", "certain", "given", "known", "unknown",
+]);
+
+export function extractSectionKeywords(text: string): string[] {
+  const lower = text.toLowerCase();
+  const tokens = lower.match(/[a-z][a-z0-9\-]{2,}/g) || [];
+  // Count frequency to rank keywords
+  const freq = new Map<string, number>();
+  for (const t of tokens) {
+    if (STOPWORDS.has(t)) continue;
+    if (GENERIC_FILLERS.has(t)) continue; // v99-3: remove academic fillers
+    if (t.length < 4 && !/^[a-z]+\d+$/.test(t)) continue;
+    freq.set(t, (freq.get(t) || 0) + 1);
+  }
+  // Sort by frequency (desc), then alphabetically for stability
+  const ranked = Array.from(freq.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 12) // v99-3: top 12 keywords max
+    .map(([kw]) => kw);
+  return ranked;
+}
+
+/**
  * Score how relevant a reference's text (title + abstract + journal) is to
  * a set of section keywords. Returns the count of distinct keyword matches.
  *
@@ -279,13 +331,24 @@ export function extractKeywords(text: string): string[] {
  * but it's fast (no LLM call) and catches the common case where a ref about
  * "TMC7 acrosome biogenesis" should NOT be cited in a section about
  * "TMC1 animal models and hearing".
+ *
+ * v99-3: Added partial-match bonus — if a keyword like "crispr" partially
+ * matches "crispr-cas9" in the ref text, count it (0.5). This reduces
+ * false-zero scores that caused topicality warnings in v98.
  */
 export function scoreRelevance(keywords: string[], refText: string): number {
   if (keywords.length === 0) return 0;
   const lower = refText.toLowerCase();
   let score = 0;
   for (const kw of keywords) {
-    if (lower.includes(kw)) score++;
+    if (lower.includes(kw)) {
+      score++;
+    } else if (kw.length >= 5) {
+      // v99-3: partial match — check if keyword's prefix (first 6 chars)
+      // appears as a word boundary in the ref text (e.g., "crispr" in "crispr-cas9")
+      const partialRe = new RegExp(`\\b${kw.slice(0, Math.min(kw.length, 6))}`, "i");
+      if (partialRe.test(lower)) score += 0.5;
+    }
   }
   return score;
 }
