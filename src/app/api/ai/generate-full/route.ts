@@ -1963,9 +1963,14 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           // prompt can reference what came before. We keep the last 3 sections
           // (~600 chars total) to stay within the prompt budget while still
           // giving the LLM enough context to match style and avoid repetition.
+          // v94-1: Borrowed from deepseek-harness's pre-step injection pattern —
+          // enrich the digest with citation density and used ref IDs so the
+          // next section's prompt can avoid citing the same refs and maintain
+          // balanced citation diversity across sections.
           const openingSentence = renumberedContent.slice(0, 180).replace(/\n+/g, " ");
           const closingSentence = renumberedContent.slice(-180).replace(/\n+/g, " ");
-          const digestEntry = `§${sectionNum} "${section.title}": opens "${openingSentence}..." closes "...${closingSentence}"`;
+          const citedRefIds = citedRefs.map((r: any) => r.externalId || r.title?.slice(0, 30)).slice(0, 5).join(", ");
+          const digestEntry = `§${sectionNum} "${section.title}": opens "${openingSentence}..." closes "...${closingSentence}" [${citedRefs.length} refs: ${citedRefIds}]`;
           previousSectionsDigest = (previousSectionsDigest + "\n" + digestEntry)
             .split("\n")
             .filter(Boolean)

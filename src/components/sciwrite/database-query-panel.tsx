@@ -125,7 +125,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="px-4 pt-4 pb-3 border-b border-border/60 space-y-3 shrink-0">
+      <div className="px-4 pt-4 pb-3 border-b border-border/60 space-y-3 shrink-0 bg-gradient-to-r from-primary/5 to-transparent">
         <div className="flex items-center gap-2">
           <Database className="h-4 w-4 text-primary" />
           <h3 className="text-sm font-semibold tracking-tight">
