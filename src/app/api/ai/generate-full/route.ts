@@ -287,6 +287,12 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         // Also clear the LLM cache so gather/curate/plan/relationships get
         // fresh results — the user explicitly clicked "generate" so they want
         // new output, not cached results from a previous run.
+        // v93-2: clearAbort BEFORE gather — the abort flag from a previous
+        // pipeline run (or session) must be cleared before any LLM call,
+        // including the gather LLM call at line 297. Previously clearAbort
+        // was at line 1032 (after gather), causing RateLimitAbortedError
+        // in gather when the abort flag was set from a previous run.
+        clearAbort();
         await clearSession(projectId);
         try {
           const { clearLLMCache } = await import("@/lib/llm-cache");
