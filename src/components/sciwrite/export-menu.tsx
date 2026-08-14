@@ -60,13 +60,14 @@ const FORMAT_META: {
   key: string;
   ext: string;
   langs?: ExportLang[]; // undefined = all langs available
+  desc: string; // v102-3: short description shown in menu
 }[] = [
-  { format: "docx", icon: FileType2, color: "text-blue-600", key: "export.word", ext: "docx" },
-  { format: "pdf", icon: FileText, color: "text-rose-600", key: "export.pdf", ext: "pdf" },
-  { format: "markdown", icon: FileCode2, color: "text-emerald-600", key: "export.markdown", ext: "md" },
-  { format: "latex", icon: FileTerminal, color: "text-amber-700", key: "export.latex", ext: "tex" },
-  { format: "epub", icon: BookOpen, color: "text-indigo-600", key: "export.epub", ext: "epub", langs: ["en"] },
-  { format: "graph-report", icon: Network, color: "text-fuchsia-600", key: "export.graphReport", ext: "html", langs: ["en"] },
+  { format: "docx", icon: FileType2, color: "text-blue-600", key: "export.word", ext: "docx", desc: "Microsoft Word" },
+  { format: "pdf", icon: FileText, color: "text-rose-600", key: "export.pdf", ext: "pdf", desc: "Portable Document" },
+  { format: "markdown", icon: FileCode2, color: "text-emerald-600", key: "export.markdown", ext: "md", desc: "Plain text .md" },
+  { format: "latex", icon: FileTerminal, color: "text-amber-700", key: "export.latex", ext: "tex", desc: "LaTeX source" },
+  { format: "epub", icon: BookOpen, color: "text-indigo-600", key: "export.epub", ext: "epub", langs: ["en"], desc: "E-book" },
+  { format: "graph-report", icon: Network, color: "text-fuchsia-600", key: "export.graphReport", ext: "html", langs: ["en"], desc: "Citation graph" },
 ];
 
 const LANG_META: Record<ExportLang, { label: string; short: string; suffix: string }> = {
@@ -138,6 +139,7 @@ export function ExportMenu({
     Icon: any,
     iconColor: string,
     label: string,
+    desc?: string, // v102-3: optional description
   ) => {
     const itemKey = `${format}:${language}`;
     const isLoading = exportMut.isPending && pending === itemKey;
@@ -146,9 +148,15 @@ export function ExportMenu({
         key={itemKey}
         onClick={() => exportMut.mutate({ format, language })}
         disabled={exportMut.isPending}
+        className="gap-2 py-1.5"
       >
-        <Icon className={`h-3.5 w-3.5 ${iconColor}`} />
-        <span className="text-xs">{label}</span>
+        <Icon className={`h-3.5 w-3.5 shrink-0 ${iconColor}`} />
+        <div className="flex flex-col min-w-0">
+          <span className="text-xs">{label}</span>
+          {desc && (
+            <span className="text-[9px] text-muted-foreground leading-tight">{desc}</span>
+          )}
+        </div>
         {isLoading && (
           <span className="ml-auto flex items-center gap-1">
             <Loader2 className="h-3 w-3 animate-spin" />
@@ -165,7 +173,7 @@ export function ExportMenu({
     FORMAT_META.map((f) => {
       const langs = f.langs || [language];
       if (!langs.includes(language)) return null;
-      return renderFormatItem(f.format, language, f.icon, f.color, t(f.key as any));
+      return renderFormatItem(f.format, language, f.icon, f.color, t(f.key as any), f.desc);
     });
 
   // If hasZh is false, use the simple single-language menu (legacy behavior)
@@ -219,7 +227,7 @@ export function ExportMenu({
           {FORMAT_META.map((f) => {
             const langs = f.langs || ["en"];
             if (!langs.includes("en")) return null;
-            return renderFormatItem(f.format, "en", f.icon, f.color, t(f.key as any));
+            return renderFormatItem(f.format, "en", f.icon, f.color, t(f.key as any), f.desc);
           })}
         </DropdownMenuGroup>
 
@@ -232,7 +240,7 @@ export function ExportMenu({
             <span className="font-normal text-[9px]">{LANG_META.zh.label}</span>
           </DropdownMenuLabel>
           {FORMAT_META.filter((f) => !f.langs).map((f) =>
-            renderFormatItem(f.format, "zh", f.icon, f.color, t(f.key as any)),
+            renderFormatItem(f.format, "zh", f.icon, f.color, t(f.key as any), f.desc),
           )}
         </DropdownMenuGroup>
 
@@ -245,7 +253,7 @@ export function ExportMenu({
             <span className="font-normal text-[9px]">{LANG_META.both.label}</span>
           </DropdownMenuLabel>
           {FORMAT_META.filter((f) => !f.langs).map((f) =>
-            renderFormatItem(f.format, "both", f.icon, "text-fuchsia-600", t(f.key as any)),
+            renderFormatItem(f.format, "both", f.icon, "text-fuchsia-600", t(f.key as any), f.desc),
           )}
         </DropdownMenuGroup>
 

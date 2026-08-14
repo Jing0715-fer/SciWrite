@@ -152,11 +152,18 @@ export function VersionHistoryDialog({ open, onOpenChange, articleId, articleTit
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
-        <DialogHeader className="px-5 pt-4 pb-3 border-b border-border/60 shrink-0">
+      <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden rounded-xl">
+        <DialogHeader className="px-5 pt-4 pb-3 border-b border-border/60 shrink-0 bg-gradient-to-r from-primary/5 to-transparent">
           <DialogTitle className="flex items-center gap-2 text-sm">
-            <History className="h-4 w-4 text-muted-foreground" />
+            <div className="flex items-center justify-center h-7 w-7 rounded-md bg-primary/10 text-primary">
+              <History className="h-4 w-4" />
+            </div>
             {t("version.title") || "Version History"}
+            {versions.length > 0 && (
+              <Badge variant="outline" className="text-[9px] h-4 px-1.5 gap-0.5 font-mono">
+                {versions.length}
+              </Badge>
+            )}
             <span className="text-[10px] text-muted-foreground font-normal truncate ml-1">
               {articleTitle.slice(0, 50)}
             </span>
