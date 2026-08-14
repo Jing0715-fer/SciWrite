@@ -285,6 +285,22 @@ export function TopicComposer({
                     <span>5000</span>
                     <span>10000</span>
                   </div>
+                  {/* v100-3: Quick word-count presets */}
+                  <div className="flex items-center gap-1 pt-1 flex-wrap">
+                    {[600, 1000, 1500, 2000, 3000].map((preset) => (
+                      <button
+                        key={preset}
+                        onClick={() => setTargetWords(preset)}
+                        className={`text-[9px] px-1.5 py-0.5 rounded transition-all ${
+                          targetWords === preset
+                            ? "bg-primary/10 text-primary font-semibold ring-1 ring-primary/20"
+                            : "bg-muted/60 text-muted-foreground hover:bg-muted hover:scale-105"
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">{t("topic.journalTemplate")}</Label>

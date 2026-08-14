@@ -71,19 +71,30 @@ export function KnowledgePanel({
   return (
     <>
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Header with Add Reference button */}
-      <div className="flex items-center justify-between px-3 mt-3 mb-1 shrink-0">
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
-          <DatabaseIcon className="h-3 w-3" />
-          {t("knowledge.sources")}
+      {/* Header — v100-1: gradient header with icon container + count badges */}
+      <div className="flex items-center justify-between px-3 py-2 mt-2 mb-1 shrink-0 rounded-lg bg-gradient-to-r from-primary/5 to-transparent border border-border/40">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center justify-center h-6 w-6 rounded-md bg-primary/10 text-primary">
+            <DatabaseIcon className="h-3.5 w-3.5" />
+          </div>
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+            {t("knowledge.sources")}
+          </span>
           {dataSources.length > 0 && (
-            <span className="text-[9px] opacity-70">{dataSources.length}</span>
+            <Badge variant="outline" className="text-[9px] h-4 px-1.5 gap-0.5 font-mono">
+              {dataSources.length}
+            </Badge>
           )}
-        </span>
+          {references.length > 0 && (
+            <Badge variant="outline" className="text-[9px] h-4 px-1.5 gap-0.5 text-blue-600 border-blue-300/40 bg-blue-500/5">
+              {references.length} refs
+            </Badge>
+          )}
+        </div>
         <Button
           variant="outline"
           size="sm"
-          className="h-6 text-[10px] gap-1 px-2 border-dashed"
+          className="h-6 text-[10px] gap-1 px-2 border-dashed hover:border-solid transition-all"
           onClick={() => setAddRefOpen(true)}
         >
           <Plus className="h-3 w-3" />
