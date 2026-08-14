@@ -2416,6 +2416,46 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         }
         log(`compose: updated ${renumberedContents.length} paragraphs with globally renumbered citations`);
 
+        // v104-1: EARLY ARTICLE SAVE — save the article BEFORE the audit phase.
+        // The audit phase makes multiple LLM calls per paragraph and is the
+        // primary cause of OOM crashes in low-memory environments (3.9Gi RAM).
+        // By saving the article here (post-compose, pre-audit), we ensure
+        // the user always gets their article even if the audit OOMs.
+        // The audit can still run and update the article content afterwards
+        // (we update the same article record after audit completes).
+        let preAuditArticle: any = null;
+        try {
+          preAuditArticle = await db.article.create({
+            data: {
+              projectId,
+              title: project.topic,
+              content: articleContent,
+              journalTemplate,
+              articleParagraph: {
+                create: generatedParagraphs.map((p, i) => ({
+                  paragraphId: p.id,
+                  order: i,
+                  section: inferFormat(sections[i].title, i, sections.length),
+                })),
+              },
+            },
+          });
+          log(`compose: pre-audit article saved (id=${preAuditArticle.id}) — OOM-resilient`);
+          // Save a version snapshot too
+          await db.articleVersion.create({
+            data: {
+              articleId: preAuditArticle.id,
+              content: articleContent,
+              contentZh: null,
+              title: project.topic,
+              label: "auto-saved pre-audit (v104-1)",
+              wordCount: countWords(articleContent),
+            },
+          }).catch(() => {});
+        } catch (e: any) {
+          log(`compose: pre-audit save failed (will retry after audit): ${e?.message?.slice(0, 80)}`);
+        }
+
         // ============ STEP 7.5: Batch deep citation audit ============
         // After ALL sections are generated + composed, run the deep citation
         // audit on each paragraph.
@@ -2433,7 +2473,11 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         // run manually later via the UI.
         const osModule = await import("os");
         const memAvailable = osModule.freemem();
-        const MEM_THRESHOLD = 500 * 1024 * 1024; // 500 MiB
+        // v104-2: Raised memory threshold from 500MiB to 700MiB — the audit
+        // phase's LLM calls need more headroom to avoid OOM. In 3.9Gi RAM
+        // environments, 500MiB was too low and audit still crashed the server.
+        // 700MiB gives ~200MiB buffer for the LLM response parsing.
+        const MEM_THRESHOLD = 700 * 1024 * 1024; // 700 MiB (v104-2: was 500)
         if (generatedParagraphs.length > 0 && memAvailable < MEM_THRESHOLD) {
           log(`audit: SKIPPED — low memory (available=${Math.round(memAvailable / 1024 / 1024)}MiB < ${MEM_THRESHOLD / 1024 / 1024}MiB threshold)`);
           send("step", {
@@ -2468,6 +2512,24 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               status: "progress",
               message: `Auditing section ${batchNum}/${totalBatches} (${auditDone}/${generatedParagraphs.length} done, ${auditIssues} issues, ${auditFixed} fixed)...`,
             });
+
+            // v104-2: Per-paragraph memory check — if memory drops below 400MiB
+            // during audit, break immediately to avoid OOM crash. The article
+            // is already saved (v104-1 pre-audit save), so breaking here is safe.
+            const memNow = osModule.freemem();
+            if (memNow < 400 * 1024 * 1024) {
+              log(`audit: BREAKING loop at paragraph ${batchNum}/${totalBatches} — low memory (${Math.round(memNow / 1024 / 1024)}MiB < 400MiB). ${auditDone}/${generatedParagraphs.length} audited. Article already saved (v104-1).`);
+              send("step", {
+                step: "audit",
+                status: "progress",
+                message: `Audit stopped at section ${batchNum}/${totalBatches} — low memory (${Math.round(memNow / 1024 / 1024)}MiB). Article already saved. ${generatedParagraphs.length - auditDone} section(s) not audited.`,
+                earlyExit: true,
+                reason: "low-memory",
+                audited: auditDone,
+                skipped: generatedParagraphs.length - auditDone,
+              });
+              break;
+            }
 
             // v65-2: Audit break threshold raised from 12 to 14. The v64 test
             // showed break@12 exited at the first paragraph (0 audited) because
@@ -3098,22 +3160,57 @@ ${cleanEn}`;
         }
 
         // ============ STEP 9: Persist the article(s) ============
-        const article = await db.article.create({
-          data: {
-            projectId,
-            title: project.topic,
-            content: articleContent,
-            ...(articleContentZh ? { contentZh: articleContentZh } : {}),
-            journalTemplate,
-            articleParagraph: {
-              create: generatedParagraphs.map((p, i) => ({
-                paragraphId: p.id,
-                order: i,
-                section: inferFormat(sections[i].title, i, sections.length),
-              })),
+        // v104-1: If we already saved a pre-audit article, UPDATE it with the
+        // post-audit content (which may have been cleaned up). Otherwise create
+        // a new article record (fallback if pre-audit save failed).
+        let article: any;
+        if (preAuditArticle) {
+          try {
+            article = await db.article.update({
+              where: { id: preAuditArticle.id },
+              data: {
+                content: articleContent,
+                ...(articleContentZh ? { contentZh: articleContentZh } : {}),
+              },
+            });
+            log(`compose: updated pre-audit article ${article.id} with post-audit content`);
+          } catch (e: any) {
+            log(`compose: pre-audit article update failed, creating new: ${e?.message?.slice(0, 80)}`);
+            article = await db.article.create({
+              data: {
+                projectId,
+                title: project.topic,
+                content: articleContent,
+                ...(articleContentZh ? { contentZh: articleContentZh } : {}),
+                journalTemplate,
+                articleParagraph: {
+                  create: generatedParagraphs.map((p, i) => ({
+                    paragraphId: p.id,
+                    order: i,
+                    section: inferFormat(sections[i].title, i, sections.length),
+                  })),
+                },
+              },
+            });
+          }
+        } else {
+          article = await db.article.create({
+            data: {
+              projectId,
+              title: project.topic,
+              content: articleContent,
+              ...(articleContentZh ? { contentZh: articleContentZh } : {}),
+              journalTemplate,
+              articleParagraph: {
+                create: generatedParagraphs.map((p, i) => ({
+                  paragraphId: p.id,
+                  order: i,
+                  section: inferFormat(sections[i].title, i, sections.length),
+                })),
+              },
             },
-          },
-        });
+          });
+        }
 
         // Save a version snapshot so the user can restore if needed.
         try {
@@ -3123,7 +3220,7 @@ ${cleanEn}`;
               content: articleContent,
               contentZh: articleContentZh || null,
               title: project.topic,
-              label: "auto-saved on generate-full",
+              label: "auto-saved on generate-full (post-audit)",
               wordCount: countWords(articleContent),
             },
           });

@@ -9323,3 +9323,70 @@ Stage Summary:
 - v99 改进再次验证 (partial-match, keyword extraction)
 - Article 未保存因 OOM, 但段落清理度确认 v101 修复有效
 - 代码待 push 到 GitHub。
+
+---
+
+Task ID: v104
+Agent: main (Z.ai Code — v104 OOM resilience + v101 fix end-to-end VERIFIED + article saved)
+Task: 优化 OOM 问题 (pre-audit article save + per-paragraph memory check) + 真实测试验证。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (v103 9c8d054)。
+- 实施了 2 项 v104 OOM 优化:
+
+1. v104-1: Pre-audit article save (generate-full route):
+  - 问题: v103 测试 article 未保存因 audit phase OOM 中断
+  - 修复: 在 compose 阶段完成后、audit 阶段开始前, 保存 article + version snapshot
+  - audit 阶段 OOM 不再导致 article 丢失
+  - audit 完成后 update 同一条 article record (不是 create 新的)
+  - 日志: "compose: pre-audit article saved (id=...) — OOM-resilient"
+
+2. v104-2: Per-paragraph memory check + raised threshold:
+  - 内存阈值从 500MiB 提升到 700MiB (audit 启动前检查)
+  - 新增 per-paragraph 内存检查: 如果 < 400MiB 则 break audit loop
+  - 日志: "audit: BREAKING loop — low memory (XXXiB < 400MiB). Article already saved (v104-1)."
+  - 安全 break: article 已保存, 不会丢失
+
+v104 真实测试 (Ribosome structure, structural-biology, 600w target):
+- 项目: cmstfx8j40000px5kxuxsbqo9
+- 5/5 sections 生成成功 ✅
+- **v104-1 OOM 修复验证 PASS** ✅✅:
+  - Article saved (id=cmstg2xrv01c4px5ksn3sbsv3) despite audit OOM crash!
+  - 日志确认: "pre-audit article saved — OOM-resilient"
+  - v103 的 article 未保存问题已解决
+- **v101 修复端到端验证 PASS** ✅✅:
+  - Article: DS=0, FC=0 (无 [DS:N] markers, 无 Further context blocks)
+  - All 5 paragraphs: DS=0, FC=0 ✅
+- **v99 改进再次验证:**
+  - §5: "preemptive slow-down — window count 12/15, waiting 25s" (v99-4)
+  - §5: "top score=2" — partial-match (v99-3)
+- citation-health: score=71 grade=B, 0 blocking, 29 warnings, 64 citations, 57 refs
+
+Article 详情:
+- content: 8779 chars, ~1119 words, 16 refs in References list
+- 5 sections: S1=141w(5cit), S2=133w(5cit), S3=116w(5cit), S4=148w(4cit), S5=150w(8cit)
+- 总词数: 688w (114% target 600w) ✅
+
+Per-section 详情 (600w, 5 sections, range=34w — 均匀!):
+- §1 Introduction: 141w, 5 cit, DS=0, FC=0 ✅
+- §2 Ribosomal Architecture: 133w, 5 cit, DS=0, FC=0 ✅
+- §3 Translation Mechanism: 116w, 5 cit, DS=0, FC=0 ✅
+- §4 Regulation: 148w, 4 cit, DS=0, FC=0 ✅
+- §5 Clinical Applications: 150w, 8 cit, DS=0, FC=0 ✅
+
+发现的不足 (v105 改进建议):
+1. **Audit 仍 OOM** — article saved but audit incomplete (1/5 audited only):
+   - v105-1: 考虑 audit phase 使用更轻量的 LLM model
+   - 或: batch audit (多个 paragraphs 一个 LLM call, 减少 5x 调用)
+2. **29 warnings** — 高于 v100 的 24 (但 article saved 这是进步):
+   - v105-2: audit 完成后增加 second-pass auto-fix for warnings
+3. **§3 只有 116w (97% target)** — 略低:
+   - v105-3: word-count injection 阈值可降低
+
+Stage Summary:
+- v104-1 pre-audit article save: VERIFIED ✅✅ (article saved despite OOM)
+- v104-2 per-paragraph memory check: IMPLEMENTED ✅
+- v101 修复再次验证: 5/5 paragraphs DS=0 FC=0 ✅
+- v99 改进再次验证: preemptive slow-down, partial-match ✅
+- citation-health: score=71 grade=B, 0 blocking, 64 citations
+- 代码待 push 到 GitHub。
