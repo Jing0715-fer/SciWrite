@@ -143,7 +143,7 @@ export function VirtualizedArticle({
   // For small articles, skip virtualization entirely.
   if (cleanedContent.length < VIRTUALIZE_THRESHOLD) {
     return (
-      <div ref={contentRef} className={className}>
+      <div ref={contentRef} className={`${className} scroll-academic`}>
         <MarkdownCitations
           content={cleanedContent}
           annotations={annotations}
@@ -156,7 +156,7 @@ export function VirtualizedArticle({
   }
 
   return (
-    <div ref={contentRef} className={className}>
+    <div ref={contentRef} className={`${className} scroll-academic`}>
       <VirtualizedSections
         sections={sections}
         annotations={annotations}

@@ -1294,7 +1294,7 @@ FOCUS: ${chunkFocus}
 TARGET WORDS: ${chunkWords}
 LANGUAGE: ${generationLanguage}
 ${continuityBlock}
-REFERENCE LIST (cite as [n], 1-based index into this list of ${sectionRefCount} refs — these have been pre-filtered for relevance to THIS section's focus):
+REFERENCE LIST (cite as [n], 1-based index into this list of ${sectionRefCount} refs — pre-filtered for relevance to THIS section):
 ${trimmedRef}
 
 DATABASE RECORDS (structural/sequence data — cite the associated publication only if directly relevant to this section):

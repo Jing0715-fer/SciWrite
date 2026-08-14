@@ -454,7 +454,7 @@ function renderSegment(
         <HoverCardContent
           side="top"
           align="center"
-          className="w-72 p-3 text-xs shadow-lg z-50"
+          className="w-72 p-3 text-xs shadow-lg z-50 rounded-lg border border-border/60 bg-gradient-to-br from-card to-muted/10"
         >
           {refs.length > 0 ? (
             <div className="space-y-1.5">
@@ -764,7 +764,8 @@ export function MarkdownCitations({
           <p className="divider-academic mb-2">
             <span>References</span>
           </p>
-          <ol className="list-none rounded-md overflow-hidden border border-border/40">
+          {/* v97-1: Enhanced reference list with rounded-lg + shadow-sm */}
+          <ol className="list-none rounded-lg overflow-hidden border border-border/40 shadow-sm">
             {allRefs.map((r, i) => (
               <li
                 id={`ref-${i + 1}`}
