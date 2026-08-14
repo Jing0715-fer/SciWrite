@@ -62,8 +62,8 @@ export function CitationValidationDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[80vh] flex flex-col gap-0 p-0">
-        <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60">
+      <DialogContent className="max-w-lg max-h-[80vh] flex flex-col gap-0 p-0 rounded-xl overflow-hidden">
+        <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 bg-gradient-to-r from-primary/5 to-transparent">
           <DialogTitle className="flex items-center gap-2 text-base">
             {isLoading ? (
               <Loader2 className="h-4 w-4 animate-spin text-primary" />

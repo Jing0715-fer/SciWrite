@@ -136,7 +136,7 @@ export function AddReferenceDialog({ open, onOpenChange, projectId }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg rounded-xl overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <BookOpen className="h-4 w-4 text-primary" />
