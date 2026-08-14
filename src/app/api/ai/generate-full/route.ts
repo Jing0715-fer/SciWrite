@@ -984,6 +984,36 @@ Output JSON only.`;
           log(`plan: added ${needed} sections, total ${sections.length} sections (per section ~${perSectionTarget}w, total ~${sections.reduce((s: number, sec: any) => s + (sec.targetWords || 0), 0)}w)`);
         }
 
+        // v96-1: Borrowed from deepseek-harness's plan mode — validate the
+        // planned sections before proceeding to generation. Check that:
+        // 1. Each section has a non-empty title and focus
+        // 2. Section titles are not duplicates
+        // 3. Total targetWords sums to approximately targetWords (±20%)
+        const seenTitles = new Set<string>();
+        let duplicateTitles = 0;
+        for (const s of sections) {
+          if (!s.title || s.title.trim().length < 3) {
+            s.title = `Section ${sections.indexOf(s) + 1}`;
+            log(`plan: WARNING — section has empty/short title, using fallback`);
+          }
+          const titleLower = s.title.toLowerCase().trim();
+          if (seenTitles.has(titleLower)) {
+            duplicateTitles++;
+            s.title = `${s.title} (Part ${duplicateTitles + 1})`;
+            log(`plan: WARNING — duplicate section title detected, renamed to "${s.title}"`);
+          }
+          seenTitles.add(titleLower);
+          if (!s.focus) {
+            s.focus = `Discussion of ${s.title} in the context of ${project.topic}`;
+          }
+        }
+        const plannedTotal = sections.reduce((s: number, sec: any) => s + (sec.targetWords || 0), 0);
+        const plannedPct = Math.round((plannedTotal / targetWords) * 100);
+        if (plannedPct < 80 || plannedPct > 120) {
+          log(`plan: WARNING — planned total ${plannedTotal}w is ${plannedPct}% of target ${targetWords}w (outside 80-120% range)`);
+        }
+        log(`plan: validated ${sections.length} sections (total ${plannedTotal}w, ${plannedPct}% of target, ${duplicateTitles} duplicates fixed)`);
+
         send("step", {
           step: "plan",
           status: "done",
