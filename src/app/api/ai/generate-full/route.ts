@@ -2620,6 +2620,21 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             log(`audit: clearing abort flag before auto-fix (was set during audit)`);
             clearAbort();
           }
+          // v105-1: Memory check before auto-fix — if memory is very low
+          // (< 300MiB), skip auto-fix too. The article is already saved
+          // (v104-1 pre-audit save), so skipping is safe. Auto-fix makes
+          // LLM calls that could push the server over the OOM edge.
+          const preFixMem = osModule.freemem();
+          if (preFixMem < 300 * 1024 * 1024) {
+            log(`audit: SKIPPING auto-fix — low memory (${Math.round(preFixMem / 1024 / 1024)}MiB < 300MiB). Article already saved (v104-1).`);
+            send("step", {
+              step: "audit",
+              status: "skipped",
+              message: `Auto-fix skipped due to low memory (${Math.round(preFixMem / 1024 / 1024)}MiB). Article already saved. You can run auto-fix manually from the Citation Health tab.`,
+              skipped: true,
+              reason: "low-memory",
+            });
+          } else {
           {
             send("step", {
               step: "audit",
@@ -2859,6 +2874,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               log(`audit: auto-fix error: ${fixErr?.message?.slice(0, 100) || "unknown"}`);
             }
           }
+          } // v105-1: close else (auto-fix ran or was skipped)
 
           // After audit + auto-fix, rebuild articleContent from the updated
           // paragraph contents. The audit/auto-fix may have changed [n] → [m]

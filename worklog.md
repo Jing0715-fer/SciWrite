@@ -9390,3 +9390,84 @@ Stage Summary:
 - v99 改进再次验证: preemptive slow-down, partial-match ✅
 - citation-health: score=71 grade=B, 0 blocking, 64 citations
 - 代码待 push 到 GitHub。
+
+---
+
+Task ID: v105
+Agent: main (Z.ai Code — v105 VLM UI audit + OOM auto-fix memory check + FULL pipeline complete)
+Task: 截图 VLM 检查 UI 问题 + OOM 优化 (auto-fix memory check) + 真实测试完整端到端。
+
+Work Log:
+- 检查远程仓库: 环境回退到 v98, git reset --hard origin/main 恢复到 v104。
+- VLM 截图分析 UI (agent-browser + z-ai vision CLI):
+  - 截图 /tmp/v105-ui-home.png (120KB)
+  - VLM 识别 8 个 UI 问题: header 对齐, sidebar 空白, 步骤卡片对齐, footer 对比度等
+- 实施了 3 项 v105 改进:
+
+1. v105-1 OOM: Auto-fix memory check (generate-full route):
+  - 在 auto-fix 启动前检查内存: 如果 < 300MiB 则跳过 auto-fix
+  - Article 已保存 (v104-1), 跳过 auto-fix 是安全的
+  - 日志: "audit: SKIPPING auto-fix — low memory"
+  - 用户可手动从 Citation Health tab 运行 auto-fix
+
+2. v105-2 UI: Footer contrast fix:
+  - footer text 从 text-muted-foreground 改为 text-foreground/70
+  - AI powered 标签添加 font-medium
+  - 分隔符添加 opacity-50
+  - [n] / [SOURCE:ID] code 添加 text-foreground/60
+  - 解决 VLM 问题 #5 (low contrast status text)
+
+3. v105-3 UI: Empty state spacing fix:
+  - projects-sidebar 空状态: py-10 → py-6, h-8 w-8 → h-7 w-7, mb-2 → mb-1.5
+  - 解决 VLM 问题 #2 (excessive whitespace in left sidebar)
+
+v105 真实测试 (Protein folding, biophysics, 600w target):
+- 项目: cmswv3bja0000pru1w830racn
+- **完整端到端 pipeline 完成!** ✅✅ (首次无 OOM crash!)
+- 总耗时: 988s (16.5 min) — audit phase 占 ~650s (5 paragraphs × ~130s each)
+- 5/5 sections 生成成功 ✅
+- **v104-1 OOM fix VERIFIED**: Article saved + updated ✅✅
+  - pre-audit article saved (id=cmswvagl401gwpru14pekbd0o)
+  - post-audit update: "updated pre-audit article with post-audit content"
+- **v101 fix VERIFIED**: 5/5 paragraphs DS=0, FC=0 ✅
+- **v99 improvements VERIFIED**:
+  - §5: "preemptive slow-down — window count 12/15, waiting 25s"
+  - §4: density retry improved 4→5
+- **Audit phase COMPLETE**: 5/5 audited (checked 38, issues 17, fixed 5) ✅
+  - v104-2 memory checks did NOT trigger (server survived!)
+- Auto-fix ran: 0 blocking, 0 fixed (gap-fill already resolved everything)
+
+Article 详情:
+- content: 8163 chars, ~1035 words, 16 refs in References list
+- 5 sections: S1=124w(5cit), S2=111w(3cit), S3=115w(2cit), S4=124w(5cit), S5=131w(4cit)
+- 总词数: 605w (101% target 600w) ✅ — 最均匀的一次!
+
+Per-section 详情 (600w, 5 sections, range=20w — 最均匀!):
+- §1: 124w, 5 cit, DS=0, FC=0 ✅
+- §2: 111w, 3 cit, DS=0, FC=0 ✅
+- §3: 115w, 2 cit, DS=0, FC=0 ✅
+- §4: 124w, 5 cit, DS=0, FC=0 ✅
+- §5: 131w, 4 cit, DS=0, FC=0 ✅
+
+citation-health:
+- score: 76 grade: B ✅ (v104 was 71, +5!)
+- blocking: 0 ✅✅
+- warnings: 24 (v104 was 29, -5!)
+- citations: 53, references: 55
+
+发现的不足 (v106 改进建议):
+1. **Audit phase 耗时 ~650s** — 仍占总耗时 66%:
+   - v106-1: 考虑 audit phase 使用 batch mode (多个 paragraphs 一个 LLM call)
+   - 或: 降低 audit cool-down (audit 不需要 generate 的严格 rate-limit)
+2. **§3 只有 2 citations** — 低于 DENSITY_MIN=5:
+   - v106-2: §3 density retry 未触发或失败, 需检查
+3. **24 warnings 仍存在** — audit fixed 5, 但 17 个未修复:
+   - v106-3: second-pass auto-fix for remaining warnings
+
+Stage Summary:
+- v105 VLM UI audit: 8 issues identified, 2 fixed (footer contrast, empty state)
+- v105-1 OOM: auto-fix memory check (skip if < 300MiB)
+- **完整端到端 pipeline 完成! 首次无 OOM crash!** ✅✅
+- Article saved + updated, audit 5/5 complete, auto-fix ran
+- citation-health: score=76 grade=B, 0 blocking, 24 warnings
+- 代码待 push 到 GitHub。

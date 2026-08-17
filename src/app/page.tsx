@@ -1243,15 +1243,15 @@ function EmptyWorkspace() {
 function Footer({ onOpenPalette }: { onOpenPalette?: () => void }) {
   const { t } = useI18n();
   return (
-    <footer className="shrink-0 px-4 py-1.5 border-t border-border/60 bg-card/60 backdrop-blur flex items-center justify-between text-[10px] text-muted-foreground">
+    <footer className="shrink-0 px-4 py-1.5 border-t border-border/60 bg-card/60 backdrop-blur flex items-center justify-between text-[10px] text-foreground/70">
       <div className="flex items-center gap-2">
-        <span className="inline-flex items-center gap-1">
+        <span className="inline-flex items-center gap-1 font-medium">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
           {t("footer.aiPowered")}
         </span>
-        <span className="hidden sm:inline">·</span>
-        <span className="hidden sm:inline">
-          {t("footer.citations")} <code className="font-mono text-[9px]">[n]</code> / <code className="font-mono text-[9px]">[SOURCE:ID]</code>
+        <span className="hidden sm:inline opacity-50">·</span>
+        <span className="hidden sm:inline text-muted-foreground">
+          {t("footer.citations")} <code className="font-mono text-[9px] text-foreground/60">[n]</code> / <code className="font-mono text-[9px] text-foreground/60">[SOURCE:ID]</code>
         </span>
       </div>
       <div className="flex items-center gap-2">
