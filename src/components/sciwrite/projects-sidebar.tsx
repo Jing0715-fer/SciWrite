@@ -242,7 +242,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
             header (article count + icon) is shrink-0 so it stays visible
             even when the list scrolls. */}
         {articles.length > 0 && (
-          <ResizablePanel defaultSize={35} minSize={15}>
+          <ResizablePanel defaultSize={40} minSize={20}>
             <div className="flex flex-col h-full">
               <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5 shrink-0 border-t border-border/60">
                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
@@ -275,13 +275,13 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
                       <button
                         key={a.id}
                         onClick={() => onOpenArticle?.(a)}
-                        className="w-full block group text-left rounded-md border border-border/50 hover:border-primary/40 hover:bg-primary/[0.03] transition-colors p-2 space-y-1"
+                        className="w-full block group text-left rounded-md border border-border/50 hover:border-primary/40 hover:bg-primary/[0.03] transition-colors p-2 space-y-1 overflow-hidden"
                         title="Open full article in viewer"
                       >
                         <div className="flex items-start gap-1.5">
                           <FileStack className="h-3.5 w-3.5 text-violet-700 dark:text-violet-400 shrink-0 mt-0.5" />
                           <div className="flex-1 min-w-0">
-                            <p className="text-[11px] font-medium leading-snug truncate group-hover:text-primary transition-colors">
+                            <p className="text-[11px] font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">
                               {a.title}
                             </p>
                             {/* Two compact stat lines instead of one wrapped row — at
@@ -290,7 +290,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
                                 stacking keeps every badge fully visible regardless of
                                 which language metadata the article carries. */}
                             <div className="mt-1 space-y-0.5">
-                              <div className="flex items-center gap-1 text-[9px] text-muted-foreground">
+                              <div className="flex items-center gap-1 text-[9px] text-muted-foreground flex-wrap">
                                 {sections > 0 && (
                                   <span className="inline-flex items-center gap-0.5 px-1 rounded bg-violet-500/10 text-violet-700 dark:text-violet-300 font-semibold tabular-nums">
                                     {sections} §
