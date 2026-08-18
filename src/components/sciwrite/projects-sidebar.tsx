@@ -194,10 +194,13 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
           Each has its own ScrollArea so they scroll independently — the
           project list no longer gets pushed off-screen when the article
           list grows. The ResizablePanelGroup lets the user drag the
-          divider to taste (default 65/35 split). */}
+          divider to taste.
+          v107-1: When there are few projects (≤2), give articles more space
+          (defaultSize 55) so article boxes display fully. When many projects,
+          use 40 to give the list room to scroll. */}
       <ResizablePanelGroup direction="vertical" className="flex-1 min-h-0">
         {/* Projects panel */}
-        <ResizablePanel defaultSize={65} minSize={25}>
+        <ResizablePanel defaultSize={projects.length <= 2 ? 45 : 60} minSize={20}>
           <ScrollArea className="h-full scroll-academic">
             <div className="px-2 py-2 space-y-1 min-w-0">
               {projects.length === 0 && (
@@ -242,7 +245,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
             header (article count + icon) is shrink-0 so it stays visible
             even when the list scrolls. */}
         {articles.length > 0 && (
-          <ResizablePanel defaultSize={40} minSize={20}>
+          <ResizablePanel defaultSize={projects.length <= 2 ? 55 : 40} minSize={25}>
             <div className="flex flex-col h-full">
               <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5 shrink-0 border-t border-border/60">
                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
@@ -263,7 +266,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
                 </Button>
               </div>
               <div
-                className="flex-1 min-h-0 overflow-y-auto scroll-academic px-3 pb-3 space-y-1.5"
+                className="flex-1 min-h-0 overflow-y-auto scroll-academic px-3 pb-2 pt-1 space-y-1.5"
                 data-slot="article-scroll"
               >
                   {articles.map((a: any) => {
