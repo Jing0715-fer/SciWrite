@@ -1207,22 +1207,22 @@ function EmptyWorkspace() {
   const { t } = useI18n();
   return (
     <div className="flex flex-col items-center justify-center h-full text-center px-6">
-      <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary/15 to-teal-500/15 flex items-center justify-center mb-4 ring-academic">
+      <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary/15 to-teal-500/15 flex items-center justify-center mb-3 ring-academic">
         <FlaskConical className="h-8 w-8 text-primary" />
       </div>
       <h2 className="text-xl font-semibold font-serif-text">
         {t("workspace.emptyTitle")}
       </h2>
-      <p className="text-sm text-muted-foreground mt-2 max-w-md leading-relaxed">
+      <p className="text-sm text-muted-foreground mt-1.5 max-w-md leading-relaxed">
         {t("workspace.emptyDesc")}
       </p>
-      <div className="mt-6 grid grid-cols-3 gap-2 max-w-lg text-[11px]">
+      <div className="mt-4 grid grid-cols-3 gap-2 max-w-lg text-[11px]">
         {[
           ["1", t("workspace.step1Title"), t("workspace.step1Desc")],
           ["2", t("workspace.step2Title"), t("workspace.step2Desc")],
           ["3", t("workspace.step3Title"), t("workspace.step3Desc")],
         ].map(([n, title, desc]) => (
-          <div key={n} className="rounded-lg border border-border/60 p-2.5 text-left">
+          <div key={n} className="rounded-lg border border-border/60 p-2.5 text-left bg-card/40">
             <div className="flex items-center gap-1 mb-1">
               <span className="h-4 w-4 rounded-full bg-primary/15 text-primary text-[9px] font-bold flex items-center justify-center">
                 {n}
@@ -1233,7 +1233,7 @@ function EmptyWorkspace() {
           </div>
         ))}
       </div>
-      <p className="text-[10px] text-muted-foreground mt-6">
+      <p className="text-[10px] text-muted-foreground/80 mt-4">
         {t("workspace.emptyHint")}
       </p>
     </div>

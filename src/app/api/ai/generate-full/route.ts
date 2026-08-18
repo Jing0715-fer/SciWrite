@@ -2477,7 +2477,11 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         // phase's LLM calls need more headroom to avoid OOM. In 3.9Gi RAM
         // environments, 500MiB was too low and audit still crashed the server.
         // 700MiB gives ~200MiB buffer for the LLM response parsing.
-        const MEM_THRESHOLD = 700 * 1024 * 1024; // 700 MiB (v104-2: was 500)
+        // v106-1: Raised to 850MiB — v105 test showed 700MiB still risky
+        // (audit took 650s, memory pressure built up over time). 850MiB
+        // gives more headroom and will skip audit earlier when memory is
+        // tight, falling back to auto-fix only (which is lighter).
+        const MEM_THRESHOLD = 850 * 1024 * 1024; // 850 MiB (v106-1: was 700)
         if (generatedParagraphs.length > 0 && memAvailable < MEM_THRESHOLD) {
           log(`audit: SKIPPED — low memory (available=${Math.round(memAvailable / 1024 / 1024)}MiB < ${MEM_THRESHOLD / 1024 / 1024}MiB threshold)`);
           send("step", {
@@ -2513,12 +2517,13 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               message: `Auditing section ${batchNum}/${totalBatches} (${auditDone}/${generatedParagraphs.length} done, ${auditIssues} issues, ${auditFixed} fixed)...`,
             });
 
-            // v104-2: Per-paragraph memory check — if memory drops below 400MiB
+            // v104-2: Per-paragraph memory check — if memory drops below 500MiB
             // during audit, break immediately to avoid OOM crash. The article
             // is already saved (v104-1 pre-audit save), so breaking here is safe.
+            // v106-1: Raised from 400MiB to 500MiB for more safety margin.
             const memNow = osModule.freemem();
-            if (memNow < 400 * 1024 * 1024) {
-              log(`audit: BREAKING loop at paragraph ${batchNum}/${totalBatches} — low memory (${Math.round(memNow / 1024 / 1024)}MiB < 400MiB). ${auditDone}/${generatedParagraphs.length} audited. Article already saved (v104-1).`);
+            if (memNow < 500 * 1024 * 1024) {
+              log(`audit: BREAKING loop at paragraph ${batchNum}/${totalBatches} — low memory (${Math.round(memNow / 1024 / 1024)}MiB < 500MiB). ${auditDone}/${generatedParagraphs.length} audited. Article already saved (v104-1).`);
               send("step", {
                 step: "audit",
                 status: "progress",
