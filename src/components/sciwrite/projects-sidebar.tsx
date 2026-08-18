@@ -201,7 +201,10 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
       <ResizablePanelGroup direction="vertical" className="flex-1 min-h-0">
         {/* Projects panel */}
         <ResizablePanel defaultSize={projects.length <= 2 ? 45 : 60} minSize={20}>
-          <ScrollArea className="h-full scroll-academic">
+          {/* v109-2: Use plain overflow-y-auto instead of ScrollArea to match
+              the article panel's behavior. ScrollArea's custom scrollbar
+              was clipping the right border of project cards. */}
+          <div className="h-full overflow-y-auto scroll-academic">
             {/* v109-1: Match article list padding (px-3) so project cards
                 have the same width as article cards. Previously px-2 made
                 project cards narrower than article cards. */}
@@ -239,7 +242,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
                 />
               ))}
             </div>
-          </ScrollArea>
+          </div>
         </ResizablePanel>
 
         <ResizableHandle withHandle />

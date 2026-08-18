@@ -9708,3 +9708,63 @@ Stage Summary:
 - **完整端到端 pipeline 完成! 第三次无 OOM!**
 - 所有 sections 都有 ≥4 citations (v107 有 3 个 sections ≤2)
 - 代码待 push 到 GitHub。
+
+---
+
+Task ID: v109
+Agent: main (Z.ai Code — v109 ScrollArea fix + project card right border + real test)
+Task: 继续修复 project 条目卡片显示不全的问题 (右边框 cut off) + 真实测试。
+
+VLM 截图分析 (多次):
+- 截图 1: project cards 右边框 cut off, ScrollArea scrollbar 覆盖
+- 截图 2 (after px-2→px-3): 宽度匹配但右边框仍不可见
+- 截图 3 (after overflow-y-auto fix): **右边框可见! 修复成功!**
+
+根因分析:
+- 问题不在 padding 或 border, 而在 ScrollArea 组件
+- shadcn ScrollArea 渲染自定义 scrollbar, 占用 ~10px 空间
+- scrollbar 覆盖了 project card 的右边框
+- article panel 使用普通 div overflow-y-auto, 没有这个问题
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (v108 1f67f52)。
+- 实施了 2 项 v109 UI 改进:
+
+1. v109-1 UI: Project list padding alignment:
+  - projects list container: px-2 → px-3 (match article list)
+  - space-y-1 → space-y-1.5 (match article list)
+
+2. v109-2 UI: ScrollArea → overflow-y-auto (ROOT FIX):
+  - 问题: ScrollArea 组件的自定义 scrollbar 覆盖 project card 右边框
+  - 修复: 将 <ScrollArea> 替换为 <div className="overflow-y-auto scroll-academic">
+  - 与 article panel 一致 (article panel 一直使用 overflow-y-auto)
+  - VLM 确认: "right border is visible", "clear gap between right edge and sidebar"
+
+v109 真实测试 (Signal transduction, molecular-biology, 600w):
+- 项目: cmsyagyf303u8ttu1f43bxwsz
+- **完整端到端 pipeline 完成!** ✅✅
+- 5/5 sections 生成成功 ✅
+- **v101 fix VERIFIED**: 5/5 paragraphs DS=0, FC=0 ✅✅
+- **v104-1 OOM fix VERIFIED**: Article saved ✅✅
+- **所有 sections 都有 ≥4 citations!** ✅✅
+  - S1=128w(4cit), S2=151w(7cit), S3=172w(6cit), S4=112w(5cit), S5=131w(5cit)
+- 总词数: 694w (116% target)
+
+Article 详情:
+- content: 9725 chars, ~1240w, DS=0, FC=0
+- 17 refs in References list
+
+VLM 验证 (修复后):
+| 问题 | 修复前 | 修复后 |
+|------|--------|--------|
+| 右边框可见 | ❌ cut off | ✅ visible |
+| 卡片宽度匹配 sidebar | ❌ narrower | ✅ matches |
+| scrollbar 覆盖 | ❌ overlaps | ✅ no overlap |
+| gap between card and sidebar | ❌ none | ✅ clear gap |
+
+Stage Summary:
+- v109-2 ScrollArea → overflow-y-auto: ROOT FIX for project card right border
+- v109-1 padding alignment: project cards match article card width
+- VLM 确认: 右边框可见, 宽度匹配, 无 overlap
+- 完整端到端 pipeline 完成! 所有 sections ≥4 citations!
+- 代码待 push 到 GitHub。
