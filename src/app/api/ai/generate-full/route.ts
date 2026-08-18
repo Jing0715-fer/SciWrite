@@ -1848,7 +1848,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               }))
               .sort((a: any, b: any) => b.score - a.score);
             const injectCount = Math.min(
-              DENSITY_MIN - citedRefs.length,
+              Math.max(DENSITY_MIN - citedRefs.length, 3), // v108-3: inject at least 3 if possible
               uncited.length,
             );
             if (injectCount > 0) {

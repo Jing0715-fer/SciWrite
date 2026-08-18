@@ -356,6 +356,27 @@ N|NONE|reason`;
   }
   const lowConfidenceOldNs = new Set(lowConfidenceMismatches.map((m) => m.n));
 
+  // v108-2: Over-cleaning prevention — count how many citations would remain
+  // AFTER corrections are applied. If all citations would be removed (newN=$REF
+  // for all), SKIP corrections entirely and keep the original content. A
+  // paragraph with 0 citations is worse than a paragraph with some "mismatched"
+  // citations (the user can manually review). This prevents the v107 §2 issue
+  // where audit left 0 citations.
+  const allRefCorrections = corrections.filter((c) => c.newN === "$REF" && !lowConfidenceOldNs.has(c.oldN));
+  const originalCitationCount = (body.match(/\[\d+(?![\d])/g) || []).length;
+  const wouldRemoveCount = allRefCorrections.length;
+  const remainingAfterFix = originalCitationCount - wouldRemoveCount;
+
+  if (remainingAfterFix <= 0 && originalCitationCount > 0) {
+    console.warn(`[deep-audit] OVER-CLEAN PREVENTED: would leave 0 citations (original=${originalCitationCount}, wouldRemove=${wouldRemoveCount}). Keeping original content.`);
+    // Don't apply any $REF corrections — only apply renumber corrections
+    for (const corr of corrections) {
+      if (corr.newN === "$REF") {
+        lowConfidenceOldNs.add(corr.oldN);
+      }
+    }
+  }
+
   const sortedCorrections = corrections
     .filter((c) => c.newN !== c.oldN && !lowConfidenceOldNs.has(c.oldN))
     .sort((a, b) => b.oldN - a.oldN);

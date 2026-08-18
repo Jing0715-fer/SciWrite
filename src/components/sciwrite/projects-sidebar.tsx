@@ -363,7 +363,7 @@ function ProjectItem({
 
   return (
     <div
-      className={`group rounded-lg border px-2.5 py-2 transition-all cursor-pointer ${
+      className={`group rounded-lg border px-2.5 py-2 transition-all cursor-pointer overflow-hidden ${
         active
           ? "border-primary/40 bg-primary/[0.06] ring-academic"
           : "border-transparent hover:border-border/60 hover:bg-muted/40"
