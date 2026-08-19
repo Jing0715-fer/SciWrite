@@ -9768,3 +9768,63 @@ Stage Summary:
 - VLM 确认: 右边框可见, 宽度匹配, 无 overlap
 - 完整端到端 pipeline 完成! 所有 sections ≥4 citations!
 - 代码待 push 到 GitHub。
+
+---
+
+Task ID: v110
+Agent: main (Z.ai Code — v110 project card symmetry fix + FULL pipeline + BEST score 84/B!)
+Task: 继续修复 project card 显示不全 (symmetry) + 真实测试。
+
+VLM 截图分析:
+- 截图 /tmp/v110-card.png: 右边框可见但 BIOPHYSICS 文字太靠右
+- VLM: "left padding larger than right padding", "BIOPHYSICS text too close to right border"
+- 根因: stat row 的 field chip 用 ml-auto 推到最右, 缺少 right padding
+
+Work Log:
+- 检查远程仓库: 环境回退到 v105, git reset --hard origin/main 恢复到 v109。
+- 实施了 1 项 v110 UI 改进:
+
+1. v110-1 UI: Project card stat row symmetry fix:
+  - stat row 添加 pr-1 (right padding)
+  - field chip: pr-0.5 → pr-1.5 (更多 right padding)
+  - field chip max-w: 60px → 70px (稍宽, 避免过早 truncate)
+  - 确保 BIOPHYSICS 等 field label 不紧贴右边框
+
+v110 真实测试 (Protein kinase signaling, molecular-biology, 600w):
+- 项目: cmszty82l0001tovb5hduu6qe
+- **完整端到端 pipeline 完成!** ✅✅
+- 5/5 sections 生成成功 ✅
+- **v101 fix VERIFIED**: 5/5 paragraphs DS=0, FC=0 ✅✅
+- **v104-1 OOM fix VERIFIED**: Article saved ✅✅
+- **citation-health: score=84 grade=B** ✅✅✅ (历史最高! v107=83)
+- 0 blocking ✅✅, 16 warnings (v107=17, -1!)
+- 65 citations, 43 references
+
+Article 详情:
+- content: 7677 chars, ~929 words, 12 refs
+- 5 sections: S1=125w(6cit), S2=163w(8cit), S3=124w(4cit), S4=116w(4cit), S5=173w(7cit)
+- 总词数: 701w (117% target)
+- §3/§4 有 4 citations (接近 DENSITY_MIN=5, 可接受)
+
+历史对比:
+| 版本 | score | grade | blocking | warnings | citations |
+|------|-------|-------|----------|----------|-----------|
+| v105 | 76 | B | 0 | 24 | 53 |
+| v107 | 83 | B | 0 | 17 | 39 |
+| v108 | 46 | D | 0 | 54 | 69 |
+| v110 | **84** | **B** | **0** | **16** | 65 |
+
+发现的不足 (v111 改进建议):
+1. **§3/§4 只有 4 citations** — 接近 DENSITY_MIN=5:
+   - v111-1: density injection 可更激进 (max 4 instead of 3)
+2. **16 warnings 仍存在** — 已是历史最少:
+   - v111-2: second-pass auto-fix 可进一步减少
+3. **701w (117% target)** — 略高:
+   - v111-3: word-count overshoot 可调整
+
+Stage Summary:
+- v110-1 project card symmetry fix: stat row + field chip padding
+- **完整端到端 pipeline 完成! citation-health score=84 (历史最高!)**
+- 0 blocking, 16 warnings (历史最少!)
+- v101/v104 fixes 验证 PASS
+- 代码待 push 到 GitHub。

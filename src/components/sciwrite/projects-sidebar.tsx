@@ -472,7 +472,7 @@ function ProjectItem({
               made all three counts look identical. The field chip clamps to
               60px so long field names ellipsize instead of pushing counts
               off-screen. */}
-          <div className="flex items-center gap-1 mt-2">
+          <div className="flex items-center gap-1 mt-2 pr-1">
             {project._count?.paragraphs !== undefined && (
               <span className="inline-flex items-center gap-0.5 px-1 py-px rounded bg-blue-500/10 text-blue-700 dark:text-blue-300 text-[9px] font-semibold tabular-nums">
                 <FileText className="h-2 w-2" />
@@ -492,7 +492,7 @@ function ProjectItem({
               </span>
             )}
             {project.field && (
-              <span className="ml-auto text-[9px] uppercase tracking-wider font-medium text-muted-foreground truncate max-w-[60px]">
+              <span className="ml-auto text-[9px] uppercase tracking-wider font-medium text-muted-foreground truncate max-w-[70px] pr-1.5">
                 {project.field.replace("-", " ")}
               </span>
             )}
