@@ -429,9 +429,11 @@ export async function POST(req: NextRequest) {
         const key = `${ds.source}:${ds.externalId || ds.title}`;
         const altKey = `${ds.source === "rcsb" || ds.source === "pdb" ? "pubmed" : ds.source}:${ds.externalId || ds.title}`;
         const isCited = citedRefKeys.has(key) || citedRefKeys.has(altKey);
-        const status = isCited ? "✓ cited" : "gathered";
-        const extId = ds.externalId || "—";
-        const title = (ds.title || "").replace(/\|/g, "\\|").slice(0, 80);
+        const status = isCited ? "cited" : "gathered";
+        const extId = (ds.externalId || "—").replace(/\|/g, "/");
+        // v111-3: Sanitize title — remove newlines and pipes that break markdown tables
+        const rawTitle = (ds.title || "") ;
+        const title = rawTitle.replace(/\|/g, "/").replace(/\n/g, " ").replace(/\r/g, "").slice(0, 80);
         lines.push(`| ${i + 1} | ${ds.source} | ${extId} | ${title} | ${status} |`);
       });
       // v101-3: Add summary line for truncated entries
@@ -1254,6 +1256,18 @@ async function buildPdf(
    * Mixed text (Latin + CJK) is wrapped by character, which works for both.
    */
   const writeLine = (
+    text: string,
+    opts: { font?: any; size?: number; color?: any; indent?: number } = {}
+  ) => {
+    // v111-4: Split on newlines first — drawText fails on embedded \n
+    // ("WinAnsi cannot encode \n (0x000a)"). Each \n becomes a new line.
+    const lines = text.split("\n");
+    for (const ln of lines) {
+      writeSingleLine(ln, opts);
+    }
+  };
+
+  const writeSingleLine = (
     text: string,
     opts: { font?: any; size?: number; color?: any; indent?: number } = {}
   ) => {

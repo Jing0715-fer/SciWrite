@@ -2374,11 +2374,18 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         // Build the references list from globally renumbered, deduplicated references
         const refList = globalRefs
           .map((r, i) => {
-            const auth = r.authors || "Anonymous";
+            // v111-1: Sanitize author field — sometimes the LLM or gather step
+            // puts a URL hostname (e.g. "pmc.ncbi.nlm.nih.gov") in the authors
+            // field instead of actual author names. Detect and replace with
+            // "Anonymous" so the reference list looks professional.
+            let auth = (r.authors || "").trim();
+            if (!auth || /^(https?:\/\/)?(www\.)?[a-z0-9.-]+\.(gov|org|com|edu|net)$/i.test(auth)) {
+              auth = "Anonymous";
+            }
             const yr = r.year ? ` (${r.year})` : "";
             const jour = r.journal ? `, ${r.journal}` : "";
             const url = r.url ? ` — ${r.url}` : "";
-            return `[${i + 1}] ${auth}${yr}${jour}. ${r.title}.${url}`;
+            return `[${i + 1}] ${auth}${yr}${jour}. ${r.title || "Untitled"}.${url}`;
           })
           .join("\n");
 
