@@ -2361,7 +2361,8 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
 
         // Always use direct assembly — LLM composition causes truncation when
         // the total content exceeds the model's max output tokens.
-        const articleBody = renumberedContents
+        // v112-1: Use `let` so we can reassign after removing uncited refs
+        let articleBody = renumberedContents
           .map((c, i) => `## ${generatedParagraphs[i]?.title || sections[i]?.title || `Section ${i + 1}`}\n\n${c}`)
           .join("\n\n");
 
@@ -2370,6 +2371,58 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           status: "progress",
           message: `Assembling ${renumberedContents.length} English sections directly (${generatedParagraphs.reduce((s, p) => s + p.wordCount, 0)} words total).`,
         });
+
+        // v112-1: Remove uncited references from the global reference list.
+        // The user reported refs [8,10,11,12,13] appearing in the list but
+        // never cited in the body. This happens because globalRefs accumulates
+        // ALL refs from all paragraphs, but some paragraphs' citations were
+        // removed during audit/auto-fix/renumbering. We scan articleBody for
+        // [n] markers and only keep refs that are actually cited.
+        const citedInBody = new Set<number>();
+        const citeScanRe = /\[(\d+(?:[,\-–\s]\d+)*)\]/g;
+        let citeMatch;
+        while ((citeMatch = citeScanRe.exec(articleBody)) !== null) {
+          const inner = citeMatch[1];
+          for (const part of inner.split(/[,;]\s*/)) {
+            const rangeMatch = part.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+            if (rangeMatch) {
+              for (let n = parseInt(rangeMatch[1]); n <= parseInt(rangeMatch[2]); n++) {
+                citedInBody.add(n);
+              }
+            } else {
+              const n = parseInt(part);
+              if (!isNaN(n)) citedInBody.add(n);
+            }
+          }
+        }
+        const originalRefCount = globalRefs.length;
+        const filteredRefs = globalRefs.filter((_, i) => citedInBody.has(i + 1));
+        // Re-number filtered refs starting from 1
+        const refNumberMap = new Map<number, number>(); // old → new
+        filteredRefs.forEach((r, i) => {
+          refNumberMap.set(globalRefs.indexOf(r) + 1, i + 1);
+        });
+        // Re-number citations in articleBody to match filtered list
+        if (filteredRefs.length < originalRefCount) {
+          log(`compose: removed ${originalRefCount - filteredRefs.length} uncited references (${originalRefCount}→${filteredRefs.length}), renumbering citations`);
+          articleBody = articleBody.replace(citeScanRe, (match, inner: string) => {
+            const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
+              const rangeMatch = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+              if (rangeMatch) {
+                const arr: number[] = [];
+                for (let n = parseInt(rangeMatch[1]); n <= parseInt(rangeMatch[2]); n++) arr.push(n);
+                return arr;
+              }
+              const n = parseInt(s);
+              return isNaN(n) ? [] : [n];
+            });
+            const newNums = nums.map((n: number) => refNumberMap.get(n)).filter(Boolean) as number[];
+            if (newNums.length === 0) return ""; // drop citation if ref was removed
+            return `[${newNums.join(",")}]`;
+          });
+          globalRefs.length = 0;
+          globalRefs.push(...filteredRefs);
+        }
 
         // Build the references list from globally renumbered, deduplicated references
         const refList = globalRefs
