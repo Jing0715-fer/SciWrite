@@ -1374,6 +1374,20 @@ CITATION FORMAT (MANDATORY):
 - Do NOT write empty brackets [].
 - Do NOT output a "### Citations" block — just write the text with [n] markers.
 
+v115-1: CONTENT MATCH VERIFICATION (CRITICAL):
+- Before citing [n], READ the reference's title and abstract from the REFERENCE LIST.
+- Check that the reference's ACTUAL SUBJECT matches your claim:
+  * If you write about "Cas9 DNA cleavage", the reference must mention Cas9 AND DNA cleavage.
+  * If you write about "clinical trials", the reference must be about clinical trials.
+  * If you write about "protein structure", the reference must contain structural data.
+- NEVER cite a reference about a DIFFERENT protein/system. For example:
+  * If the reference is about "Cas13" (RNA-targeting), do NOT cite it for "Cas9" (DNA-targeting).
+  * If the reference is about "Cas12a", do NOT cite it for Cas9-specific mechanisms.
+  * If the reference is a clinical trial paper, do NOT cite it for structural biology.
+- If NO reference in the list matches your specific claim, write [$REF] instead of citing
+  an unrelated reference. It is FAR BETTER to have an uncited claim than to cite a reference
+  that says something completely different.
+
 PARAGRAPH FORMAT (MANDATORY — critical for consistent document export):
 - Start the body DIRECTLY with the first sentence of the section content.
   The section title is rendered separately by the export step; do NOT repeat it.

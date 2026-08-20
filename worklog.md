@@ -10103,3 +10103,49 @@ Stage Summary:
 - v101 fix verified ✅
 - v112-1 uncited removal 需要在 audit 后再次运行
 - 代码待 push 到 GitHub。
+
+---
+
+Task ID: v115
+Agent: main (Z.ai Code — v115 citation content match verification prompt)
+Task: 修复用户审稿指出的"参考文献被系统性地分配给了与它们实际内容完全无关的段落"问题。
+
+用户审稿反馈 (CRISPR Cas9 1500w 文章):
+1. 文献 [4] (Cas13/RNA-targeting) 被反复用于 Cas9 (DNA-targeting) 论述 — 8 次
+2. 文献 [9] (SCD临床试验) 被用于 Cas9 结构生物学论述
+3. 文献 [10] (Cas12a) 被用于 Cas9 结构描述
+4. 其他错配: β-地中海贫血标 [12,6] 但 [12] 是亨廷顿病, [6] 是癌症
+5. 文献 [17] (Doudna & Charpentier 2014) 从未被引用
+
+根因分析:
+- LLM 在生成时看到 reference list, 但没有仔细核对每个引用的实际内容
+- LLM 倾向于"看起来相关"的编号而非实际内容匹配
+- 现有 prompt 有引用规则但不够具体, 缺乏内容匹配验证步骤
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (v114 7a26420)。
+- 实施了 1 项 v115 改进:
+
+1. v115-1: Content match verification prompt (generate-full route):
+  - 在 CITATION FORMAT 规则后新增 "CONTENT MATCH VERIFICATION" 段落
+  - 明确要求 LLM 在引用前 READ reference 的 title 和 abstract
+  - 提供具体例子:
+    * "Cas9 DNA cleavage" → reference 必须提到 Cas9 AND DNA cleavage
+    * "clinical trials" → reference 必须是关于临床试验
+    * "protein structure" → reference 必须包含结构数据
+  - 明确禁止跨系统引用:
+    * Cas13 文献不能用于 Cas9 论述
+    * Cas12a 文献不能用于 Cas9 机制
+    * 临床论文不能用于结构生物学
+  - 如果没有匹配的引用, 使用 [$REF] 而不是引用不相关文献
+  - "It is FAR BETTER to have an uncited claim than to cite a reference that says something completely different"
+
+验证:
+- v112-1 uncited refs removal 已在 compose 阶段运行
+- v115-1 prompt 改进将减少内容错配
+- 需要真实测试验证效果
+
+Stage Summary:
+- v115-1 content match verification prompt: 添加明确的引用内容匹配验证规则
+- 针对 Cas13/Cas12a/临床论文错配提供具体禁止例子
+- 代码待 push 到 GitHub。
