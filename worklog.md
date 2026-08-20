@@ -10149,3 +10149,54 @@ Stage Summary:
 - v115-1 content match verification prompt: 添加明确的引用内容匹配验证规则
 - 针对 Cas13/Cas12a/临床论文错配提供具体禁止例子
 - 代码待 push 到 GitHub。
+
+---
+
+Task ID: v116
+Agent: main (Z.ai Code — v116 2000w full generation + v115 prompt verification)
+Task: 真实 2000w 全文生成任务，验证 v115 content match prompt 改进效果。
+
+v116 真实 2000w 生成任务 (Protein folding, biophysics):
+- 项目: cmt1b505f016eudufnhowkg3p
+- **完整端到端 pipeline 完成!** ✅✅
+- 总耗时: 1307s (21.8 min)
+- 7/7 sections 生成成功 ✅
+- Total: **1658w** (83% target 2000w)
+- **v101 fix VERIFIED**: DS=0, FC=0 ✅✅
+- **v112-1 uncited**: 2 uncited [10,16] ❌ (audit 后引入)
+- **v108-2 OVER-CLEAN PREVENTED**: 3次 ✅
+- **PDF export WORKS**: HTTP 200, 33KB ✅
+
+Per-section 详情 (2000w, 7 sections, target ~285w each):
+- §1: 339w (119%), 7cit ✅
+- §2: 323w (113%), 11cit ✅
+- §3: 194w (68%), 7cit ✅
+- §4: 213w (75%), 7cit ✅
+- §5: 186w (65%), 5cit ✅
+- §6: 174w (61%), 5cit ✅
+- §7: 229w (80%), 7cit ✅
+- TOTAL: 1658w
+
+citation-health:
+- score: 0 grade: F (0 blocking but 104 warnings)
+- 129 citations, 105 references
+- audit: checked 87, issues 63, fixed 10
+
+发现的问题:
+1. **2 uncited refs** [10,16] — v112-1 需要在 audit 后再次运行
+2. **104 warnings** — audit 保留了很多 mismatched citations (over-clean prevention)
+3. **1658w (83%)** — 低于 target, §5/§6 偏低 (65%/61%)
+4. **score 0/F** — 0 blocking 但 warnings 太多导致 score=0
+
+v115 prompt 改进效果:
+- ✓ 所有 sections 都有 ≥5 citations (无 0-citation sections)
+- ✓ v99-1 overshoot cap 工作 (§3: "overshoot 127% > 125% cap")
+- ✗ 仍有 104 warnings (内容匹配仍需改进)
+- ✗ 2 uncited refs (audit 后引入)
+
+Stage Summary:
+- 2000w 完整 pipeline 完成! 21.8 min, 7 sections, 1658w
+- PDF export works ✅
+- v101/v108 fixes verified ✅
+- v115 prompt 有改善但 warnings 仍高
+- 代码待 push 到 GitHub。
