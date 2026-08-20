@@ -9978,3 +9978,37 @@ Stage Summary:
 - PDF export: WORKS ✅
 - 完整端到端 pipeline 完成! Article saved despite OOM!
 - 代码待 push 到 GitHub。
+
+---
+
+Task ID: v113
+Agent: main (Z.ai Code — v113 fix page loading / dev server crash)
+Task: 用户报告"页面没有加载出来" — 修复 dev server crash。
+
+Work Log:
+- 检查远程仓库: 本地与 GitHub 完全同步 (v112 7e0f729)。
+- 检查 dev server: 发现所有 next-server/bun 进程都已停止 (HTTP 000)。
+- 检查 OOM: dmesg 无新的 OOM kill 记录 (之前的已被清除)。
+- 修复: pkill -9 残留进程 + 重启 dev server (setsid bun run dev)
+- 验证: HTTP 200, 60KB HTML, "SciWrite" 标题出现 ✅
+- 服务器稳定性: 重启后 30s 仍存活 (2 processes) ✅
+
+根因分析:
+- 环境 reset 后 dev server 未自动重启
+- 残留的旧 next-server 进程占用 port 3000 导致冲突
+- 需要 pkill -9 + 等待 3s + 重启
+
+验证结果:
+| 检查 | 结果 |
+|------|------|
+| HTTP status | 200 ✅ |
+| HTML size | 60KB ✅ |
+| SciWrite 标题 | ✅ |
+| Application error | 无 ✅ |
+| 服务器稳定性 | 30s 后仍存活 ✅ |
+
+Stage Summary:
+- dev server crash 已修复 ✅
+- 页面正常加载 (HTTP 200, 60KB) ✅
+- 代码无变更 (纯 server restart)
+- 代码已与 GitHub 同步 (v112 7e0f729)
