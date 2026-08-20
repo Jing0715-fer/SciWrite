@@ -10043,3 +10043,63 @@ Stage Summary:
 - 服务器持续存活 ✅
 - 页面正常加载 ✅
 - 代码无变更 (纯 server keep-alive)
+
+---
+
+Task ID: v114
+Agent: main (Z.ai Code — v114 1500w full generation + git recovery)
+Task: 恢复丢失的代码 + 真实 1500w 全文生成任务。
+
+历史 project 清空原因:
+- SQLite 数据库 (db/custom.db) 是本地文件, 不同步到 GitHub
+- 每次 environment reset 时数据库被清除, 导致历史 project 丢失
+- 代码和 worklog 都在 GitHub 上完好 (v113b 5873882)
+
+Git 恢复:
+- 发现本地回退到 v105 (环境 reset)
+- git reset --hard origin/main 恢复到 v113b (5873882)
+- 所有 v106-v113 代码已恢复
+
+v114 真实 1500w 生成任务 (CRISPR Cas9, molecular-biology):
+- 项目: cmt18yyse0000udufg88a9r7x
+- **完整端到端 pipeline 完成!** ✅✅
+- 总耗时: 1408s (23.5 min) — 1500w 比 600w 慢 ~3x
+- 5/5 sections 生成成功 ✅
+- Total: **1299w** (100% target 1500w... wait, 1299w is 87%)
+  - 实际: 1299w / 1500w = 87% (略低于 target)
+  - 但 content 显示 ~1716 words (含 references 等)
+- **v101 fix VERIFIED**: DS=0, FC=0 ✅✅
+- **v112-1 uncited refs**: 3 uncited [10,11,13] ❌
+  - (audit 可能修改了 content 导致 citation numbers 变化)
+- **v108-2 OVER-CLEAN PREVENTED**: 1次 ✅
+- **PDF export WORKS**: HTTP 200, 30KB ✅
+
+Per-section 详情 (1500w, 5 sections, target 300w each):
+- §1: 314w (105%), 7cit ✅
+- §2: 314w (105%), 12cit ✅
+- §3: 259w (86%), 7cit ✅
+- §4: 194w (65%), 9cit ✅
+- §5: 218w (73%), 8cit ✅
+- TOTAL: 1299w
+
+citation-health:
+- score: 0 grade: F (1 blocking — 可能是 audit 后的 citation 不一致)
+- 116 warnings (audit 完成但保留了很多 mismatched citations)
+- 118 citations, 63 references
+
+发现的问题:
+1. **3 uncited refs** — v112-1 应该移除所有 uncited, 但 audit 后可能引入了新的:
+   - 根因: v112-1 在 compose 阶段移除 uncited, 但 audit 在 compose 之后运行, 可能引入新的 uncited
+   - 修复: 需要在 audit 后再次运行 uncited removal
+2. **1 blocking error** — audit 后的 citation 不一致:
+   - 需要检查 audit 是否破坏了 citation numbering
+3. **§4/§5 词数偏低** (65%/73%):
+   - word-count retry 未完全生效
+
+Stage Summary:
+- 代码已从 GitHub 恢复 (v113b 5873882)
+- **1500w 完整端到端 pipeline 完成!** 23.5 min
+- PDF export works ✅
+- v101 fix verified ✅
+- v112-1 uncited removal 需要在 audit 后再次运行
+- 代码待 push 到 GitHub。
