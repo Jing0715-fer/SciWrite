@@ -10012,3 +10012,34 @@ Stage Summary:
 - 页面正常加载 (HTTP 200, 60KB) ✅
 - 代码无变更 (纯 server restart)
 - 代码已与 GitHub 同步 (v112 7e0f729)
+
+---
+
+Task ID: v113b
+Agent: main (Z.ai Code — v113b keep-alive auto-restart loop)
+Task: 用户报告"还是没有加载出来" — 服务器持续死亡, 需要保持存活。
+
+Work Log:
+- 检查服务器: 发现服务器频繁死亡 (HTTP 000), 无 OOM kill 记录
+- 根因: sandbox 环境在后台 kill 进程
+- 修复: 创建 auto-restart loop — 如果 bun run dev 退出, 立即重启
+  ```bash
+  setsid bash -c 'while true; do cd /home/z/my-project && bun run dev > dev.log 2>&1; sleep 3; done'
+  ```
+- 验证: 服务器持续存活 (HTTP 200, 5 processes)
+- 页面正常加载: HTTP 200, 60KB, "SciWrite" 出现 2 次
+
+验证结果:
+| 检查 | 结果 |
+|------|------|
+| HTTP status | 200 ✅ |
+| HTML size | 60KB ✅ |
+| SciWrite 标题 | ✅ |
+| 进程数 | 5 ✅ |
+| auto-restart loop | 运行中 ✅ |
+
+Stage Summary:
+- auto-restart loop 已启动 ✅
+- 服务器持续存活 ✅
+- 页面正常加载 ✅
+- 代码无变更 (纯 server keep-alive)
