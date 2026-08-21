@@ -10200,3 +10200,49 @@ Stage Summary:
 - v101/v108 fixes verified ✅
 - v115 prompt 有改善但 warnings 仍高
 - 代码待 push 到 GitHub。
+
+---
+
+Task ID: v117
+Agent: main (Z.ai Code — v117 1500w full generation + git sync verified)
+Task: 验证远程仓库代码最新 + 真实 1500w 全文生成任务。
+
+Git 同步验证:
+- 本地 HEAD = origin/main = 01dcac7 ✅ (完全同步)
+- 8 个空修改文件已 reset (git checkout -- .)
+- 代码干净, 无未提交更改
+
+v117 真实 1500w 生成任务 (Neurodegenerative disease, neuroscience):
+- 项目: cmt29zf370000kyv4lbduiboy
+- **完整端到端 pipeline 完成!** ✅✅
+- 总耗时: 1201s (20.0 min)
+- 5/5 sections 生成成功 ✅
+- Total: **1178w** (79% target 1500w)
+- **v101 fix VERIFIED**: DS=0, FC=0 ✅✅
+- **v112-1 uncited removal**: compose 阶段移除 1 个 (17→16) ✅
+  - 但 audit 后仍有 7 uncited [8,9,10,12,14,15,16] ❌
+- **v108-2 OVER-CLEAN PREVENTED**: 1次 ✅
+- **PDF export WORKS**: HTTP 200, 28KB ✅
+- citation-health: score=39 grade=D, 0 blocking, 61 warnings
+
+Per-section 详情 (1500w, 5 sections, target 300w each):
+- §1: 212w (71%), 8cit ✅
+- §2: 210w (70%), 7cit ✅
+- §3: 244w (81%), 8cit ✅
+- §4: 254w (85%), 4cit ⚠️
+- §5: 258w (86%), 9cit ✅
+- TOTAL: 1178w (79%)
+
+发现的问题:
+1. **7 uncited refs** — audit 后引入 (v112-1 只在 compose 阶段运行, 需要在 audit 后再次运行)
+2. **61 warnings** — 内容匹配仍需改进
+3. **1178w (79%)** — 低于 target, 所有 sections 偏低
+4. **§4 只有 4 citations** — 接近 DENSITY_MIN=5
+
+Stage Summary:
+- Git 同步验证: 本地与 GitHub 完全同步 ✅
+- 1500w 完整 pipeline 完成! 20.0 min, 5 sections, 1178w
+- PDF export works ✅
+- v101/v108 fixes verified ✅
+- v112-1 需要在 audit 后再次运行 uncited removal
+- 代码待 push 到 GitHub。
