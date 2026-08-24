@@ -10246,3 +10246,84 @@ Stage Summary:
 - v101/v108 fixes verified ✅
 - v112-1 需要在 audit 后再次运行 uncited removal
 - 代码待 push 到 GitHub。
+
+---
+
+Task ID: v118
+Agent: main (Z.ai Code — v118 1500w full generation + quality assessment)
+Task: 验证 GitHub 同步 + 真实 1500w 全文生成 + 质量评估。
+
+Git 同步验证:
+- 本地 HEAD (824929b) 与远程 (0ab30e3) 不同步 (相同内容, 不同 hash)
+- git reset --hard origin/main 恢复同步
+- HEAD = origin/main = 0ab30e3 ✅
+
+Provider token: 200 OK, daily-remaining: 499, 10min-remaining: 29 ✅
+
+v118 真实 1500w 生成任务 (Apoptosis pathways, molecular-biology):
+- 项目: cmt6kxudg0000opuh9k91i2jw
+- **完整端到端 pipeline 完成!** ✅✅
+- 总耗时: 1218s (20.3 min)
+- 5/5 sections 生成成功 ✅
+- Total: **1178w** (79% target 1500w)
+- **v101 fix VERIFIED**: DS=0, FC=0 ✅✅
+- **v112-1 uncited removal**: compose 移除 3 个 (17→14) ✅
+  - 但 audit 后仍有 4 uncited [9,11,12,13] ❌
+- **v108-2 OVER-CLEAN PREVENTED**: 1次 ✅
+- **PDF export WORKS**: HTTP 200, 29KB ✅
+- citation-health: score=24 grade=F, 1 blocking, 71 warnings
+
+Per-section 详情 (1500w, 5 sections, target 300w each):
+- §1: 277w (92%), 8cit ✅
+- §2: 246w (82%), 7cit ✅
+- §3: 243w (81%), 6cit ✅
+- §4: 217w (72%), 7cit ✅
+- §5: 195w (65%), 7cit ✅
+- TOTAL: 1178w (79%)
+
+=== 质量评估 ===
+
+优点:
+1. ✅ 无残留草稿标记 ([DS:N]=0)
+2. ✅ 无 Further context 块 (FC=0)
+3. ✅ PDF 导出正常 (29KB)
+4. ✅ 所有 sections 都有 ≥6 citations
+5. ✅ 作者格式正确 (sample: [1] Kashyap D, [2] Singh P, [3] Tian X)
+6. ✅ v112-1 在 compose 阶段成功移除 3 个 uncited refs
+7. ✅ OVER-CLEAN PREVENTED 正确触发
+
+缺点:
+1. ❌ 4 uncited refs [9,11,12,13] — audit 后引入
+2. ❌ 71 warnings — 内容匹配问题仍严重
+3. ❌ 1 blocking error — citation 不一致
+4. ❌ 1178w (79%) — 低于 target, §5 偏低 (65%)
+5. ❌ health score 24/F — 历史最低之一
+6. ❌ v111-1 URL-as-author: 14 个 (URL 在 reference text 中出现, 但不是 author 字段)
+
+=== 改进建议 (v119) ===
+
+1. **v119-1: Post-audit uncited removal** — v112-1 只在 compose 阶段运行,
+   需要在 audit 完成后再次运行 uncited removal:
+   - 根因: audit 可能修改 citations, 导致新的 uncited refs
+   - 修复: 在 final rebuild 后再次扫描 + 移除 uncited refs
+
+2. **v119-2: Reduce warnings** — 71 warnings 说明内容匹配仍差:
+   - v115 prompt 改进有部分效果但不够
+   - 需要更强的 citation-content matching verification
+   - 考虑: 在 audit 阶段自动替换 mismatched citations
+
+3. **v119-3: Fix blocking error** — 1 blocking 需要检查:
+   - 可能是 audit 修改后 citation numbering 不一致
+   - 需要 post-audit renumbering
+
+4. **v119-4: Improve word count** — 1178w (79%):
+   - §5 只有 195w (65%), word-count retry 未完全生效
+   - 考虑: 降低 word-count retry threshold (从 90% 到 85%)
+
+Stage Summary:
+- Git 同步: 本地与 GitHub 完全同步 ✅
+- 1500w 完整 pipeline 完成! 20.3 min, 5 sections, 1178w
+- PDF export works ✅
+- v101/v108/v112 fixes verified ✅
+- 质量评估: 结构正确, 引用格式正确, 但 warnings 高 + uncited refs 残留
+- 代码待 push 到 GitHub。
