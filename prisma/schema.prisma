@@ -1,9 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,20 +10,346 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model Project {
+  id          String      @id @default(cuid())
+  title       String
+  topic       String
+  description String?
+  field       String? // research field, e.g. structural-biology, genomics
+  journalTemplate String? // e.g. nature, cell, science, jbc, plos, ieee
+  status      String      @default("active") // active, archived
+  shareToken  String?     @unique // if set, the project is readable via /shared/[token]
+  paragraphs  Paragraph[]
+  articles    Article[]
+  dataSources DataSource[]
+  references  Reference[]
+  userData    UserData[]
+  relationships RelationshipAnalysis[]
+  conversations ConversationSession[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 }
 
-model Post {
-  id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model Paragraph {
+  id               String              @id @default(cuid())
+  projectId        String
+  project          Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title            String
+  content          String              // markdown content with inline citations like [PMID:123] (primary — English when "both" mode)
+  contentZh        String?             // Chinese translation when language is "both"; null otherwise
+  format           String              @default("background") // background, intro, methods, results, discussion, conclusion, abstract
+  scenario         String              @default("literature-review") // literature-review, protein-structure, sequence-analysis, mechanism, comparative, clinical, custom
+  status           String              @default("draft") // draft, annotated, revising, revised, finalized
+  order            Int                 @default(0)
+  wordCount        Int                 @default(0)
+  wordCountZh      Int                 @default(0)
+  deletedAt        DateTime?           // Soft-delete timestamp — null = active, set = in trash. Auto-purged after 30 days.
+  annotations      Annotation[]
+  references       Reference[]
+  articleParagraph ArticleParagraph[]
+  comments         Comment[]
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([projectId])
+  @@index([deletedAt])
+}
+
+model Annotation {
+  id           String    @id @default(cuid())
+  paragraphId  String
+  paragraph    Paragraph @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+  startOffset  Int       @default(0)
+  endOffset    Int       @default(0)
+  selectedText String    @default("")
+  comment      String
+  type         String    @default("comment") // comment, revise-request, question, highlight, praise
+  severity     String    @default("info") // info, warning, critical
+  resolved     Boolean   @default(false)
+  aiResponse   String?
+  createdAt    DateTime  @default(now())
+
+  @@index([paragraphId])
+}
+
+model Reference {
+  id            String     @id @default(cuid())
+  paragraphId   String?
+  paragraph     Paragraph? @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+  projectId     String?
+  project       Project?   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type          String     // pubmed, uniprot, pdb, ncbi, blast, web, manual
+  externalId    String?
+  title         String
+  authors       String?
+  journal       String?
+  year          String?
+  url           String?
+  doi           String?
+  abstract      String?
+  citationKey   String?
+  citationOrder Int?       // 0-based index within the paragraph, matching [n] citation order (1 = index 0)
+  createdAt     DateTime   @default(now())
+
+  @@index([paragraphId])
+  @@index([projectId])
+}
+
+model DataSource {
+  id         String   @id @default(cuid())
+  projectId  String?
+  project    Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  source     String   // rcsb, uniprot, pubmed, ncbi, blast, web, manual
+  query      String
+  rawJson    String
+  summary    String?
+  title      String?
+  externalId String?
+  url        String?
+  pinned     Boolean  @default(false)
+  // Enhanced metadata
+  authors    String?
+  journal    String?
+  year       String?
+  doi        String?
+  abstract   String?
+  keywords   String?  // JSON array
+  extra      String?  // JSON object for source-specific fields (e.g. resolution, method, gene)
+  createdAt  DateTime @default(now())
+
+  @@index([projectId])
+}
+
+// Cached protein structure analysis results (Molcraft fusion).
+// One row per unique PDB ID — analysis is expensive (downloads + parses the
+// full PDB file + runs SASA / Ramachandran / B-factor / H-bond / ligand /
+// cavity / charge computations), so we persist the full structured result.
+// The `contextMarkdown` field holds the LLM-ready context block injected into
+// writing prompts so the LLM can discuss real structural features.
+model StructureAnalysis {
+  id              String   @id @default(cuid())
+  pdbId           String   @unique // uppercase PDB ID, e.g. "1A3N"
+  title           String?
+  pdbText         String   // the raw PDB file content (cached for re-analysis)
+  // Full structured analysis JSON (composition, secondary structure, ligands,
+  // Ramachandran, B-factor, SASA, H-bonds, clashes, charge/pI, cavities, etc.)
+  analysisJson    String
+  // LLM-friendly Markdown summary — injected into writing prompts
+  contextMarkdown String
+  // Richer RCSB metadata JSON (entry + polymers + nonpolymers + assemblies)
+  rcsbMetadataJson String?
+  // Provenance
+  atomCount       Int      @default(0)
+  residueCount    Int      @default(0)
+  chainCount      Int      @default(0)
+  ligandCount     Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([pdbId])
+}
+
+// Cached pairwise comparison matrix results (avoids recomputing O(n²)
+// Kabsch/alignment comparisons on every dashboard open). Keyed by project ID.
+model ComparisonMatrixCache {
+  id          String   @id @default(cuid())
+  projectId   String   @unique
+  // JSON of ComparisonMatrixResult: { pdbIds, rmsdMatrix, tmScoreMatrix,
+  // identityMatrix, entries, n }
+  matrixJson  String
+  // Hash of the PDB ID set (to detect when structures are added/removed)
+  pdbIdHash   String
+  n           Int      @default(0) // number of structures compared
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
+}
+
+model CitationAuditReport {
+  id            String   @id @default(cuid())
+  paragraphId   String
+  projectId     String
+  trigger       String   @default("manual")
+  checkedCount  Int      @default(0)
+  issueCount    Int      @default(0)
+  fixedCount    Int      @default(0)
+  bodyUpdated   Boolean  @default(false)
+  reportJson    String
+  contentHash   String?
+  createdAt     DateTime @default(now())
+
+  @@index([paragraphId])
+  @@index([projectId])
+  @@index([createdAt])
+}
+
+model Article {
+  id               String              @id @default(cuid())
+  projectId        String
+  project          Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title            String
+  titleZh          String?
+  abstract         String?
+  content          String
+  contentZh        String?             // Chinese full-text translation when language is "both"; null otherwise
+  journalTemplate String?
+  deletedAt        DateTime?           // Soft-delete timestamp — null = active, set = in trash. Auto-purged after 30 days.
+  articleParagraph ArticleParagraph[]
+  reviews          Review[]
+  versions         ArticleVersion[]
+  comments         Comment[]
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([projectId])
+  @@index([deletedAt]) // Speeds up trash-list and active-list queries
+}
+
+// Version history — a snapshot of the article's content saved each time
+// the user edits + saves, or each time the article is re-composed. The
+// user can diff any two versions or restore a previous version.
+model ArticleVersion {
+  id          String   @id @default(cuid())
+  articleId   String
+  article     Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  content     String   // snapshot of article.content at the time of save
+  contentZh   String?  // snapshot of article.contentZh (if present)
+  title       String   // snapshot of article.title
+  label       String?  // optional user-provided label (e.g. "before revision")
+  wordCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([articleId])
+  @@index([createdAt])
+}
+
+model ArticleParagraph {
+  id          String    @id @default(cuid())
+  articleId   String
+  article     Article   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  paragraphId String
+  paragraph   Paragraph @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+  order       Int
+  section     String?
+
+  @@index([articleId])
+}
+
+model Review {
+  id          String   @id @default(cuid())
+  articleId   String
+  article     Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  round       Int      @default(1)
+  // Structured scores (0-10 each)
+  scoreNovelty      Float?
+  scoreSignificance Float?
+  scoreClarity      Float?
+  scoreMethodology  Float?
+  scoreCitations     Float?
+  scoreOverall      Float?
+  // Qualitative verdict
+  verdict     String   // accept | minor-revision | major-revision | reject
+  summary     String   // AI-generated review summary
+  strengths   String   // JSON array of strengths
+  weaknesses  String   // JSON array of weaknesses
+  suggestions String   // JSON array of revision suggestions
+  // Iteration tracking
+  revisedContent String? // the revised content after acting on this review
+  createdAt   DateTime @default(now())
+
+  @@index([articleId])
+}
+
+// User-provided data: images, tables, text descriptions used in Results writing
+model UserData {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type        String   // image, table, text
+  title       String
+  description String?  // user-provided caption/description
+  filePath    String?  // for uploaded images (relative path under /upload)
+  data        String?  // JSON: for tables (rows/cols) or structured data
+  createdAt   DateTime @default(now())
+
+  @@index([projectId])
+}
+
+// Source relationship analysis (persisted)
+model RelationshipAnalysis {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  summary     String
+  themes      String   // JSON array
+  edges       String   // JSON array
+  nodes       String   // JSON array
+  keyInsights String   // JSON array
+  contradictions String // JSON array
+  createdAt   DateTime @default(now())
+
+  @@index([projectId])
+}
+
+// LLM conversation session — maintains context across multiple AI tasks within a project
+// so that gather → curate → plan → generate → compose → review can share context
+model ConversationSession {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  taskType    String   // gather, curate, relationships, plan, generate, compose, review, write, outline, revise
+  role        String   // system | user | assistant
+  content     String   // the message content
+  metadata    String?  // JSON: { sectionTitle, wordCount, temperature, etc. }
+  tokenEstimate Int   @default(0) // rough token estimate for context window management
+  // CLI session id returned by the underlying CLI (e.g. Hermes' `session_id: 20260730_...`
+  // banner or codebuddy's JSON `sessionId` field). Persisted so subsequent LLM calls
+  // within the same (project, taskType, provider) can be sent via `--resume <id>`,
+  // reusing the remote session instead of creating a new one each turn.
+  cliSessionId String?
+  // Which CLI produced the session id (e.g. "hermes", "codebuddy", "codex",
+  // "claude"). Stored alongside cliSessionId so a mid-project provider swap
+  // (codebuddy → hermes) doesn't accidentally feed hermes codebuddy's id
+  // and trigger a confusing "session not found" error. Read by chatWithSession
+  // to scope its resume lookup to the currently-active provider.
+  cliProvider String?
+  createdAt   DateTime @default(now())
+
+  @@index([projectId])
+  @@index([projectId, taskType])
+  @@index([projectId, taskType, cliProvider])
+}
+
+// Reusable prompt templates
+model PromptTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  taskType    String
+  systemPrompt String?
+  instruction String?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([taskType])
+}
+
+// Comments
+model Comment {
+  id          String     @id @default(cuid())
+  articleId   String?
+  article     Article?   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  paragraphId String?
+  paragraph   Paragraph? @relation(fields: [paragraphId], references: [id], onDelete: Cascade)
+  parentId    String?
+  author      String     @default("User")
+  content     String
+  resolved    Boolean    @default(false)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([articleId])
+  @@index([paragraphId])
+  @@index([parentId])
 }

@@ -6,8 +6,11 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-geist-sans), var(--font-zh-sans), "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif;
+  --font-mono: var(--font-geist-mono), "SF Mono", ui-monospace, monospace;
+  --font-serif: var(--font-serif), var(--font-zh-serif), "Songti SC",
+    "SimSun", "STSong", serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -45,71 +48,147 @@
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  /* Warm paper neutrals */
+  --background: oklch(0.992 0.004 95);
+  --foreground: oklch(0.21 0.02 150);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.21 0.02 150);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.21 0.02 150);
+  /* Emerald primary */
+  --primary: oklch(0.52 0.13 162);
+  --primary-foreground: oklch(0.99 0.01 150);
+  --secondary: oklch(0.96 0.012 150);
+  --secondary-foreground: oklch(0.3 0.04 162);
+  --muted: oklch(0.965 0.008 95);
+  --muted-foreground: oklch(0.52 0.02 150);
+  /* Teal accent */
+  --accent: oklch(0.94 0.035 172);
+  --accent-foreground: oklch(0.32 0.06 172);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --border: oklch(0.905 0.012 150);
+  --input: oklch(0.92 0.012 150);
+  --ring: oklch(0.52 0.13 162);
+  --chart-1: oklch(0.6 0.15 162);
+  --chart-2: oklch(0.62 0.12 185);
+  --chart-3: oklch(0.7 0.14 85);
+  --chart-4: oklch(0.58 0.18 30);
+  --chart-5: oklch(0.55 0.16 300);
+  --sidebar: oklch(0.975 0.006 150);
+  --sidebar-foreground: oklch(0.21 0.02 150);
+  --sidebar-primary: oklch(0.52 0.13 162);
+  --sidebar-primary-foreground: oklch(0.99 0.01 150);
+  --sidebar-accent: oklch(0.94 0.035 172);
+  --sidebar-accent-foreground: oklch(0.32 0.06 172);
+  --sidebar-border: oklch(0.905 0.012 150);
+  --sidebar-ring: oklch(0.52 0.13 162);
+}
+
+/* ============================================================
+   Custom themes — applied via data-theme attribute on <html>.
+   Each theme overrides the primary/accent colors while keeping
+   the neutral palette (background, foreground, muted, etc.)
+   unchanged for readability consistency.
+   ============================================================ */
+
+/* Ocean — deep blue-teal primary */
+[data-theme="ocean"] {
+  --primary: oklch(0.52 0.14 230);
+  --primary-foreground: oklch(0.99 0.01 230);
+  --ring: oklch(0.52 0.14 230);
+  --sidebar-primary: oklch(0.52 0.14 230);
+  --sidebar-primary-foreground: oklch(0.99 0.01 230);
+  --sidebar-ring: oklch(0.52 0.14 230);
+  --accent: oklch(0.94 0.035 200);
+  --accent-foreground: oklch(0.32 0.06 200);
+  --sidebar-accent: oklch(0.94 0.035 200);
+  --sidebar-accent-foreground: oklch(0.32 0.06 200);
+  --chart-1: oklch(0.6 0.15 230);
+}
+
+[data-theme="ocean"].dark {
+  --primary: oklch(0.7 0.14 230);
+  --primary-foreground: oklch(0.16 0.02 230);
+  --ring: oklch(0.7 0.14 230);
+  --sidebar-primary: oklch(0.7 0.14 230);
+}
+
+/* Sunset — warm amber-rose primary */
+[data-theme="sunset"] {
+  --primary: oklch(0.58 0.18 30);
+  --primary-foreground: oklch(0.99 0.01 30);
+  --ring: oklch(0.58 0.18 30);
+  --sidebar-primary: oklch(0.58 0.18 30);
+  --sidebar-primary-foreground: oklch(0.99 0.01 30);
+  --sidebar-ring: oklch(0.58 0.18 30);
+  --accent: oklch(0.94 0.04 50);
+  --accent-foreground: oklch(0.35 0.07 50);
+  --sidebar-accent: oklch(0.94 0.04 50);
+  --sidebar-accent-foreground: oklch(0.35 0.07 50);
+  --chart-1: oklch(0.6 0.18 30);
+}
+
+[data-theme="sunset"].dark {
+  --primary: oklch(0.7 0.16 30);
+  --primary-foreground: oklch(0.16 0.02 30);
+  --ring: oklch(0.7 0.16 30);
+  --sidebar-primary: oklch(0.7 0.16 30);
+}
+
+/* Violet — purple primary */
+[data-theme="violet"] {
+  --primary: oklch(0.55 0.22 300);
+  --primary-foreground: oklch(0.99 0.01 300);
+  --ring: oklch(0.55 0.22 300);
+  --sidebar-primary: oklch(0.55 0.22 300);
+  --sidebar-primary-foreground: oklch(0.99 0.01 300);
+  --sidebar-ring: oklch(0.55 0.22 300);
+  --accent: oklch(0.94 0.04 300);
+  --accent-foreground: oklch(0.35 0.07 300);
+  --sidebar-accent: oklch(0.94 0.04 300);
+  --sidebar-accent-foreground: oklch(0.35 0.07 300);
+  --chart-1: oklch(0.6 0.2 300);
+}
+
+[data-theme="violet"].dark {
+  --primary: oklch(0.7 0.2 300);
+  --primary-foreground: oklch(0.16 0.02 300);
+  --ring: oklch(0.7 0.2 300);
+  --sidebar-primary: oklch(0.7 0.2 300);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --background: oklch(0.17 0.012 160);
+  --foreground: oklch(0.96 0.005 150);
+  --card: oklch(0.21 0.014 160);
+  --card-foreground: oklch(0.96 0.005 150);
+  --popover: oklch(0.22 0.014 160);
+  --popover-foreground: oklch(0.96 0.005 150);
+  --primary: oklch(0.7 0.13 162);
+  --primary-foreground: oklch(0.16 0.02 162);
+  --secondary: oklch(0.26 0.018 160);
+  --secondary-foreground: oklch(0.94 0.01 150);
+  --muted: oklch(0.25 0.015 160);
+  --muted-foreground: oklch(0.7 0.015 150);
+  --accent: oklch(0.3 0.05 172);
+  --accent-foreground: oklch(0.92 0.03 172);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.7 0.13 162);
+  --chart-1: oklch(0.7 0.15 162);
+  --chart-2: oklch(0.7 0.12 185);
+  --chart-3: oklch(0.75 0.14 85);
+  --chart-4: oklch(0.65 0.18 30);
+  --chart-5: oklch(0.6 0.16 300);
+  --sidebar: oklch(0.2 0.014 160);
+  --sidebar-foreground: oklch(0.96 0.005 150);
+  --sidebar-primary: oklch(0.7 0.13 162);
+  --sidebar-primary-foreground: oklch(0.16 0.02 162);
+  --sidebar-accent: oklch(0.3 0.05 172);
+  --sidebar-accent-foreground: oklch(0.92 0.03 172);
+  --sidebar-border: oklch(1 0 0 / 12%);
+  --sidebar-ring: oklch(0.7 0.13 162);
 }
 
 @layer base {
@@ -118,5 +197,398 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "ss01", "cv01", "cv03";
   }
+}
+
+/* ---------- Academic typography ---------- */
+.font-serif-text {
+  font-family: var(--font-serif), var(--font-zh-serif), "Iowan Old Style",
+    "Palatino Linotype", "URW Palladio L", P052, Palatino, Georgia,
+    "Songti SC", "SimSun", "STSong", serif;
+  font-feature-settings: "onum" 1, "liga" 1, "kern" 1;
+}
+
+.prose-academic {
+  font-family: var(--font-serif), var(--font-zh-serif), Georgia,
+    "Times New Roman", "Songti SC", "SimSun", "STSong", serif;
+  font-size: 1.0125rem;
+  line-height: 1.78;
+  color: oklch(0.24 0.02 150);
+  letter-spacing: 0.003em;
+  /* CJK typography optimizations: slightly looser line-height for Chinese
+     (which needs more vertical breathing room than Latin), and adjust
+     letter-spacing so Chinese characters don't feel cramped. */
+  text-justify: inter-ideograph;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+.prose-academic.dark-text,
+.dark .prose-academic {
+  color: oklch(0.9 0.005 150);
+}
+
+/* ---------- Chinese typography polish ----------
+   When the content contains CJK characters, apply refined spacing rules.
+   Chinese text needs more line-height than Latin (~1.8 vs 1.6) and should
+   not use letter-spacing (which creates awkward gaps between characters). */
+:lang(zh),
+.prose-academic:lang(zh),
+.prose-academic:-webkit-any(:lang(zh)) {
+  line-height: 1.85;
+  letter-spacing: 0;
+}
+
+/* Punctuation kerning for Chinese: prevent full-width punctuation from
+   creating large gaps at line starts (hanging punctuation). */
+.prose-academic {
+  text-spacing: trim-start allow-end;
+  -ms-text-spacing: trim-start allow-end;
+}
+
+/* Headings: use the serif stack with Chinese fallback for a cohesive
+   academic look. Section titles in Chinese articles should match the
+   serif body text. */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-serif), var(--font-zh-serif), Georgia,
+    "Songti SC", "SimSun", serif;
+  font-weight: 600;
+}
+
+/* Citation markers */
+.cite-marker {
+  display: inline;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.72em;
+  vertical-align: super;
+  line-height: 0;
+  color: oklch(0.45 0.11 162);
+  background: oklch(0.94 0.03 172 / 0.6);
+  border-radius: 0.25rem;
+  padding: 0.05em 0.32em;
+  margin: 0 0.04em;
+  font-weight: 600;
+  cursor: help;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.cite-marker:hover {
+  background: oklch(0.86 0.07 172);
+  color: oklch(0.34 0.1 162);
+  transform: translateY(-1px) scale(1.06);
+  box-shadow: 0 1px 3px oklch(0.45 0.1 162 / 0.25);
+}
+.cite-marker:focus-visible {
+  outline: 2px solid oklch(0.55 0.15 162);
+  outline-offset: 1px;
+}
+.dark .cite-marker {
+  color: oklch(0.78 0.1 162);
+  background: oklch(0.3 0.05 172 / 0.5);
+}
+.dark .cite-marker:hover {
+  background: oklch(0.4 0.08 172);
+  color: oklch(0.88 0.1 162);
+}
+
+/* Adversarial citation-audit marker states (Layer 3 rendering guard).
+   - unresolved: the [n] points to nothing (hallucinated / out-of-range)
+   - missing: the reference entry is absent from the References section
+   - unsupported: very low topical overlap with the citing sentence
+   - suspect: weak overlap — needs manual verification */
+.cite-marker-unresolved {
+  color: oklch(0.42 0.11 75);
+  background: oklch(0.92 0.06 85 / 0.65);
+  text-decoration: underline dotted oklch(0.55 0.12 75);
+  text-underline-offset: 2px;
+}
+.cite-marker-unresolved:hover {
+  background: oklch(0.87 0.09 80);
+  color: oklch(0.35 0.1 75);
+}
+.cite-marker-missing {
+  color: oklch(0.45 0.18 25);
+  background: oklch(0.9 0.1 25 / 0.6);
+  text-decoration: underline wavy oklch(0.5 0.2 25);
+  text-underline-offset: 2px;
+}
+.cite-marker-unsupported {
+  color: oklch(0.42 0.15 40);
+  background: oklch(0.9 0.08 70 / 0.55);
+  text-decoration: underline dotted oklch(0.48 0.14 40);
+  text-underline-offset: 2px;
+}
+.cite-marker-suspect {
+  color: oklch(0.42 0.12 75);
+  background: oklch(0.92 0.06 85 / 0.6);
+}
+.cite-audit-icon {
+  font-size: 0.85em;
+  margin-left: 0.1em;
+  color: oklch(0.45 0.15 40);
+}
+.dark .cite-marker-unresolved,
+.dark .cite-marker-missing {
+  color: oklch(0.82 0.1 75);
+  background: oklch(0.34 0.08 75 / 0.5);
+  text-decoration-color: oklch(0.75 0.12 75);
+}
+.dark .cite-marker-unsupported {
+  color: oklch(0.8 0.13 40);
+  background: oklch(0.33 0.1 40 / 0.45);
+}
+.dark .cite-marker-suspect {
+  color: oklch(0.82 0.1 75);
+  background: oklch(0.34 0.08 75 / 0.45);
+}
+.dark .cite-audit-icon {
+  color: oklch(0.8 0.14 40);
+}
+
+/* Annotation highlights */
+.ann-highlight {
+  background: linear-gradient(
+    120deg,
+    oklch(0.92 0.13 85 / 0.45),
+    oklch(0.9 0.12 70 / 0.5)
+  );
+  border-bottom: 2px solid oklch(0.7 0.15 70 / 0.7);
+  border-radius: 2px;
+  padding: 0 1px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.ann-highlight:hover {
+  background: linear-gradient(
+    120deg,
+    oklch(0.88 0.15 85 / 0.6),
+    oklch(0.85 0.14 70 / 0.7)
+  );
+}
+.ann-highlight-critical {
+  background: linear-gradient(
+    120deg,
+    oklch(0.88 0.12 25 / 0.4),
+    oklch(0.86 0.13 15 / 0.5)
+  );
+  border-bottom-color: oklch(0.62 0.2 25);
+}
+
+/* Pending annotation selection — preserves the text selection highlight
+   while the annotation popover is open, even after the native selection
+   is lost due to focus moving to the popover. */
+.pending-selection {
+  background: linear-gradient(
+    120deg,
+    oklch(0.85 0.13 200 / 0.35),
+    oklch(0.82 0.12 220 / 0.4)
+  );
+  border-radius: 2px;
+  padding: 0 1px;
+  box-shadow: 0 0 0 1px oklch(0.7 0.1 200 / 0.3);
+  color: inherit;
+}
+.dark .pending-selection {
+  background: linear-gradient(
+    120deg,
+    oklch(0.65 0.13 200 / 0.35),
+    oklch(0.6 0.12 220 / 0.4)
+  );
+  box-shadow: 0 0 0 1px oklch(0.5 0.1 200 / 0.4);
+}
+
+/* Paper texture for writing surfaces */
+.paper-surface {
+  background-color: var(--card);
+  background-image:
+    radial-gradient(
+      circle at 1px 1px,
+      oklch(0.5 0.02 150 / 0.025) 1px,
+      transparent 0
+    );
+  background-size: 22px 22px;
+}
+.dark .paper-surface {
+  background-image:
+    radial-gradient(
+      circle at 1px 1px,
+      oklch(0.9 0.02 150 / 0.03) 1px,
+      transparent 0
+    );
+}
+
+/* Custom scrollbar */
+.scroll-academic::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.scroll-academic::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-academic::-webkit-scrollbar-thumb {
+  background: oklch(0.82 0.02 150);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.scroll-academic::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.72 0.05 162);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+.dark .scroll-academic::-webkit-scrollbar-thumb {
+  background: oklch(0.35 0.02 150);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+/* Subtle fade-in for generated content */
+@keyframes acad-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.acad-fade-in {
+  animation: acad-fade-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Typing cursor for streaming */
+@keyframes blink-caret {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.typing-caret::after {
+  content: "▌";
+  margin-left: 1px;
+  color: oklch(0.52 0.13 162);
+  animation: blink-caret 1s steps(1) infinite;
+}
+
+/* Gradient ring for active states */
+.ring-academic {
+  box-shadow:
+    0 0 0 1px oklch(0.52 0.13 162 / 0.25),
+    0 1px 2px oklch(0.3 0.05 162 / 0.08);
+}
+
+/* Source badge gradients */
+.badge-emerald { background: oklch(0.92 0.06 162); color: oklch(0.34 0.09 162); }
+.badge-teal    { background: oklch(0.92 0.05 185); color: oklch(0.32 0.08 185); }
+.badge-amber   { background: oklch(0.93 0.07 80);  color: oklch(0.38 0.09 65);  }
+.badge-rose    { background: oklch(0.93 0.05 20);  color: oklch(0.4 0.13 20);   }
+.badge-violet  { background: oklch(0.93 0.05 300); color: oklch(0.4 0.11 300);  }
+.badge-sky     { background: oklch(0.93 0.05 230); color: oklch(0.4 0.1 230);   }
+.badge-slate   { background: oklch(0.93 0.01 250); color: oklch(0.4 0.02 250);  }
+.dark .badge-emerald { background: oklch(0.32 0.07 162); color: oklch(0.86 0.1 162); }
+.dark .badge-teal    { background: oklch(0.32 0.06 185); color: oklch(0.86 0.09 185); }
+.dark .badge-amber   { background: oklch(0.34 0.08 80);  color: oklch(0.88 0.1 70);  }
+.dark .badge-rose    { background: oklch(0.34 0.08 20);  color: oklch(0.88 0.1 20);   }
+.dark .badge-violet  { background: oklch(0.34 0.08 300); color: oklch(0.88 0.1 300);  }
+.dark .badge-sky     { background: oklch(0.34 0.07 230); color: oklch(0.88 0.09 230);  }
+.dark .badge-slate   { background: oklch(0.32 0.015 250); color: oklch(0.85 0.02 250); }
+
+/* Hairline divider with dot */
+.divider-academic {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: oklch(0.6 0.02 150);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.divider-academic::before,
+.divider-academic::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    oklch(0.82 0.02 150),
+    transparent
+  );
+}
+
+/* ============================================================
+   Range slider thumb styling
+   ============================================================
+   Tailwind's `appearance-none` removes the browser's default slider
+   thumb, making the slider look like a plain bar that can't be dragged.
+   These rules restore a visible, grabbable thumb for all
+   input[type=range] elements. The thumb uses the primary color so it
+   matches the app's theme, and is large enough (14px) for easy mouse
+   and touch interaction.
+   ============================================================ */
+
+/* Range slider — use class selector for higher specificity than Tailwind v4 preflight */
+.sciwrite-range-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* WebKit / Blink (Chrome, Safari, Edge) */
+.sciwrite-range-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 9999px;
+}
+.sciwrite-range-slider::-webkit-slider-thumb {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  width: 14px !important;
+  height: 14px !important;
+  border-radius: 9999px;
+  background: hsl(var(--primary));
+  border: 2px solid hsl(var(--background));
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.4), 0 1px 3px rgb(0 0 0 / 0.2);
+  margin-top: -4px;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.sciwrite-range-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.2), 0 2px 6px rgb(0 0 0 / 0.25);
+}
+.sciwrite-range-slider::-webkit-slider-thumb:active {
+  transform: scale(1.25);
+}
+
+/* Firefox */
+.sciwrite-range-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 9999px;
+}
+.sciwrite-range-slider::-moz-range-thumb {
+  width: 14px !important;
+  height: 14px !important;
+  border-radius: 9999px;
+  background: hsl(var(--primary));
+  border: 2px solid hsl(var(--background));
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.4), 0 1px 3px rgb(0 0 0 / 0.2);
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.sciwrite-range-slider::-moz-range-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.2), 0 2px 6px rgb(0 0 0 / 0.25);
+}
+.sciwrite-range-slider::-moz-range-thumb:active {
+  transform: scale(1.25);
+}
+
+/* Focus outline for accessibility */
+.sciwrite-range-slider:focus {
+  outline: none;
+}
+.sciwrite-range-slider:focus::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.3), 0 2px 6px rgb(0 0 0 / 0.25);
+}
+.sciwrite-range-slider:focus::-moz-range-thumb {
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.3), 0 2px 6px rgb(0 0 0 / 0.25);
 }

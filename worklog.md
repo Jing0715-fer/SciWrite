@@ -245,3 +245,33 @@ Stage Summary（最终对比数据）:
 | 生成时间 | 5.8 min | 9.3 min | +60%（换取校验） |
 | 审查器自身假阳性 | 0-1/14 | 0-2/4（修复后） | — |
 | 编号完整性 | 无孤儿/越界 | 无孤儿/越界 | 持平（v1 靠修复补丁，v2 靠结构保证） |
+
+---
+Task ID: 11
+Agent: 主协调者 (Z.ai Code)
+Task: 用户报告三个 UI 问题——①部分文献引用红色带问号 ②分段视图不显示文献列表 ③引用悬停弹窗半透明难以阅读
+
+Work Log:
+- 环境勘察：发现环境重置后 /home/z/my-project/src 被清空为模板，但原应用仍在 /home/z/sciwrite 完整运行（端口 3000 被其占用）；数据库 3.6MB 全部数据在 my-project/db/custom.db（系统级 DATABASE_URL 两服务器共库）
+- 恢复：将 sciwrite 的 src/、prisma/schema.prisma、package.json（含 docx/pdf-lib 新依赖）、next.config.ts、tests/、scripts/、public/fonts 复制回 my-project；bun install + prisma generate；停掉 sciwrite 旧服务，从 my-project 重启 dev server（端口 3000），数据完好
+- 根因分析（全部实证复现）：
+  * 红色问号：paragraph-card.tsx 的 effectiveRefs 优先用【文章级全局参考文献】（v1 仅 9 条）解析【段落本地编号正文】（v1 引用到 [19]）→ [10]-[19] 全部超界 → 渲染为红色 "[n]?"；文章查看器 Sections 标签页的 heading 匹配回退路径同样混用两套编号
+  * 分段无文献列表：paragraph-card.tsx 中 suppressRefList={globalArticleRefs.length > 0}——只要存在成文就把每段的文献列表整个隐藏
+  * 半透明弹窗：markdown-citations.tsx 的 HoverCardContent 用 bg-gradient-to-br from-card to-muted/10（10% 透明度渐变）
+- 修复（4 个文件）：
+  * paragraph-card.tsx：effectiveRefs 改为段内引用优先（本地编号 [n] = 段落第 n 条文献，citationOrder 排序），全局列表仅作无本地文献时兜底；移除 suppressRefList 抑制 → 每段卡片显示自己的文献列表
+  * article-viewer-tabs.tsx（Sections 标签）：成文节用全局编号+全局文献；未匹配回退路径用段落本地文献（修混用）；传 onlyCitedRefs 让每节只列出该节实际引用的文献
+  * markdown-citations.tsx：悬停弹窗改为纯不透明 bg-popover + ring + shadow-xl + z-50，宽度 320px；新增 onlyCitedRefs prop（引用索引跟踪）；未解析标记去掉 "?" 后缀，悬停显示中文解释（"未收录于参考文献列表"+原因）
+  * globals.css：cite-marker-unresolved 由红色波浪线改为琥珀色虚线下划线（中性、不吓人）
+- 验证（agent-browser E2E + VLM 截图核验）：
+  * v2 项目段落卡：30 个引用标记 0 未解析；5 个文献列表 50 条（5+7+10+13+15）
+  * v1 基线段落卡：35 个标记 0 未解析（修复前 [10]-[19] 均为红问号）；5 个文献列表 58 条
+  * 文章查看器 Sections 标签：27 个标记 0 未解析；每节显示 "References (n)" 引用子集列表（5/3/4/3/3）
+  * 悬停弹窗：computed bg=lab(100 0 0) 纯白不透明、无渐变、opacity 1；[15]→Donohoue 2021、[19,12]→Hariprabu 2021（正确的本地文献）；VLM 确认"完全不透明、文字清晰可读"
+  * 移动端 390×844：无横向滚动、footer 精确粘底（bottom=844）；桌面 1440×900 正常
+  * eslint 全绿；tsc 与原 sciwrite 代码库错误集完全一致（178 个原有错误，0 新增）；dev.log 无错误；无 console error
+
+Stage Summary:
+- 三个用户可见缺陷全部修复且浏览器实测通过：红问号归零、分段文献列表恢复显示、悬停弹窗完全不透明
+- 编号语义现已一致：段正文 → 段内文献；成文节 → 全局 ## References；混用即红问号的根源已消除
+- 应用从 sciwrite 完整迁回 my-project（代码+配置+依赖+数据），后续开发以 my-project 为准
