@@ -275,3 +275,62 @@ Stage Summary:
 - 三个用户可见缺陷全部修复且浏览器实测通过：红问号归零、分段文献列表恢复显示、悬停弹窗完全不透明
 - 编号语义现已一致：段正文 → 段内文献；成文节 → 全局 ## References；混用即红问号的根源已消除
 - 应用从 sciwrite 完整迁回 my-project（代码+配置+依赖+数据），后续开发以 my-project 为准
+
+---
+Task ID: 12
+Agent: 主协调者 (Z.ai Code)
+Task: 处理用户对 v2 CRISPR-Cas9 文章的逐条引用核对反馈（5 类问题）
+
+Work Log:
+- 用户基于 v2 文章的最早 ArticleVersion（cmt8bbxjz011nnpyvgi8xqxa4，15 引用，含 Basit 2026 [11] 与 Zhang 2015 [12]）做了 5 类问题的核对：
+  1. 第 4-5 章系统性引用错位（[11]→[13] Bravo、[12]→[14] Skeens、[13]→[15] Donohoue）
+  2. [14] [15] 应被引用却闲置
+  3. 重复编号 [2,2] 与 [9,9]
+  4. 附录"6 cited inline"与正文 13 引用计数不一致
+  5. "Molecular Mechanisms of Cas9" 与 "Structural Insights into Cas9 Function" 章节冗余
+- 数据库比对：v2 文章有 4 个 ArticleVersion 快照
+  * cmt8bbxjz011nnpyvgi8xqxa4 (06:57:39, 15 引用, 原始版, 含 Basit+Zhang)
+  * cmt8bivzl0128npyvqjzp2ilt (07:03:04, 10 引用, 首次对抗修复)
+  * cmt8deqh9012bnpyvb7xuud9n (07:55:49, 10 引用, 恢复前快照)
+  * cmt8dgrxo012pnpyvgq1o0huv (07:57:24, 13 引用, 当前最新版, 对抗修复后)
+- 当前 Article.content（用户实际查看的版本）逐条核对用户的 5 类问题：
+  * 问题 1-3（引用错位 + [14][15] 闲置）：不存在。对抗修复已移除 Basit 与 Zhang 两条不相关综述并重排编号，当前 13 引用编号 [11]=Bravo(cryo-EM ✓)、[12]=Skeens(HF1/Hypa/Evo ✓)、[13]=Donohoue(chRDNA ✓) — 全部正确。用户分析基于对早期 15-ref 版本 [11]=Basit/[12]=Zhang 的旧记忆。
+  * 问题 4（[2,2]、[9,9] 重复）：存在 — 已修复。
+  * 问题 5（章节冗余）：存在 — 已修复。
+  * 问题 6（附录计数 6 vs 13）：存在 — 已修复。
+- 修复 #1（文章视图合并）：cmt8bbxjx011fnpyvjooiszkm.article.content
+  * 将 "## Molecular Mechanisms of Cas9" 与 "## Structural Insights into Cas9 Function" 合并为 "## Molecular Mechanisms and Structural Insights of Cas9"（3 段）
+  * 合并去重内容：bilobed architecture / 2.5 Å / HNH+RuvC / 10-nt seed A-form 仅保留一次
+  * [2,2]→[2]；[9,9]→[9]
+  * 字数 1771→1659（节省 112 字冗余）
+  * 创建新 ArticleVersion 快照（id=cmt8me7fix01article01）记录本次编辑
+- 修复 #2（段落级合并）：§2 与 §3 段落合并
+  * §2 段落标题："Molecular Mechanisms of Cas9" → "Molecular Mechanisms and Structural Insights of Cas9"
+  * §2 段落内容：替换为 3 段合并版本（[2]、[8]、[6]、[7]、[9]、[9,10]）
+  * §2 段落 references：从 7 条扩展到 10 条（新增 §3 独有的 pubmed:26317473 / pubmed:31285607 / pubmed:26841432）
+  * §3 段落软删除（deletedAt=now）
+  * Paragraphs 标签从 5 卡片变 4 卡片
+- 修复 #3（export 路由 cited 计数）：src/app/api/export/route.ts
+  * v112-1：新增 isDataSourceCited() 函数，对 RCSB/PDB DataSource 解析 extra.pmid/extra.pubmedId，与 citedRefKeys 的 pubmed:PMID 比对（原来直接用 PDB ID 匹配导致系统性漏判）
+  * v112-2：导出文章时解析 article.content 的 "## References" 段构建 bodyRefPmids 集合，作为权威依据 — 排除对抗修复已从正文移除但段级 reference 仍存在的旧引用（如 Basit 41524770、Zhang 26575098）
+  * 附录文本追加说明：cited count 可能高于 ## References 条目数因为同一引用可对应多个 gathered DataSource（一条 PubMed + 多个 PDB 结构）
+  * 实测：v2 文章 cited count 从 6 → 19（15 RCSB + 4 PubMed），与正文 13 引用接近（差额 6 为多个 PDB 结构映射到同一 PMID）
+- 验证（agent-browser E2E）：
+  * 文章视图（Article 标签）：4 个 H2 段落 — Introduction / Molecular Mechanisms and Structural Insights of Cas9 / Off-Target Effects / Strategies — 无 "Structural Insights" 独立段
+  * 段落视图（Paragraphs 标签）：4 个卡片（原 5 个，§3 已软删除）
+  * 引用标记全文扫描：无 [2,2]、[9,9] 重复；仅剩合法多引用 [3,4]、[9,10]、[11,12]
+  * 悬停 [11]→Bravo 2022 "Structural basis for mismatch surveillance by CRISPR-Cas9" ✓
+  * 悬停 [12]→Skeens 2024 "High-fidelity, hyper-accurate, and evolved mutants..." ✓
+  * 悬停 [13]→Donohoue 2021 "Conformational control of Cas9 by CRISPR hybrid RNA-DNA guides..." ✓
+  * 参考文献列表 13 条：[1] Lino / [2] Jinek / [3] Guo / [4] Kalter / [5] Cetin / [6] Anders / [7] Jiang / [8] Nishimasu / [9] Zhu / [10] Jiang2016 / [11] Bravo / [12] Skeens / [13] Donohoue
+  * 移动端 + 桌面端：footer 粘底、无横向滚动
+  * eslint 全绿；dev.log 无错误；无 console error
+
+Stage Summary:
+- 用户的 5 类问题中：
+  * 引用错位（1）、[14][15] 闲置（2）：在当前 13-ref 文章中已不存在 — v2 管线对抗修复已自动移除 Basit/Zhang 并重排，用户分析基于早期 15-ref 版本
+  * [2,2]/[9,9] 重复（3）：已修复
+  * 附录计数（4）：已修复（6→19，并补充说明）
+  * 章节冗余（5）：已修复（合并为单一段落 + 单一段落卡片）
+- 当前文章视图引用映射全对：[11]=Bravo(cryo-EM)、[12]=Skeens(HF1/Hypa/Evo)、[13]=Donohoue(chRDNA)
+- export 路由对 RCSB 数据源的 cited 判定已修，准确反映正文实际引用

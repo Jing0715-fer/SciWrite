@@ -106,6 +106,11 @@ export async function POST(req: NextRequest) {
     // 117 data sources but only 36 references in the exported document?"
     let projectId: string | null = null;
     let citedRefKeys = new Set<string>(); // keys of references actually cited inline
+    // v112-2: Body-derived PMID set — populated when exporting an article by
+    // parsing its "## References" section. Used to reconcile the (potentially
+    // stale) paragraph-derived citedRefKeys against what's actually in the
+    // article body. See isDataSourceCited() below.
+    const bodyRefPmids = new Set<string>();
 
     if (body.type === "paragraph") {
       const p = await db.paragraph.findUnique({
@@ -209,7 +214,15 @@ export async function POST(req: NextRequest) {
       contentZh = a.contentZh;
       abstract = a.abstract || "";
       projectId = a.projectId;
-      // Merge references from all paragraphs linked to this article
+      // Merge references from all paragraphs linked to this article.
+      // v112-2: After adversarial auto-fix the article body's "## References"
+      // list may have had entries removed (e.g. Basit 2026 / Zhang 2015 reviews
+      // removed as off-topic during adversarial review) without updating the
+      // linked paragraphs' Reference rows. So the paragraph-derived citedRefKeys
+      // is stale — it includes refs that are no longer in the article body.
+      // We therefore parse the body's "## References" section post-hoc and
+      // reconcile: only refs whose PMID appears in the body's references list
+      // count as "cited inline" for the Data Source Inventory appendix.
       const refMap = new Map<string, Reference>();
       for (const ap of a.articleParagraph) {
         for (const r of ap.paragraph.references) {
@@ -220,6 +233,16 @@ export async function POST(req: NextRequest) {
       }
       references = [...refMap.values()];
       annotations = a.articleParagraph.flatMap((ap) => ap.paragraph.annotations);
+
+      // v112-2: Build body-derived cited PMIDs from the article's "## References"
+      // section (parse pubmed URLs). This becomes the authoritative set used
+      // by the Data Source Inventory appendix to mark DataSources as "cited".
+      const refStart = (a.content || "").indexOf("## References");
+      if (refStart >= 0) {
+        const refSection = a.content.substring(refStart);
+        const pmidMatches = [...refSection.matchAll(/pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)/g)];
+        for (const m of pmidMatches) bodyRefPmids.add(m[1]);
+      }
     }
 
     // Apply language selection: if user asked for "zh" and we have contentZh, use it.
@@ -399,12 +422,68 @@ export async function POST(req: NextRequest) {
     // with its index, source DB, external ID, title, and a [CITED] / [gathered]
     // marker so the user can see at a glance which sources made it into the
     // article body and which were gathered-but-unused.
+    //
+    // v112-1: DataSource "cited" detection — for RCSB/PDB entries, the externalId
+    // stored on the DataSource row is the PDB ID (e.g. "4OO8"), but the Reference
+    // row created from the same gather stores `type=pubmed` + `externalId=PMID`
+    // (because v2 fix #DB1 in citation-binding pipeline unified RCSB-with-
+    // publication references to use their PMID as the canonical externalId).
+    // So a plain "rcsb:4OO8" vs "pubmed:24529477" comparison never matches.
+    // We therefore also consult DataSource.extra (JSON) for the linked PMID
+    // (extra.pmid / extra.pubmedId) and check `pubmed:PMID` against citedRefKeys.
+    // This fixes the long-standing "6 cited inline" under-count on RCSB-heavy
+    // projects where the actual cited reference count is much higher.
+    //
+    // v112-2: If bodyRefPmids is populated (article-export case), we restrict
+    // "cited" to only DataSources whose PMID appears in the article body's
+    // "## References" section. This excludes paragraph-level references that
+    // were auto-removed from the body during adversarial review (e.g. Basit
+    // 2026, Zhang 2015 in the v2 CRISPR-Cas9 article). The result is a count
+    // that matches the user's mental model of "cited inline" — i.e. only refs
+    // that actually appear in the article body the reader sees.
+    const isDataSourceCited = (ds: any): boolean => {
+      const extId = ds.externalId || ds.title;
+      // For RCSB/PDB DataSources, the canonical match key is the PMID in extra
+      // JSON (extra.pmid / extra.pubmedId). The DataSource.externalId is the
+      // PDB ID, which doesn't match the Reference's PMID-based externalId.
+      if (ds.source === "rcsb" || ds.source === "pdb") {
+        let extra: any = null;
+        try {
+          extra = typeof ds.extra === "string" ? JSON.parse(ds.extra) : ds.extra;
+        } catch { /* ignore malformed extra */ }
+        const pmid = extra?.pmid || extra?.pubmedId;
+        if (pmid) {
+          // v112-2: if body-derived PMID set is available, it's authoritative
+          if (bodyRefPmids.size > 0) return bodyRefPmids.has(pmid);
+          // otherwise fall back to paragraph-level citedRefKeys
+          if (citedRefKeys.has(`pubmed:${pmid}`)) return true;
+        }
+        return false;
+      }
+      // For non-RCSB DataSources (pubmed, web, uniprot, ncbi, etc.), the
+      // externalId IS the PMID (or equivalent). Check both the body-derived
+      // set (authoritative) and the paragraph-level citedRefKeys (fallback).
+      if (bodyRefPmids.size > 0 && ds.source === "pubmed") {
+        return bodyRefPmids.has(extId);
+      }
+      const directKey = `${ds.source}:${extId}`;
+      const altKey = `pubmed:${extId}`;
+      return citedRefKeys.has(directKey) || citedRefKeys.has(altKey);
+    };
     let dataSourceAppendix = "";
     if (dataSources.length > 0) {
-      const citedCount = dataSources.filter((ds) => {
-        const key = `${ds.source === "rcsb" || ds.source === "pdb" ? "pubmed" : ds.source}:${ds.externalId || ds.title}`;
-        return citedRefKeys.has(key) || citedRefKeys.has(`${ds.source}:${ds.externalId || ds.title}`);
-      }).length;
+      const citedCount = dataSources.filter((ds) => isDataSourceCited(ds)).length;
+      // v112-2: For article exports, bodyRefPmids contains the PMIDs actually
+      // present in the article's "## References" section. The cited count above
+      // may exceed the ## References list size because some references have
+      // multiple gathered DataSources (e.g., one PubMed record + several PDB
+      // structures for the same publication). Both count as "cited" because
+      // they all contributed to the same reference entry.
+      const bodyRefNote = bodyRefPmids.size > 0
+        ? ` The article body's "## References" section contains ${bodyRefPmids.size} unique references; ` +
+          `the cited count above (${citedCount}) may be higher because a single reference can correspond ` +
+          `to multiple gathered DataSources (e.g. one PubMed record + several PDB structures for the same publication).`
+        : "";
       const lines: string[] = [
         "",
         "## Appendix: Data Source Inventory",
@@ -414,7 +493,7 @@ export async function POST(req: NextRequest) {
           `${dataSources.length - citedCount} were gathered for context (structural/sequence data, ` +
           `supplementary metadata) but did not carry a publication that could be cited as a reference. ` +
           `This is expected behavior: UniProt, NCBI, and BLAST records provide protein/domain/sequence ` +
-          `context that informs the writing but are not themselves bibliographic citations.`,
+          `context that informs the writing but are not themselves bibliographic citations.` + bodyRefNote,
         "",
         "| # | Source | External ID | Title | Status |",
         "|---|--------|-------------|-------|--------|",
@@ -426,9 +505,7 @@ export async function POST(req: NextRequest) {
       const showAll = dataSources.length <= maxTableRows;
       const displaySources = showAll ? dataSources : dataSources.slice(0, maxTableRows);
       displaySources.forEach((ds, i) => {
-        const key = `${ds.source}:${ds.externalId || ds.title}`;
-        const altKey = `${ds.source === "rcsb" || ds.source === "pdb" ? "pubmed" : ds.source}:${ds.externalId || ds.title}`;
-        const isCited = citedRefKeys.has(key) || citedRefKeys.has(altKey);
+        const isCited = isDataSourceCited(ds);
         const status = isCited ? "cited" : "gathered";
         const extId = (ds.externalId || "—").replace(/\|/g, "/");
         // v111-3: Sanitize title — remove newlines and pipes that break markdown tables
