@@ -1,0 +1,1475 @@
+     1→     1→/**
+     2→     2→ * Shared LLM helper — ported from pdb-tracker-web-v4/src/lib/llm.ts.
+     3→     3→ *
+     4→     4→ * Provider selection policy (NO z-ai, NO hardcoded absolute paths):
+     5→     5→ *
+     6→     6→ *   The first time a model call is made (or on explicit `inspectProviders()`)
+     7→     7→ *   we **probe** each candidate. A candidate is considered *available* only if
+     8→     8→ *   its binary resolves on PATH (via `where`/`which`) and a tiny smoke-test
+     9→     9→ *   invocation succeeds within a 6-second budget. That probe is cached for
+    10→    10→ *   the lifetime of the Node process.
+    11→    11→ *
+    12→    12→ *   At call time `generateText` walks the candidate list in the user-requested
+    13→    13→ *   order (or auto order), and on the first failed call it cleanly falls
+    14→    14→ *   through to the next candidate. We never fabricate output.
+    15→    15→ *
+    16→    16→ *   Each CLI has a tiny *adapter* table — name, smoke-test args, real-call
+    17→    17→ *   arg template, output-stream hint (stdout|stderr|both), and a regex to
+    18→    18→ *   strip the leading "session_id: ..." banner that some agents emit on
+    19→    19→ *   stderr. Adding a new CLI = adding one entry to `CLI_ADAPTERS`.
+    20→    20→ *
+    21→    21→ * Differences from the upstream pdb-tracker copy:
+    22→    22→ *   • SciWrite's existing default LLM is `z-ai-web-dev-sdk` (callZai).
+    23→    23→ *   • Cache file lives under `os.tmpdir()/sciwrite-cache/` (not pdb-tracker-cache).
+    24→    24→ *   • `inspectProviders()` reports a 'zai-sdk' provider when the SDK is importable.
+    25→    25→ */
+    26→    26→
+    27→    27→import { spawn, execSync } from "node:child_process";
+    28→    28→import { existsSync, writeFileSync, readFileSync, unlinkSync, statSync, mkdirSync } from "node:fs";
+    29→    29→import { tmpdir } from "node:os";
+    30→    30→import { join } from "node:path";
+    31→    31→
+    32→    32→// ─── Public types ─────────────────────────────────────────────────────────────
+    33→    33→
+    34→    34→export interface LlmConfig {
+    35→    35→  /** One of: 'cli:hermes' | 'cli:claude' | 'cli:codex' | 'cli:openclaw' | 'cli:gemini' | 'cli:codebuddy' | 'cli:aider' | 'anthropic' | 'openai' | 'zai-sdk' | '' (auto) */
+    36→    36→  provider?: string;
+    37→    37→  model?: string;
+    38→    38→  system?: string;
+    39→    39→  temperature?: number;
+    40→    40→  maxTokens?: number;
+    41→    41→}
+    42→    42→
+    43→    43→export interface LlmResult {
+    44→    44→  ok: boolean;
+    45→    45→  content: string;
+    46→    46→  /** Alias for `content` — legacy callers read `.text`. */
+    47→    47→  text: string;
+    48→    48→  provider: string;
+    49→    49→  model: string;
+    50→    50→  durationMs: number;
+    51→    51→  fallback: boolean;
+    52→    52→  error?: string;
+    53→    53→  meta?: Record<string, unknown>;
+    54→    54→}
+    55→    55→
+    56→    56→export interface LlmProviderInfo {
+    57→    57→  provider: string;
+    58→    58→  /** Resolved binary path if a CLI provider; null for SDK providers. */
+    59→    59→  bin: string | null;
+    60→    60→  /** UI icon — single emoji chosen to loosely match the original brand. */
+    61→    61→  icon: string;
+    62→    62→  label: string;
+    63→    63→  reason: string;
+    64→    64→  available: boolean;
+    65→    65→  /** 'native' (PATH on host OS), 'wsl' (Linux distro via WSL bridge), or 'sdk'. */
+    66→    66→  via: "native" | "wsl" | "sdk";
+    67→    67→}
+    68→    68→
+    69→    69→// ─── CLI adapter table ────────────────────────────────────────────────────────
+    70→    70→
+    71→    71→interface CliAdapter {
+    72→    72→  id: string;
+    73→    73→  label: string;
+    74→    74→  icon: string;
+    75→    75→  bin: string;
+    76→    76→  wslBin?: string;
+    77→    77→  /** Hard-coded fallback locations to try before PATH lookup. */
+    78→    78→  extraProbePaths?: string[] | (() => string[]);
+    79→    79→  /** Args used by the smoke-test probe (default: ['--version']). */
+    80→    80→  probeArgs?: string[];
+    81→    81→  probeTimeoutMs?: number;
+    82→    82→  /** Set true for Node-script shims that need `node <bin> ...args`. */
+    83→    83→  needsNode?: boolean;
+    84→    84→  /**
+    85→    85→   * Real-call argv template. Receives the prompt and (optionally) the user
+    86→    86→   * model name. Return an array of args appended to the resolved binary.
+    87→    87→   */
+    88→    88→  callArgs: (prompt: string, model?: string) => string[];
+    89→    89→  /** Which stream(s) to harvest for the agent's reply. */
+    90→    90→  outputStream?: "stdout" | "stderr" | "both";
+    91→    91→  /** If set, the CLI writes its final answer to this file (token $OUTPUT_FILE substituted). */
+    92→    92→  outputFile?: string;
+    93→    93→  /** Strip a leading banner (e.g. Hermes' `session_id: ...`). */
+    94→    94→  stripBanner?: (raw: string) => string;
+    95→    95→  /**
+    96→    96→   * Build the `--resume <sessionId>` argv tokens (or equivalent) to append to
+    97→    97→   * `callArgs()` when reusing an existing CLI session. When undefined the
+    98→    98→   * adapter does not support session reuse and every call starts a fresh
+    99→    99→   * CLI session (the existing fallback behavior).
+   100→   100→   */
+   101→   101→  resumeArg?: (sessionId: string) => string[];
+   102→   102→  /**
+   103→   103→   * Pull a session id out of the CLI's stdout/stderr. Return null when no
+   104→   104→   * id is present (or when the adapter does not surface one). Used together
+   105→   105→   * with `resumeArg` to persist a (project, taskType, provider) → session_id
+   106→   106→   * mapping across calls.
+   107→   107→   */
+   108→   108→  parseSessionId?: (raw: string) => string | null;
+   109→   109→  /**
+   110→   110→   * Extract the LLM's reply text out of `stdout`. Defaults to
+   111→   111→   * `stripBanner(raw).trim()`. Override for adapters whose stdout contains
+   112→   112→   * structured output (JSON envelopes, stream-json NDJSON, etc.) — without
+   113→   113→   * this the entire envelope gets passed up as the LLM's answer.
+   114→   114→   */
+   115→   115→  extractContent?: (raw: string) => string;
+   116→   116→  callTimeoutMs?: number;
+   117→   117→  /** Extra env vars merged into the child process environment. */
+   118→   118→  extraEnv?: Record<string, string>;
+   119→   119→}
+   120→   120→
+   121→   121→const HERMES_BANNER_RE = /(?:^|\n)\s*session_id:\s*\S+\s*(?=\n|$)/i;
+   122→   122→// Capture group on the same banner so parseSessionId() can extract just the id.
+   123→   123→const HERMES_SESSION_ID_RE = /(?:^|\n)\s*session_id:\s*(\S+)/i;
+   124→   124→
+   125→   125→const CLI_ADAPTERS: CliAdapter[] = [
+   126→   126→  {
+   127→   127→    id: "hermes",
+   128→   128→    label: "Hermes CLI",
+   129→   129→    bin: "hermes",
+   130→   130→    icon: "🪶",
+   131→   131→    wslBin: "hermes",
+   132→   132→    probeArgs: ["--version"],
+   133→   133→    callArgs: (q) => ["chat", "-q", q, "-Q"],
+   134→   134→    outputStream: "both",
+   135→   135→    stripBanner: (raw) => raw.replace(HERMES_BANNER_RE, "").trim(),
+   136→   136→    // Hermes `chat -q` emits a leading `session_id: <id>` banner (see HERMES_BANNER_RE).
+   137→   137→    // We capture it via parseSessionId and pass it back as `--resume <id>` on the
+   138→   138→    // next call so the agent reuses the same remote session instead of starting
+   139→   139→    // a brand-new one.
+   140→   140→    parseSessionId: (raw) => {
+   141→   141→      const m = raw.match(HERMES_SESSION_ID_RE);
+   142→   142→      return m ? m[1] : null;
+   143→   143→    },
+   144→   144→    resumeArg: (sessionId) => ["--resume", sessionId],
+   145→   145→    // Hermes ships inside a Python venv; first-run startup can take 20-30s
+   146→   146→    // on Windows because of a CWD scan that walks the project's AGENTS.md.
+   147→   147→    // Give the probe enough time to return a version string before declaring
+   148→   148→    // the binary unavailable.
+   149→   149→    extraEnv: { PYTHONIOENCODING: "utf-8" },
+   150→   150→    probeTimeoutMs: 45_000,
+   151→   151→    callTimeoutMs: Number(process.env.HERMES_CLI_TIMEOUT_MS) || 600_000,
+   152→   152→  },
+   153→   153→  {
+   154→   154→    id: "claude",
+   155→   155→    label: "Claude Code CLI",
+   156→   156→    bin: "claude",
+   157→   157→    icon: "🟠",
+   158→   158→    wslBin: "claude",
+   159→   159→    probeArgs: ["--version"],
+   160→   160→    // --output-format json emits a JSON envelope per turn; --resume <sid>
+   161→   161→    // reuses an existing session. Same wire shape as codebuddy because the
+   162→   162→    // two CLIs share a common ancestor — extractContent + parseSessionId
+   163→   163→    // can reuse the same regex/strategy.
+   164→   164→    callArgs: (q) => ["-p", q, "--no-stream", "--output-format", "json"],
+   165→   165→    outputStream: "stdout",
+   166→   166→    probeTimeoutMs: 15_000,
+   167→   167→    callTimeoutMs: 240_000,
+   168→   168→    parseSessionId: (raw) => {
+   169→   169→      const m = raw.match(/"sessionId"\s*:\s*"([a-f0-9-]{8,})"/i);
+   170→   170→      return m ? m[1] : null;
+   171→   171→    },
+   172→   172→    resumeArg: (sessionId) => ["--resume", sessionId],
+   173→   173→    extractContent: (raw) => {
+   174→   174→      try {
+   175→   175→        const arr = JSON.parse(raw);
+   176→   176→        if (Array.isArray(arr)) {
+   177→   177→          for (let i = arr.length - 1; i >= 0; i--) {
+   178→   178→            const ev = arr[i];
+   179→   179→            if (ev?.type === "result" && typeof ev.result === "string") return ev.result;
+   180→   180→          }
+   181→   181→          for (let i = arr.length - 1; i >= 0; i--) {
+   182→   182→            const ev = arr[i];
+   183→   183→            if (ev?.type === "assistant" && Array.isArray(ev.message?.content)) {
+   184→   184→              const blocks = ev.message.content.filter((b: any) => b?.type === "text");
+   185→   185→              const lastText = blocks[blocks.length - 1]?.text;
+   186→   186→              if (typeof lastText === "string") return lastText;
+   187→   187→            }
+   188→   188→          }
+   189→   189→        }
+   190→   190→      } catch {}
+   191→   191→      return raw.trim();
+   192→   192→    },
+   193→   193→  },
+   194→   194→  {
+   195→   195→    id: "codex",
+   196→   196→    label: "Codex CLI",
+   197→   197→    bin: "codex",
+   198→   198→    icon: "🟢",
+   199→   199→    wslBin: "codex",
+   200→   200→    probeArgs: ["--version"],
+   201→   201→    extraProbePaths: (() => {
+   202→   202→      const home = process.env.HOME || process.env.USERPROFILE || "";
+   203→   203→      const paths: string[] = [];
+   204→   204→      if (process.platform === "win32") {
+   205→   205→        if (home) {
+   206→   206→          paths.push(`${home}\\.bun\\bin\\codex.exe`);
+   207→   207→          paths.push(`${home}\\.bun\\bin\\codex.cmd`);
+   208→   208→          paths.push(`${home}\\AppData\\Roaming\\npm\\codex.cmd`);
+   209→   209→          paths.push(`${home}\\AppData\\Local\\npm\\codex.cmd`);
+   210→   210→          paths.push(`${home}\\.local\\bin\\codex.exe`);
+   211→   211→        }
+   212→   212→        paths.push("C:\\Program Files\\nodejs\\codex.cmd");
+   213→   213→      } else {
+   214→   214→        if (home) {
+   215→   215→          paths.push(`${home}/.bun/bin/codex`);
+   216→   216→          paths.push(`${home}/.local/bin/codex`);
+   217→   217→          paths.push(`${home}/.npm-global/bin/codex`);
+   218→   218→          paths.push(`${home}/.nvm/versions/node/current/bin/codex`);
+   219→   219→        }
+   220→   220→        paths.push("/usr/local/bin/codex");
+   221→   221→        paths.push("/opt/homebrew/bin/codex");
+   222→   222→      }
+   223→   223→      return paths;
+   224→   224→    })(),
+   225→   225→    // --json emits JSONL events to stdout: thread.started, turn.started,
+   226→   226→    // item.completed (item.type=agent_message carries the final text in
+   227→   227→    // item.text), turn.completed. We need --json for parseSessionId; the
+   228→   228→    // legacy --output-last-message + $OUTPUT_FILE flow is dropped because
+   229→   229→    // we can now read the answer from the same JSONL stream.
+   230→   230→    callArgs: (q) => ["exec", "--json", q],
+   231→   231→    outputStream: "stdout",
+   232→   232→    probeTimeoutMs: 15_000,
+   233→   233→    callTimeoutMs: 240_000,
+   234→   234→    // codex prints `{"type":"thread.started","thread_id":"<uuid>"}` on the
+   235→   235→    // first JSONL line. Resume via `codex exec resume <thread_id> <prompt>`.
+   236→   236→    parseSessionId: (raw) => {
+   237→   237→      const m = raw.match(/"thread_id"\s*:\s*"([a-f0-9-]{8,})"/i);
+   238→   238→      return m ? m[1] : null;
+   239→   239→    },
+   240→   240→    resumeArg: (sessionId) => ["resume", sessionId],
+   241→   241→    // Last `item.completed` whose item.type === "agent_message" carries the
+   242→   242→    // final answer in .item.text. Walk from the end so trailing text wins.
+   243→   243→    extractContent: (raw) => {
+   244→   244→      const lines = raw.split(/\r?\n/);
+   245→   245→      for (let i = lines.length - 1; i >= 0; i--) {
+   246→   246→        const line = lines[i].trim();
+   247→   247→        if (!line.startsWith("{")) continue;
+   248→   248→        try {
+   249→   249→          const ev = JSON.parse(line);
+   250→   250→          if (ev?.type === "item.completed" && ev.item?.type === "agent_message" && typeof ev.item.text === "string") {
+   251→   251→            return ev.item.text;
+   252→   252→          }
+   253→   253→        } catch {}
+   254→   254→      }
+   255→   255→      // Fallback: last `turn.completed` with .text (rare)
+   256→   256→      for (let i = lines.length - 1; i >= 0; i--) {
+   257→   257→        const line = lines[i].trim();
+   258→   258→        if (!line.startsWith("{")) continue;
+   259→   259→        try {
+   260→   260→          const ev = JSON.parse(line);
+   261→   261→          if (ev?.type === "turn.completed" && typeof ev.text === "string") return ev.text;
+   262→   262→        } catch {}
+   263→   263→      }
+   264→   264→      return raw.trim();
+   265→   265→    },
+   266→   266→  },
+   267→   267→  {
+   268→   268→    id: "openclaw",
+   269→   269→    label: "OpenClaw CLI",
+   270→   270→    bin: "openclaw",
+   271→   271→    icon: "🦅",
+   272→   272→    wslBin: "openclaw",
+   273→   273→    probeArgs: ["--version"],
+   274→   274→    callArgs: (q) => ["llm", "chat", "--no-stream", q],
+   275→   275→    outputStream: "stdout",
+   276→   276→    probeTimeoutMs: 15_000,
+   277→   277→    callTimeoutMs: 240_000,
+   278→   278→  },
+   279→   279→  {
+   280→   280→    id: "gemini",
+   281→   281→    label: "Gemini CLI",
+   282→   282→    bin: "gemini",
+   283→   283→    icon: "♊",
+   284→   284→    wslBin: "gemini",
+   285→   285→    probeArgs: ["--version"],
+   286→   286→    callArgs: (q) => [q],
+   287→   287→    outputStream: "stdout",
+   288→   288→    probeTimeoutMs: 15_000,
+   289→   289→    callTimeoutMs: 240_000,
+   290→   290→  },
+   291→   291→  {
+   292→   292→    id: "codebuddy",
+   293→   293→    label: "Codebuddy / WorkBuddy CLI",
+   294→   294→    icon: "🐼",
+   295→   295→    bin: "codebuddy",
+   296→   296→    needsNode: true,
+   297→   297→    extraProbePaths: [
+   298→   298→      process.platform === "win32"
+   299→   299→        ? "C:\\Program Files\\WorkBuddy\\resources\\app.asar.unpacked\\cli\\bin\\codebuddy"
+   300→   300→        : "/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy",
+   301→   301→      "/usr/local/bin/codebuddy",
+   302→   302→      "/opt/homebrew/bin/codebuddy",
+   303→   303→    ],
+   304→   304→    callArgs: (q, model) => {
+   305→   305→      const m = model || process.env.CODEBUDDY_MODEL || "deepseek-v4-pro";
+   306→   306→      // --output-format json prints the full message envelope to stdout so we can
+   307→   307→      // pull the sessionId. --resume <id> reuses the existing session on the
+   308→   308→      // next call. Both are added at the call site (callAnyLlm) when the
+   309→   309→      // adapter's resumeArg/parseSessionId hooks are present.
+   310→   310→      return ["--print", "--output-format", "json", "--model", m, q];
+   311→   311→    },
+   312→   312→    outputStream: "stdout",
+   313→   313→    // codebuddy prints `{"type":"message", ... "sessionId":"<uuid>", ...}` for
+   314→   314→    // every message. We pull the first match so the same remote session is
+   315→   315→    // resumed on the next call. Falls back to null on malformed JSON.
+   316→   316→    parseSessionId: (raw) => {
+   317→   317→      const m = raw.match(/"sessionId"\s*:\s*"([a-f0-9-]{8,})"/i);
+   318→   318→      return m ? m[1] : null;
+   319→   319→    },
+   320→   320→    resumeArg: (sessionId) => ["--resume", sessionId],
+   321→   321→    // --output-format json emits a JSON array of envelopes. The actual LLM
+   322→   322→    // answer lives in the LAST `assistant` message's last text block (after
+   323→   323→    // any `thinking` blocks). Walk backwards so trailing text wins. Falls
+   324→   324→    // back to the trimmed raw output if no assistant text is found, so a
+   325→   325→    // future codebuddy format change won't silently break us.
+   326→   326→    extractContent: (raw) => {
+   327→   327→      try {
+   328→   328→        const arr = JSON.parse(raw);
+   329→   329→        if (!Array.isArray(arr)) return raw.trim();
+   330→   330→        // Last "result" event carries the final answer in .result.
+   331→   331→        for (let i = arr.length - 1; i >= 0; i--) {
+   332→   332→          const ev = arr[i];
+   333→   333→          if (ev?.type === "result" && typeof ev.result === "string") return ev.result;
+   334→   334→        }
+   335→   335→        // Last assistant message's last text block.
+   336→   336→        for (let i = arr.length - 1; i >= 0; i--) {
+   337→   337→          const ev = arr[i];
+   338→   338→          if (ev?.type === "assistant" && Array.isArray(ev.message?.content)) {
+   339→   339→            const blocks = ev.message.content.filter((b: any) => b?.type === "text");
+   340→   340→            const lastText = blocks[blocks.length - 1]?.text;
+   341→   341→            if (typeof lastText === "string") return lastText;
+   342→   342→          }
+   343→   343→        }
+   344→   344→      } catch {}
+   345→   345→      return raw.trim();
+   346→   346→    },
+   347→   347→    probeTimeoutMs: 15_000,
+   348→   348→    callTimeoutMs: 240_000,
+   349→   349→    extraEnv: { PYTHONIOENCODING: "utf-8" },
+   350→   350→  },
+   351→   351→  {
+   352→   352→    id: "aider",
+   353→   353→    label: "Aider CLI",
+   354→   354→    bin: "aider",
+   355→   355→    icon: "🛠️",
+   356→   356→    wslBin: "aider",
+   357→   357→    probeArgs: ["--version"],
+   358→   358→    callArgs: (q) => ["--message", q, "--no-git", "--yes", "--no-auto-commits"],
+   359→   359→    outputStream: "stdout",
+   360→   360→    probeTimeoutMs: 15_000,
+   361→   361→    callTimeoutMs: 240_000,
+   362→   362→  },
+   363→   363→];
+   364→   364→
+   365→   365→// ─── PATH-based resolver (cross-platform, no hardcoded paths) ────────────────
+   366→   366→
+   367→   367→/** Read the Lxss registry to enumerate installed WSL distros + the default one. */
+   368→   368→function wslRegistryInfo(): { defaultDistro: string; distros: string[] } | null {
+   369→   369→  if (process.platform !== "win32") return null;
+   370→   370→  try {
+   371→   371→    const wslList = execSync("wsl.exe -l -v", {
+   372→   372→      timeout: 10_000,
+   373→   373→      encoding: "buffer",
+   374→   374→      windowsHide: true,
+   375→   375→    });
+   376→   376→    const cleaned = Buffer.from(wslList).toString("utf8").replace(/\0/g, " ").replace(/\t/g, " ");
+   377→   377→    const lines = cleaned
+   378→   378→      .split(/\r?\n/)
+   379→   379→      .map((l) => l.trim())
+   380→   380→      .filter((l) => l && !/^NAME\b/i.test(l));
+   381→   381→    const distros: string[] = [];
+   382→   382→    let defaultDistro = "";
+   383→   383→    for (const line of lines) {
+   384→   384→      const isDefault = /^\*/.test(line);
+   385→   385→      const tokens = line.split(/\s{2,}|\s+/).map((t) => t.trim()).filter(Boolean);
+   386→   386→      const name = (isDefault ? tokens[1] : tokens[0]) || "";
+   387→   387→      if (!name || /^(running|stopped|installing)$/i.test(name)) continue;
+   388→   388→      distros.push(name);
+   389→   389→      if (isDefault && !defaultDistro) defaultDistro = name;
+   390→   390→    }
+   391→   391→    if (distros.length === 0) {
+   392→   392→      const out = execSync(
+   393→   393→        'reg query "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Lxss" /s',
+   394→   394→        { timeout: 5_000, encoding: "buffer", windowsHide: true },
+   395→   395→      );
+   396→   396→      const text = Buffer.from(out).toString("latin1");
+   397→   397→      const uuids: string[] = [];
+   398→   398→      const uuid2name: Record<string, string> = {};
+   399→   399→      const blocks = text.split(/\r?\n\s*\r?\n/);
+   400→   400→      for (const blk of blocks) {
+   401→   401→        const uuidMatch = blk.match(/\\([\w-]{36})\s*$/m);
+   402→   402→        if (!uuidMatch) continue;
+   403→   403→        const uuid = uuidMatch[1];
+   404→   404→        uuids.push(uuid);
+   405→   405→        const nameMatch = blk.match(/DistributionName\s+REG_SZ\s+(.+)/);
+   406→   406→        if (nameMatch) uuid2name[uuid] = nameMatch[1].trim();
+   407→   407→      }
+   408→   408→      const defaultMatch = text.match(/DefaultDistribution\s+REG_SZ\s+\{?([\w-]+)\}?/);
+   409→   409→      if (defaultMatch) {
+   410→   410→        const uuid = defaultMatch[1];
+   411→   411→        defaultDistro = uuid2name[uuid] || uuid;
+   412→   412→      }
+   413→   413→      for (const u of uuids) {
+   414→   414→        const n = uuid2name[u] || u;
+   415→   415→        if (n) distros.push(n);
+   416→   416→      }
+   417→   417→    }
+   418→   418→    if (distros.length === 0) return null;
+   419→   419→    return { defaultDistro: defaultDistro || distros[0], distros };
+   420→   420→  } catch {
+   421→   421→    return null;
+   422→   422→  }
+   423→   423→}
+   424→   424→
+   425→   425→/** Resolve the WSL distro name to invoke. Priority: WSL_DISTRO env > registry default > "Debian". */
+   426→   426→function wslTargetDistro(): string {
+   427→   427→  return process.env.WSL_DISTRO || "Debian";
+   428→   428→}
+   429→   429→
+   430→   430→/** Lightweight readiness check — runs `true` in the default distro. */
+   431→   431→function wslAvailable(): Promise<boolean> {
+   432→   432→  if (process.platform !== "win32") return Promise.resolve(false);
+   433→   433→  const info = wslRegistryInfo();
+   434→   434→  if (!info) return Promise.resolve(false);
+   435→   435→  const distro = wslTargetDistro();
+   436→   436→  return new Promise<boolean>((resolve) => {
+   437→   437→    let done = false;
+   438→   438→    const finish = (b: boolean) => {
+   439→   439→      if (!done) {
+   440→   440→        done = true;
+   441→   441→        resolve(b);
+   442→   442→      }
+   443→   443→    };
+   444→   444→    try {
+   445→   445→      const child = spawn("wsl.exe", ["-d", distro, "--", "true"], {
+   446→   446→        stdio: ["ignore", "pipe", "pipe"],
+   447→   447→        windowsHide: true,
+   448→   448→      });
+   449→   449→      child.on("error", () => finish(false));
+   450→   450→      child.on("close", (code) => finish(code === 0));
+   451→   451→    } catch {
+   452→   452→      finish(false);
+   453→   453→    }
+   454→   454→    setTimeout(() => finish(false), 45_000);
+   455→   455→  });
+   456→   456→}
+   457→   457→
+   458→   458→/** Run `bash -lc '...'` inside the configured WSL distro and capture stdout/stderr. */
+   459→   459→function runInWsl(
+   460→   460→  bashCmd: string,
+   461→   461→  timeoutMs = 300_000,
+   462→   462→): Promise<{ code: number; stdout: string; stderr: string }> {
+   463→   463→  const distro = wslTargetDistro();
+   464→   464→  return new Promise((resolve, reject) => {
+   465→   465→    let done = false;
+   466→   466→    const finish = (code: number, stdout: string, stderr: string) => {
+   467→   467→      if (done) return;
+   468→   468→      done = true;
+   469→   469→      resolve({ code, stdout, stderr });
+   470→   470→    };
+   471→   471→    try {
+   472→   472→      const child = spawn("wsl.exe", ["-d", distro, "--", "bash"], {
+   473→   473→        stdio: ["pipe", "pipe", "pipe"],
+   474→   474→        windowsHide: true,
+   475→   475→      });
+   476→   476→      let stdout = "";
+   477→   477→      let stderr = "";
+   478→   478→      const killTimer = setTimeout(() => {
+   479→   479→        try {
+   480→   480→          child.kill();
+   481→   481→        } catch {}
+   482→   482→        finish(124, stdout, stderr);
+   483→   483→      }, timeoutMs);
+   484→   484→      child.stdout.on("data", (b) => {
+   485→   485→        stdout += b.toString();
+   486→   486→      });
+   487→   487→      child.stderr.on("data", (b) => {
+   488→   488→        stderr += b.toString();
+   489→   489→      });
+   490→   490→      child.on("error", (err) => {
+   491→   491→        clearTimeout(killTimer);
+   492→   492→        finish(1, stdout, stderr + "\nspawn: " + err.message);
+   493→   493→      });
+   494→   494→      child.on("close", (code) => {
+   495→   495→        clearTimeout(killTimer);
+   496→   496→        finish(code ?? -1, stdout, stderr);
+   497→   497→      });
+   498→   498→      const script = [
+   499→   499→        `set +e`,
+   500→   500→        `[ -r "$HOME/.profile" ] && . "$HOME/.profile" 2>/dev/null || true`,
+   501→   501→        `[ -r "$HOME/.bash_profile" ] && . "$HOME/.bash_profile" 2>/dev/null || true`,
+   502→   502→        `[ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc" 2>/dev/null || true`,
+   503→   503→        `export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$HOME/go/bin:$HOME/.bun/bin:$HOME/Library/Python/3.12/bin:$HOME/Library/Python/3.11/bin:/opt/homebrew/bin:/usr/local/bin:/snap/bin:$PATH"`,
+   504→   504→        bashCmd,
+   505→   505→      ].join("\n");
+   506→   506→      child.stdin.write(script + "\n");
+   507→   507→      child.stdin.end();
+   508→   508→    } catch (err) {
+   509→   509→      finish(1, "", "spawn: " + (err as Error).message);
+   510→   510→    }
+   511→   511→  });
+   512→   512→}
+   513→   513→
+   514→   514→/** Try to find `bin` inside WSL PATH. Returns path or null. */
+   515→   515→async function findOnWsl(bin: string): Promise<string | null> {
+   516→   516→  try {
+   517→   517→    const bashCmd = `command -v ${bin} 2>/dev/null || which ${bin} 2>/dev/null`;
+   518→   518→    const r = await runInWsl(bashCmd, 30_000);
+   519→   519→    if (r.code !== 0) return null;
+   520→   520→    const first = r.stdout
+   521→   521→      .split("\n")
+   522→   522→      .map((line) => line.trim())
+   523→   523→      .find(Boolean);
+   524→   524→    return first || null;
+   525→   525→  } catch {
+   526→   526→    return null;
+   527→   527→  }
+   528→   528→}
+   529→   529→
+   530→   530→/** Resolve `bin` on PATH. Uses `where` (Windows) / `which` (POSIX). Returns absolute path or null. */
+   531→   531→function findOnPath(bin: string, extras?: string[]): Promise<string | null> {
+   532→   532→  return new Promise<string | null>((resolve) => {
+   533→   533→    let resolved = false;
+   534→   534→    if (extras) {
+   535→   535→      for (const p of extras) {
+   536→   536→        if (resolved) break;
+   537→   537→        try {
+   538→   538→          if (existsSync(p)) {
+   539→   539→            resolved = true;
+   540→   540→            resolve(p);
+   541→   541→            return;
+   542→   542→          }
+   543→   543→        } catch {}
+   544→   544→      }
+   545→   545→    }
+   546→   546→    if (!resolved) {
+   547→   547→      const envKey = bin.toUpperCase().replace(/[^A-Z0-9]/g, "_") + "_CLI_PATH";
+   548→   548→      const envPath = process.env[envKey];
+   549→   549→      if (envPath) {
+   550→   550→        try {
+   551→   551→          if (existsSync(envPath)) {
+   552→   552→            resolved = true;
+   553→   553→            resolve(envPath);
+   554→   554→            return;
+   555→   555→          }
+   556→   556→        } catch {}
+   557→   557→      }
+   558→   558→    }
+   559→   559→    if (resolved) return;
+   560→   560→    const cmd = process.platform === "win32" ? "where" : "which";
+   561→   561→    const r = spawn(cmd, [bin], {
+   562→   562→      stdio: ["ignore", "pipe", "pipe"],
+   563→   563→      shell: process.platform === "win32",
+   564→   564→    });
+   565→   565→    let out = "";
+   566→   566→    r.stdout.on("data", (b) => {
+   567→   567→      out += b.toString();
+   568→   568→    });
+   569→   569→    r.on("error", () => {
+   570→   570→      if (!resolved) {
+   571→   571→        resolved = true;
+   572→   572→        resolve(null);
+   573→   573→      }
+   574→   574→    });
+   575→   575→    r.on("close", (code) => {
+   576→   576→      if (resolved) return;
+   577→   577→      resolved = true;
+   578→   578→      if (code !== 0) return resolve(null);
+   579→   579→      const first = out
+   580→   580→        .split("\n")
+   581→   581→        .map((line) => line.trim())
+   582→   582→        .find(Boolean);
+   583→   583→      resolve(first || null);
+   584→   584→    });
+   585→   585→  });
+   586→   586→}
+   587→   587→
+   588→   588→// ─── Probe (smoke test) ───────────────────────────────────────────────────────
+   589→   589→
+   590→   590→interface ProbeOk {
+   591→   591→  ok: true;
+   592→   592→  bin: string;
+   593→   593→  reason: string;
+   594→   594→}
+   595→   595→interface ProbeErr {
+   596→   596→  ok: false;
+   597→   597→  reason: string;
+   598→   598→}
+   599→   599→
+   600→   600→async function probeCli(adapter: CliAdapter): Promise<ProbeOk | ProbeErr> {
+   601→   601→  const extras = typeof adapter.extraProbePaths === "function" ? adapter.extraProbePaths() : adapter.extraProbePaths;
+   602→   602→  const bin = await findOnPath(adapter.bin, extras);
+   603→   603→  if (!bin) return { ok: false, reason: `${adapter.label} not found on PATH` };
+   604→   604→
+   605→   605→  const args = adapter.probeArgs ?? ["--version"];
+   606→   606→  const probeTimeout = adapter.probeTimeoutMs ?? 8_000;
+   607→   607→
+   608→   608→  return new Promise((resolve) => {
+   609→   609→    // On Windows .cmd/.bat shims need shell:true to spawn correctly. The
+   610→   610→    // subsequent `node` interpreter only fires for adapters flagged
+   611→   611→    // needsNode (WorkBuddy codebuddy etc.); non-node CLIs spawn their bin
+   612→   612→    // directly with the appropriate shell flag.
+   613→   613→    const isCmdBatch = process.platform === "win32" && /\.(cmd|bat)$/i.test(bin);
+   614→   614→    const nodeBin = process.platform === "win32" ? "node.exe" : "node";
+   615→   615→    // Guard: Windows CreateProcessW cmdline limit ~32KB. Detect up front
+   616→   616→    // and surface a clear "prompt too long" error instead of the cryptic
+   617→   617→    // ENAMETOOLONG that Node's child_process throws.
+   618→   618→    if (process.platform === "win32") {
+   619→   619→      const fullArgv = adapter.needsNode ? [bin, ...args] : [bin, ...args];
+   620→   620→      const cmdlineLen = fullArgv.reduce((s, x) => s + x.length + 1, 0);
+   621→   621→      if (cmdlineLen > 30000) {
+   622→   622→        return resolve({ ok: false, reason: `${adapter.label} probe prompt too long for Windows spawn (cmdline ${cmdlineLen} chars)` });
+   623→   623→      }
+   624→   624→    }
+   625→   625→    const child = adapter.needsNode
+   626→   626→      ? spawn(nodeBin, [bin, ...args], {
+   627→   627→          stdio: ["ignore", "pipe", "pipe"],
+   628→   628→          env: { ...process.env, ...adapter.extraEnv },
+   629→   629→          windowsHide: true,
+   630→   630→        })
+   631→   631→      : spawn(bin, args, {
+   632→   632→          stdio: ["ignore", "pipe", "pipe"],
+   633→   633→          env: { ...process.env, ...adapter.extraEnv },
+   634→   634→          shell: isCmdBatch,
+   635→   635→          windowsHide: true,
+   636→   636→        });
+   637→   637→    let stdout = "";
+   638→   638→    let stderr = "";
+   639→   639→    let done = false;
+   640→   640→    const finish = (r: ProbeOk | ProbeErr) => {
+   641→   641→      if (!done) {
+   642→   642→        done = true;
+   643→   643→        resolve(r);
+   644→   644→      }
+   645→   645→    };
+   646→   646→    const killTimer = setTimeout(() => {
+   647→   647→      try {
+   648→   648→        child.kill();
+   649→   649→      } catch {}
+   650→   650→      finish({ ok: false, reason: `${adapter.label} probe timed out (${probeTimeout}ms)` });
+   651→   651→    }, probeTimeout);
+   652→   652→    child.stdout.on("data", (b) => {
+   653→   653→      stdout += b.toString();
+   654→   654→    });
+   655→   655→    child.stderr.on("data", (b) => {
+   656→   656→      stderr += b.toString();
+   657→   657→    });
+   658→   658→    child.on("error", (err) => {
+   659→   659→      clearTimeout(killTimer);
+   660→   660→      finish({ ok: false, reason: `${adapter.label} spawn failed: ${err?.message}` });
+   661→   661→    });
+   662→   662→    child.on("close", (code) => {
+   663→   663→      clearTimeout(killTimer);
+   664→   664→      const combined = (stdout + "\n" + stderr).trim();
+   665→   665→      if (code === 0 && combined.length > 0) {
+   666→   666→        finish({ ok: true, bin, reason: `${adapter.label} found at ${bin}` });
+   667→   667→      } else {
+   668→   668→        finish({
+   669→   669→          ok: false,
+   670→   670→          reason: `${adapter.label} probe failed (exit=${code}, ${combined.slice(0, 120)})`,
+   671→   671→        });
+   672→   672→      }
+   673→   673→    });
+   674→   674→  });
+   675→   675→}
+   676→   676→
+   677→   677→// ─── Probe cache (per-process) ────────────────────────────────────────────────
+   678→   678→
+   679→   679→interface AdapterProbes {
+   680→   680→  native?: ProbeOk | ProbeErr;
+   681→   681→  wsl?: ProbeOk | ProbeErr;
+   682→   682→}
+   683→   683→
+   684→   684→let _probeCache: Promise<Record<string, AdapterProbes>> | null = null;
+   685→   685→let _probeCacheAt = 0;
+   686→   686→const PROBE_TTL_MS = 5 * 60_000; // 5 minutes
+   687→   687→
+   688→   688→// Cache file lives in OS tmpdir so writing does NOT trigger webpack's file
+   689→   689→// watcher → no HMR / page refresh / CSS flash. Per-project namespace
+   690→   690→// ("sciwrite-cache") keeps us isolated from pdb-tracker's cache file.
+   691→   691→const _CACHE_DIR = join(tmpdir(), "sciwrite-cache");
+   692→   692→try {
+   693→   693→  mkdirSync(_CACHE_DIR, { recursive: true });
+   694→   694→} catch {}
+   695→   695→const DISK_CACHE_FILE = join(_CACHE_DIR, "llm-providers-cache.json");
+   696→   696→const DISK_CACHE_VERSION = 1;
+   697→   697→const DISK_TTL_MS = 144 * 60 * 60_000; // 144 hours (6 days)
+   698→   698→
+   699→   699→interface CachedProvider {
+   700→   700→  id: string;
+   701→   701→  via: "native" | "wsl";
+   702→   702→  bin: string | null;
+   703→   703→  available: boolean;
+   704→   704→  reason: string;
+   705→   705→  binMtime?: number;
+   706→   706→}
+   707→   707→interface ProviderCache {
+   708→   708→  version: number;
+   709→   709→  lastUpdated: string;
+   710→   710→  providers: CachedProvider[];
+   711→   711→}
+   712→   712→
+   713→   713→function readDiskCache(): ProviderCache | null {
+   714→   714→  try {
+   715→   715→    const text = readFileSync(DISK_CACHE_FILE, "utf8");
+   716→   716→    const parsed = JSON.parse(text) as ProviderCache;
+   717→   717→    if (parsed.version !== DISK_CACHE_VERSION) return null;
+   718→   718→    if (!Array.isArray(parsed.providers) || !parsed.lastUpdated) return null;
+   719→   719→    const ageMs = Date.now() - new Date(parsed.lastUpdated).getTime();
+   720→   720→    if (ageMs > DISK_TTL_MS) return null;
+   721→   721→    for (const p of parsed.providers) {
+   722→   722→      if (p.available && p.bin && !existsSync(p.bin)) return null;
+   723→   723→    }
+   724→   724→    return parsed;
+   725→   725→  } catch {
+   726→   726→    return null;
+   727→   727→  }
+   728→   728→}
+   729→   729→
+   730→   730→function writeDiskCache(probes: Record<string, AdapterProbes>): void {
+   731→   731→  try {
+   732→   732→    // Don't persist a "all unavailable" snapshot — that snapshot is usually
+   733→   733→    // the result of a transient probe-time failure (e.g. WSL service hung
+   734→   734→    // or codebuddy.exe momentarily locked), and persisting it causes every
+   735→   735→    // subsequent request to also report "no providers". Only cache when at
+   736→   736→    // least one adapter returned a positive result.
+   737→   737→    let anyAvailable = false;
+   738→   738→    for (const id of Object.keys(probes)) {
+   739→   739→      for (const via of ["native", "wsl"] as const) {
+   740→   740→        if (probes[id]?.[via]?.ok) { anyAvailable = true; break; }
+   741→   741→      }
+   742→   742→      if (anyAvailable) break;
+   743→   743→    }
+   744→   744→    if (!anyAvailable) {
+   745→   745→      // Best-effort: delete the stale cache file so next read forces re-probe.
+   746→   746→      try { unlinkSync(DISK_CACHE_FILE); } catch {}
+   747→   747→      return;
+   748→   748→    }
+   749→   749→    const providers: CachedProvider[] = [];
+   750→   750→    for (const a of CLI_ADAPTERS) {
+   751→   751→      const pair = probes[a.id];
+   752→   752→      if (!pair) continue;
+   753→   753→      for (const via of ["native", "wsl"] as const) {
+   754→   754→        const p = pair[via];
+   755→   755→        if (!p) continue;
+   756→   756→        let binMtime: number | undefined;
+   757→   757→        if (p.ok && p.bin) {
+   758→   758→          try {
+   759→   759→            binMtime = statSync(p.bin).mtimeMs / 1000;
+   760→   760→          } catch {}
+   761→   761→        }
+   762→   762→        providers.push({
+   763→   763→          id: a.id,
+   764→   764→          via,
+   765→   765→          bin: p.ok ? p.bin : null,
+   766→   766→          available: p.ok,
+   767→   767→          reason: p.reason,
+   768→   768→          binMtime,
+   769→   769→        });
+   770→   770→      }
+   771→   771→    }
+   772→   772→    const cache: ProviderCache = {
+   773→   773→      version: DISK_CACHE_VERSION,
+   774→   774→      lastUpdated: new Date().toISOString(),
+   775→   775→      providers,
+   776→   776→    };
+   777→   777→    writeFileSync(DISK_CACHE_FILE, JSON.stringify(cache, null, 2));
+   778→   778→  } catch (err) {
+   779→   779→    console.warn("[llm] failed to write provider cache:", (err as Error).message);
+   780→   780→  }
+   781→   781→}
+   782→   782→
+   783→   783→function clearDiskCache(): void {
+   784→   784→  try {
+   785→   785→    unlinkSync(DISK_CACHE_FILE);
+   786→   786→  } catch {}
+   787→   787→}
+   788→   788→
+   789→   789→function markProviderStale(adapterId: string, via: "native" | "wsl"): void {
+   790→   790→  const cache = readDiskCache();
+   791→   791→  if (!cache) return;
+   792→   792→  const before = cache.providers.length;
+   793→   793→  cache.providers = cache.providers.filter((p) => !(p.id === adapterId && p.via === via));
+   794→   794→  if (cache.providers.length === before) return;
+   795→   795→  try {
+   796→   796→    cache.lastUpdated = new Date().toISOString();
+   797→   797→    writeFileSync(DISK_CACHE_FILE, JSON.stringify(cache, null, 2));
+   798→   798→  } catch {}
+   799→   799→}
+   800→   800→
+   801→   801→function probeAll(force = false): Promise<Record<string, AdapterProbes>> {
+   802→   802→  const ageOk = Date.now() - _probeCacheAt < PROBE_TTL_MS;
+   803→   803→  if (_probeCache && ageOk && !force) return _probeCache;
+   804→   804→  if (_probeCache && force) _probeCache = null;
+   805→   805→  _probeCache = (async () => {
+   806→   806→    if (!force) {
+   807→   807→      const disk = readDiskCache();
+   808→   808→      if (disk) {
+   809→   809→        const out: Record<string, AdapterProbes> = {};
+   810→   810→        for (const p of disk.providers) {
+   811→   811→          if (!out[p.id]) out[p.id] = {};
+   812→   812→          out[p.id][p.via] = p.available
+   813→   813→            ? { ok: true, bin: p.bin!, reason: p.reason }
+   814→   814→            : { ok: false, reason: p.reason };
+   815→   815→        }
+   816→   816→        return out;
+   817→   817→      }
+   818→   818→    }
+   819→   819→    const out: Record<string, AdapterProbes> = {};
+   820→   820→    await Promise.all(
+   821→   821→      CLI_ADAPTERS.map(async (a) => {
+   822→   822→        out[a.id] = { native: await probeCli(a) };
+   823→   823→      }),
+   824→   824→    );
+   825→   825→    if (process.platform === "win32") {
+   826→   826→      const wsl = await wslAvailable();
+   827→   827→      if (wsl) {
+   828→   828→        const wslResults = await Promise.all(
+   829→   829→          CLI_ADAPTERS.map((a) => probeCliInWsl(a).then((r) => ({ id: a.id, r }))),
+   830→   830→        );
+   831→   831→        for (const { id, r } of wslResults) {
+   832→   832→          out[id] = { ...(out[id] ?? {}), wsl: r };
+   833→   833→        }
+   834→   834→      }
+   835→   835→    }
+   836→   836→    writeDiskCache(out);
+   837→   837→    _probeCacheAt = Date.now();
+   838→   838→    return out;
+   839→   839→  })();
+   840→   840→  return _probeCache;
+   841→   841→}
+   842→   842→
+   843→   843→async function probeCliInWsl(adapter: CliAdapter): Promise<ProbeOk | ProbeErr> {
+   844→   844→  const wslBin = adapter.wslBin ?? adapter.bin;
+   845→   845→  const wslPath = await findOnWsl(wslBin);
+   846→   846→  if (!wslPath) return { ok: false, reason: `${adapter.label} not found inside WSL` };
+   847→   847→  const args = adapter.probeArgs ?? ["--version"];
+   848→   848→  const bashCmd = `${wslBin} ${args.map((a) => JSON.stringify(a)).join(" ")}`;
+   849→   849→  const probeTimeout = adapter.probeTimeoutMs ?? 8_000;
+   850→   850→  try {
+   851→   851→    const r = await runInWsl(
+   852→   852→      `timeout ${Math.ceil(probeTimeout / 1000)} ${bashCmd} 2>&1`,
+   853→   853→      probeTimeout + 30_000,
+   854→   854→    );
+   855→   855→    const combined = (r.stdout + "\n" + r.stderr).trim();
+   856→   856→    if ((r.code === 0 || r.code === 124) && combined.length > 0) {
+   857→   857→      return { ok: true, bin: wslPath, reason: `${adapter.label} found in WSL at ${wslPath}` };
+   858→   858→    }
+   859→   859→    return {
+   860→   860→      ok: false,
+   861→   861→      reason: `${adapter.label} WSL probe failed (exit=${r.code}, ${combined.slice(0, 120)})`,
+   862→   862→    };
+   863→   863→  } catch (err: any) {
+   864→   864→    return { ok: false, reason: `${adapter.label} WSL probe error: ${err?.message}` };
+   865→   865→  }
+   866→   866→}
+   867→   867→
+   868→   868→export function clearLlmProbeCache(): void {
+   869→   869→  _probeCache = null;
+   870→   870→  _probeCacheAt = 0;
+   871→   871→  clearDiskCache();
+   872→   872→}
+   873→   873→
+   874→   874→export function markLlmProviderStale(adapterId: string, via: "native" | "wsl"): void {
+   875→   875→  markProviderStale(adapterId, via);
+   876→   876→}
+   877→   877→
+   878→   878→// ─── z-ai SDK availability check (SciWrite-specific) ─────────────────────────
+   879→   879→//
+   880→   880→// SciWrite's existing default is z-ai-web-dev-sdk. We surface it as a synthetic
+   881→   881→// 'zai-sdk' provider so the existing UI flow keeps working alongside the new
+   882→   882→// CLI detection. The SDK doesn't need a probe — just verify the importable
+   883→   883→// package exists in node_modules.
+   884→   884→
+   885→   885→function isZaiSdkAvailable(): boolean {
+   886→   886→  try {
+   887→   887→    require.resolve("z-ai-web-dev-sdk");
+   888→   888→    return true;
+   889→   889→  } catch {
+   890→   890→    return false;
+   891→   891→  }
+   892→   892→}
+   893→   893→
+   894→   894→// ─── Provider enumeration (for the front-end settings panel) ──────────────────
+   895→   895→
+   896→   896→export interface InspectProvidersOptions {
+   897→   897→  /** When true, include `available: false` entries so the UI can show them dim. Default false. */
+   898→   898→  showUnavailable?: boolean;
+   899→   899→  /** Optional list of provider ids the user has whitelisted (others hidden). */
+   900→   900→  whitelist?: string[];
+   901→   901→}
+   902→   902→
+   903→   903→export async function inspectProviders(opts: InspectProvidersOptions = {}): Promise<{
+   904→   904→  chosen: string;
+   905→   905→  available: LlmProviderInfo[];
+   906→   906→  totalClisScanned: number;
+   907→   907→}> {
+   908→   908→  const probes = await probeAll();
+   909→   909→  const available: LlmProviderInfo[] = [];
+   910→   910→  let totalClisScanned = 0;
+   911→   911→
+   912→   912→  // Iterate CLI_ADAPTERS instead of `probes` so every registered adapter is
+   913→   913→  // represented in the result — even ones that were skipped because the disk
+   914→   914→  // cache had no record of them (e.g. a CLI installed after the first probe
+   915→   915→  // session). Without this, `detected` would silently drop the entry and the
+   916→   916→  // "redetect" button in the LLM config dialog would have nothing to show.
+   917→   917→  for (const a of CLI_ADAPTERS) {
+   918→   918→    totalClisScanned++;
+   919→   919→    const probePair = probes[a.id] ?? {};
+   920→   920→    if (probePair.native?.ok) {
+   921→   921→      available.push({
+   922→   922→        provider: `cli:${a.id}`,
+   923→   923→        bin: probePair.native.bin,
+   924→   924→        icon: a.icon,
+   925→   925→        label: a.label,
+   926→   926→        reason: probePair.native.reason,
+   927→   927→        available: true,
+   928→   928→        via: "native",
+   929→   929→      });
+   930→   930→    } else if (probePair.wsl?.ok) {
+   931→   931→      available.push({
+   932→   932→        provider: `cli:${a.id}`,
+   933→   933→        bin: probePair.wsl.bin,
+   934→   934→        icon: a.icon,
+   935→   935→        label: `${a.label} (WSL)`,
+   936→   936→        reason: probePair.wsl.reason,
+   937→   937→        available: true,
+   938→   938→        via: "wsl",
+   939→   939→      });
+   940→   940→    } else {
+   941→   941→      const why =
+   942→   942→        probePair.native?.reason || probePair.wsl?.reason || `${a.label} not probed yet (cache miss — click 重新检测)`;
+   943→   943→      available.push({
+   944→   944→        provider: `cli:${a.id}`,
+   945→   945→        bin: null,
+   946→   946→        icon: a.icon,
+   947→   947→        label: a.label,
+   948→   948→        reason: why,
+   949→   949→        available: false,
+   950→   950→        via: "native",
+   951→   951→      });
+   952→   952→    }
+   953→   953→  }
+   954→   954→
+   955→   955→  // SDK fallbacks — only added if their package is installed.
+   956→   956→  const anthropicAvailable = !!process.env.ANTHROPIC_API_KEY;
+   957→   957→  available.push({
+   958→   958→    provider: "anthropic",
+   959→   959→    bin: null,
+   960→   960→    icon: "🤖",
+   961→   961→    label: "Anthropic SDK",
+   962→   962→    reason: anthropicAvailable ? "ANTHROPIC_API_KEY is set" : "ANTHROPIC_API_KEY not set",
+   963→   963→    available: anthropicAvailable,
+   964→   964→    via: "sdk",
+   965→   965→  });
+   966→   966→
+   967→   967→  const openaiAvailable = !!process.env.OPENAI_API_KEY;
+   968→   968→  available.push({
+   969→   969→    provider: "openai",
+   970→   970→    bin: null,
+   971→   971→    icon: "🧠",
+   972→   972→    label: "OpenAI SDK",
+   973→   973→    reason: openaiAvailable ? "OPENAI_API_KEY is set" : "OPENAI_API_KEY not set",
+   974→   974→    available: openaiAvailable,
+   975→   975→    via: "sdk",
+   976→   976→  });
+   977→   977→
+   978→   978→  // SciWrite's default — z-ai-web-dev-sdk. Always report it (SDK ships with
+   979→   979→  // the project), and let the existing /api/llm-config route own the actual
+   980→   980→  // dispatch through `src/lib/ai.ts`.
+   981→   981→  const zaiSdkAvailable = isZaiSdkAvailable();
+   982→   982→  available.push({
+   983→   983→    provider: "zai-sdk",
+   984→   984→    bin: null,
+   985→   985→    icon: "🧊",
+   986→   986→    label: "z-ai-web-dev-sdk",
+   987→   987→    reason: zaiSdkAvailable
+   988→   988→      ? "z-ai-web-dev-sdk installed (SciWrite default)"
+   989→   989→      : "z-ai-web-dev-sdk not installed",
+   990→   990→    available: zaiSdkAvailable,
+   991→   991→    via: "sdk",
+   992→   992→  });
+   993→   993→
+   994→   994→  const chosen = available.find((p) => p.available)?.provider || "zai-sdk";
+   995→   995→  const showAll = !!opts.showUnavailable;
+   996→   996→  const wl = opts.whitelist && opts.whitelist.length > 0 ? new Set(opts.whitelist) : null;
+   997→   997→  const filtered = available.filter((p) => {
+   998→   998→    if (wl && !wl.has(p.provider)) return false;
+   999→   999→    if (!showAll && !p.available) return false;
+  1000→  1000→    return true;
+  1001→  1001→  });
+  1002→  1002→  return { chosen, available: filtered, totalClisScanned };
+  1003→  1003→}
+  1004→  1004→
+  1005→  1005→export function resolveLlmConfig(overrides?: LlmConfig): LlmConfig & { resolvedProvider: string } {
+  1006→  1006→  const envProvider = process.env.LLM_PROVIDER || "";
+  1007→  1007→  const provider = (overrides?.provider || envProvider || "").trim() || "auto";
+  1008→  1008→  const model = (overrides?.model || process.env.LLM_MODEL || "").trim() || undefined;
+  1009→  1009→  return { ...overrides, provider, model, resolvedProvider: provider };
+  1010→  1010→}
+  1011→  1011→
+  1012→  1012→// ─── High-level text-in / text-out ────────────────────────────────────────────
+  1013→  1013→
+  1014→  1014→export async function generateText(
+  1015→  1015→  systemPrompt: string,
+  1016→  1016→  userPrompt: string,
+  1017→  1017→  opts: { maxChars?: number; llm?: LlmConfig; sessionId?: string } = {},
+  1018→  1018→): Promise<LlmResult> {
+  1019→  1019→  const t0 = Date.now();
+  1020→  1020→  const maxChars = opts.maxChars ?? 4000;
+  1021→  1021→  const cfg = resolveLlmConfig(opts.llm);
+  1022→  1022→  const r = await callAnyLlm(
+  1023→  1023→    userPrompt,
+  1024→  1024→    { ...cfg, system: cfg.system || systemPrompt },
+  1025→  1025→    { sessionId: opts.sessionId },
+  1026→  1026→  );
+  1027→  1027→  if (r.ok) {
+  1028→  1028→    const content = (r.content || "").slice(0, maxChars);
+  1029→  1029→    return {
+  1030→  1030→      ok: true,
+  1031→  1031→      content,
+  1032→  1032→      text: content,
+  1033→  1033→      provider: r.provider,
+  1034→  1034→      model: r.model,
+  1035→  1035→      durationMs: Date.now() - t0,
+  1036→  1036→      fallback: false,
+  1037→  1037→      meta: r.meta,
+  1038→  1038→    };
+  1039→  1039→  }
+  1040→  1040→  return {
+  1041→  1041→    ok: false,
+  1042→  1042→    content: "",
+  1043→  1043→    text: "",
+  1044→  1044→    provider: r.provider,
+  1045→  1045→    model: r.model,
+  1046→  1046→    durationMs: Date.now() - t0,
+  1047→  1047→    fallback: false,
+  1048→  1048→    error: r.error,
+  1049→  1049→  };
+  1050→  1050→}
+  1051→  1051→
+  1052→  1052→// ─── Core dispatch with fallback ──────────────────────────────────────────────
+  1053→  1053→
+  1054→  1054→async function callAnyLlm(
+  1055→  1055→  prompt: string,
+  1056→  1056→  cfg: LlmConfig & { resolvedProvider: string; system: string },
+  1057→  1057→  opts: { sessionId?: string } = {},
+  1058→  1058→): Promise<LlmResult> {
+  1059→  1059→  const probes = await probeAll();
+  1060→  1060→  const order = decideProviderOrder(cfg.resolvedProvider, cfg.model);
+  1061→  1061→  // If a session id was passed in, only feed it to adapters that declared a
+  1062→  1062→  // `resumeArg`. Other adapters get undefined and behave as before.
+  1063→  1063→  const sessionId = opts.sessionId;
+  1064→  1064→
+  1065→  1065→  const errors: string[] = [];
+  1066→  1066→  for (const item of order) {
+  1067→  1067→    const id = item.id;
+  1068→  1068→    const via = item.via;
+  1069→  1069→    if (id.startsWith("cli:")) {
+  1070→  1070→      const adapter = CLI_ADAPTERS.find((a) => `cli:${a.id}` === id);
+  1071→  1071→      if (!adapter) continue;
+  1072→  1072→      const probePair = probes[adapter.id] ?? {};
+  1073→  1073→      const probe = via === "wsl" ? probePair.wsl : probePair.native;
+  1074→  1074→      if (!probe?.ok) {
+  1075→  1075→        errors.push(`${id}${via ? `(${via})` : ""}: ${probe?.reason ?? "unavailable"}`);
+  1076→  1076→        continue;
+  1077→  1077→      }
+  1078→  1078→      // Pass the session id only to adapters that support resume AND that
+  1079→  1079→      // match the adapter the stored id came from. Otherwise the resume
+  1080→  1080→      // would silently land on the wrong CLI's session store and fail.
+  1081→  1081→      const adapterSessionId = adapter.resumeArg ? sessionId : undefined;
+  1082→  1082→      try {
+  1083→  1083→        const t0 = Date.now();
+  1084→  1084→        const result =
+  1085→  1085→          via === "wsl"
+  1086→  1086→            ? await runCliInWsl(adapter, probe.bin, prompt, cfg.model, adapterSessionId)
+  1087→  1087→            : await runCli(adapter, probe.bin, prompt, cfg.model, adapterSessionId);
+  1088→  1088→        const text = result.text;
+  1089→  1089→        return {
+  1090→  1090→          ok: true,
+  1091→  1091→          content: text,
+  1092→  1092→          text,
+  1093→  1093→          provider: id,
+  1094→  1094→          model: cfg.model || adapter.id,
+  1095→  1095→          durationMs: Date.now() - t0,
+  1096→  1096→          fallback: item.fallback,
+  1097→  1097→          meta: { cli: probe.bin, via: via ?? "native", cliSessionId: result.sessionId },
+  1098→  1098→        };
+  1099→  1099→      } catch (err: any) {
+  1100→  1100→        errors.push(`${id}${via ? `(${via})` : ""}: ${err?.message ?? String(err)}`);
+  1101→  1101→        if (via) {
+  1102→  1102→          try {
+  1103→  1103→            markLlmProviderStale(adapter.id, via);
+  1104→  1104→          } catch {}
+  1105→  1105→        }
+  1106→  1106→        continue;
+  1107→  1107→      }
+  1108→  1108→    }
+  1109→  1109→    if (id === "anthropic") {
+  1110→  1110→      if (!process.env.ANTHROPIC_API_KEY) {
+  1111→  1111→        errors.push("anthropic: ANTHROPIC_API_KEY not set");
+  1112→  1112→        continue;
+  1113→  1113→      }
+  1114→  1114→      try {
+  1115→  1115→        const t0 = Date.now();
+  1116→  1116→        const text = await callAnthropic(prompt, cfg.system, cfg.model);
+  1117→  1117→        return {
+  1118→  1118→          ok: true,
+  1119→  1119→          content: text,
+  1120→  1120→          text,
+  1121→  1121→          provider: id,
+  1122→  1122→          model: cfg.model || "claude-3-5-sonnet-latest",
+  1123→  1123→          durationMs: Date.now() - t0,
+  1124→  1124→          fallback: false,
+  1125→  1125→        };
+  1126→  1126→      } catch (err: any) {
+  1127→  1127→        errors.push(`anthropic: ${err?.message ?? String(err)}`);
+  1128→  1128→        continue;
+  1129→  1129→      }
+  1130→  1130→    }
+  1131→  1131→    if (id === "openai") {
+  1132→  1132→      if (!process.env.OPENAI_API_KEY) {
+  1133→  1133→        errors.push("openai: OPENAI_API_KEY not set");
+  1134→  1134→        continue;
+  1135→  1135→      }
+  1136→  1136→      try {
+  1137→  1137→        const t0 = Date.now();
+  1138→  1138→        const text = await callOpenai(prompt, cfg.system, cfg.model);
+  1139→  1139→        return {
+  1140→  1140→          ok: true,
+  1141→  1141→          content: text,
+  1142→  1142→          text,
+  1143→  1143→          provider: id,
+  1144→  1144→          model: cfg.model || "gpt-4o-mini",
+  1145→  1145→          durationMs: Date.now() - t0,
+  1146→  1146→          fallback: false,
+  1147→  1147→        };
+  1148→  1148→      } catch (err: any) {
+  1149→  1149→        errors.push(`openai: ${err?.message ?? String(err)}`);
+  1150→  1150→        continue;
+  1151→  1151→      }
+  1152→  1152→    }
+  1153→  1153→    // ── z.ai SDK (SciWrite default branch) ──
+  1154→  1154→    if (id === "zai-sdk") {
+  1155→  1155→      try {
+  1156→  1156→        const t0 = Date.now();
+  1157→  1157→        const text = await callZai(prompt, cfg.system, cfg.model);
+  1158→  1158→        return {
+  1159→  1159→          ok: true,
+  1160→  1160→          content: text,
+  1161→  1161→          text,
+  1162→  1162→          provider: id,
+  1163→  1163→          model: cfg.model || "glm-4.6",
+  1164→  1164→          durationMs: Date.now() - t0,
+  1165→  1165→          fallback: item.fallback,
+  1166→  1166→        };
+  1167→  1167→      } catch (err: any) {
+  1168→  1168→        errors.push(`zai-sdk: ${err?.message ?? String(err)}`);
+  1169→  1169→        continue;
+  1170→  1170→      }
+  1171→  1171→    }
+  1172→  1172→  }
+  1173→  1173→
+  1174→  1174→  return {
+  1175→  1175→    ok: false,
+  1176→  1176→    content: "",
+  1177→  1177→    text: "",
+  1178→  1178→    provider: cfg.resolvedProvider,
+  1179→  1179→    model: cfg.model || "",
+  1180→  1180→    durationMs: 0,
+  1181→  1181→    fallback: false,
+  1182→  1182→    error: `No LLM provider succeeded. Tried ${order.length} candidate(s): ${errors.join("; ")}`,
+  1183→  1183→  };
+  1184→  1184→}
+  1185→  1185→
+  1186→  1186→interface OrderedProvider {
+  1187→  1187→  id: string;
+  1188→  1188→  via?: "native" | "wsl";
+  1189→  1189→  /** True when not the user-requested provider (i.e. fallback). */
+  1190→  1190→  fallback: boolean;
+  1191→  1191→}
+  1192→  1192→
+  1193→  1193→function decideProviderOrder(requested: string, _model?: string): OrderedProvider[] {
+  1194→  1194→  const cliIds = CLI_ADAPTERS.map((a) => `cli:${a.id}`);
+  1195→  1195→  const auto: OrderedProvider[] = [];
+  1196→  1196→  for (const id of cliIds) auto.push({ id, via: "native", fallback: requested !== id });
+  1197→  1197→  for (const id of cliIds) auto.push({ id, via: "wsl", fallback: requested !== id });
+  1198→  1198→  auto.push({ id: "anthropic", fallback: true });
+  1199→  1199→  auto.push({ id: "openai", fallback: true });
+  1200→  1200→  // z-ai SDK — always-available fallback candidate (SciWrite default)
+  1201→  1201→  auto.push({ id: "zai-sdk", fallback: requested !== "zai-sdk" });
+  1202→  1202→
+  1203→  1203→  if (!requested || requested === "auto") {
+  1204→  1204→    return auto.map((p) => ({ ...p, fallback: false }));
+  1205→  1205→  }
+  1206→  1206→  const requestedProvider = auto.find((p) => p.id === requested);
+  1207→  1207→  const rest = auto.filter((p) => p.id !== requested);
+  1208→  1208→  return [
+  1209→  1209→    { ...(requestedProvider ?? { id: requested, fallback: false }), fallback: false },
+  1210→  1210→    ...rest,
+  1211→  1211→  ];
+  1212→  1212→}
+  1213→  1213→
+  1214→  1214→// ─── CLI subprocess runner ────────────────────────────────────────────────────
+  1215→  1215→
+  1216→  1216→/**
+  1217→  1217→ * Compute per-call timeout. Hermes specifically scales with prompt size — a 10k-char
+  1218→  1218→ * full report takes ~5-10 minutes; a short query returns in ~30s.
+  1219→  1219→ */
+  1220→  1220→function computeCliTimeoutMs(adapter: CliAdapter, prompt: string): number {
+  1221→  1221→  const base = adapter.callTimeoutMs ?? 240_000;
+  1222→  1222→  const heuristic = 60_000 + prompt.length * 30;
+  1223→  1223→  return Math.max(base, heuristic);
+  1224→  1224→}
+  1225→  1225→
+  1226→  1226→function runCli(
+  1227→  1227→  adapter: CliAdapter,
+  1228→  1228→  bin: string,
+  1229→  1229→  prompt: string,
+  1230→  1230→  model: string | undefined,
+  1231→  1231→  sessionId?: string,
+  1232→  1232→): Promise<{ text: string; sessionId: string | null }> {
+  1233→  1233→  const rawArgs = adapter.callArgs(prompt, model);
+  1234→  1234→  const timeoutMs = computeCliTimeoutMs(adapter, prompt);
+  1235→  1235→  let outputFilePath: string | null = null;
+  1236→  1236→  let args = rawArgs;
+  1237→  1237→  if (adapter.outputFile) {
+  1238→  1238→    const ext = adapter.id === "codex" ? ".md" : ".txt";
+  1239→  1239→    outputFilePath = join(
+  1240→  1240→      tmpdir(),
+  1241→  1241→      `sciwrite-llm-${adapter.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`,
+  1242→  1242→    );
+  1243→  1243→    try {
+  1244→  1244→      writeFileSync(outputFilePath, "");
+  1245→  1245→    } catch {}
+  1246→  1246→    args = rawArgs.map((a) => (a === "$OUTPUT_FILE" ? outputFilePath! : a));
+  1247→  1247→  }
+  1248→  1248→  // Append --resume <sessionId> when the adapter supports session reuse AND
+  1249→  1249→  // we have a stored id. Adapters that don't define `resumeArg` keep the
+  1250→  1250→  // old behavior (fresh CLI session every call) so this is fully backwards
+  1251→  1251→  // compatible with claude/codex/aider/etc.
+  1252→  1252→  if (sessionId && adapter.resumeArg) {
+  1253→  1253→    args = [...args, ...adapter.resumeArg(sessionId)];
+  1254→  1254→  }
+  1255→  1255→
+  1256→  1256→  return new Promise<{ text: string; sessionId: string | null }>((resolve, reject) => {
+  1257→  1257→    const isCmdBatch = process.platform === "win32" && /\.(cmd|bat)$/i.test(bin);
+  1258→  1258→    // For Node shims (e.g. codebuddy) prefer spawning `node` directly; under
+  1259→  1259→    // bun-exec the shebang lookup mis-fires and the next call leaks handles.
+  1260→  1260→    // Guard: CLI providers pass the prompt as a command-line argument to
+  1261→  1261→    // spawn(). On Windows the limit is ~32KB (CreateProcessW). On Linux,
+  1262→  1262→    // MAX_ARG_STRLEN is 128KB per single argument, but the total argv +
+  1263→  1263→    // envp must fit within ARG_MAX (~2MB). In practice, prompts >24KB
+  1264→  1264→    // cause ENAMETOOLONG on some CLI providers (codebuddy, hermes).
+  1265→  1265→    // Detect up front and surface a clear error.
+  1266→  1266→    const fullArgv = adapter.needsNode ? [bin, ...args] : [bin, ...args];
+  1267→  1267→    const cmdlineLen = fullArgv.reduce((s, x) => s + x.length + 1, 0);
+  1268→  1268→    if (cmdlineLen > 30000) {
+  1269→  1269→      const promptArg = args.find((a) => a.length > 100);
+  1270→  1270→      return reject(
+  1271→  1271→        new Error(
+  1272→  1272→          `prompt too long for CLI spawn (cmdline ${cmdlineLen} chars, max ~30KB). ` +
+  1273→  1273→          `Largest arg is ${promptArg?.length ?? 0} chars. ` +
+  1274→  1274→          `The prompt should have been compressed by compressPrompt() — check ai.ts.`
+  1275→  1275→        ),
+  1276→  1276→      );
+  1277→  1277→    }
+  1278→  1278→    const child = adapter.needsNode
+  1279→  1279→      ? spawn("node", [bin, ...args], {
+  1280→  1280→          stdio: ["ignore", "pipe", "pipe"],
+  1281→  1281→          env: { ...process.env, ...adapter.extraEnv },
+  1282→  1282→          windowsHide: true,
+  1283→  1283→        })
+  1284→  1284→      : spawn(bin, args, {
+  1285→  1285→          stdio: ["ignore", "pipe", "pipe"],
+  1286→  1286→          env: { ...process.env, ...adapter.extraEnv },
+  1287→  1287→          shell: isCmdBatch,
+  1288→  1288→          windowsHide: true,
+  1289→  1289→        });
+  1290→  1290→
+  1291→  1291→    let stdout = "";
+  1292→  1292→    let stderr = "";
+  1293→  1293→    const killTimer = setTimeout(() => {
+  1294→  1294→      try {
+  1295→  1295→        child.kill();
+  1296→  1296→      } catch {}
+  1297→  1297→      reject(new Error(`${adapter.id} timed out after ${timeoutMs}ms`));
+  1298→  1298→    }, timeoutMs);
+  1299→  1299→
+  1300→  1300→    child.stdout.on("data", (b) => {
+  1301→  1301→      stdout += b.toString();
+  1302→  1302→    });
+  1303→  1303→    child.stderr.on("data", (b) => {
+  1304→  1304→      stderr += b.toString();
+  1305→  1305→    });
+  1306→  1306→
+  1307→  1307→    child.on("error", (err) => {
+  1308→  1308→      clearTimeout(killTimer);
+  1309→  1309→      cleanup();
+  1310→  1310→      reject(new Error(`${adapter.id} spawn error: ${err?.message}`));
+  1311→  1311→    });
+  1312→  1312→    child.on("close", (code) => {
+  1313→  1313→      clearTimeout(killTimer);
+  1314→  1314→      let cleaned = "";
+  1315→  1315→      if (outputFilePath) {
+  1316→  1316→        try {
+  1317→  1317→          const fileContent = readFileSync(outputFilePath, "utf8");
+  1318→  1318→          if (fileContent.trim().length > 0) cleaned = fileContent;
+  1319→  1319→        } catch {}
+  1320→  1320→      }
+  1321→  1321→      if (!cleaned) {
+  1322→  1322→        const raw =
+  1323→  1323→          adapter.outputStream === "stdout"
+  1324→  1324→            ? stdout
+  1325→  1325→            : adapter.outputStream === "stderr"
+  1326→  1326→              ? stderr
+  1327→  1327→              : (stdout.trim() + (stderr.includes("\n") ? "\n" : "") + stderr).trim();
+  1328→  1328→        const stripped = adapter.stripBanner ? adapter.stripBanner(raw) : raw;
+  1329→  1329→        cleaned = adapter.extractContent ? adapter.extractContent(stripped) : stripped.trim();
+  1330→  1330→      }
+  1331→  1331→      cleanup();
+  1332→  1332→      // Best-effort session-id extraction. We always run parseSessionId on
+  1333→  1333→      // the un-extracted raw output (some adapters put the id in a banner
+  1334→  1334→      // that extractContent then strips). When we don't have an id yet and
+  1335→  1335→      // this is a brand-new session, this is the one we'll persist for the
+  1336→  1336→      // next resume. When we *do* have an id, the freshly-returned one
+  1337→  1337→      // should match (sanity check) — if not, the CLI started a new session
+  1338→  1338→      // (e.g. the old one expired) and we surface the new id to the caller.
+  1339→  1339→      const newSessionId = adapter.parseSessionId
+  1340→  1340→        ? adapter.parseSessionId(
+  1341→  1341→            adapter.outputStream === "stderr" ? stderr : stdout,
+  1342→  1342→          )
+  1343→  1343→        : null;
+  1344→  1344→      const effectiveSessionId = newSessionId || sessionId || null;
+  1345→  1345→      if (cleaned.length > 0) {
+  1346→  1346→        resolve({ text: cleaned, sessionId: effectiveSessionId });
+  1347→  1347→        return;
+  1348→  1348→      }
+  1349→  1349→      reject(
+  1350→  1350→        new Error(
+  1351→  1351→          `${adapter.id} returned empty output (exit=${code}, stderr=${stderr.slice(0, 300)})`,
+  1352→  1352→        ),
+  1353→  1353→      );
+  1354→  1354→    });
+  1355→  1355→
+  1356→  1356→    function cleanup() {
+  1357→  1357→      if (outputFilePath) {
+  1358→  1358→        try {
+  1359→  1359→          unlinkSync(outputFilePath);
+  1360→  1360→        } catch {}
+  1361→  1361→        outputFilePath = null;
+  1362→  1362→      }
+  1363→  1363→    }
+  1364→  1364→  });
+  1365→  1365→}
+  1366→  1366→
+  1367→  1367→function runCliInWsl(
+  1368→  1368→  adapter: CliAdapter,
+  1369→  1369→  wslBin: string,
+  1370→  1370→  prompt: string,
+  1371→  1371→  model: string | undefined,
+  1372→  1372→  sessionId?: string,
+  1373→  1373→): Promise<{ text: string; sessionId: string | null }> {
+  1374→  1374→  let args = adapter.callArgs(prompt, model);
+  1375→  1375→  if (sessionId && adapter.resumeArg) {
+  1376→  1376→    args = [...args, ...adapter.resumeArg(sessionId)];
+  1377→  1377→  }
+  1378→  1378→  const escaped = args.map((a) => `'${a.replace(/'/g, `'\\''`)}'`).join(" ");
+  1379→  1379→  const timeoutSec = Math.max(1, Math.ceil((adapter.callTimeoutMs ?? 240_000) / 1000));
+  1380→  1380→  const bashCmd = `timeout ${timeoutSec} ${wslBin} ${escaped} 2>&1`;
+  1381→  1381→  const totalTimeout = computeCliTimeoutMs(adapter, prompt) + 15_000;
+  1382→  1382→  return new Promise<{ text: string; sessionId: string | null }>((resolve, reject) => {
+  1383→  1383→    let stdout = "";
+  1384→  1384→    let stderr = "";
+  1385→  1385→    const child = spawn("wsl.exe", ["-e", "bash", "-lc", bashCmd], {
+  1386→  1386→      stdio: ["ignore", "pipe", "pipe"],
+  1387→  1387→    });
+  1388→  1388→    const killTimer = setTimeout(() => {
+  1389→  1389→      try {
+  1390→  1390→        child.kill();
+  1391→  1391→      } catch {}
+  1392→  1392→      reject(new Error(`${adapter.id} WSL timed out after ${totalTimeout}ms`));
+  1393→  1393→    }, totalTimeout);
+  1394→  1394→    child.stdout.on("data", (b) => {
+  1395→  1395→      stdout += b.toString();
+  1396→  1396→    });
+  1397→  1397→    child.stderr.on("data", (b) => {
+  1398→  1398→      stderr += b.toString();
+  1399→  1399→    });
+  1400→  1400→    child.on("error", (err) => {
+  1401→  1401→      clearTimeout(killTimer);
+  1402→  1402→      reject(new Error(`${adapter.id} WSL spawn error: ${err?.message}`));
+  1403→  1403→    });
+  1404→  1404→    child.on("close", (code) => {
+  1405→  1405→      clearTimeout(killTimer);
+  1406→  1406→      const raw = (stdout + (stderr ? "\n" + stderr : "")).trim();
+  1407→  1407→      const stripped = adapter.stripBanner ? adapter.stripBanner(raw) : raw;
+  1408→  1408→      const cleaned = adapter.extractContent ? adapter.extractContent(stripped) : stripped.trim();
+  1409→  1409→      const newSessionId = adapter.parseSessionId
+  1410→  1410→        ? adapter.parseSessionId(stdout || stderr)
+  1411→  1411→        : null;
+  1412→  1412→      const effectiveSessionId = newSessionId || sessionId || null;
+  1413→  1413→      if (cleaned.length > 0) {
+  1414→  1414→        resolve({ text: cleaned, sessionId: effectiveSessionId });
+  1415→  1415→        return;
+  1416→  1416→      }
+  1417→  1417→      reject(
+  1418→  1418→        new Error(
+  1419→  1419→          `${adapter.id} WSL returned empty output (exit=${code}, stderr=${stderr.slice(0, 300)})`,
+  1420→  1420→        ),
+  1421→  1421→      );
+  1422→  1422→    });
+  1423→  1423→  });
+  1424→  1424→}
+  1425→  1425→
+  1426→  1426→// ─── SDK providers ────────────────────────────────────────────────────────────
+  1427→  1427→
+  1428→  1428→async function callAnthropic(prompt: string, system?: string, model?: string): Promise<string> {
+  1429→  1429→  const Anthropic = (await (eval("import"))("@anthropic-ai/sdk")).default;
+  1430→  1430→  const apiKey = process.env.ANTHROPIC_API_KEY;
+  1431→  1431→  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
+  1432→  1432→  const client = new Anthropic({ apiKey });
+  1433→  1433→  const resp = await client.messages.create({
+  1434→  1434→    model: model || "claude-3-5-sonnet-latest",
+  1435→  1435→    max_tokens: 4096,
+  1436→  1436→    system: system || "You are a helpful assistant.",
+  1437→  1437→    messages: [{ role: "user", content: prompt }],
+  1438→  1438→  });
+  1439→  1439→  const block = resp.content?.[0];
+  1440→  1440→  return (block && block.type === "text" ? block.text : "") || "";
+  1441→  1441→}
+  1442→  1442→
+  1443→  1443→async function callOpenai(prompt: string, system?: string, model?: string): Promise<string> {
+  1444→  1444→  const OpenAI = (await (eval("import"))("openai")).default;
+  1445→  1445→  const apiKey = process.env.OPENAI_API_KEY;
+  1446→  1446→  if (!apiKey) throw new Error("OPENAI_API_KEY not set");
+  1447→  1447→  const client = new OpenAI({ apiKey });
+  1448→  1448→  const resp = await client.chat.completions.create({
+  1449→  1449→    model: model || "gpt-4o-mini",
+  1450→  1450→    messages: [
+  1451→  1451→      ...(system ? [{ role: "system" as const, content: system }] : []),
+  1452→  1452→      { role: "user" as const, content: prompt },
+  1453→  1453→    ],
+  1454→  1454→  });
+  1455→  1455→  return resp.choices?.[0]?.message?.content || "";
+  1456→  1456→}
+  1457→  1457→
+  1458→  1458→/**
+  1459→  1459→ * z.ai SDK — SciWrite's default LLM. Delegates to z-ai-web-dev-sdk which is
+  1460→  1460→ * already imported by `src/lib/ai.ts`. We re-import here so this file is
+  1461→  1461→ * self-contained and the dispatch logic doesn't need a separate wiring step.
+  1462→  1462→ */
+  1463→  1463→async function callZai(prompt: string, system?: string, model?: string): Promise<string> {
+  1464→  1464→  const ZAI = (await (eval("import"))("z-ai-web-dev-sdk")).default;
+  1465→  1465→  const zai = await ZAI.create();
+  1466→  1466→  const resp = await zai.chat.completions.create({
+  1467→  1467→    model: model || "glm-4.6",
+  1468→  1468→    messages: [
+  1469→  1469→      ...(system ? [{ role: "system" as const, content: system }] : []),
+  1470→  1470→      { role: "user" as const, content: prompt },
+  1471→  1471→    ],
+  1472→  1472→    thinking: { type: "disabled" as const },
+  1473→  1473→  });
+  1474→  1474→  return resp.choices?.[0]?.message?.content || "";
+  1475→  1475→}
