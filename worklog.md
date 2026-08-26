@@ -464,3 +464,27 @@ Stage Summary:
 - 问题 2（验证报告假阳性）：加固 export 路由的 maxRefN 推导，从 body ## References 段取权威计数，消除 paragraph-derived refs stale 时的假阳性。当前文章导出已无 false positive。
 - 问题 3（数据源无关）：用户已确认不影响引用准确性，本次未实施（属于 gather 阶段 LLM 主题聚焦改进，工作量较大且不在本轮 scope）。
 - 持久产物：ArticleVersion (pre-ethics-trim)、修改后的 src/app/api/export/route.ts。
+
+---
+Task ID: github-push
+Agent: main (orchestrator)
+Task: Push current project state to GitHub (user provided fresh PAT)
+
+Work Log:
+- 检查 git 拓扑：本地 main (9662910, 2026-08-26, 296 files, clean) vs origin/main (d2ddb3e, 2026-08-24, 293 files)
+- git merge-base main origin/main 返回空 → 两条历史无共同祖先（本地为 re-init 后的新历史）
+- 发现本地 main 的 935e138 与 origin/e2e-test-dedup-fix 同 SHA，故本地 main = origin/e2e-test-dedup-fix + 3 新提交
+- 用新 token 更新 remote URL（git remote -v 自动 redact）
+- fetch 验证 token 可用（exit 0）
+- Step 1 安全网：将旧 origin/main (d2ddb3e) push 到新分支 archive/pre-20260824，保留 145 条旧历史
+- Step 2 force-with-lease=main:d2ddb3e 将本地 main push 到 origin/main（d2ddb3e → 9662910 forced update）
+- 验证 e2e-test-clean / e2e-test-dedup-fix 与 origin 已同步（ahead=0 behind=0）
+- 最终 fetch 确认：origin/main = 9662910 = local main HEAD
+
+Stage Summary:
+- 推送成功，GitHub 现反映本地最新状态。
+- origin/main = 9662910 (2026-08-26)
+- origin/archive/pre-20260824 = d2ddb3e（旧历史安全备份）
+- origin/e2e-test-clean、origin/e2e-test-dedup-fix 保持不变
+- 仓库地址：https://github.com/Jing0715-fer/SciWrite
+- 注意：本地 token 已写入 .git/config（git remote -v 自动 redact 显示）。如需撤销，可 git remote set-url origin https://github.com/Jing0715-fer/SciWrite.git 移除 token。
