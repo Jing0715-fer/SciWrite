@@ -426,13 +426,24 @@ export function sanitizeOutOfRangeCitations(
   const citeRe = /\[(\d{1,3}(?:[,\-–]\s*\d{1,3})*)\]/g;
   const newContent = content.replace(citeRe, (match, inner: string) => {
     const nums = expandCitationRange(inner);
-    const validNums = nums.filter((n) => n >= 1 && n <= refCount);
+    // Dedupe within a citation group: [5,5] → [5]. The LLM or a buggy
+    // adversarial-removal pass can produce a [n,n] marker that cites the
+    // same paper twice — semantically meaningless and trips duplicate
+    // audit warnings. Observed in E2E test 2026-08-26 on article
+    // cmt9f93jg00x4rewrmj0qpm75 (one [5,5] slipped through sanitize).
+    const unique = Array.from(new Set(nums));
+    const validNums = unique.filter((n) => n >= 1 && n <= refCount);
     if (validNums.length === 0) {
-      replaced++;
+      replaced += nums.length;
       return "[$REF]";
     }
-    if (validNums.length < nums.length) {
-      replaced += nums.length - validNums.length;
+    if (validNums.length < unique.length) {
+      replaced += unique.length - validNums.length;
+      return `[${validNums.join(",")}]`;
+    }
+    if (unique.length < nums.length) {
+      // All valid but duplicates were collapsed — still rewrite so the
+      // marker text matches the deduplicated form.
       return `[${validNums.join(",")}]`;
     }
     return match;

@@ -190,8 +190,15 @@ export function convertKeysToNumbers<T extends BindableRef>(
       droppedKeys++;
       return ""; // hallucinated key — remove entirely
     }
-    newNums.sort((a, b) => a - b); // ascending within a citation group
-    return `[${newNums.join(",")}]`;
+    // Dedupe within a single citation group: {{R5,R5}} → [5] not [5,5].
+    // The LLM sometimes copies the same key twice in one bracket, which
+    // would otherwise produce a meaningless [n,n] marker that looks like a
+    // multi-citation but cites the same paper twice (and trips duplicate-
+    // citation audit warnings downstream). Issue observed in E2E test
+    // 2026-08-26: article cmt9f93jg00x4rewrmj0qpm75 contained [5,5].
+    const unique = Array.from(new Set(newNums));
+    unique.sort((a, b) => a - b); // ascending within a citation group
+    return `[${unique.join(",")}]`;
   });
 
   // Pass 4: cleanup whitespace artifacts left by removals
@@ -249,8 +256,11 @@ export function removeCitationsAndRenumber<T extends BindableRef>(
   stripped = stripped.replace(/@@KEEP([\d,]+)@@/g, (_match, inner: string) => {
     const nums = inner.split(",").map((s) => parseInt(s, 10));
     const newNums = nums.map((n) => oldToNew[n]).filter((n) => n !== undefined);
-    newNums.sort((a, b) => a - b);
-    return newNums.length ? `[${newNums.join(",")}]` : "";
+    // Dedupe within citation group (defensive against [n,n] duplicates
+    // that may already exist in the input being renumbered).
+    const unique = Array.from(new Set(newNums));
+    unique.sort((a, b) => a - b);
+    return unique.length ? `[${unique.join(",")}]` : "";
   });
 
   // Pass 3: cleanup whitespace artifacts left by removals

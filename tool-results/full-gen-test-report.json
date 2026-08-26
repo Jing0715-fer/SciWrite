@@ -1,0 +1,150 @@
+{
+  "meta": {
+    "topic": "CRISPR-Cas9 genome editing: molecular mechanisms, off-target effects, and clinical applications",
+    "field": "molecular biology",
+    "projectId": "cmt9et4x90000rewr6r154n7p",
+    "articleId": "cmt9f93jg00x4rewrmj0qpm75",
+    "title": "Full Generation Test 2026-08-26T01:22",
+    "startedAt": "2026-08-26T01:22",
+    "finishedAt": "2026-08-26T01:37"
+  },
+  "pipeline": {
+    "totalMs": 744352,
+    "totalMin": 12.41,
+    "stages": [
+      {
+        "name": "gather",
+        "result": "executed DB + web queries"
+      },
+      {
+        "name": "curate",
+        "result": "selected most relevant citable subset"
+      },
+      {
+        "name": "plan",
+        "result": "designed 7-section outline"
+      },
+      {
+        "name": "analyze",
+        "result": "extracted structured evidence bank (claims pre-bound to sources)"
+      },
+      {
+        "name": "allocate",
+        "result": "allocated ~6 refs/section + evidence"
+      },
+      {
+        "name": "generate",
+        "result": "7 sections generated with {{Rn}} structural keys + verify gate"
+      },
+      {
+        "name": "verify",
+        "result": "adversarial per-citation verification (UNSUPPORTED\u226580 removed)"
+      },
+      {
+        "name": "compose",
+        "result": "global renumbering + reference sync + article save"
+      }
+    ],
+    "sectionResults": [
+      {
+        "section": 1,
+        "words": 270,
+        "citations_after_verify": 5,
+        "removed": 0,
+        "flagged": 0
+      },
+      {
+        "section": 2,
+        "words": 402,
+        "citations_after_verify": 5,
+        "removed": 1,
+        "flagged": 1
+      },
+      {
+        "section": 3,
+        "words": 290,
+        "citations_after_verify": 4,
+        "removed": 1,
+        "flagged": 0
+      },
+      {
+        "section": 4,
+        "words": 322,
+        "citations_after_verify": 4,
+        "removed": 0,
+        "flagged": 0
+      },
+      {
+        "section": 5,
+        "words": 302,
+        "citations_after_verify": 3,
+        "removed": 2,
+        "flagged": 1
+      },
+      {
+        "section": 6,
+        "words": 217,
+        "citations_after_verify": 3,
+        "removed": 1,
+        "flagged": 2
+      },
+      {
+        "section": 7,
+        "words": 302,
+        "citations_after_verify": 1,
+        "removed": 3,
+        "flagged": 1
+      }
+    ],
+    "composeOutput": {
+      "totalWords": 2726,
+      "totalRefs": 17,
+      "auditBlocking": 0,
+      "auditTopicalityWarnings": 19
+    }
+  },
+  "article": {
+    "id": "cmt9f93jg00x4rewrmj0qpm75",
+    "bodyCharLen": 16597,
+    "bodyWordCount": 2309,
+    "bodyCitationMarkers": 53,
+    "bodyUniqueRefNumbers": 17,
+    "listedRefs": 17,
+    "duplicateMarkers": [
+      "[5,5]"
+    ],
+    "sections": [
+      "Introduction to CRISPR-Cas9 Technology",
+      "Molecular Mechanisms of Cas9",
+      "Structural Insights into Cas9 Function",
+      "Off-Target Effects in CRISPR-Cas9 Editing",
+      "High-Fidelity Cas9 Variants",
+      "Clinical Applications and Therapeutic Potential",
+      "Future Directions and Challenges"
+    ],
+    "firstChars": "## Introduction to CRISPR-Cas9 Technology\n\nThe CRISPR-Cas9 system has emerged as a revolutionary genome editing tool that has transformed molecular biology and biotechnology [1]. This RNA-guided endonuclease system was initially discovered as a prokaryotic adaptive immune defense mechanism that protects bacteria against invading genetic elements such as phages and plasmids [2]. The CRISPR locus, c"
+  },
+  "adversarial": {
+    "checked": 30,
+    "supported": 28,
+    "partial": 0,
+    "unsupported": 2,
+    "removed": 0,
+    "removedCitations": [
+      {
+        "n": 5,
+        "confidence": 100,
+        "reason": "Reference does not mention 7 \u00c5 resolution or provide insights into RNA-guided DNA recognition and cleavage at that resolution",
+        "sentence": "7 \u00c5 across different Cas9 orthologs provide fundamental insights into the molecular basis of RNA-guided DNA recognition and cleavage [5,5]."
+      },
+      {
+        "n": 5,
+        "confidence": 100,
+        "reason": "Same as check 8 - reference does not mention 7 \u00c5 resolution or provide insights at that resolution",
+        "sentence": "7 \u00c5 across different Cas9 orthologs provide fundamental insights into the molecular basis of RNA-guided DNA recognition and cleavage [5,5]."
+      }
+    ],
+    "unsupportedRate": 6.67,
+    "supportedRate": 93.33
+  }
+}
