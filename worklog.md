@@ -404,3 +404,27 @@ Stage Summary:
 - Test reproducible: `bun run scripts/full-generation-test.ts`
 - High-priority fix verified: `[n,n]` duplicates collapsed in 3 functions, inline tests pass
 - 5-issue improvement plan documented in `IMPROVEMENT_PLAN.md`
+
+---
+Task ID: 14
+Agent: 主协调者 (Z.ai Code)
+Task: 排查"为何运行 V2 时显示 V2 pipeline fail"
+
+Work Log:
+- 用户报告 V2 管线运行时显示 "V2 pipeline fail"。先定位错误来源：`src/app/api/ai/generate-full-v2/route.ts:1060` 的 catch 块发出 `v2 pipeline failed: ${errMsg.slice(0,300)}` SSE error 事件。
+- 复现尝试 1：直接 POST V2 端点，但用 `bun run scripts/repro-v2-fail.ts` 创建项目失败，提示 `attempt to write a readonly database`（SQLite 错误 1032）。
+- 复现尝试 2：经 API 端 `/api/projects` POST 创建项目也返回 500，错误同样是 readonly database — 当时 dev server (PID 5866, 启动于 02:07) 的 Prisma 客户端处于只读状态。
+- 直接用 bun 脚本测试 DB 可写（`db.project.create` 成功）→ 排除 DB 文件本身问题，指向 dev server 进程级 fd/状态异常。
+- 杀掉旧 dev server，重启 — 第一次重启后 server 立刻 EPIPE uncaughtException 崩溃。进一步定位：dev server 启动脚本 `/tmp/start-dev.sh` 用了 `sys.stdout = open(LOG, "w")` 改 Python 层 stdout，但 `os.execvp` 后子进程继承的是 OS 级 fd 1（原 shell 的 pipe），不是 Python 包装器。父 bash 退出后 pipe 读端关闭，next-server 任何 stdout 写入触发 EPIPE → uncaughtException → 进入不稳定状态 → SSE 流暗中途中断 → V2 catch 块的 error 事件根本没到达用户浏览器，用户只看到早期事件流断流（误判为 "v2 pipeline failed"）。
+- 修复 `/tmp/start-dev.sh`：用 `os.dup2(devnull_fd, 0)` + `os.dup2(log_fd, 1)` + `os.dup2(log_fd, 2)` 真正重定向 OS 级 fd。
+- 同时持久化修复到项目内：新建 `.zscripts/dev-daemon.py`，含详细注释解释为何必须用 os.dup2。
+- 重启 dev server (PID 8777) 后：next-development.log 干净（无 EPIPE/uncaughtException），curl 0.1s 返回 200。
+- 端到端验证 V2：创建项目 `cmt9id33x0000rertoibcdfu4`，POST `/api/ai/generate-full-v2` (targetWords=500, maxDbQueries=4)。SSE 流成功走完 7 个章节 + verify + compose：7 sections, 2557 words, 16 references, 0 blocking errors, 25 topicality warnings, ~11.5 分钟。文章已保存（articleId=cmt9irxdu00o8rertvgdk79u3）。
+- 旁路发现：V2 跑 6-7 段以后频繁触发 `[rate-limiter] cool-down 60000ms for 'chat'/'chatStream' (window count≥15)`，单管线耗时被拖慢约 4-5 分钟。这是性能问题，非正确性问题（pipeline 最终成功）。
+
+Stage Summary:
+- 根因：dev server 启动脚本的 fd 重定向写错（Python 包装器 vs OS 级 fd）。`sys.stdout = open(...)` 不被 execvp 继承，子进程 fd 1 仍是父 shell 的 pipe，pipe 读端在父退出后关闭 → EPIPE → uncaughtException → next-server 不稳定 → V2 SSE 流暗中途中断 → 用户看到 "V2 pipeline fail"。
+- 修复：`/tmp/start-dev.sh` + `.zscripts/dev-daemon.py` 均改用 `os.dup2()` 在 OS 级重定向 fd 0/1/2。
+- 验证：V2 端到端跑通，文章已保存到 DB（`cmt9irxdu00o8rertvgdk79u3`），无 error 事件。
+- 持久化产物：`.zscripts/dev-daemon.py`（含详尽注释解释根因，供未来 agent 复用）。
+- 后续建议：rate-limiter 阈值（chat/chatStream 共用 15/15min 窗口）对 V2 这种密集调用管线过紧，可考虑为 v2 pipeline taskType 放宽或单独计数，预计能省 4-5 分钟/次。
