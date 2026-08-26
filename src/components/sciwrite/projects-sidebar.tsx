@@ -34,6 +34,16 @@ import { ShareDialog } from "./share-dialog";
 import { ProjectImportExport } from "./project-import-export";
 import { useI18n } from "@/lib/i18n";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -357,6 +367,7 @@ function ProjectItem({
   const { t } = useI18n();
   const qc = useQueryClient();
   const [editing, setEditing] = React.useState(false);
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [title, setTitle] = React.useState(project.title);
   const [topic, setTopic] = React.useState(project.topic);
 
@@ -454,9 +465,7 @@ function ProjectItem({
                 className="h-5 w-5 text-destructive"
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (confirm(t("projects.deleteConfirm", { name: project.title }))) {
-                    onDelete();
-                  }
+                  setConfirmDelete(true);
                 }}
                 disabled={deleting}
               >
@@ -503,6 +512,30 @@ function ProjectItem({
           </div>
         </>
       )}
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("projects.deleteTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("projects.deleteConfirm", { name: project.title })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => onDelete()}
+              disabled={deleting}
+            >
+              {deleting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                t("common.delete")
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

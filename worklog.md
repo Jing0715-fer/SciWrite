@@ -1235,3 +1235,27 @@ Work Log:
 Stage Summary:
 - 浏览器验证确认：所有修复的交互路径（命令面板 4 动作、暗色切换、语言切换）行为正确，无回归
 - tsc src/ 0 错误（修复前 132）；eslint 0 输出；dev server 全程稳定
+
+---
+Task ID: fix-round-3-i18n
+Agent: general-purpose
+Task: 引用健康度面板 citation-health-dashboard.tsx 全面国际化（约 60 处硬编码英文 → i18n t() 调用）
+
+Work Log:
+- 通读 worklog.md 近几节（fix-round-1 / fix-round-1-verify）确认约定：tsc+lint 双零、i18n 只动 en/zh 两块、ja/ko/fr 依赖 t() 自动回退英文
+- 通读 citation-health-dashboard.tsx（986 行）全部渲染字符串，梳理为：加载/错误态、等级徽章 Tooltip、统计磁贴（citations/refs/blocking/warnings）、清洁进度、展开按钮（含单复数 offender/offenders）、批量 Auto-fix 按钮+进度、修复结果徽章、批量 Regenerate 按钮+进度+确认对话框、问题段落列表（blk/warn/cit·ref 徽记、Fix/Regen 小按钮）、文章审计列表（cit/ref/blocking/missing/suspect/unsup/orphan/numbering drift/clean 徽章）、6 个 title 悬浮提示、5 处 setError 回退文案
+- src/lib/i18n.tsx：在 en 块末尾（common.deleting 之后、闭括号之前）与 zh 块末尾各插入一个连续的 citationHealth.* 键块 —— en 63 键 / zh 63 键，名称一一对应；插值变量（{n}/{done}/{total}/{fixed}/{before}/{paragraphs}/{processed}/{clean}/{cit}/{ref}/{label}/{score}）承接全部动态计数，未把数字烤进键值
+- citation-health-dashboard.tsx：
+  * 新增 `import { useI18n, type TranslationKey } from "@/lib/i18n"` + 组件首行 `const { t } = useI18n()`
+  * GRADE_LABELS（英文标签查找表）改为 GRADE_LABEL_KEYS（等级→翻译键），JSX 内 `t(GRADE_LABEL_KEYS[agg.grade] ?? "citationHealth.gradeUnknown")` 渲染期解析；附 gradeUnknown 兜底键
+  * `${n} offender${s}` 单复数模板串 → offenderOne/offendersMany 两键 + 三元判断，保留原单复数语义
+  * `Fixing d/t…`、`Regen d/t…`、`Fixed a/b across n ¶`、`Regenerated a/b ¶`、`n cit · m ref`、`x/y clean` 等模板串全部改为 {var} 插值键
+  * 确认对话框长句拆为 regenBodyPrefix/regenParagraphsCount/regenBodySuffix 三键以保留 <strong> 强调结构（zh 语序相应重组为"重写 N 个段落的正文"）；⚠ 前缀与取消按钮复用现有 common.cancel / common.retry（en+zh 均已存在的键，不新增未加前缀键）
+  * 仅字符串替换：hooks 依赖数组（[projectId]、[report, fixParagraph, fetchHealth] 等）、API 调用、JSX 结构全部未动；git diff 仅 2 个文件
+- 刻意不翻译（保留原文）：throw new Error(`HTTP/auto-fix HTTP/regenerate HTTP ${status}`)（内部控制流异常，会被 catch 后替换为回退文案）、console.error 遥测、`§`/`…`/`[{f.n}]`/`✓ 之外的数字磁贴`（语言中立符号）、`"__batch__"` 哨兵、API 数据字段（p.title/a.title/f.reason/agg.grade/healthScore）
+- 验证：`npx tsc --noEmit` 退出码 0 零错误；`bun run lint` 退出码 0、0 error（166 个全仓预存 warning，其中本组件 2 个 fixData/iconColor 为改动前已存在）；脚本核对 en/zh 各 63 键零差集零重复；组件引用的 57 个静态键 + 6 个 GRADE 动态键全部存在于 en；抽查 fixedAcross/tooltipTitle/cleanBadge 三键在 en/zh 同名成对
+
+Stage Summary:
+- 新增 i18n 键：en 63 / zh 63（citationHealth.* 前缀，简体中文科研语域：Excellent→优秀、Citation Health→引用健康度、Fix→修复、Regen→重写、numbering drift→编号漂移 等）；ja/ko/fr 走 t() 英文回退无需补键
+- 修改文件 2 个：src/components/sciwrite/citation-health-dashboard.tsx（约 60 处硬编码 → t()，含 1 张英文查找表转键表）、src/lib/i18n.tsx（en/zh 块尾各插一个连续键块）
+- tsc 0 错误、lint 0 错误；组件逻辑/hooks/API/JSX 结构零改动；5 处 setError 回退文案也已国际化（虽当前未被渲染，防患于未然）

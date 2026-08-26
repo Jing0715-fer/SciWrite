@@ -10,6 +10,7 @@
  */
 
 import { chatWithSession } from "@/lib/llm-session";
+import JSON5 from "json5";
 
 export function ncbiItemsCount(items: any[]): number {
   return items.filter((i) => i.source === "pubmed" || i.source === "ncbi").length;
@@ -207,7 +208,16 @@ export function safeParseJSON(raw: string, fallback: any): any {
     console.warn("[safeParseJSON] First 200 chars: " + match[0].slice(0, 200));
     console.warn("[safeParseJSON] Last 200 chars: " + match[0].slice(-200));
 
-    // Strategy 3: Try to fix common JSON issues
+    // Strategy 3: Tolerant parse — JSON5 handles trailing commas, unquoted
+    // keys, and single-quoted strings CORRECTLY (unlike the regex repair
+    // below, which mangles numeric keys and apostrophes inside values).
+    try {
+      return JSON5.parse(match[0]);
+    } catch {
+      // fall through to the last-ditch regex repair
+    }
+
+    // Strategy 4 (last resort): regex repair of common JSON issues
     let fixed = match[0]
       .replace(/,\s*}/g, "}")  // trailing comma
       .replace(/,\s*]/g, "]")  // trailing comma in array

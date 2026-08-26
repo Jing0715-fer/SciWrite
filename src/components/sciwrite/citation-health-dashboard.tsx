@@ -45,6 +45,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useI18n, type TranslationKey } from "@/lib/i18n";
 
 interface ParagraphHealthReport {
   paragraphId: string;
@@ -114,12 +115,14 @@ const GRADE_COLORS: Record<string, string> = {
   F: "text-red-700 dark:text-red-300 border-red-300/60 bg-gradient-to-br from-red-50/70 to-transparent dark:from-red-950/25",
 };
 
-const GRADE_LABELS: Record<string, string> = {
-  A: "Excellent",
-  B: "Good",
-  C: "Fair",
-  D: "Poor",
-  F: "Critical",
+// Grade → i18n key; the label itself is resolved via t() at render time
+// so it follows the active locale.
+const GRADE_LABEL_KEYS: Record<string, TranslationKey> = {
+  A: "citationHealth.gradeA",
+  B: "citationHealth.gradeB",
+  C: "citationHealth.gradeC",
+  D: "citationHealth.gradeD",
+  F: "citationHealth.gradeF",
 };
 
 /**
@@ -145,6 +148,7 @@ export function CitationHealthDashboard({
   projectId: string;
   onJumpParagraph?: (paragraphId: string) => void;
 }) {
+  const { t } = useI18n();
   const [report, setReport] = React.useState<HealthReport | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -176,7 +180,7 @@ export function CitationHealthDashboard({
       // Auto-expand when there are blocking errors so the user sees them.
       if (data.aggregate.totalBlocking > 0) setOpen(true);
     } catch (err: any) {
-      setError(err?.message || "Failed to load citation health.");
+      setError(err?.message || t("citationHealth.loadFailed"));
     } finally {
       setLoading(false);
     }
@@ -252,7 +256,7 @@ export function CitationHealthDashboard({
       // Re-fetch health to reflect the fixes.
       await fetchHealth();
     } catch (err: any) {
-      setError(err?.message || "Batch auto-fix failed.");
+      setError(err?.message || t("citationHealth.batchFixFailed"));
     } finally {
       setFixing(false);
       setFixProgress(null);
@@ -268,7 +272,7 @@ export function CitationHealthDashboard({
         await fixParagraph(paragraphId);
         await fetchHealth();
       } catch (err: any) {
-        setError(err?.message || "Auto-fix failed for this paragraph.");
+        setError(err?.message || t("citationHealth.fixFailed"));
       } finally {
         setFixingParagraphId(null);
       }
@@ -292,7 +296,7 @@ export function CitationHealthDashboard({
         if (!res.ok) throw new Error(`regenerate HTTP ${res.status}`);
         await fetchHealth();
       } catch (err: any) {
-        setError(err?.message || "Regenerate failed for this paragraph.");
+        setError(err?.message || t("citationHealth.regenFailed"));
       } finally {
         setRegeneratingParagraphId(null);
       }
@@ -351,7 +355,7 @@ export function CitationHealthDashboard({
       setRegenResult({ processed, total: offenders.length });
       await fetchHealth();
     } catch (err: any) {
-      setError(err?.message || "Batch regenerate failed.");
+      setError(err?.message || t("citationHealth.batchRegenFailed"));
     } finally {
       setRegeneratingParagraphId(null);
       setRegenProgress(null);
@@ -368,7 +372,7 @@ export function CitationHealthDashboard({
         <div className="h-5 w-5 rounded-md bg-primary/15 text-primary flex items-center justify-center ring-academic">
           <Loader2 className="h-3 w-3 animate-spin" />
         </div>
-        <span className="font-serif-text tracking-tight">Analyzing citation health…</span>
+        <span className="font-serif-text tracking-tight">{t("citationHealth.loading")}</span>
       </div>
     );
   }
@@ -379,14 +383,14 @@ export function CitationHealthDashboard({
         <div className="h-5 w-5 rounded-md bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center ring-academic">
           <CircleAlert className="h-3 w-3" />
         </div>
-        <span className="font-serif-text tracking-tight">Citation health unavailable</span>
+        <span className="font-serif-text tracking-tight">{t("citationHealth.unavailable")}</span>
         <Button
           variant="ghost"
           size="sm"
           className="h-5 px-1.5 text-[10px] hover:bg-amber-500/10 hover:text-amber-700 dark:hover:text-amber-400"
           onClick={fetchHealth}
         >
-          <RefreshCw className="h-3 w-3" /> Retry
+          <RefreshCw className="h-3 w-3" /> {t("common.retry")}
         </Button>
       </div>
     );
@@ -434,13 +438,18 @@ export function CitationHealthDashboard({
           <TooltipContent side="bottom" className="text-[10px]">
             <div className="space-y-0.5">
               <p className="font-semibold">
-                Citation Health: {GRADE_LABELS[agg.grade]} ({agg.healthScore}/100)
+                {t("citationHealth.tooltipTitle", {
+                  label: t(
+                    GRADE_LABEL_KEYS[agg.grade] ?? "citationHealth.gradeUnknown"
+                  ),
+                  score: agg.healthScore,
+                })}
               </p>
               <p className="text-muted-foreground">
-                Grade = 100 − (5×blocking + 1×warning).
+                {t("citationHealth.gradeFormula")}
               </p>
               <p className="text-muted-foreground">
-                A ≥90 · B ≥70 · C ≥50 · D ≥30 · F &lt;30
+                {t("citationHealth.gradeScale")}
               </p>
             </div>
           </TooltipContent>
@@ -452,30 +461,32 @@ export function CitationHealthDashboard({
         <span className="surface-card rounded-md px-2 py-0.5 flex items-center gap-1 transition-all hover:shadow-md hover:border-primary/30">
           <FileText className="h-3 w-3 text-primary" />
           <span className="font-serif-text font-semibold tabular-nums text-foreground">{agg.totalCitations}</span>
-          <span className="text-muted-foreground">citations</span>
+          <span className="text-muted-foreground">{t("citationHealth.statCitations")}</span>
         </span>
         <span className="surface-card rounded-md px-2 py-0.5 flex items-center gap-1 transition-all hover:shadow-md hover:border-primary/30">
           <BookOpen className="h-3 w-3 text-teal-600 dark:text-teal-400" />
           <span className="font-serif-text font-semibold tabular-nums text-foreground">{agg.totalReferences}</span>
-          <span className="text-muted-foreground">refs</span>
+          <span className="text-muted-foreground">{t("citationHealth.statRefs")}</span>
         </span>
         {agg.totalBlocking > 0 ? (
           <span className="surface-card rounded-md px-2 py-0.5 flex items-center gap-1 transition-all hover:shadow-md hover:border-rose-400/50">
             <CircleX className="h-3 w-3 text-red-600 dark:text-red-400" />
             <span className="font-serif-text font-semibold tabular-nums text-foreground">{agg.totalBlocking}</span>
-            <span className="text-muted-foreground">blocking</span>
+            <span className="text-muted-foreground">{t("citationHealth.statBlocking")}</span>
           </span>
         ) : (
           <span className="surface-card rounded-md px-2 py-0.5 flex items-center gap-1 transition-all hover:shadow-md hover:border-emerald-400/50">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            <span className="font-serif-text font-semibold text-emerald-700 dark:text-emerald-400">0 blocking</span>
+            <span className="font-serif-text font-semibold text-emerald-700 dark:text-emerald-400">
+              {t("citationHealth.zeroBlocking")}
+            </span>
           </span>
         )}
         {agg.totalWarnings > 0 && (
           <span className="surface-card rounded-md px-2 py-0.5 flex items-center gap-1 transition-all hover:shadow-md hover:border-amber-400/50">
             <AlertTriangle className="h-3 w-3 text-amber-600 dark:text-amber-400" />
             <span className="font-serif-text font-semibold tabular-nums text-foreground">{agg.totalWarnings}</span>
-            <span className="text-muted-foreground">warnings</span>
+            <span className="text-muted-foreground">{t("citationHealth.statWarnings")}</span>
           </span>
         )}
       </div>
@@ -494,7 +505,10 @@ export function CitationHealthDashboard({
           )}
         />
         <span className="text-[9px] text-muted-foreground font-serif-text tabular-nums shrink-0 font-medium tracking-tight">
-          {agg.paragraphsClean}/{agg.totalParagraphs} clean
+          {t("citationHealth.cleanCount", {
+            clean: agg.paragraphsClean,
+            total: agg.totalParagraphs,
+          })}
         </span>
       </div>
 
@@ -509,10 +523,14 @@ export function CitationHealthDashboard({
                 <ChevronRight className="h-3 w-3" />
               )}
               {report.worstOffenders.length > 0
-                ? `${report.worstOffenders.length} offender${
-                    report.worstOffenders.length === 1 ? "" : "s"
-                  }`
-                : "Details"}
+                ? report.worstOffenders.length === 1
+                  ? t("citationHealth.offenderOne", {
+                      n: report.worstOffenders.length,
+                    })
+                  : t("citationHealth.offendersMany", {
+                      n: report.worstOffenders.length,
+                    })
+                : t("citationHealth.details")}
             </Button>
           </CollapsibleTrigger>
         </Collapsible>
@@ -530,7 +548,7 @@ export function CitationHealthDashboard({
             className="h-6 px-2 text-[10px] gap-1 border-amber-300/60 text-amber-700 dark:text-amber-400 hover:bg-amber-50/60 dark:hover:bg-amber-950/30 hover:shadow-sm transition-all"
             disabled={fixing}
             onClick={runBatchAutoFix}
-            title="Run the LLM auto-fix on all paragraphs with blocking citation errors"
+            title={t("citationHealth.autoFixAllTitle")}
           >
             {fixing ? (
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -538,8 +556,11 @@ export function CitationHealthDashboard({
               <Wand2 className="h-3 w-3" />
             )}
             {fixing && fixProgress
-              ? `Fixing ${fixProgress.done}/${fixProgress.total}…`
-              : "Auto-fix all"}
+              ? t("citationHealth.fixingProgress", {
+                  done: fixProgress.done,
+                  total: fixProgress.total,
+                })
+              : t("citationHealth.autoFixAll")}
           </Button>
           {/* Live progress bar during batch fix. */}
           {fixing && fixProgress && (
@@ -570,8 +591,11 @@ export function CitationHealthDashboard({
         <div className="badge-emerald flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md">
           <CheckCircle2 className="h-3 w-3" />
           <span className="tabular-nums">
-            Fixed {fixResult.totalFixed}/{fixResult.totalBefore} across{" "}
-            {fixResult.paragraphsProcessed} ¶
+            {t("citationHealth.fixedAcross", {
+              fixed: fixResult.totalFixed,
+              before: fixResult.totalBefore,
+              paragraphs: fixResult.paragraphsProcessed,
+            })}
           </span>
         </div>
       )}
@@ -590,7 +614,7 @@ export function CitationHealthDashboard({
             className="h-6 px-2 text-[10px] gap-1 border-primary/40 text-primary hover:bg-primary/10 hover:shadow-sm transition-all"
             disabled={fixing || regenProgress !== null}
             onClick={() => setConfirmRegen(true)}
-            title="Regenerate ALL paragraphs with citation issues via LLM (re-writes body text with correct [n] citations). Slower but more thorough than Auto-fix. You will be asked to confirm."
+            title={t("citationHealth.regenAllTitle")}
           >
             {regenProgress !== null ? (
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -598,8 +622,11 @@ export function CitationHealthDashboard({
               <RotateCw className="h-3 w-3" />
             )}
             {regenProgress !== null
-              ? `Regen ${regenProgress.done}/${regenProgress.total}…`
-              : "Regenerate all"}
+              ? t("citationHealth.regenProgress", {
+                  done: regenProgress.done,
+                  total: regenProgress.total,
+                })
+              : t("citationHealth.regenerateAll")}
           </Button>
           {/* Live progress bar during batch regenerate. */}
           {regenProgress !== null && (
@@ -630,7 +657,10 @@ export function CitationHealthDashboard({
         <div className="badge-emerald flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md">
           <CheckCircle2 className="h-3 w-3" />
           <span className="tabular-nums">
-            Regenerated {regenResult.processed}/{regenResult.total} ¶
+            {t("citationHealth.regeneratedOf", {
+              processed: regenResult.processed,
+              total: regenResult.total,
+            })}
           </span>
         </div>
       )}
@@ -648,10 +678,10 @@ export function CitationHealthDashboard({
             // to switch to the Analysis → Audit Trail sub-tab.
             window.dispatchEvent(new CustomEvent("open-audit-trail"));
           }}
-          title="Review low-confidence citation issues that need manual verification"
+          title={t("citationHealth.reviewWarningsTitle")}
         >
           <CircleAlert className="h-3 w-3" />
-          Review {agg.totalWarnings} warnings
+          {t("citationHealth.reviewWarnings", { n: agg.totalWarnings })}
         </Button>
       )}
 
@@ -661,7 +691,7 @@ export function CitationHealthDashboard({
         size="sm"
         className="h-6 w-6 p-0 glass-subtle rounded-md hover:shadow-sm transition-all"
         onClick={fetchHealth}
-        title="Re-run citation health check"
+        title={t("citationHealth.refreshTitle")}
       >
         <RefreshCw className="h-3 w-3" />
       </Button>
@@ -674,7 +704,7 @@ export function CitationHealthDashboard({
             <div className="space-y-1.5">
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1 font-serif-text glass-subtle rounded-md px-2 py-1">
                 <TrendingUp className="h-3 w-3 text-primary" />
-                Worst-offending paragraphs
+                {t("citationHealth.worstOffenders")}
               </p>
               {report.worstOffenders.length === 0 ? (
                 <div className="surface-card rounded-md py-2 px-2 flex items-center gap-2">
@@ -682,8 +712,7 @@ export function CitationHealthDashboard({
                     <CheckCircle2 className="h-3 w-3" />
                   </div>
                   <p className="text-[11px] text-muted-foreground font-serif-text">
-                    All paragraphs pass the citation audit. No blocking errors
-                    or warnings.
+                    {t("citationHealth.allClean")}
                   </p>
                 </div>
               ) : (
@@ -718,7 +747,7 @@ export function CitationHealthDashboard({
                             variant="outline"
                             className="h-3.5 px-1 text-[8px] badge-rose"
                           >
-                            {p.blockingCount} blk
+                            {t("citationHealth.blkCount", { n: p.blockingCount })}
                           </Badge>
                         )}
                         {p.warningCount > 0 && (
@@ -726,11 +755,14 @@ export function CitationHealthDashboard({
                             variant="outline"
                             className="h-3.5 px-1 text-[8px] badge-amber"
                           >
-                            {p.warningCount} warn
+                            {t("citationHealth.warnCount", { n: p.warningCount })}
                           </Badge>
                         )}
                         <span className="text-[9px] text-muted-foreground shrink-0 tabular-nums">
-                          {p.citationCount} cit · {p.refCount} ref
+                          {t("citationHealth.citRefCount", {
+                            cit: p.citationCount,
+                            ref: p.refCount,
+                          })}
                         </span>
                         {/* Per-paragraph "Fix this" button — only for paragraphs
                             with blocking findings. Stops propagation so the
@@ -745,14 +777,14 @@ export function CitationHealthDashboard({
                               e.stopPropagation();
                               fixSingleParagraph(p.paragraphId);
                             }}
-                            title="Run auto-fix on just this paragraph (adds missing references via LLM + database queries)"
+                            title={t("citationHealth.fixThisTitle")}
                           >
                             {isFixingThis ? (
                               <Loader2 className="h-2.5 w-2.5 animate-spin" />
                             ) : (
                               <Wand2 className="h-2.5 w-2.5" />
                             )}
-                            {isFixingThis ? "…" : "Fix"}
+                            {isFixingThis ? "…" : t("citationHealth.fix")}
                           </Button>
                         )}
                         {/* Per-paragraph "Regenerate" button — re-writes the
@@ -771,14 +803,14 @@ export function CitationHealthDashboard({
                               e.stopPropagation();
                               regenerateParagraph(p.paragraphId);
                             }}
-                            title="Regenerate this paragraph's content via LLM using the current reference list (re-writes the body with correct [n] citations)"
+                            title={t("citationHealth.regenThisTitle")}
                           >
                             {isRegenerating ? (
                               <Loader2 className="h-2.5 w-2.5 animate-spin" />
                             ) : (
                               <RotateCw className="h-2.5 w-2.5" />
                             )}
-                            {isRegenerating ? "…" : "Regen"}
+                            {isRegenerating ? "…" : t("citationHealth.regen")}
                           </Button>
                         )}
                       </div>
@@ -816,7 +848,7 @@ export function CitationHealthDashboard({
             <div className="space-y-1.5">
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1 font-serif-text glass-subtle rounded-md px-2 py-1">
                 <Sparkles className="h-3 w-3 text-primary" />
-                Article audits
+                {t("citationHealth.articleAudits")}
               </p>
               {report.articles.length === 0 ? (
                 <div className="surface-card rounded-md py-2 px-2 flex items-center gap-2">
@@ -824,7 +856,7 @@ export function CitationHealthDashboard({
                     <BookOpen className="h-3 w-3" />
                   </div>
                   <p className="text-[11px] text-muted-foreground font-serif-text">
-                    No composed articles yet. Run Compose to generate one.
+                    {t("citationHealth.noArticles")}
                   </p>
                 </div>
               ) : (
@@ -846,7 +878,7 @@ export function CitationHealthDashboard({
                           {a.title}
                         </span>
                         <span className="text-[9px] text-muted-foreground shrink-0 tabular-nums">
-                          {a.wordCount}w
+                          {t("citationHealth.wordsCount", { n: a.wordCount })}
                         </span>
                       </div>
                       <div className="flex flex-wrap gap-1">
@@ -854,20 +886,22 @@ export function CitationHealthDashboard({
                           variant="outline"
                           className="h-3.5 px-1 text-[8px] badge-slate"
                         >
-                          {a.totalCitations} cit
+                          {t("citationHealth.citCount", { n: a.totalCitations })}
                         </Badge>
                         <Badge
                           variant="outline"
                           className="h-3.5 px-1 text-[8px] badge-slate"
                         >
-                          {a.totalReferences} ref
+                          {t("citationHealth.refCount", { n: a.totalReferences })}
                         </Badge>
                         {a.summary.blockingErrors > 0 && (
                           <Badge
                             variant="outline"
                             className="h-3.5 px-1 text-[8px] badge-rose"
                           >
-                            {a.summary.blockingErrors} blocking
+                            {t("citationHealth.blockingCount", {
+                              n: a.summary.blockingErrors,
+                            })}
                           </Badge>
                         )}
                         {a.summary.missing > 0 && (
@@ -875,7 +909,9 @@ export function CitationHealthDashboard({
                             variant="outline"
                             className="h-3.5 px-1 text-[8px] badge-rose"
                           >
-                            {a.summary.missing} missing
+                            {t("citationHealth.missingCount", {
+                              n: a.summary.missing,
+                            })}
                           </Badge>
                         )}
                         {a.summary.suspect > 0 && (
@@ -883,7 +919,9 @@ export function CitationHealthDashboard({
                             variant="outline"
                             className="h-3.5 px-1 text-[8px] badge-teal"
                           >
-                            {a.summary.suspect} suspect
+                            {t("citationHealth.suspectCount", {
+                              n: a.summary.suspect,
+                            })}
                           </Badge>
                         )}
                         {a.summary.unsupported > 0 && (
@@ -891,7 +929,9 @@ export function CitationHealthDashboard({
                             variant="outline"
                             className="h-3.5 px-1 text-[8px] badge-amber"
                           >
-                            {a.summary.unsupported} unsup
+                            {t("citationHealth.unsupCount", {
+                              n: a.summary.unsupported,
+                            })}
                           </Badge>
                         )}
                         {!a.numberingIntegrityOk && (
@@ -899,7 +939,7 @@ export function CitationHealthDashboard({
                             variant="outline"
                             className="h-3.5 px-1 text-[8px] badge-rose"
                           >
-                            numbering drift
+                            {t("citationHealth.numberingDrift")}
                           </Badge>
                         )}
                         {a.summary.orphan > 0 && (
@@ -907,7 +947,9 @@ export function CitationHealthDashboard({
                             variant="outline"
                             className="h-3.5 px-1 text-[8px] badge-amber"
                           >
-                            {a.summary.orphan} orphan
+                            {t("citationHealth.orphanCount", {
+                              n: a.summary.orphan,
+                            })}
                           </Badge>
                         )}
                         {a.summary.blockingErrors === 0 &&
@@ -917,7 +959,7 @@ export function CitationHealthDashboard({
                               variant="outline"
                               className="h-3.5 px-1 text-[8px] badge-emerald"
                             >
-                              ✓ clean
+                              {t("citationHealth.cleanBadge")}
                             </Badge>
                           )}
                       </div>
@@ -938,34 +980,32 @@ export function CitationHealthDashboard({
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-base font-serif-text tracking-tight">
               <RotateCw className="h-5 w-5 text-primary shrink-0" />
-              Regenerate all paragraphs with citation issues?
+              {t("citationHealth.regenConfirmTitle")}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-sm leading-relaxed space-y-2">
               <span className="block">
-                This will re-write the body text of{" "}
+                {t("citationHealth.regenBodyPrefix")}{" "}
                 <strong className="text-foreground font-serif-text">
-                  {report?.worstOffenders.filter(
-                    (p) => p.blockingCount > 0 || p.warningCount > 0
-                  ).length || 0}{" "}
-                  paragraph(s)
+                  {t("citationHealth.regenParagraphsCount", {
+                    n:
+                      report?.worstOffenders.filter(
+                        (p) => p.blockingCount > 0 || p.warningCount > 0
+                      ).length || 0,
+                  })}
                 </strong>{" "}
-                via LLM using their current reference lists.
+                {t("citationHealth.regenBodySuffix")}
               </span>
               <span className="block text-amber-600 dark:text-amber-400">
-                ⚠ This is a destructive operation — the current paragraph
-                content will be replaced with fresh text. Consider using
-                "Auto-fix all" first if you only need to add missing references.
+                ⚠ {t("citationHealth.regenWarning")}
               </span>
               <span className="block text-muted-foreground text-xs">
-                The regeneration runs the LLM with the project's curated
-                references and re-numbers citations by appearance order. Each
-                paragraph's reference list is rebuilt to match the new body.
+                {t("citationHealth.regenNote")}
               </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="text-xs">
-              Cancel
+              {t("common.cancel")}
             </AlertDialogCancel>
             <AlertDialogAction
               className="text-xs gap-1.5 btn-gradient-primary text-primary-foreground hover:shadow-md transition-all"
@@ -976,7 +1016,7 @@ export function CitationHealthDashboard({
               }}
             >
               <RotateCw className="h-3.5 w-3.5" />
-              Regenerate all
+              {t("citationHealth.regenerateAll")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
+import { VERIFY_BATCH_SIZE, VERIFY_REMOVE_CONFIDENCE, maxCitableRefsFor } from "@/lib/v2-config";
+import { logger } from "@/lib/logger";
 import { webSearch } from "@/lib/ai";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
@@ -77,11 +79,10 @@ interface GenerateFullV2Body {
   promptInstruction?: string;
 }
 
-/** Conservative removal thresholds for the adversarial verify stage. */
+/** Conservative removal verdict for the adversarial verify stage. */
 const VERIFY_REMOVE_VERDICT = "UNSUPPORTED";
-const VERIFY_REMOVE_CONFIDENCE = 80;
-/** Verifier batches: citations checked per LLM call. */
-const VERIFY_BATCH_SIZE = 10;
+// VERIFY_BATCH_SIZE / VERIFY_REMOVE_CONFIDENCE / maxCitableRefs constants
+// live in @/lib/v2-config (single source of truth for pipeline tuning).
 
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as GenerateFullV2Body;
@@ -116,9 +117,11 @@ export async function POST(req: NextRequest) {
       };
 
       const t0 = Date.now();
+      const slog = logger("generate-full-v2");
       const log = (msg: string) => {
-        const line = `[generate-full-v2] +${String(Date.now() - t0).padStart(7)}ms ${msg}`;
-        try { console.log(line); } catch {}
+        // Structured single-line JSON (grep-able by level/scope/ms); replaces
+        // the old ad-hoc `[generate-full-v2] +123ms ...` format strings.
+        try { slog.info(msg, { ms: Date.now() - t0 }); } catch {}
       };
 
       // Pipeline-wide accuracy telemetry (emitted in `complete`).
@@ -463,7 +466,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
 
         // ============ STEP 2: Curate ============
         send("step", { step: "curate", status: "started", message: `Curating references...` });
-        const maxCitableRefs = Math.min(savedReferences.length, Math.max(20, Math.floor(targetWords / 200)));
+        const maxCitableRefs = maxCitableRefsFor(targetWords, savedReferences.length);
         const curatedRefs = await curateReferences(
           projectId, savedReferences, project.topic, project.field || "life sciences", maxCitableRefs, maxTokens
         );
@@ -1201,6 +1204,7 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
         safeClose();
       } catch (err: any) {
         const errMsg = String(err?.message ?? err);
+        try { slog.error("FATAL", { ms: Date.now() - t0, error: errMsg.slice(0, 300) }); } catch {}
         log(`FATAL: ${errMsg.slice(0, 300)}`);
 
         // ★ CRITICAL FIX (crash-safe rollback). Previously ANY failure after

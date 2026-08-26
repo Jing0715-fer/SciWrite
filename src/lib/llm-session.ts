@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { chat } from "@/lib/ai";
+import { SESSION_MAX_TOTAL_CHARS as MAX_TOTAL_CHARS } from "@/lib/v2-config";
 
 /**
  * LLM Session Manager
@@ -212,7 +213,6 @@ export async function chatWithSession(
   // 1. First, drop oldest context messages (keep system + latest prompt)
   // 2. If still too long, use compressPrompt() to intelligently truncate
   //    the longest context blocks (reference lists, full-text articles, etc.)
-  const MAX_TOTAL_CHARS = 28000;
   let finalPrompt = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
   if (finalPrompt.length > MAX_TOTAL_CHARS) {
     // Drop oldest non-system messages (front) one at a time until we fit.
@@ -388,7 +388,6 @@ export async function chatWithSessionStream(
 
   // Build the full prompt + system into a single string, with the same
   // context-window safety compression as chatWithSession().
-  const MAX_TOTAL_CHARS = 28000;
   let finalPrompt = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
   if (finalPrompt.length > MAX_TOTAL_CHARS) {
     while (finalPrompt.length > MAX_TOTAL_CHARS && messages.length > 2) {
