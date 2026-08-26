@@ -233,7 +233,19 @@ export function extractBodyCitations(body: string): {
 export function extractKeywords(text: string): Set<string> {
   const lower = (text || "").toLowerCase();
   const tokens = lower.match(/[a-z][a-z0-9-]{3,}/g) || [];
-  return new Set(tokens.filter((t) => !STOPWORDS.has(t)));
+  const latin = new Set(tokens.filter((t) => !STOPWORDS.has(t)));
+  // FIX (中文 support): the Latin-only regex made every Chinese sentence score
+  // 0 → all citations in Chinese paragraphs were flagged suspect/unsupported
+  // (false positives). Add CJK character bigrams as tokens so Chinese
+  // topicality works the same way Latin keyword overlap does.
+  const cjkRuns = lower.match(/[\u4e00-\u9fff]{2,}/g) || [];
+  for (const run of cjkRuns) {
+    for (let i = 0; i < run.length - 1; i++) {
+      latin.add(run.slice(i, i + 2));
+    }
+    if (run.length === 2) latin.add(run);
+  }
+  return latin;
 }
 
 /**
@@ -414,13 +426,24 @@ export function sanitizeOutOfRangeCitations(
   const citeRe = /\[(\d{1,3}(?:[,\-–]\s*\d{1,3})*)\]/g;
   const newContent = content.replace(citeRe, (match, inner: string) => {
     const nums = expandCitationRange(inner);
-    const validNums = nums.filter((n) => n >= 1 && n <= refCount);
+    // Dedupe within a citation group: [5,5] → [5]. The LLM or a buggy
+    // adversarial-removal pass can produce a [n,n] marker that cites the
+    // same paper twice — semantically meaningless and trips duplicate
+    // audit warnings. Observed in E2E test 2026-08-26 on article
+    // cmt9f93jg00x4rewrmj0qpm75 (one [5,5] slipped through sanitize).
+    const unique = Array.from(new Set(nums));
+    const validNums = unique.filter((n) => n >= 1 && n <= refCount);
     if (validNums.length === 0) {
-      replaced++;
+      replaced += nums.length;
       return "[$REF]";
     }
-    if (validNums.length < nums.length) {
-      replaced += nums.length - validNums.length;
+    if (validNums.length < unique.length) {
+      replaced += unique.length - validNums.length;
+      return `[${validNums.join(",")}]`;
+    }
+    if (unique.length < nums.length) {
+      // All valid but duplicates were collapsed — still rewrite so the
+      // marker text matches the deduplicated form.
       return `[${validNums.join(",")}]`;
     }
     return match;
