@@ -1027,8 +1027,12 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
         const filteredRefs = globalRefs.filter((_, i) => citedInBody.has(i + 1));
         const refNumberMap = new Map<number, number>();
         if (filteredRefs.length < globalRefs.length) {
+          // Build the object-identity → index map once (indexOf inside the
+          // loop below was O(n²) with object identity).
+          const globalIndex = new Map(globalRefs.map((r, i) => [r, i] as const));
           filteredRefs.forEach((r, i) => {
-            refNumberMap.set(globalRefs.indexOf(r) + 1, i + 1);
+            const gi = globalIndex.get(r);
+            if (gi !== undefined) refNumberMap.set(gi + 1, i + 1);
           });
           articleBody = articleBody.replace(citeScanRe, (match, inner: string) => {
             const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {

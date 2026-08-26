@@ -15,6 +15,8 @@
  * rate is high during iterative article regeneration within one session.
  */
 
+import { createHash } from "node:crypto";
+
 interface CacheEntry {
   result: any;
   expiresAt: number;
@@ -29,15 +31,12 @@ let _hits = 0;
 let _misses = 0;
 
 /**
- * Simple string hash (djb2) — fast and good enough for cache keys.
- * Not cryptographic, but we don't need collision resistance here.
+ * Cache keys use SHA-256 — collision-free even for very long-lived caches.
+ * (The previous djb2 32-bit hash could collide at ~65k entries via the
+ * birthday paradox and silently return the wrong cached LLM result.)
  */
 function hashString(s: string): string {
-  let hash = 5381;
-  for (let i = 0; i < s.length; i++) {
-    hash = ((hash << 5) + hash + s.charCodeAt(i)) | 0;
-  }
-  return (hash >>> 0).toString(36);
+  return createHash("sha256").update(s).digest("hex");
 }
 
 /**

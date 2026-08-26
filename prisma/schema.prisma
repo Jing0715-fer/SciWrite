@@ -19,6 +19,7 @@ model Project {
   journalTemplate String? // e.g. nature, cell, science, jbc, plos, ieee
   status      String      @default("active") // active, archived
   shareToken  String?     @unique // if set, the project is readable via /shared/[token]
+  shareTokenExpiresAt DateTime? // enforced by /api/shared/[token]; rotated on expiry
   paragraphs  Paragraph[]
   articles    Article[]
   dataSources DataSource[]

@@ -309,8 +309,6 @@ export default function Home() {
                       projectId={activeProjectId}
                       dataSources={dataSources}
                       references={references}
-                      articles={articles}
-                      onOpenArticle={(a) => setViewArticle(a as Article)}
                     />
                   </div>
                   <div className="shrink-0 border-t border-border/60 p-2">
@@ -397,8 +395,6 @@ export default function Home() {
                   projectId={activeProjectId}
                   dataSources={dataSources}
                   references={references}
-                  articles={articles}
-                  onOpenArticle={(a) => setViewArticle(a as Article)}
                 />
               </div>
               {/* LLM cache stats — shows hit rate + clear button so the user

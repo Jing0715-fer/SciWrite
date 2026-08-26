@@ -184,7 +184,10 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
   // produces the misleading "z-ai-config not found" error and violates the
   // user's explicit choice. Surface the original error instead.
   const { generateText } = await import("@/lib/llm");
-  const r = await generateText(opts.system ?? "", prompt, {
+  // NOTE: pass compressedPrompt, not the raw prompt — CLI providers spawn with
+  // the prompt on the argv, and long prompts can exceed the OS argv limit
+  // (128KB Linux / 32KB Windows) → ENAMETOOLONG → "returned no output".
+  const r = await generateText(opts.system ?? "", compressedPrompt, {
     llm: {
       provider: selected,
       temperature: opts.temperature,
@@ -226,7 +229,8 @@ export async function chatWithSessionId(
     return { text, cliSessionId: null };
   }
   const { generateText } = await import("@/lib/llm");
-  const r = await generateText(opts.system ?? "", prompt, {
+  // compressedPrompt — see note in chat() about the CLI argv limit.
+  const r = await generateText(opts.system ?? "", compressedPrompt, {
     llm: { provider: selected, temperature: opts.temperature },
     maxChars: 32000,
     sessionId,
@@ -403,7 +407,10 @@ export async function webSearch(
   // Non-zai providers don't ship a native web-search tool. Returning [] keeps
   // the pipeline alive (gather/compose will still run with database queries)
   // and avoids throwing the misleading "z-ai-config not found" error.
-  if (!(await isZaiSelected())) return [];
+  if (!(await isZaiSelected())) {
+    warnNoZaiTools("webSearch");
+    return [];
+  }
   try {
     const zai = await getAI();
     const result = await zai.functions.invoke("web_search", {
@@ -429,7 +436,10 @@ export interface PageReadResult {
 export async function readPage(url: string): Promise<PageReadResult> {
   // Page reading is a z-ai-sdk hosted tool. Non-zai providers don't ship it;
   // return empty rather than throwing "z-ai-config not found".
-  if (!(await isZaiSelected())) return {};
+  if (!(await isZaiSelected())) {
+    warnNoZaiTools("readPage");
+    return {};
+  }
   try {
     const zai = await getAI();
     const result: any = await zai.functions.invoke("page_reader", { url });
@@ -452,6 +462,16 @@ export async function readPage(url: string): Promise<PageReadResult> {
  * Used by webSearch() / readPage() to no-op when the user picked a CLI
  * provider (hermes/codex/codebuddy/etc.) that doesn't ship web/search tools.
  */
+let _warnedNoZaiTools = false;
+function warnNoZaiTools(fn: "webSearch" | "readPage") {
+  if (_warnedNoZaiTools) return;
+  _warnedNoZaiTools = true;
+  console.warn(
+    `[ai] ${fn}: the selected CLI provider has no hosted web-search/page-reader tools — ` +
+      `${fn}() is disabled for this process; gathering will rely on database queries only.`,
+  );
+}
+
 async function isZaiSelected(): Promise<boolean> {
   try {
     const { getSelectedProvider } = await import("@/lib/llm-selection");

@@ -11,14 +11,34 @@ import type {
 } from "./types";
 import { consumeSSEStream } from "./sse";
 
+/**
+ * Fetch timeouts. Plain CRUD never takes >90s; LLM-backed sync routes
+ * (summarize / verify / compose / revise / gather / ...) can legitimately run
+ * for minutes, so they get a 5-minute budget instead of hanging forever.
+ */
+const DEFAULT_TIMEOUT_MS = 90_000;
+const LLM_TIMEOUT_MS = 5 * 60_000;
+const LLM_ROUTE_RE =
+  /^\/api\/(ai\/|insights|databases|data-sources\/[^/]+\/deep-read|articles\/[^/]+\/(summarize|verify-citations|generate-diagram|suggest-citations|optimize-structure|generate-captions|analyze-style|submission-check)|paragraphs\/[^/]+\/(validate-citations|auto-fix-citations|revise)|projects\/[^/]+\/validate-citations)/;
+
 async function jfetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-  });
+  const timeoutMs = LLM_ROUTE_RE.test(url) ? LLM_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers || {}),
+      },
+      signal: init?.signal ?? AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    if (err instanceof DOMException && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s: ${url}`);
+    }
+    throw err;
+  }
   const text = await res.text();
   let data: any = null;
   try {

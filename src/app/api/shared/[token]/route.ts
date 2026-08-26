@@ -24,11 +24,24 @@ export async function GET(
       topic: true,
       description: true,
       field: true,
+      shareTokenExpiresAt: true,
     },
   });
 
   if (!project) {
     return NextResponse.json({ error: "Shared project not found or link has been revoked." }, { status: 404 });
+  }
+
+  // Enforce the 30-day share-link TTL (legacy tokens without an expiry are
+  // grandfathered until the owner re-opens the share dialog).
+  if (
+    project.shareTokenExpiresAt &&
+    project.shareTokenExpiresAt.getTime() <= Date.now()
+  ) {
+    return NextResponse.json(
+      { error: "This share link has expired. Ask the project owner to generate a new one." },
+      { status: 410 },
+    );
   }
 
   // Return articles (non-trashed) with their paragraphs

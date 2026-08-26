@@ -28,7 +28,7 @@ import { StructureDashboardDialog } from "./structure-dashboard-dialog";
 import { useI18n } from "@/lib/i18n";
 import { api } from "@/lib/api-client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { DataSource, Reference, Article } from "@/lib/types";
+import type { DataSource, Reference } from "@/lib/types";
 
 const TYPE_BADGE: Record<string, string> = {
   pubmed: "badge-emerald",
@@ -57,14 +57,10 @@ export function KnowledgePanel({
   projectId,
   dataSources,
   references,
-  articles,
-  onOpenArticle,
 }: {
   projectId: string | null;
   dataSources: DataSource[];
   references: Reference[];
-  articles: (Article & { _count?: any })[];
-  onOpenArticle: (a: Article) => void;
 }) {
   const { t } = useI18n();
   const [addRefOpen, setAddRefOpen] = React.useState(false);
