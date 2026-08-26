@@ -428,3 +428,39 @@ Stage Summary:
 - 验证：V2 端到端跑通，文章已保存到 DB（`cmt9irxdu00o8rertvgdk79u3`），无 error 事件。
 - 持久化产物：`.zscripts/dev-daemon.py`（含详尽注释解释根因，供未来 agent 复用）。
 - 后续建议：rate-limiter 阈值（chat/chatStream 共用 15/15min 窗口）对 V2 这种密集调用管线过紧，可考虑为 v2 pipeline taskType 放宽或单独计数，预计能省 4-5 分钟/次。
+
+---
+Task ID: 15
+Agent: 主协调者 (Z.ai Code)
+Task: 修复用户审查反馈的 3 个微小问题（Ethics 章节重复 + 验证报告假阳性 + 数据源无关条目）
+
+Work Log:
+- 读取 article cmt9irxdu00o8rertvgdk79u3 全文，定位 Ethics 章节重复内容：
+  - 原 Ethics 第 1 段开头 "1987 年大肠杆菌重复序列发现" + "Nobel Prize 2020" 与引言第 1 段几乎逐字重复
+  - 原 Ethics 第 2 段复述 Casgevy 获批（已在 Therapeutic Applications 章节详述）
+  - 原 Ethics 第 3 段复述癌症应用（已在 Therapeutic Applications 章节详述）
+- 复现 export 路由的 orphan/uncited 检查逻辑（scripts/trace-export-logic.ts）：
+  - 当前状态下 maxRefN=16、citedIndices={1..16}、uncitedRefIndices=[]、orphanCitations=[]，全部正确
+  - 但代码使用 `maxRefN = references.length`（paragraph-derived），对抗审查移除引用后 paragraph refs 会 stale，导致假阳性
+- 重写 Ethics 章节（scripts/rewrite-ethics.ts）：
+  - 删除 1987/Nobel/E. coli 重复段落
+  - 新内容 4 段、260 词，聚焦：可遗传 vs 体细胞编辑伦理、公平访问、未来技术方向（base/prime editing、epigenetic modulation）、跨学科合作呼吁
+  - 仅复用已在其他章节引用过的 [3][4][5][12][13][15]，不引入新孤儿
+  - 旧版本保存为 ArticleVersion（label="pre-ethics-trim (auto-saved)"）
+  - 同步更新 paragraph cmt9irx8s00jqrertv71ks2gr 的 content/wordCount
+- 加固 export 路由（src/app/api/export/route.ts）：
+  - 新增 bodyMaxRefN 推导：从文章 body 的 "## References" 段解析 `[n]` 标记，取 max 作为权威 maxRefN
+  - 仅当 body 无可解析 references 段时才回退到 `references.length`
+  - 标注 v114 注释解释 stale paragraph refs 导致假阳性的根因
+  - ESLint 通过，无错误
+- 端到端验证：
+  - 重跑 markdown 导出 → "Citation Validation" 附录未出现（无任何 issue）
+  - Ethics 章节导出确认：无 "1987"/"Nobel"/"Escherichia coli" 重复
+  - "cancer" 在 Ethics 仅出现 1 次（新语境："cancer-research community ... functional genomics screens"）
+  - 全文 16 条参考文献仍都被正文引用（citedIndices=1..16，无 missing）
+
+Stage Summary:
+- 问题 1（Ethics 重复）：直接重写并落库，原版本保留为 ArticleVersion。新章节 4 段 260 词，聚焦伦理与未来方向。
+- 问题 2（验证报告假阳性）：加固 export 路由的 maxRefN 推导，从 body ## References 段取权威计数，消除 paragraph-derived refs stale 时的假阳性。当前文章导出已无 false positive。
+- 问题 3（数据源无关）：用户已确认不影响引用准确性，本次未实施（属于 gather 阶段 LLM 主题聚焦改进，工作量较大且不在本轮 scope）。
+- 持久产物：ArticleVersion (pre-ethics-trim)、修改后的 src/app/api/export/route.ts。

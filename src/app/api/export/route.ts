@@ -367,10 +367,39 @@ export async function POST(req: NextRequest) {
     // number outside the curated reference range.
     const dollarRefCount = (cleanContent.match(/\[\$REF\]/g) || []).length;
 
+    // Authoritative reference count = the number of [n] entries in the
+    // article body's "## References" section. The paragraph-derived
+    // `references` array can be STALE — adversarial review (v112-2) can
+    // remove references from the article body without updating the linked
+    // paragraphs' Reference rows, so `references.length` may be larger
+    // than what the reader actually sees. Using the stale count as
+    // `maxRefN` produces FALSE POSITIVES in the uncited-refs check
+    // (flagging refs [n+1..N] as "uncited" when they're actually absent
+    // from the body's reference list, not "uncited inline"). Conversely,
+    // if the body's reference list grew (rare), `references.length` would
+    // UNDER-count and miss real orphans. We therefore parse the body's
+    // "## References" section and count `[n]` markers there as the
+    // source of truth, falling back to `references.length` only if the
+    // body has no parseable reference section.
+    const bodyRefSectionStart = content.indexOf("## References");
+    let bodyMaxRefN = references.length;
+    if (bodyRefSectionStart >= 0) {
+      const bodyRefSection = content.substring(bodyRefSectionStart);
+      // Match lines that start with [n] at the very beginning (after newline).
+      const refLineMatches = [...bodyRefSection.matchAll(/(?:^|\n)\s*\[(\d{1,3})\]/g)];
+      if (refLineMatches.length > 0) {
+        const maxSeen = refLineMatches.reduce((mx, m) => {
+          const n = parseInt(m[1]);
+          return isNaN(n) ? mx : Math.max(mx, n);
+        }, 0);
+        if (maxSeen > 0) bodyMaxRefN = maxSeen;
+      }
+    }
+    const maxRefN = bodyMaxRefN;
+
     // Orphan [n]: any [n] whose n exceeds the total reference count. We
     // renumber globally during generate-full, so this should be rare, but
     // can still happen if a section's local [n] wasn't mapped correctly.
-    const maxRefN = references.length;
     const orphanCitations = new Set<number>();
     const citeMarkerRe = /\[(\d{1,3}(?:[,\-–\s]\d{1,3})*)\]/g;
     let cm: RegExpExecArray | null;
@@ -395,6 +424,10 @@ export async function POST(req: NextRequest) {
     // never appear. (citedRefKeys above tracks paragraph-linked refs, but for
     // the final exported article the body may have been globally renumbered,
     // so we re-derive from the body text.)
+    // v114: maxRefN now sourced from the article body's "## References"
+    // section (see bodyMaxRefN derivation above), eliminating false positives
+    // that occurred when paragraph-derived `references.length` exceeded the
+    // body's actual reference count after adversarial removal.
     const citedIndices = new Set<number>();
     const citeMarkerRe2 = /\[(\d{1,3}(?:[,\-–\s]\d{1,3})*)\]/g;
     let cm2: RegExpExecArray | null;
