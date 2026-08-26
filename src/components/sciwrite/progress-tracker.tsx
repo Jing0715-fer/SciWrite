@@ -47,18 +47,18 @@ export function ProgressTracker({
   const goalMet = totalWords >= wordGoal;
 
   return (
-    <div className="px-5 py-2.5 border-b border-border/60 bg-gradient-to-r from-muted/30 to-transparent">
+    <div className="glass-subtle px-5 py-2.5 border-b hairline">
       <div className="flex items-center gap-4 flex-wrap">
         {/* Word count goal tracker */}
         <div className="flex-1 min-w-[200px]">
-          <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center justify-between mb-1.5">
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
               <Type className="h-3 w-3" />
               {t("progress.writingProgress")}
             </span>
             <button
               onClick={() => setShowGoalSelector((v) => !v)}
-              className="text-[10px] font-mono text-muted-foreground hover:text-primary transition-colors"
+              className="text-[10px] font-mono text-muted-foreground hover:text-primary transition-colors tabular-nums"
               title={t("progress.setWordGoalTitle")}
             >
               {totalWords} / {wordGoal}w
@@ -79,10 +79,10 @@ export function ProgressTracker({
                     onWordGoalChange?.(g);
                     setShowGoalSelector(false);
                   }}
-                  className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${
+                  className={`text-[9px] px-1.5 py-0.5 rounded transition-all tabular-nums ${
                     wordGoal === g
-                      ? "bg-primary/10 text-primary font-semibold"
-                      : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                      ? "tab-pill"
+                      : "tab-pill-inactive"
                   }`}
                 >
                   {g}
@@ -147,10 +147,10 @@ function StatPill({
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-muted/40 hover:bg-muted/70 transition-colors cursor-help">
+          <div className="surface-card flex items-center gap-1 px-1.5 py-0.5 rounded-md cursor-help transition-all hover:shadow-sm hover:border-primary/30">
             <span className={colorMap[color] || "text-muted-foreground"}>{icon}</span>
             <span className="text-muted-foreground hidden sm:inline">{label}</span>
-            <span className={`font-semibold ${colorMap[color] || "text-foreground"}`}>
+            <span className={`font-semibold tabular-nums ${colorMap[color] || "text-foreground"}`}>
               {value}
             </span>
           </div>

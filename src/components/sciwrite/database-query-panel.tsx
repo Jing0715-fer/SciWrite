@@ -125,10 +125,12 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="px-4 pt-4 pb-3 border-b border-border/60 space-y-3 shrink-0 bg-gradient-to-r from-primary/5 to-transparent">
+      <div className="glass-subtle px-4 pt-4 pb-3 border-b border-border/60 space-y-3 shrink-0">
         <div className="flex items-center gap-2">
-          <Database className="h-4 w-4 text-primary" />
-          <h3 className="text-sm font-semibold tracking-tight">
+          <div className="h-6 w-6 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+            <Database className="h-3.5 w-3.5 text-primary" />
+          </div>
+          <h3 className="text-[15px] font-semibold tracking-tight font-serif-text">
             {t("db.title")}
           </h3>
         </div>
@@ -156,7 +158,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
 
       <div className="px-4 py-3 border-b border-border/60 space-y-2 shrink-0">
         {source === "blast" ? (
-          <>
+          <div className="surface-card rounded-lg p-2 space-y-2">
             <Textarea
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -190,21 +192,24 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
                 <span className="ml-1">{t("db.blast")}</span>
               </Button>
             </div>
-          </>
+          </div>
         ) : (
           <form
             onSubmit={(e) => {
               e.preventDefault();
               searchMut.mutate();
             }}
-            className="flex items-center gap-2"
+            className="surface-card rounded-lg p-2 flex items-center gap-2"
           >
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={srcMeta.queryPlaceholder}
-              className="h-8 text-xs"
-            />
+            <div className="relative flex-1">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={srcMeta.queryPlaceholder}
+                className="h-8 pl-7 text-xs"
+              />
+            </div>
             <Button
               type="submit"
               size="sm"
@@ -238,9 +243,11 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
             </div>
           )}
           {!results && !searchMut.isPending && (
-            <div className="text-center py-10 text-muted-foreground">
-              <FlaskConical className="h-8 w-8 mx-auto mb-2 opacity-40" />
-              <p className="text-xs">
+            <div className="acad-fade-in flex flex-col items-center text-center py-12 text-muted-foreground">
+              <div className="ring-academic h-11 w-11 rounded-xl flex items-center justify-center mb-3 bg-card">
+                <FlaskConical className="h-5 w-5 text-primary/70" />
+              </div>
+              <p className="text-xs font-serif-text font-medium tracking-tight">
                 {t("db.noResults")}
               </p>
             </div>
@@ -250,7 +257,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
               {[0, 1, 2].map((i) => (
                 <div
                   key={i}
-                  className="rounded-lg border border-border/70 bg-card p-3 space-y-2 overflow-hidden"
+                  className="surface-card rounded-lg p-3 space-y-2 overflow-hidden"
                 >
                   <div className="flex items-start gap-2">
                     <div className="h-2 w-4 bg-muted/60 rounded animate-pulse mt-0.5" />
@@ -285,7 +292,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
               />
             ))}
           {results && results.rawSnippet && (
-            <div className="text-[11px] text-muted-foreground bg-muted/40 rounded-md p-2 font-mono">
+            <div className="text-[11px] text-muted-foreground bg-muted/40 border hairline rounded-md p-2 font-mono">
               {results.rawSnippet}
             </div>
           )}
@@ -314,10 +321,10 @@ function ResultCard({
   const [expanded, setExpanded] = React.useState(false);
   const badgeClass = SOURCE_BADGE[item.source] || "badge-slate";
   return (
-    <div className="rounded-lg border border-border/70 bg-card hover:shadow-sm transition-shadow overflow-hidden">
+    <div className="surface-card rounded-lg hover:shadow-md hover:border-primary/30 transition-all overflow-hidden">
       <div className="p-3 space-y-1.5">
         <div className="flex items-start gap-2">
-          <span className="text-[10px] font-mono text-muted-foreground mt-0.5 shrink-0">
+          <span className="badge-slate px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold shrink-0 mt-0.5">
             {String(index + 1).padStart(2, "0")}
           </span>
           <div className="flex-1 min-w-0">
@@ -363,7 +370,7 @@ function ResultCard({
           </p>
         )}
       </div>
-      <div className="flex items-center gap-1 px-3 py-1.5 bg-muted/30 border-t border-border/50">
+      <div className="flex items-center gap-1 px-3 py-1.5 bg-muted/20 border-t hairline">
         <Button
           variant="ghost"
           size="sm"

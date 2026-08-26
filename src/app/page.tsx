@@ -269,14 +269,11 @@ export default function Home() {
             react-resizable-panels (its internal layout state is destroyed
             when the component is conditionally re-created). */}
         {isMobile === undefined ? (
-          <div className="rounded-xl border border-border/60 bg-card overflow-hidden h-full flex items-center justify-center">
+          <div className="rounded-xl border border-border/60 bg-card overflow-hidden h-full flex items-center justify-center shadow-md">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
         ) : isMobile ? (
-          /* Mobile layout — on screens < 768px the 3-panel ResizablePanelGroup
-             is replaced with a bottom tab bar + full-width panel switcher.
-             This prevents the 3 panels from being unusably narrow on phones. */
-          <div className="flex flex-col h-full rounded-xl border border-border/60 bg-card overflow-hidden">
+          <div className="flex flex-col h-full rounded-xl border border-border/60 bg-card overflow-hidden shadow-md">
             {/* Active panel content — full width */}
             <div className="flex-1 min-h-0 overflow-hidden">
               {mobilePanel === "projects" && (
@@ -361,10 +358,10 @@ export default function Home() {
         <ResizablePanelGroup
           direction="horizontal"
           key="desktop-panels"
-          className="rounded-xl border border-border/60 bg-card overflow-hidden h-full"
+          className="rounded-xl border border-border/60 bg-card overflow-hidden h-full shadow-lg"
         >
           {/* Left: projects */}
-          <ResizablePanel defaultSize={22} minSize={18} maxSize={32} className="bg-sidebar/50">
+          <ResizablePanel defaultSize={22} minSize={18} maxSize={32} className="bg-sidebar/40">
             <ProjectsSidebar
               projects={projects}
               activeId={activeProjectId}
@@ -399,7 +396,7 @@ export default function Home() {
           <ResizableHandle withHandle />
 
           {/* Right: databases + knowledge */}
-          <ResizablePanel defaultSize={30} minSize={24} maxSize={42} className="bg-sidebar/30">
+          <ResizablePanel defaultSize={30} minSize={24} maxSize={42} className="bg-sidebar/20">
             <div className="flex flex-col h-full overflow-hidden">
               <div className="h-[44%] min-h-0 border-b border-border/60 overflow-hidden">
                 <DatabaseQueryPanel projectId={activeProjectId} />
@@ -570,54 +567,57 @@ function Header({
 }) {
   const { t } = useI18n();
   return (
-    <header className="shrink-0 px-4 py-2.5 border-b border-border/60 bg-card/80 backdrop-blur flex items-center gap-3">
-      <div className="flex items-center gap-2">
-        <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-primary to-teal-600 flex items-center justify-center shadow-sm">
+    <header className="glass-toolbar shrink-0 px-4 py-2.5 flex items-center gap-3 relative z-30">
+      <div className="flex items-center gap-2.5">
+        <div className="brand-tile h-9 w-9 rounded-xl flex items-center justify-center">
           <FlaskConical className="h-4.5 w-4.5 text-primary-foreground" />
         </div>
         <div className="leading-none">
-          <h1 className="text-sm font-bold tracking-tight">
-            {t("app.title")}
-            <span className="text-primary">·</span>
-            <span className="text-muted-foreground font-normal"> {t("app.subtitle")}</span>
+          <h1 className="text-sm font-bold tracking-tight flex items-baseline gap-1.5">
+            <span className="font-serif-text">{t("app.title")}</span>
+            <span className="text-primary/50 text-xs">·</span>
+            <span className="text-muted-foreground font-normal text-xs">{t("app.subtitle")}</span>
           </h1>
-          <p className="text-[10px] text-muted-foreground mt-0.5">
+          <p className="text-[10px] text-muted-foreground mt-1 tracking-wide">
             {t("app.tagline")}
           </p>
         </div>
       </div>
 
-      <div className="h-6 w-px bg-border mx-1 hidden sm:block" />
+      <div className="h-7 w-px bg-border/70 mx-1.5 hidden sm:block" />
 
       <div className="flex-1 min-w-0 hidden sm:block">
         {project ? (
-          <div className="flex items-center gap-2 min-w-0">
-            <BookOpenText className="h-3.5 w-3.5 text-primary shrink-0" />
-            <span className="text-xs font-medium truncate">{project.title}</span>
-            <span className="text-[10px] text-muted-foreground truncate hidden md:inline">
+          <div className="flex items-center gap-2 min-w-0 group">
+            <span className="inline-flex items-center justify-center h-6 w-6 rounded-md bg-primary/10 text-primary shrink-0">
+              <BookOpenText className="h-3.5 w-3.5" />
+            </span>
+            <span className="text-xs font-semibold truncate">{project.title}</span>
+            <span className="text-[10px] text-muted-foreground/80 truncate hidden md:inline">
               — {project.topic}
             </span>
           </div>
         ) : (
-          <span className="text-xs text-muted-foreground">{t("app.noProject")}</span>
+          <span className="text-xs text-muted-foreground italic">{t("app.noProject")}</span>
         )}
       </div>
 
       <div className="flex items-center gap-1.5">
         {project && (
           <>
-            <Badge variant="outline" className="text-[9px] h-5 gap-1">
-              <PenLine className="h-2.5 w-2.5" />
+            <Badge variant="outline" className="text-[9px] h-5 gap-1 bg-card/60 border-border/70 font-medium tabular-nums">
+              <PenLine className="h-2.5 w-2.5 text-primary" />
               {paragraphCount}
             </Badge>
-            <Badge variant="outline" className="text-[9px] h-5 gap-1">
-              <Layers className="h-2.5 w-2.5" />
+            <Badge variant="outline" className="text-[9px] h-5 gap-1 bg-card/60 border-border/70 font-medium tabular-nums">
+              <Layers className="h-2.5 w-2.5 text-primary" />
               {articleCount}
             </Badge>
+            <div className="h-5 w-px bg-border/60 mx-0.5 hidden lg:block" />
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 text-xs gap-1.5"
+              className="h-8 text-xs gap-1.5 hover:bg-muted/60"
               onClick={onOpenInsights}
               title={t("app.insightsTitle")}
             >
@@ -626,21 +626,21 @@ function Header({
             </Button>
             {/* Unified AI Writing Hub button */}
             <Button
-              variant="outline"
               size="sm"
-              className="h-8 text-xs gap-1.5 bg-gradient-to-r from-primary/15 to-primary/5 border-primary/40 hover:from-primary/20 hover:to-primary/10"
+              className="btn-gradient-primary h-8 text-xs gap-1.5 text-primary-foreground font-medium"
               onClick={onOpenWrite}
               title={t("app.unifiedWriteTitle")}
             >
-              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              <Sparkles className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">{t("app.unifiedWrite")}</span>
             </Button>
+            <div className="h-5 w-px bg-border/60 mx-0.5 hidden sm:block" />
           </>
         )}
         <Button
           variant="ghost"
           size="icon"
-          className="h-8 w-8 rounded-full"
+          className="h-8 w-8 rounded-lg hover:bg-muted/60"
           onClick={() => onOpenLLMConfig()}
           title={t("app.llmConfigTitle")}
         >
@@ -738,11 +738,11 @@ function WritingWorkspace({
 
   return (
     <div className="flex flex-col h-full relative">
-      <div className="px-5 py-3 border-b border-border/60 bg-gradient-to-r from-primary/[0.04] to-transparent shrink-0">
+      <div className="glass-subtle px-5 py-3.5 border-b border-border/60 shrink-0">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 mb-0.5">
-              <h2 className="text-base font-semibold tracking-tight truncate font-serif-text">
+            <div className="flex items-center gap-2 mb-1">
+              <h2 className="text-lg font-semibold tracking-tight truncate font-serif-text leading-tight">
                 {project.title}
               </h2>
               {project.field && (
@@ -756,11 +756,11 @@ function WritingWorkspace({
             </p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <Button variant="ghost" size="sm" className="h-8 text-xs gap-1.5" onClick={onOpenUserData} title={t("app.uploadDataTitle")}>
+            <Button variant="ghost" size="sm" className="h-8 text-xs gap-1.5 hover:bg-muted/60" onClick={onOpenUserData} title={t("app.uploadDataTitle")}>
               <DatabaseZap className="h-3.5 w-3.5" />
               <span className="hidden xl:inline">{t("app.dataButton")}</span>
             </Button>
-            <Button variant="ghost" size="sm" className={`h-8 text-xs gap-1.5 ${tipsOpen ? "bg-amber-100/60 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400" : ""}`} onClick={() => onTipsOpenChange(!tipsOpen)} title={t("app.writingTipsTitle")}>
+            <Button variant="ghost" size="sm" className={`h-8 text-xs gap-1.5 ${tipsOpen ? "bg-amber-100/60 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400" : "hover:bg-muted/60"}`} onClick={() => onTipsOpenChange(!tipsOpen)} title={t("app.writingTipsTitle")}>
               <Lightbulb className="h-3.5 w-3.5" />
               <span className="hidden xl:inline">{t("app.tips")}</span>
             </Button>
@@ -787,18 +787,18 @@ function WritingWorkspace({
       )}
 
       {/* Workspace tabs */}
-      <div className="flex items-center gap-1 px-5 py-1.5 border-b border-border/60 shrink-0 bg-muted/20 overflow-x-auto">
-        <button onClick={() => setWorkspaceTab("paragraphs")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${workspaceTab === "paragraphs" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}>
-          <PenLine className="h-3 w-3 inline mr-1" />{t("workspace.paragraphsTabLabel", { n: paragraphs.length })}
+      <div className="flex items-center gap-1 px-5 py-2 border-b border-border/60 shrink-0 bg-muted/15 overflow-x-auto">
+        <button onClick={() => setWorkspaceTab("paragraphs")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-all whitespace-nowrap flex items-center gap-1 ${workspaceTab === "paragraphs" ? "tab-pill" : "tab-pill-inactive"}`}>
+          <PenLine className="h-3 w-3" />{t("workspace.paragraphsTabLabel", { n: paragraphs.length })}
         </button>
-        <button onClick={() => setWorkspaceTab("article")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${workspaceTab === "article" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}>
-          <Layers className="h-3 w-3 inline mr-1" />{t("workspace.articleTab")}{latestArticle ? ` (${articles.length})` : ""}
+        <button onClick={() => setWorkspaceTab("article")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-all whitespace-nowrap flex items-center gap-1 ${workspaceTab === "article" ? "tab-pill" : "tab-pill-inactive"}`}>
+          <Layers className="h-3 w-3" />{t("workspace.articleTab")}{latestArticle ? ` (${articles.length})` : ""}
         </button>
-        <button onClick={() => setWorkspaceTab("review")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${workspaceTab === "review" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}>
-          <Gavel className="h-3 w-3 inline mr-1" />{t("workspace.reviewTab")}
+        <button onClick={() => setWorkspaceTab("review")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-all whitespace-nowrap flex items-center gap-1 ${workspaceTab === "review" ? "tab-pill" : "tab-pill-inactive"}`}>
+          <Gavel className="h-3 w-3" />{t("workspace.reviewTab")}
         </button>
-        <button onClick={() => setWorkspaceTab("relationships")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors whitespace-nowrap ${workspaceTab === "relationships" ? "bg-card shadow-sm text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/40"}`}>
-          <Network className="h-3 w-3 inline mr-1" />{t("workspace.relationshipsTab")}
+        <button onClick={() => setWorkspaceTab("relationships")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-all whitespace-nowrap flex items-center gap-1 ${workspaceTab === "relationships" ? "tab-pill" : "tab-pill-inactive"}`}>
+          <Network className="h-3 w-3" />{t("workspace.relationshipsTab")}
         </button>
         {latestArticle && (
           <div className="ml-auto shrink-0">
@@ -812,15 +812,15 @@ function WritingWorkspace({
         <ScrollArea className="flex-1 min-h-0 scroll-academic">
           <div className="px-5 py-4 max-w-3xl mx-auto space-y-3">
             {paragraphs.length === 0 ? (
-              <div className="text-center py-16">
-                <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
-                  <Lightbulb className="h-7 w-7 text-primary" />
+              <div className="text-center py-16 acad-fade-in">
+                <div className="h-16 w-16 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3 ring-academic">
+                  <Lightbulb className="h-8 w-8 text-primary" />
                 </div>
-                <h3 className="text-sm font-semibold">{t("workspace.startWriting")}</h3>
-                <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+                <h3 className="text-sm font-semibold font-serif-text">{t("workspace.startWriting")}</h3>
+                <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto leading-relaxed">
                   {t("workspace.startHint")}
                 </p>
-                <Button size="sm" className="mt-4 gap-1.5" onClick={onOpenWrite}>
+                <Button size="sm" className="mt-4 gap-1.5 btn-gradient-primary text-primary-foreground" onClick={onOpenWrite}>
                   <Sparkles className="h-3.5 w-3.5" />
                   {t("workspace.draftFirst")}
                   <ArrowRight className="h-3.5 w-3.5" />
@@ -843,7 +843,7 @@ function WritingWorkspace({
                 </div>
                 <SortableParagraphs paragraphs={paragraphs} projectId={activeProjectId} articleContent={articles[0]?.content} />
                 <div className="pt-2">
-                  <Button variant="outline" size="sm" className="w-full h-9 text-xs gap-1.5 border-dashed" onClick={onOpenWrite}>
+                  <Button variant="outline" size="sm" className="w-full h-9 text-xs gap-1.5 border-dashed hover:border-primary/50 hover:bg-primary/[0.03] hover:text-primary transition-all" onClick={onOpenWrite}>
                     <Sparkles className="h-3.5 w-3.5" />
                     {t("workspace.draftAnother")}
                   </Button>
@@ -910,13 +910,15 @@ function WritingWorkspace({
                 />
               </div>
             ) : (
-              <div className="text-center py-16">
-                <Layers className="h-10 w-10 mx-auto opacity-40 mb-3" />
-                <h3 className="text-sm font-semibold">{t("workspace.noArticleTitle")}</h3>
-                <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto mb-4">
+              <div className="text-center py-16 acad-fade-in">
+                <div className="h-16 w-16 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3 ring-academic">
+                  <Layers className="h-8 w-8 text-primary" />
+                </div>
+                <h3 className="text-sm font-semibold font-serif-text">{t("workspace.noArticleTitle")}</h3>
+                <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto mb-4 leading-relaxed">
                   {t("workspace.noArticleDesc")}
                 </p>
-                <Button size="sm" className="gap-1.5" onClick={onOpenCompose} disabled={paragraphs.length < 2}>
+                <Button size="sm" className="gap-1.5 btn-gradient-primary text-primary-foreground" onClick={onOpenCompose} disabled={paragraphs.length < 2}>
                   <Layers className="h-3.5 w-3.5" />
                   {t("workspace.composeArticleBtn")}
                 </Button>
@@ -1206,25 +1208,25 @@ function safeParseArr(raw: string): any[] {
 function EmptyWorkspace() {
   const { t } = useI18n();
   return (
-    <div className="flex flex-col items-center justify-center h-full text-center px-6">
-      <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary/15 to-teal-500/15 flex items-center justify-center mb-3 ring-academic">
-        <FlaskConical className="h-8 w-8 text-primary" />
+    <div className="flex flex-col items-center justify-center h-full text-center px-6 acad-fade-in">
+      <div className="brand-tile h-20 w-20 rounded-3xl flex items-center justify-center mb-4 ring-academic">
+        <FlaskConical className="h-10 w-10 text-primary-foreground" />
       </div>
-      <h2 className="text-xl font-semibold font-serif-text">
+      <h2 className="text-2xl font-semibold font-serif-text tracking-tight">
         {t("workspace.emptyTitle")}
       </h2>
-      <p className="text-sm text-muted-foreground mt-1.5 max-w-md leading-relaxed">
+      <p className="text-sm text-muted-foreground mt-2 max-w-md leading-relaxed">
         {t("workspace.emptyDesc")}
       </p>
-      <div className="mt-4 grid grid-cols-3 gap-2 max-w-lg text-[11px]">
-        {[
+      <div className="mt-5 grid grid-cols-3 gap-2.5 max-w-lg text-[11px]">
+        {[ 
           ["1", t("workspace.step1Title"), t("workspace.step1Desc")],
           ["2", t("workspace.step2Title"), t("workspace.step2Desc")],
           ["3", t("workspace.step3Title"), t("workspace.step3Desc")],
         ].map(([n, title, desc]) => (
-          <div key={n} className="rounded-lg border border-border/60 p-2.5 text-left bg-card/40">
-            <div className="flex items-center gap-1 mb-1">
-              <span className="h-4 w-4 rounded-full bg-primary/15 text-primary text-[9px] font-bold flex items-center justify-center">
+          <div key={n} className="surface-card rounded-lg p-3 text-left hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <span className="h-5 w-5 rounded-md bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center">
                 {n}
               </span>
               <span className="font-semibold text-[11px]">{title}</span>
@@ -1233,7 +1235,7 @@ function EmptyWorkspace() {
           </div>
         ))}
       </div>
-      <p className="text-[10px] text-muted-foreground/80 mt-4">
+      <p className="text-[10px] text-muted-foreground/80 mt-5">
         {t("workspace.emptyHint")}
       </p>
     </div>
@@ -1243,13 +1245,16 @@ function EmptyWorkspace() {
 function Footer({ onOpenPalette }: { onOpenPalette?: () => void }) {
   const { t } = useI18n();
   return (
-    <footer className="shrink-0 px-4 py-1.5 border-t border-border/60 bg-card/60 backdrop-blur flex items-center justify-between text-[10px] text-foreground/70">
+    <footer className="glass-toolbar shrink-0 px-4 py-1.5 flex items-center justify-between text-[10px] text-foreground/70 relative z-20" style={{ boxShadow: "inset 0 1px 0 oklch(0.905 0.012 150 / 0.8)" }}>
       <div className="flex items-center gap-2">
-        <span className="inline-flex items-center gap-1 font-medium">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+        <span className="inline-flex items-center gap-1.5 font-medium">
+          <span className="relative inline-flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+          </span>
           {t("footer.aiPowered")}
         </span>
-        <span className="hidden sm:inline opacity-50">·</span>
+        <span className="hidden sm:inline opacity-40">·</span>
         <span className="hidden sm:inline text-muted-foreground">
           {t("footer.citations")} <code className="font-mono text-[9px] text-foreground/60">[n]</code> / <code className="font-mono text-[9px] text-foreground/60">[SOURCE:ID]</code>
         </span>
@@ -1258,16 +1263,16 @@ function Footer({ onOpenPalette }: { onOpenPalette?: () => void }) {
         {onOpenPalette && (
           <button
             onClick={onOpenPalette}
-            className="hidden md:inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 hover:bg-muted/60 transition-colors"
+            className="hidden md:inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 bg-card/40 hover:bg-muted/60 hover:border-border transition-colors"
             title={t("footer.openPaletteTitle")}
           >
-            <kbd className="font-mono text-[9px] font-semibold">⌘K</kbd>
+            <kbd className="font-mono text-[9px] font-semibold text-foreground/80">⌘K</kbd>
             <span className="text-muted-foreground">{t("footer.commands")}</span>
           </button>
         )}
-        <span className="hidden md:inline">RCSB · UniProt · PubMed · NCBI · BLAST</span>
-        <span>·</span>
-        <span>{t("app.title")}</span>
+        <span className="hidden md:inline text-muted-foreground/80">RCSB · UniProt · PubMed · NCBI · BLAST</span>
+        <span className="opacity-40">·</span>
+        <span className="font-medium">{t("app.title")}</span>
       </div>
     </footer>
   );

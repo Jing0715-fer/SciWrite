@@ -125,12 +125,12 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
           projectTitle={projects.find((p) => p.id === activeId)?.title || ""}
         />
       )}
-      <div className="px-3 pt-3 pb-2 border-b border-border/60 flex items-center justify-between">
+      <div className="glass-subtle px-3 pt-3 pb-2 border-b hairline flex items-center justify-between">
         <div className="flex items-center gap-1.5 min-w-0">
-          <div className="h-6 w-6 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-            <FlaskConical className="h-3.5 w-3.5 text-primary" />
+          <div className="brand-tile h-6 w-6 rounded-md flex items-center justify-center shrink-0">
+            <FlaskConical className="h-3.5 w-3.5 text-primary-foreground" />
           </div>
-          <span className="text-xs font-semibold tracking-tight truncate">{t("projects.title")}</span>
+          <span className="text-xs font-semibold tracking-tight truncate font-serif-text">{t("projects.title")}</span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <ProjectImportExport
@@ -153,7 +153,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
           <Button
             size="sm"
             variant="default"
-            className="h-7 px-2 gap-1"
+            className="btn-gradient-primary h-7 px-2 gap-1 text-primary-foreground font-medium"
             onClick={() => setCreateOpen(true)}
           >
             <Plus className="h-3.5 w-3.5" />
@@ -167,14 +167,14 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
           (case-insensitive). Hides cleanly when the list is empty so it
           doesn't compete with the "no projects yet" empty state. */}
       {projects.length > 0 && (
-        <div className="px-3 py-2 border-b border-border/60 shrink-0">
+        <div className="px-3 py-2 border-b hairline shrink-0">
           <div className="relative">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search projects…"
-              className="h-7 pl-7 pr-7 text-[11px]"
+              className="h-7 pl-7 pr-7 text-[11px] bg-card/60 border-border/70 focus-visible:border-primary/50 transition-colors"
             />
             {search && (
               <button
@@ -210,18 +210,22 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
                 project cards narrower than article cards. */}
             <div className="px-3 py-2 space-y-1.5 min-w-0">
               {projects.length === 0 && (
-                <div className="text-center py-6 px-3 text-muted-foreground">
-                  <FolderOpen className="h-7 w-7 mx-auto opacity-40 mb-1.5" />
-                  <p className="text-xs">{t("projects.empty")}</p>
-                  <p className="text-[10px] mt-1">
+                <div className="text-center py-6 px-3 text-muted-foreground acad-fade-in">
+                  <div className="h-12 w-12 mx-auto rounded-xl bg-primary/10 flex items-center justify-center mb-2 ring-academic">
+                    <FolderOpen className="h-6 w-6 text-primary" />
+                  </div>
+                  <p className="text-xs font-medium">{t("projects.empty")}</p>
+                  <p className="text-[10px] mt-1 text-muted-foreground/80">
                     {t("projects.emptyHint")}
                   </p>
                 </div>
               )}
               {filteredProjects.length === 0 && search && (
-                <div className="text-center py-6 px-3 text-muted-foreground">
-                  <Search className="h-6 w-6 mx-auto opacity-40 mb-1.5" />
-                  <p className="text-[11px]">No projects match “{search}”.</p>
+                <div className="text-center py-6 px-3 text-muted-foreground acad-fade-in">
+                  <div className="h-10 w-10 mx-auto rounded-xl bg-muted/60 flex items-center justify-center mb-2">
+                    <Search className="h-5 w-5 opacity-50" />
+                  </div>
+                  <p className="text-[11px] font-medium">No projects match “{search}”.</p>
                   <button
                     type="button"
                     onClick={() => setSearch("")}
@@ -253,11 +257,11 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
         {articles.length > 0 && (
           <ResizablePanel defaultSize={projects.length <= 2 ? 55 : 40} minSize={25}>
             <div className="flex flex-col h-full">
-              <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5 shrink-0 border-t border-border/60">
+              <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5 shrink-0 border-t hairline">
                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
                   <FileStack className="h-3 w-3" />
                   {t("workspace.articleTab") || "Articles"}
-                  <span className="text-[9px] opacity-70">{articles.length}</span>
+                  <span className="text-[9px] opacity-70 tabular-nums">{articles.length}</span>
                 </span>
                 {/* Trash button — opens the article trash dialog where users can
                     restore soft-deleted articles or permanently delete them. */}
@@ -284,7 +288,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
                       <button
                         key={a.id}
                         onClick={() => onOpenArticle?.(a)}
-                        className="w-full block group text-left rounded-md border border-border/50 hover:border-primary/40 hover:bg-primary/[0.03] transition-colors p-2 space-y-1 overflow-hidden"
+                        className="w-full block group text-left surface-card rounded-lg hover:shadow-md hover:border-primary/40 hover:-translate-y-px transition-all p-2 space-y-1 overflow-hidden"
                         title="Open full article in viewer"
                       >
                         <div className="flex items-start gap-1.5">
@@ -369,10 +373,10 @@ function ProjectItem({
 
   return (
     <div
-      className={`group rounded-md border p-2 transition-all cursor-pointer overflow-hidden ${
+      className={`group surface-card rounded-lg p-2.5 transition-all cursor-pointer overflow-hidden ${
         active
           ? "border-primary/40 bg-primary/[0.06] ring-academic"
-          : "border-border hover:border-primary/40 hover:bg-muted/40"
+          : "hover:border-primary/40 hover:shadow-md hover:-translate-y-px"
       }`}
       onClick={onSelect}
     >

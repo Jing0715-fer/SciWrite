@@ -1,0 +1,769 @@
+     1→@import "tailwindcss";
+     2→@import "tw-animate-css";
+     3→
+     4→@custom-variant dark (&:is(.dark *));
+     5→
+     6→@theme inline {
+     7→  --color-background: var(--background);
+     8→  --color-foreground: var(--foreground);
+     9→  --font-sans: var(--font-geist-sans), var(--font-zh-sans), "PingFang SC",
+    10→    "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif;
+    11→  --font-mono: var(--font-geist-mono), "SF Mono", ui-monospace, monospace;
+    12→  --font-serif: var(--font-serif), var(--font-zh-serif), "Songti SC",
+    13→    "SimSun", "STSong", serif;
+    14→  --color-sidebar-ring: var(--sidebar-ring);
+    15→  --color-sidebar-border: var(--sidebar-border);
+    16→  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    17→  --color-sidebar-accent: var(--sidebar-accent);
+    18→  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    19→  --color-sidebar-primary: var(--sidebar-primary);
+    20→  --color-sidebar-foreground: var(--sidebar-foreground);
+    21→  --color-sidebar: var(--sidebar);
+    22→  --color-chart-5: var(--chart-5);
+    23→  --color-chart-4: var(--chart-4);
+    24→  --color-chart-3: var(--chart-3);
+    25→  --color-chart-2: var(--chart-2);
+    26→  --color-chart-1: var(--chart-1);
+    27→  --color-ring: var(--ring);
+    28→  --color-input: var(--input);
+    29→  --color-border: var(--border);
+    30→  --color-destructive: var(--destructive);
+    31→  --color-accent-foreground: var(--accent-foreground);
+    32→  --color-accent: var(--accent);
+    33→  --color-muted-foreground: var(--muted-foreground);
+    34→  --color-muted: var(--muted);
+    35→  --color-secondary-foreground: var(--secondary-foreground);
+    36→  --color-secondary: var(--secondary);
+    37→  --color-primary-foreground: var(--primary-foreground);
+    38→  --color-primary: var(--primary);
+    39→  --color-popover-foreground: var(--popover-foreground);
+    40→  --color-popover: var(--popover);
+    41→  --color-card-foreground: var(--card-foreground);
+    42→  --color-card: var(--card);
+    43→  --radius-sm: calc(var(--radius) - 4px);
+    44→  --radius-md: calc(var(--radius) - 2px);
+    45→  --radius-lg: var(--radius);
+    46→  --radius-xl: calc(var(--radius) + 4px);
+    47→}
+    48→
+    49→/* ============================================================
+    50→   SciWrite — Refined Academic Studio design system
+    51→   A warmer, deeper paper palette with a richer emerald primary,
+    52→   layered soft shadows, frosted-glass toolbars and a refined
+    53→   typographic rhythm. All legacy utility class names are
+    54→   preserved so the 60+ existing components keep working.
+    55→   ============================================================ */
+    56→
+    57→:root {
+    58→  --radius: 0.75rem;
+    59→
+    60→  /* Paper neutrals — slightly warmer, with a faint cream tint that
+    61→     reads as "scholarly paper" rather than flat white. */
+    62→  --background: oklch(0.985 0.006 95);
+    63→  --foreground: oklch(0.22 0.018 150);
+    64→  --card: oklch(1 0 0);
+    65→  --card-foreground: oklch(0.22 0.018 150);
+    66→  --popover: oklch(1 0 0);
+    67→  --popover-foreground: oklch(0.22 0.018 150);
+    68→
+    69→  /* Emerald primary — deeper and more saturated for a confident,
+    70→     premium feel, while staying within accessible contrast. */
+    71→  --primary: oklch(0.48 0.14 164);
+    72→  --primary-foreground: oklch(0.99 0.012 150);
+    73→  --secondary: oklch(0.965 0.012 150);
+    74→  --secondary-foreground: oklch(0.32 0.045 162);
+    75→  --muted: oklch(0.965 0.008 95);
+    76→  --muted-foreground: oklch(0.5 0.022 150);
+    77→
+    78→  /* Teal accent — slightly cooler for a complementary highlight. */
+    79→  --accent: oklch(0.94 0.038 178);
+    80→  --accent-foreground: oklch(0.3 0.065 178);
+    81→  --destructive: oklch(0.577 0.245 27.325);
+    82→  --border: oklch(0.905 0.012 150);
+    83→  --input: oklch(0.92 0.012 150);
+    84→  --ring: oklch(0.48 0.14 164);
+    85→
+    86→  /* Layered soft shadow system — the single biggest perceived-quality
+    87→     upgrade. Surfaces now lift gently instead of sitting flat. */
+    88→  --shadow-2xs: 0 1px 1px oklch(0.28 0.05 162 / 0.04);
+    89→  --shadow-xs: 0 1px 2px oklch(0.28 0.05 162 / 0.06), 0 1px 1px oklch(0.28 0.05 162 / 0.04);
+    90→  --shadow-sm: 0 1px 3px oklch(0.28 0.05 162 / 0.07), 0 1px 2px oklch(0.28 0.05 162 / 0.05);
+    91→  --shadow-md: 0 4px 8px oklch(0.28 0.05 162 / 0.08), 0 2px 4px oklch(0.28 0.05 162 / 0.05);
+    92→  --shadow-lg: 0 8px 20px oklch(0.28 0.05 162 / 0.1), 0 3px 6px oklch(0.28 0.05 162 / 0.06);
+    93→  --shadow-xl: 0 14px 34px oklch(0.28 0.05 162 / 0.12), 0 6px 12px oklch(0.28 0.05 162 / 0.07);
+    94→  --shadow-glow: 0 0 0 1px oklch(0.48 0.14 164 / 0.18), 0 6px 18px oklch(0.48 0.14 164 / 0.12);
+    95→
+    96→  /* Motion — a single set of easing tokens so transitions feel
+    97→     consistent across the whole app. */
+    98→  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    99→  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+   100→  --ease-snap: cubic-bezier(0.4, 0, 0.2, 1);
+   101→
+   102→  --chart-1: oklch(0.58 0.16 162);
+   103→  --chart-2: oklch(0.62 0.12 185);
+   104→  --chart-3: oklch(0.7 0.14 85);
+   105→  --chart-4: oklch(0.58 0.18 30);
+   106→  --chart-5: oklch(0.55 0.16 300);
+   107→  --sidebar: oklch(0.975 0.007 150);
+   108→  --sidebar-foreground: oklch(0.22 0.018 150);
+   109→  --sidebar-primary: oklch(0.48 0.14 164);
+   110→  --sidebar-primary-foreground: oklch(0.99 0.012 150);
+   111→  --sidebar-accent: oklch(0.94 0.038 178);
+   112→  --sidebar-accent-foreground: oklch(0.3 0.065 178);
+   113→  --sidebar-border: oklch(0.905 0.012 150);
+   114→  --sidebar-ring: oklch(0.48 0.14 164);
+   115→}
+   116→
+   117→/* ============================================================
+   118→   Custom themes — applied via data-theme attribute on <html>.
+   119→   Each theme overrides the primary/accent colors while keeping
+   120→   the neutral palette (background, foreground, muted, etc.)
+   121→   unchanged for readability consistency.
+   122→   ============================================================ */
+   123→
+   124→/* Ocean — deep blue-teal primary */
+   125→[data-theme="ocean"] {
+   126→  --primary: oklch(0.52 0.14 230);
+   127→  --primary-foreground: oklch(0.99 0.01 230);
+   128→  --ring: oklch(0.52 0.14 230);
+   129→  --sidebar-primary: oklch(0.52 0.14 230);
+   130→  --sidebar-primary-foreground: oklch(0.99 0.01 230);
+   131→  --sidebar-ring: oklch(0.52 0.14 230);
+   132→  --accent: oklch(0.94 0.035 200);
+   133→  --accent-foreground: oklch(0.32 0.06 200);
+   134→  --sidebar-accent: oklch(0.94 0.035 200);
+   135→  --sidebar-accent-foreground: oklch(0.32 0.06 200);
+   136→  --chart-1: oklch(0.6 0.15 230);
+   137→}
+   138→
+   139→[data-theme="ocean"].dark {
+   140→  --primary: oklch(0.7 0.14 230);
+   141→  --primary-foreground: oklch(0.16 0.02 230);
+   142→  --ring: oklch(0.7 0.14 230);
+   143→  --sidebar-primary: oklch(0.7 0.14 230);
+   144→}
+   145→
+   146→/* Sunset — warm amber-rose primary */
+   147→[data-theme="sunset"] {
+   148→  --primary: oklch(0.58 0.18 30);
+   149→  --primary-foreground: oklch(0.99 0.01 30);
+   150→  --ring: oklch(0.58 0.18 30);
+   151→  --sidebar-primary: oklch(0.58 0.18 30);
+   152→  --sidebar-primary-foreground: oklch(0.99 0.01 30);
+   153→  --sidebar-ring: oklch(0.58 0.18 30);
+   154→  --accent: oklch(0.94 0.04 50);
+   155→  --accent-foreground: oklch(0.35 0.07 50);
+   156→  --sidebar-accent: oklch(0.94 0.04 50);
+   157→  --sidebar-accent-foreground: oklch(0.35 0.07 50);
+   158→  --chart-1: oklch(0.6 0.18 30);
+   159→}
+   160→
+   161→[data-theme="sunset"].dark {
+   162→  --primary: oklch(0.7 0.16 30);
+   163→  --primary-foreground: oklch(0.16 0.02 30);
+   164→  --ring: oklch(0.7 0.16 30);
+   165→  --sidebar-primary: oklch(0.7 0.16 30);
+   166→}
+   167→
+   168→/* Violet — purple primary */
+   169→[data-theme="violet"] {
+   170→  --primary: oklch(0.55 0.22 300);
+   171→  --primary-foreground: oklch(0.99 0.01 300);
+   172→  --ring: oklch(0.55 0.22 300);
+   173→  --sidebar-primary: oklch(0.55 0.22 300);
+   174→  --sidebar-primary-foreground: oklch(0.99 0.01 300);
+   175→  --sidebar-ring: oklch(0.55 0.22 300);
+   176→  --accent: oklch(0.94 0.04 300);
+   177→  --accent-foreground: oklch(0.35 0.07 300);
+   178→  --sidebar-accent: oklch(0.94 0.04 300);
+   179→  --sidebar-accent-foreground: oklch(0.35 0.07 300);
+   180→  --chart-1: oklch(0.6 0.2 300);
+   181→}
+   182→
+   183→[data-theme="violet"].dark {
+   184→  --primary: oklch(0.7 0.2 300);
+   185→  --primary-foreground: oklch(0.16 0.02 300);
+   186→  --ring: oklch(0.7 0.2 300);
+   187→  --sidebar-primary: oklch(0.7 0.2 300);
+   188→}
+   189→
+   190→/* Dark mode — deeper, less flat. The background gets a subtle
+   191→   emerald undertone so dark mode feels like the same product,
+   192→   not a zebra inversion. */
+   193→.dark {
+   194→  --background: oklch(0.165 0.014 162);
+   195→  --foreground: oklch(0.965 0.006 150);
+   196→  --card: oklch(0.205 0.016 162);
+   197→  --card-foreground: oklch(0.965 0.006 150);
+   198→  --popover: oklch(0.215 0.016 162);
+   199→  --popover-foreground: oklch(0.965 0.006 150);
+   200→  --primary: oklch(0.72 0.14 164);
+   201→  --primary-foreground: oklch(0.16 0.02 162);
+   202→  --secondary: oklch(0.255 0.018 162);
+   203→  --secondary-foreground: oklch(0.94 0.01 150);
+   204→  --muted: oklch(0.245 0.015 162);
+   205→  --muted-foreground: oklch(0.71 0.015 150);
+   206→  --accent: oklch(0.3 0.05 178);
+   207→  --accent-foreground: oklch(0.92 0.03 178);
+   208→  --destructive: oklch(0.704 0.191 22.216);
+   209→  --border: oklch(1 0 0 / 10%);
+   210→  --input: oklch(1 0 0 / 14%);
+   211→  --ring: oklch(0.72 0.14 164);
+   212→  --chart-1: oklch(0.72 0.15 162);
+   213→  --chart-2: oklch(0.72 0.12 185);
+   214→  --chart-3: oklch(0.75 0.14 85);
+   215→  --chart-4: oklch(0.65 0.18 30);
+   216→  --chart-5: oklch(0.6 0.16 300);
+   217→  --sidebar: oklch(0.195 0.014 162);
+   218→  --sidebar-foreground: oklch(0.965 0.006 150);
+   219→  --sidebar-primary: oklch(0.72 0.14 164);
+   220→  --sidebar-primary-foreground: oklch(0.16 0.02 162);
+   221→  --sidebar-accent: oklch(0.3 0.05 178);
+   222→  --sidebar-accent-foreground: oklch(0.92 0.03 178);
+   223→  --sidebar-border: oklch(1 0 0 / 10%);
+   224→  --sidebar-ring: oklch(0.72 0.14 164);
+   225→
+   226→  --shadow-2xs: 0 1px 1px oklch(0 0 0 / 0.2);
+   227→  --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.28), 0 1px 1px oklch(0 0 0 / 0.2);
+   228→  --shadow-sm: 0 1px 3px oklch(0 0 0 / 0.3), 0 1px 2px oklch(0 0 0 / 0.22);
+   229→  --shadow-md: 0 4px 10px oklch(0 0 0 / 0.32), 0 2px 4px oklch(0 0 0 / 0.24);
+   230→  --shadow-lg: 0 10px 24px oklch(0 0 0 / 0.36), 0 3px 8px oklch(0 0 0 / 0.26);
+   231→  --shadow-xl: 0 18px 40px oklch(0 0 0 / 0.4), 0 6px 14px oklch(0 0 0 / 0.3);
+   232→  --shadow-glow: 0 0 0 1px oklch(0.72 0.14 164 / 0.24), 0 8px 22px oklch(0.72 0.14 164 / 0.16);
+   233→}
+   234→
+   235→@layer base {
+   236→  * {
+   237→    @apply border-border outline-ring/50;
+   238→  }
+   239→  body {
+   240→    @apply bg-background text-foreground;
+   241→    font-feature-settings: "ss01", "cv01", "cv03";
+   242→    /* A faint warm radial wash behind everything — gives the app a
+   243→       subtle "studio" depth instead of a flat sheet of paper. */
+   244→    background-image:
+   245→      radial-gradient(ellipse 80% 50% at 50% -10%, oklch(0.48 0.14 164 / 0.05), transparent 70%),
+   246→      radial-gradient(ellipse 60% 40% at 100% 0%, oklch(0.62 0.12 185 / 0.04), transparent 60%);
+   247→    background-attachment: fixed;
+   248→  }
+   249→  .dark body {
+   250→    background-image:
+   251→      radial-gradient(ellipse 80% 50% at 50% -10%, oklch(0.72 0.14 164 / 0.09), transparent 70%),
+   252→      radial-gradient(ellipse 60% 40% at 100% 0%, oklch(0.55 0.16 300 / 0.05), transparent 60%);
+   253→  }
+   254→  /* Selection — emerald-tinted so highlights match the brand. */
+   255→  ::selection {
+   256→    background: oklch(0.48 0.14 164 / 0.22);
+   257→    color: oklch(0.2 0.03 150);
+   258→  }
+   259→  .dark ::selection {
+   260→    background: oklch(0.72 0.14 164 / 0.32);
+   261→    color: oklch(0.16 0.02 162);
+   262→  }
+   263→}
+   264→
+   265→/* ---------- Academic typography ---------- */
+   266→.font-serif-text {
+   267→  font-family: var(--font-serif), var(--font-zh-serif), "Iowan Old Style",
+   268→    "Palatino Linotype", "URW Palladio L", P052, Palatino, Georgia,
+   269→    "Songti SC", "SimSun", "STSong", serif;
+   270→  font-feature-settings: "onum" 1, "liga" 1, "kern" 1;
+   271→}
+   272→
+   273→.prose-academic {
+   274→  font-family: var(--font-serif), var(--font-zh-serif), Georgia,
+   275→    "Times New Roman", "Songti SC", "SimSun", "STSong", serif;
+   276→  font-size: 1.0125rem;
+   277→  line-height: 1.78;
+   278→  color: oklch(0.24 0.02 150);
+   279→  letter-spacing: 0.003em;
+   280→  text-justify: inter-ideograph;
+   281→  word-break: break-word;
+   282→  overflow-wrap: break-word;
+   283→}
+   284→.prose-academic.dark-text,
+   285→.dark .prose-academic {
+   286→  color: oklch(0.9 0.005 150);
+   287→}
+   288→
+   289→/* ---------- Chinese typography polish ---------- */
+   290→:lang(zh),
+   291→.prose-academic:lang(zh),
+   292→.prose-academic:-webkit-any(:lang(zh)) {
+   293→  line-height: 1.85;
+   294→  letter-spacing: 0;
+   295→}
+   296→
+   297→.prose-academic {
+   298→  text-spacing: trim-start allow-end;
+   299→  -ms-text-spacing: trim-start allow-end;
+   300→}
+   301→
+   302→/* Headings — refined tracking & weight for a more editorial feel. */
+   303→h1, h2, h3, h4, h5, h6 {
+   304→  font-family: var(--font-serif), var(--font-zh-serif), Georgia,
+   305→    "Songti SC", "SimSun", serif;
+   306→  font-weight: 600;
+   307→  letter-spacing: -0.012em;
+   308→}
+   309→
+   310→/* ============================================================
+   311→   NEW surface utilities — the visual backbone of the redesign.
+   312→   These are consumed by the shell + cards so elevation is
+   313→   consistent across the whole app.
+   314→   ============================================================ */
+   315→
+   316→/* Frosted-glass toolbar — for the top header and bottom footer.
+   317→   Sits over the body's radial wash with a blur + subtle tint. */
+   318→.glass-toolbar {
+   319→  background-color: oklch(1 0 0 / 0.72);
+   320→  backdrop-filter: blur(14px) saturate(1.4);
+   321→  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+   322→  box-shadow: inset 0 -1px 0 oklch(0.905 0.012 150 / 0.8), 0 1px 3px oklch(0.28 0.05 162 / 0.05);
+   323→}
+   324→.dark .glass-toolbar {
+   325→  background-color: oklch(0.205 0.016 162 / 0.7);
+   326→  box-shadow: inset 0 -1px 0 oklch(1 0 0 / 0.08), 0 1px 3px oklch(0 0 0 / 0.2);
+   327→}
+   328→
+   329→/* A lighter glass variant for sub-panels (workspace header, panel
+   330→   headers) where the full-strength toolbar would feel heavy. */
+   331→.glass-subtle {
+   332→  background-color: oklch(1 0 0 / 0.55);
+   333→  backdrop-filter: blur(8px) saturate(1.25);
+   334→  -webkit-backdrop-filter: blur(8px) saturate(1.25);
+   335→}
+   336→.dark .glass-subtle {
+   337→  background-color: oklch(0.205 0.016 162 / 0.5);
+   338→}
+   339→
+   340→/* Elevated card surface — used by content cards. */
+   341→.surface-card {
+   342→  background-color: var(--card);
+   343→  box-shadow: var(--shadow-xs);
+   344→  border: 1px solid var(--border);
+   345→}
+   346→/* Lifted surface for hover / active focus states. */
+   347→.surface-raised {
+   348→  box-shadow: var(--shadow-md);
+   349→  border-color: oklch(0.48 0.14 164 / 0.35);
+   350→}
+   351→.dark .surface-raised {
+   352→  border-color: oklch(0.72 0.14 164 / 0.4);
+   353→}
+   354→
+   355→/* Hairline divider — softer than border-border. */
+   356→.hairline {
+   357→  border-color: oklch(0.905 0.012 150 / 0.7);
+   358→}
+   359→.dark .hairline {
+   360→  border-color: oklch(1 0 0 / 0.08);
+   361→}
+   362→
+   363→/* Consistent focus ring for interactive elements. */
+   364→.focus-ring {
+   365→  outline: 2px solid oklch(0.48 0.14 164 / 0.55);
+   366→  outline-offset: 2px;
+   367→}
+   368→.dark .focus-ring {
+   369→  outline-color: oklch(0.72 0.14 164 / 0.6);
+   370→}
+   371→
+   372→/* Brand mark — the logo tile gradient. */
+   373→.brand-tile {
+   374→  background-image: linear-gradient(135deg, oklch(0.52 0.15 164), oklch(0.5 0.13 185));
+   375→  box-shadow: 0 2px 6px oklch(0.48 0.14 164 / 0.32), inset 0 1px 0 oklch(1 0 0 / 0.25);
+   376→}
+   377→.dark .brand-tile {
+   378→  background-image: linear-gradient(135deg, oklch(0.6 0.15 164), oklch(0.55 0.14 185));
+   379→  box-shadow: 0 2px 8px oklch(0.72 0.14 164 / 0.3), inset 0 1px 0 oklch(1 0 0 / 0.18);
+   380→}
+   381→
+   382→/* Primary gradient button — for the headline CTA. */
+   383→.btn-gradient-primary {
+   384→  background-image: linear-gradient(135deg, oklch(0.52 0.15 164), oklch(0.46 0.14 168));
+   385→  box-shadow: 0 2px 6px oklch(0.48 0.14 164 / 0.28), inset 0 1px 0 oklch(1 0 0 / 0.18);
+   386→  transition: box-shadow 0.18s var(--ease-out), transform 0.18s var(--ease-out), filter 0.18s var(--ease-out);
+   387→}
+   388→.btn-gradient-primary:hover {
+   389→  filter: brightness(1.06);
+   390→  box-shadow: 0 4px 12px oklch(0.48 0.14 164 / 0.34), inset 0 1px 0 oklch(1 0 0 / 0.22);
+   391→}
+   392→.btn-gradient-primary:active {
+   393→  transform: translateY(0.5px);
+   394→}
+   395→.dark .btn-gradient-primary {
+   396→  background-image: linear-gradient(135deg, oklch(0.68 0.15 164), oklch(0.6 0.14 168));
+   397→  box-shadow: 0 2px 8px oklch(0.72 0.14 164 / 0.3), inset 0 1px 0 oklch(1 0 0 / 0.14);
+   398→}
+   399→
+   400→/* Refined tab indicator — pill background + soft shadow. */
+   401→.tab-pill {
+   402→  background-color: var(--card);
+   403→  box-shadow: var(--shadow-xs);
+   404→  border: 1px solid oklch(0.905 0.012 150 / 0.9);
+   405→  color: var(--primary);
+   406→}
+   407→.dark .tab-pill {
+   408→  border-color: oklch(1 0 0 / 0.1);
+   409→}
+   410→.tab-pill-inactive {
+   411→  color: var(--muted-foreground);
+   412→  transition: color 0.15s var(--ease-out), background-color 0.15s var(--ease-out);
+   413→}
+   414→.tab-pill-inactive:hover {
+   415→  color: var(--foreground);
+   416→  background-color: oklch(0.905 0.012 150 / 0.4);
+   417→}
+   418→.dark .tab-pill-inactive:hover {
+   419→  background-color: oklch(1 0 0 / 0.05);
+   420→}
+   421→
+   422→/* ============================================================
+   423→   Legacy utility classes — preserved & enhanced.
+   424→   ============================================================ */
+   425→
+   426→/* Citation markers */
+   427→.cite-marker {
+   428→  display: inline;
+   429→  font-family: var(--font-mono), ui-monospace, monospace;
+   430→  font-size: 0.72em;
+   431→  vertical-align: super;
+   432→  line-height: 0;
+   433→  color: oklch(0.42 0.12 164);
+   434→  background: oklch(0.94 0.035 178 / 0.6);
+   435→  border-radius: 0.3rem;
+   436→  padding: 0.06em 0.34em;
+   437→  margin: 0 0.04em;
+   438→  font-weight: 600;
+   439→  cursor: help;
+   440→  transition: background 0.15s var(--ease-out), color 0.15s var(--ease-out), transform 0.15s var(--ease-out),
+   441→    box-shadow 0.15s var(--ease-out);
+   442→}
+   443→.cite-marker:hover {
+   444→  background: oklch(0.86 0.07 178);
+   445→  color: oklch(0.32 0.11 164);
+   446→  transform: translateY(-1px) scale(1.06);
+   447→  box-shadow: 0 1px 3px oklch(0.42 0.12 164 / 0.28);
+   448→}
+   449→.cite-marker:focus-visible {
+   450→  outline: 2px solid oklch(0.48 0.14 164);
+   451→  outline-offset: 1px;
+   452→}
+   453→.dark .cite-marker {
+   454→  color: oklch(0.78 0.1 164);
+   455→  background: oklch(0.3 0.05 178 / 0.5);
+   456→}
+   457→.dark .cite-marker:hover {
+   458→  background: oklch(0.4 0.08 178);
+   459→  color: oklch(0.88 0.1 164);
+   460→}
+   461→
+   462→/* Adversarial citation-audit marker states */
+   463→.cite-marker-unresolved {
+   464→  color: oklch(0.42 0.11 75);
+   465→  background: oklch(0.92 0.06 85 / 0.65);
+   466→  text-decoration: underline dotted oklch(0.55 0.12 75);
+   467→  text-underline-offset: 2px;
+   468→}
+   469→.cite-marker-unresolved:hover {
+   470→  background: oklch(0.87 0.09 80);
+   471→  color: oklch(0.35 0.1 75);
+   472→}
+   473→.cite-marker-missing {
+   474→  color: oklch(0.45 0.18 25);
+   475→  background: oklch(0.9 0.1 25 / 0.6);
+   476→  text-decoration: underline wavy oklch(0.5 0.2 25);
+   477→  text-underline-offset: 2px;
+   478→}
+   479→.cite-marker-unsupported {
+   480→  color: oklch(0.42 0.15 40);
+   481→  background: oklch(0.9 0.08 70 / 0.55);
+   482→  text-decoration: underline dotted oklch(0.48 0.14 40);
+   483→  text-underline-offset: 2px;
+   484→}
+   485→.cite-marker-suspect {
+   486→  color: oklch(0.42 0.12 75);
+   487→  background: oklch(0.92 0.06 85 / 0.6);
+   488→}
+   489→.cite-audit-icon {
+   490→  font-size: 0.85em;
+   491→  margin-left: 0.1em;
+   492→  color: oklch(0.45 0.15 40);
+   493→}
+   494→.dark .cite-marker-unresolved,
+   495→.dark .cite-marker-missing {
+   496→  color: oklch(0.82 0.1 75);
+   497→  background: oklch(0.34 0.08 75 / 0.5);
+   498→  text-decoration-color: oklch(0.75 0.12 75);
+   499→}
+   500→.dark .cite-marker-unsupported {
+   501→  color: oklch(0.8 0.13 40);
+   502→  background: oklch(0.33 0.1 40 / 0.45);
+   503→}
+   504→.dark .cite-marker-suspect {
+   505→  color: oklch(0.82 0.1 75);
+   506→  background: oklch(0.34 0.08 75 / 0.45);
+   507→}
+   508→.dark .cite-audit-icon {
+   509→  color: oklch(0.8 0.14 40);
+   510→}
+   511→
+   512→/* Annotation highlights */
+   513→.ann-highlight {
+   514→  background: linear-gradient(
+   515→    120deg,
+   516→    oklch(0.92 0.13 85 / 0.45),
+   517→    oklch(0.9 0.12 70 / 0.5)
+   518→  );
+   519→  border-bottom: 2px solid oklch(0.7 0.15 70 / 0.7);
+   520→  border-radius: 2px;
+   521→  padding: 0 1px;
+   522→  cursor: pointer;
+   523→  transition: background 0.15s var(--ease-out);
+   524→}
+   525→.ann-highlight:hover {
+   526→  background: linear-gradient(
+   527→    120deg,
+   528→    oklch(0.88 0.15 85 / 0.6),
+   529→    oklch(0.85 0.14 70 / 0.7)
+   530→  );
+   531→}
+   532→.ann-highlight-critical {
+   533→  background: linear-gradient(
+   534→    120deg,
+   535→    oklch(0.88 0.12 25 / 0.4),
+   536→    oklch(0.86 0.13 15 / 0.5)
+   537→  );
+   538→  border-bottom-color: oklch(0.62 0.2 25);
+   539→}
+   540→
+   541→/* Pending annotation selection */
+   542→.pending-selection {
+   543→  background: linear-gradient(
+   544→    120deg,
+   545→    oklch(0.85 0.13 200 / 0.35),
+   546→    oklch(0.82 0.12 220 / 0.4)
+   547→  );
+   548→  border-radius: 2px;
+   549→  padding: 0 1px;
+   550→  box-shadow: 0 0 0 1px oklch(0.7 0.1 200 / 0.3);
+   551→  color: inherit;
+   552→}
+   553→.dark .pending-selection {
+   554→  background: linear-gradient(
+   555→    120deg,
+   556→    oklch(0.65 0.13 200 / 0.35),
+   557→    oklch(0.6 0.12 220 / 0.4)
+   558→  );
+   559→  box-shadow: 0 0 0 1px oklch(0.5 0.1 200 / 0.4);
+   560→}
+   561→
+   562→/* Paper texture for writing surfaces */
+   563→.paper-surface {
+   564→  background-color: var(--card);
+   565→  background-image:
+   566→    radial-gradient(
+   567→      circle at 1px 1px,
+   568→      oklch(0.5 0.02 150 / 0.025) 1px,
+   569→      transparent 0
+   570→    );
+   571→  background-size: 22px 22px;
+   572→}
+   573→.dark .paper-surface {
+   574→  background-image:
+   575→    radial-gradient(
+   576→      circle at 1px 1px,
+   577→      oklch(0.9 0.02 150 / 0.03) 1px,
+   578→      transparent 0
+   579→    );
+   580→}
+   581→
+   582→/* Custom scrollbar — refined thumb with subtle gradient. */
+   583→.scroll-academic::-webkit-scrollbar {
+   584→  width: 10px;
+   585→  height: 10px;
+   586→}
+   587→.scroll-academic::-webkit-scrollbar-track {
+   588→  background: transparent;
+   589→}
+   590→.scroll-academic::-webkit-scrollbar-thumb {
+   591→  background: oklch(0.82 0.02 150);
+   592→  border-radius: 999px;
+   593→  border: 2px solid transparent;
+   594→  background-clip: padding-box;
+   595→}
+   596→.scroll-academic::-webkit-scrollbar-thumb:hover {
+   597→  background: oklch(0.72 0.06 164);
+   598→  background-clip: padding-box;
+   599→  border: 2px solid transparent;
+   600→}
+   601→.dark .scroll-academic::-webkit-scrollbar-thumb {
+   602→  background: oklch(0.35 0.02 150);
+   603→  background-clip: padding-box;
+   604→  border: 2px solid transparent;
+   605→}
+   606→.dark .scroll-academic::-webkit-scrollbar-thumb:hover {
+   607→  background: oklch(0.45 0.06 164);
+   608→  background-clip: padding-box;
+   609→}
+   610→
+   611→/* Subtle fade-in for generated content */
+   612→@keyframes acad-fade-in {
+   613→  from {
+   614→    opacity: 0;
+   615→    transform: translateY(6px);
+   616→  }
+   617→  to {
+   618→    opacity: 1;
+   619→    transform: translateY(0);
+   620→  }
+   621→}
+   622→.acad-fade-in {
+   623→  animation: acad-fade-in 0.45s var(--ease-out) both;
+   624→}
+   625→
+   626→/* Typing cursor for streaming */
+   627→@keyframes blink-caret {
+   628→  0%, 49% { opacity: 1; }
+   629→  50%, 100% { opacity: 0; }
+   630→}
+   631→.typing-caret::after {
+   632→  content: "▌";
+   633→  margin-left: 1px;
+   634→  color: oklch(0.48 0.14 164);
+   635→  animation: blink-caret 1s steps(1) infinite;
+   636→}
+   637→.dark .typing-caret::after {
+   638→  color: oklch(0.72 0.14 164);
+   639→}
+   640→
+   641→/* Gradient ring for active states */
+   642→.ring-academic {
+   643→  box-shadow:
+   644→    0 0 0 1px oklch(0.48 0.14 164 / 0.28),
+   645→    0 1px 2px oklch(0.3 0.05 162 / 0.08),
+   646→    0 4px 14px oklch(0.48 0.14 164 / 0.08);
+   647→}
+   648→.dark .ring-academic {
+   649→  box-shadow:
+   650→    0 0 0 1px oklch(0.72 0.14 164 / 0.3),
+   651→    0 1px 2px oklch(0 0 0 / 0.2),
+   652→    0 4px 16px oklch(0.72 0.14 164 / 0.1);
+   653→}
+   654→
+   655→/* Source badge gradients */
+   656→.badge-emerald { background: oklch(0.92 0.06 162); color: oklch(0.34 0.09 162); }
+   657→.badge-teal    { background: oklch(0.92 0.05 185); color: oklch(0.32 0.08 185); }
+   658→.badge-amber   { background: oklch(0.93 0.07 80);  color: oklch(0.38 0.09 65);  }
+   659→.badge-rose    { background: oklch(0.93 0.05 20);  color: oklch(0.4 0.13 20);   }
+   660→.badge-violet  { background: oklch(0.93 0.05 300); color: oklch(0.4 0.11 300);  }
+   661→.badge-sky     { background: oklch(0.93 0.05 230); color: oklch(0.4 0.1 230);   }
+   662→.badge-slate   { background: oklch(0.93 0.01 250); color: oklch(0.4 0.02 250);  }
+   663→.dark .badge-emerald { background: oklch(0.32 0.07 162); color: oklch(0.86 0.1 162); }
+   664→.dark .badge-teal    { background: oklch(0.32 0.06 185); color: oklch(0.86 0.09 185); }
+   665→.dark .badge-amber   { background: oklch(0.34 0.08 80);  color: oklch(0.88 0.1 70);  }
+   666→.dark .badge-rose    { background: oklch(0.34 0.08 20);  color: oklch(0.88 0.1 20);   }
+   667→.dark .badge-violet  { background: oklch(0.34 0.08 300); color: oklch(0.88 0.1 300);  }
+   668→.dark .badge-sky     { background: oklch(0.34 0.07 230); color: oklch(0.88 0.09 230);  }
+   669→.dark .badge-slate   { background: oklch(0.32 0.015 250); color: oklch(0.85 0.02 250); }
+   670→
+   671→/* Hairline divider with dot */
+   672→.divider-academic {
+   673→  display: flex;
+   674→  align-items: center;
+   675→  gap: 0.5rem;
+   676→  color: oklch(0.6 0.02 150);
+   677→  font-size: 0.7rem;
+   678→  text-transform: uppercase;
+   679→  letter-spacing: 0.12em;
+   680→}
+   681→.divider-academic::before,
+   682→.divider-academic::after {
+   683→  content: "";
+   684→  flex: 1;
+   685→  height: 1px;
+   686→  background: linear-gradient(
+   687→    to right,
+   688→    transparent,
+   689→    oklch(0.82 0.02 150),
+   690→    transparent
+   691→  );
+   692→}
+   693→.dark .divider-academic::before,
+   694→.dark .divider-academic::after {
+   695→  background: linear-gradient(
+   696→    to right,
+   697→    transparent,
+   698→    oklch(0.35 0.02 150),
+   699→    transparent
+   700→  );
+   701→}
+   702→
+   703→/* ============================================================
+   704→   Range slider thumb styling
+   705→   ============================================================ */
+   706→
+   707→.sciwrite-range-slider {
+   708→  -webkit-appearance: none;
+   709→  appearance: none;
+   710→  background: transparent;
+   711→  cursor: pointer;
+   712→}
+   713→
+   714→.sciwrite-range-slider::-webkit-slider-runnable-track {
+   715→  height: 6px;
+   716→  border-radius: 9999px;
+   717→}
+   718→.sciwrite-range-slider::-webkit-slider-thumb {
+   719→  -webkit-appearance: none !important;
+   720→  appearance: none !important;
+   721→  width: 14px !important;
+   722→  height: 14px !important;
+   723→  border-radius: 9999px;
+   724→  background: hsl(var(--primary));
+   725→  border: 2px solid hsl(var(--background));
+   726→  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.4), 0 1px 3px rgb(0 0 0 / 0.2);
+   727→  margin-top: -4px;
+   728→  transition: transform 0.1s ease, box-shadow 0.1s ease;
+   729→}
+   730→.sciwrite-range-slider::-webkit-slider-thumb:hover {
+   731→  transform: scale(1.15);
+   732→  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.2), 0 2px 6px rgb(0 0 0 / 0.25);
+   733→}
+   734→.sciwrite-range-slider::-webkit-slider-thumb:active {
+   735→  transform: scale(1.25);
+   736→}
+   737→
+   738→.sciwrite-range-slider::-moz-range-track {
+   739→  height: 6px;
+   740→  border-radius: 9999px;
+   741→}
+   742→.sciwrite-range-slider::-moz-range-thumb {
+   743→  width: 14px !important;
+   744→  height: 14px !important;
+   745→  border-radius: 9999px;
+   746→  background: hsl(var(--primary));
+   747→  border: 2px solid hsl(var(--background));
+   748→  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.4), 0 1px 3px rgb(0 0 0 / 0.2);
+   749→  cursor: pointer;
+   750→  transition: transform 0.1s ease, box-shadow 0.1s ease;
+   751→}
+   752→.sciwrite-range-slider::-moz-range-thumb:hover {
+   753→  transform: scale(1.15);
+   754→  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.2), 0 2px 6px rgb(0 0 0 / 0.25);
+   755→}
+   756→.sciwrite-range-slider::-moz-range-thumb:active {
+   757→  transform: scale(1.25);
+   758→}
+   759→
+   760→.sciwrite-range-slider:focus {
+   761→  outline: none;
+   762→}
+   763→.sciwrite-range-slider:focus::-webkit-slider-thumb {
+   764→  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.3), 0 2px 6px rgb(0 0 0 / 0.25);
+   765→}
+   766→.sciwrite-range-slider:focus::-moz-range-thumb {
+   767→  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.3), 0 2px 6px rgb(0 0 0 / 0.25);
+   768→}
+   769→

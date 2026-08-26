@@ -107,11 +107,11 @@ interface HealthReport {
 }
 
 const GRADE_COLORS: Record<string, string> = {
-  A: "text-emerald-600 dark:text-emerald-400 bg-gradient-to-br from-emerald-100/80 to-emerald-50/40 dark:from-emerald-950/40 dark:to-emerald-950/10 border-emerald-300/60 shadow-emerald-500/10",
-  B: "text-lime-600 dark:text-lime-400 bg-gradient-to-br from-lime-100/80 to-lime-50/40 dark:from-lime-950/40 dark:to-lime-950/10 border-lime-300/60 shadow-lime-500/10",
-  C: "text-amber-600 dark:text-amber-400 bg-gradient-to-br from-amber-100/80 to-amber-50/40 dark:from-amber-950/40 dark:to-amber-950/10 border-amber-300/60 shadow-amber-500/10",
-  D: "text-orange-600 dark:text-orange-400 bg-gradient-to-br from-orange-100/80 to-orange-50/40 dark:from-orange-950/40 dark:to-orange-950/10 border-orange-300/60 shadow-orange-500/10",
-  F: "text-red-600 dark:text-red-400 bg-gradient-to-br from-red-100/80 to-red-50/40 dark:from-red-950/40 dark:to-red-950/10 border-red-300/60 shadow-red-500/10",
+  A: "text-emerald-700 dark:text-emerald-300 border-emerald-300/60 bg-gradient-to-br from-emerald-50/70 to-transparent dark:from-emerald-950/25",
+  B: "text-lime-700 dark:text-lime-300 border-lime-300/60 bg-gradient-to-br from-lime-50/70 to-transparent dark:from-lime-950/25",
+  C: "text-amber-700 dark:text-amber-300 border-amber-300/60 bg-gradient-to-br from-amber-50/70 to-transparent dark:from-amber-950/25",
+  D: "text-orange-700 dark:text-orange-300 border-orange-300/60 bg-gradient-to-br from-orange-50/70 to-transparent dark:from-orange-950/25",
+  F: "text-red-700 dark:text-red-300 border-red-300/60 bg-gradient-to-br from-red-50/70 to-transparent dark:from-red-950/25",
 };
 
 const GRADE_LABELS: Record<string, string> = {
@@ -364,22 +364,26 @@ export function CitationHealthDashboard({
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        Analyzing citation health…
+      <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-muted-foreground acad-fade-in">
+        <div className="h-5 w-5 rounded-md bg-primary/15 text-primary flex items-center justify-center ring-academic">
+          <Loader2 className="h-3 w-3 animate-spin" />
+        </div>
+        <span className="font-serif-text tracking-tight">Analyzing citation health…</span>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground">
-        <CircleAlert className="h-3.5 w-3.5 text-amber-500" />
-        Citation health unavailable
+      <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-muted-foreground acad-fade-in">
+        <div className="h-5 w-5 rounded-md bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center ring-academic">
+          <CircleAlert className="h-3 w-3" />
+        </div>
+        <span className="font-serif-text tracking-tight">Citation health unavailable</span>
         <Button
           variant="ghost"
           size="sm"
-          className="h-5 px-1.5 text-[10px]"
+          className="h-5 px-1.5 text-[10px] hover:bg-amber-500/10 hover:text-amber-700 dark:hover:text-amber-400"
           onClick={fetchHealth}
         >
           <RefreshCw className="h-3 w-3" /> Retry
@@ -407,21 +411,22 @@ export function CitationHealthDashboard({
       : 100;
 
   return (
-    <div className="px-5 py-2 border-b border-border/40 bg-gradient-to-r from-muted/30 to-muted/10 flex items-center gap-3 flex-wrap">
-      {/* Grade badge — v85-1: Enhanced with gradient background */}
+    <div className="px-5 py-2.5 border-b border-border/40 glass-subtle flex items-center gap-3 flex-wrap acad-fade-in relative">
+      {/* Grade badge — polished scoreboard tile (surface-card + ring-academic for A) */}
       <TooltipProvider delayDuration={200}>
         <Tooltip>
           <TooltipTrigger asChild>
             <div
               className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-help shadow-sm transition-all hover:shadow-md hover:scale-[1.02]",
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-help transition-all hover:shadow-md hover:scale-[1.02] surface-card",
                 GRADE_COLORS[agg.grade],
+                agg.grade === "A" && "ring-academic",
                 hasBlocking && "animate-pulse"
               )}
             >
               <Icon className="h-3.5 w-3.5" />
-              <span className="font-mono text-sm leading-none">{agg.grade}</span>
-              <span className="font-sans text-[10px] font-medium opacity-80">
+              <span className="font-serif-text text-base leading-none tracking-tight">{agg.grade}</span>
+              <span className="font-sans text-[10px] font-medium opacity-80 tabular-nums">
                 {agg.healthScore}
               </span>
             </div>
@@ -442,40 +447,40 @@ export function CitationHealthDashboard({
         </Tooltip>
       </TooltipProvider>
 
-      {/* Quick stats — v85-1: Enhanced with pill-shaped containers */}
+      {/* Quick stats — surface-card tiles with hover lift + tabular-nums */}
       <div className="flex items-center gap-2 text-[10px]">
-        <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/8 text-primary">
-          <FileText className="h-3 w-3" />
-          <span className="font-semibold">{agg.totalCitations}</span>
-          <span className="opacity-70">citations</span>
+        <span className="surface-card rounded-md px-2 py-0.5 flex items-center gap-1 transition-all hover:shadow-md hover:border-primary/30">
+          <FileText className="h-3 w-3 text-primary" />
+          <span className="font-serif-text font-semibold tabular-nums text-foreground">{agg.totalCitations}</span>
+          <span className="text-muted-foreground">citations</span>
         </span>
-        <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-500/8 text-blue-600 dark:text-blue-400">
-          <BookOpen className="h-3 w-3" />
-          <span className="font-semibold">{agg.totalReferences}</span>
-          <span className="opacity-70">refs</span>
+        <span className="surface-card rounded-md px-2 py-0.5 flex items-center gap-1 transition-all hover:shadow-md hover:border-primary/30">
+          <BookOpen className="h-3 w-3 text-teal-600 dark:text-teal-400" />
+          <span className="font-serif-text font-semibold tabular-nums text-foreground">{agg.totalReferences}</span>
+          <span className="text-muted-foreground">refs</span>
         </span>
         {agg.totalBlocking > 0 ? (
-          <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-500/10 text-red-600 dark:text-red-400">
-            <CircleX className="h-3 w-3" />
-            <span className="font-semibold">{agg.totalBlocking}</span>
-            <span className="opacity-70">blocking</span>
+          <span className="surface-card rounded-md px-2 py-0.5 flex items-center gap-1 transition-all hover:shadow-md hover:border-rose-400/50">
+            <CircleX className="h-3 w-3 text-red-600 dark:text-red-400" />
+            <span className="font-serif-text font-semibold tabular-nums text-foreground">{agg.totalBlocking}</span>
+            <span className="text-muted-foreground">blocking</span>
           </span>
         ) : (
-          <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+          <span className="surface-card rounded-md px-2 py-0.5 flex items-center gap-1 transition-all hover:shadow-md hover:border-emerald-400/50">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            <span className="font-semibold">0 blocking</span>
+            <span className="font-serif-text font-semibold text-emerald-700 dark:text-emerald-400">0 blocking</span>
           </span>
         )}
         {agg.totalWarnings > 0 && (
-          <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400">
-            <AlertTriangle className="h-3 w-3" />
-            <span className="font-semibold">{agg.totalWarnings}</span>
-            <span className="opacity-70">warnings</span>
+          <span className="surface-card rounded-md px-2 py-0.5 flex items-center gap-1 transition-all hover:shadow-md hover:border-amber-400/50">
+            <AlertTriangle className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+            <span className="font-serif-text font-semibold tabular-nums text-foreground">{agg.totalWarnings}</span>
+            <span className="text-muted-foreground">warnings</span>
           </span>
         )}
       </div>
 
-      {/* Clean progress — v85-1: Enhanced with gradient + percentage label */}
+      {/* Clean progress — refined label typography */}
       <div className="flex items-center gap-2 min-w-[160px] flex-1 max-w-[280px]">
         <Progress
           value={cleanPct}
@@ -488,7 +493,7 @@ export function CitationHealthDashboard({
               : "[&>div]:bg-gradient-to-r [&>div]:from-red-400 [&>div]:to-red-600"
           )}
         />
-        <span className="text-[9px] text-muted-foreground font-mono tabular-nums shrink-0 font-medium">
+        <span className="text-[9px] text-muted-foreground font-serif-text tabular-nums shrink-0 font-medium tracking-tight">
           {agg.paragraphsClean}/{agg.totalParagraphs} clean
         </span>
       </div>
@@ -497,7 +502,7 @@ export function CitationHealthDashboard({
       {(report.worstOffenders.length > 0 || report.articles.length > 0) && (
         <Collapsible open={open} onOpenChange={setOpen} className="ml-auto">
           <CollapsibleTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] gap-1">
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] gap-1 glass-subtle rounded-md hover:shadow-sm transition-all">
               {open ? (
                 <ChevronDown className="h-3 w-3" />
               ) : (
@@ -522,7 +527,7 @@ export function CitationHealthDashboard({
           <Button
             variant="outline"
             size="sm"
-            className="h-6 px-2 text-[10px] gap-1 border-amber-300/60 text-amber-700 dark:text-amber-400 hover:bg-amber-50/60 dark:hover:bg-amber-950/30"
+            className="h-6 px-2 text-[10px] gap-1 border-amber-300/60 text-amber-700 dark:text-amber-400 hover:bg-amber-50/60 dark:hover:bg-amber-950/30 hover:shadow-sm transition-all"
             disabled={fixing}
             onClick={runBatchAutoFix}
             title="Run the LLM auto-fix on all paragraphs with blocking citation errors"
@@ -562,9 +567,9 @@ export function CitationHealthDashboard({
 
       {/* Fix result badge — shows for 8s after a batch fix completes. */}
       {fixResult && !fixing && (
-        <div className="flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20 px-1.5 py-0.5 rounded">
+        <div className="badge-emerald flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md">
           <CheckCircle2 className="h-3 w-3" />
-          <span>
+          <span className="tabular-nums">
             Fixed {fixResult.totalFixed}/{fixResult.totalBefore} across{" "}
             {fixResult.paragraphsProcessed} ¶
           </span>
@@ -582,7 +587,7 @@ export function CitationHealthDashboard({
           <Button
             variant="outline"
             size="sm"
-            className="h-6 px-2 text-[10px] gap-1 border-primary/40 text-primary hover:bg-primary/10"
+            className="h-6 px-2 text-[10px] gap-1 border-primary/40 text-primary hover:bg-primary/10 hover:shadow-sm transition-all"
             disabled={fixing || regenProgress !== null}
             onClick={() => setConfirmRegen(true)}
             title="Regenerate ALL paragraphs with citation issues via LLM (re-writes body text with correct [n] citations). Slower but more thorough than Auto-fix. You will be asked to confirm."
@@ -622,9 +627,9 @@ export function CitationHealthDashboard({
 
       {/* Regen result badge — shows after a batch regenerate completes. */}
       {regenResult && regenProgress === null && (
-        <div className="flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20 px-1.5 py-0.5 rounded">
+        <div className="badge-emerald flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md">
           <CheckCircle2 className="h-3 w-3" />
-          <span>
+          <span className="tabular-nums">
             Regenerated {regenResult.processed}/{regenResult.total} ¶
           </span>
         </div>
@@ -637,7 +642,7 @@ export function CitationHealthDashboard({
         <Button
           variant="ghost"
           size="sm"
-          className="h-6 px-2 text-[10px] gap-1 text-orange-600 dark:text-orange-400 hover:bg-orange-100/60 dark:hover:bg-orange-950/40"
+          className="h-6 px-2 text-[10px] gap-1 text-orange-600 dark:text-orange-400 hover:bg-orange-100/60 dark:hover:bg-orange-950/40 hover:shadow-sm transition-all"
           onClick={() => {
             // Trigger a custom event that the article viewer can listen for
             // to switch to the Analysis → Audit Trail sub-tab.
@@ -654,7 +659,7 @@ export function CitationHealthDashboard({
       <Button
         variant="ghost"
         size="sm"
-        className="h-6 w-6 p-0"
+        className="h-6 w-6 p-0 glass-subtle rounded-md hover:shadow-sm transition-all"
         onClick={fetchHealth}
         title="Re-run citation health check"
       >
@@ -664,18 +669,23 @@ export function CitationHealthDashboard({
       {/* Expanded detail */}
       <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleContent>
-          <div className="w-full mt-2 pt-2 border-t border-border/30 grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div className="w-full mt-2 pt-2 border-t hairline grid grid-cols-1 lg:grid-cols-2 gap-3">
             {/* Worst-offending paragraphs */}
             <div className="space-y-1.5">
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-                <TrendingUp className="h-3 w-3" />
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1 font-serif-text glass-subtle rounded-md px-2 py-1">
+                <TrendingUp className="h-3 w-3 text-primary" />
                 Worst-offending paragraphs
               </p>
               {report.worstOffenders.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground py-2 px-2 rounded bg-emerald-50/40 dark:bg-emerald-950/15">
-                  ✓ All paragraphs pass the citation audit. No blocking errors
-                  or warnings.
-                </p>
+                <div className="surface-card rounded-md py-2 px-2 flex items-center gap-2">
+                  <div className="h-5 w-5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 flex items-center justify-center ring-academic">
+                    <CheckCircle2 className="h-3 w-3" />
+                  </div>
+                  <p className="text-[11px] text-muted-foreground font-serif-text">
+                    All paragraphs pass the citation audit. No blocking errors
+                    or warnings.
+                  </p>
+                </div>
               ) : (
                 <div className="space-y-1 max-h-44 overflow-y-auto scroll-academic">
                   {report.worstOffenders.map((p) => {
@@ -685,28 +695,28 @@ export function CitationHealthDashboard({
                     <div
                       key={p.paragraphId}
                       className={cn(
-                        "rounded-md border px-2 py-1.5 text-[11px] cursor-pointer hover:bg-accent/30 transition-colors",
+                        "rounded-md border px-2 py-1.5 text-[11px] cursor-pointer transition-all shadow-xs hover:shadow-md",
                         isFixingThis
                           ? "border-amber-400/70 bg-amber-50/60 dark:bg-amber-950/25 ring-1 ring-amber-300/40"
                           : isRegenerating
                           ? "border-primary/50 bg-primary/[0.06] dark:bg-primary/[0.08] ring-1 ring-primary/30"
                           : p.blockingCount > 0
-                          ? "border-red-300/50 bg-red-50/40 dark:bg-red-950/15"
-                          : "border-amber-300/50 bg-amber-50/40 dark:bg-amber-950/15"
+                          ? "border-red-300/60 bg-red-50/40 dark:bg-red-950/15 hover:border-red-400/60"
+                          : "border-amber-300/60 bg-amber-50/40 dark:bg-amber-950/15 hover:border-amber-400/60"
                       )}
                       onClick={() => !isFixingThis && !isRegenerating && onJumpParagraph?.(p.paragraphId)}
                     >
                       <div className="flex items-center gap-1.5 mb-1">
-                        <span className="font-mono text-[9px] text-muted-foreground">
+                        <span className="font-mono text-[9px] text-muted-foreground tabular-nums">
                           §{p.order + 1}
                         </span>
-                        <span className="font-medium truncate flex-1 min-w-0">
+                        <span className="font-medium truncate flex-1 min-w-0 font-serif-text">
                           {p.title}
                         </span>
                         {p.blockingCount > 0 && (
                           <Badge
                             variant="outline"
-                            className="h-3.5 px-1 text-[8px] border-red-300/60 text-red-700 dark:text-red-400"
+                            className="h-3.5 px-1 text-[8px] badge-rose"
                           >
                             {p.blockingCount} blk
                           </Badge>
@@ -714,12 +724,12 @@ export function CitationHealthDashboard({
                         {p.warningCount > 0 && (
                           <Badge
                             variant="outline"
-                            className="h-3.5 px-1 text-[8px] border-amber-300/60 text-amber-700 dark:text-amber-400"
+                            className="h-3.5 px-1 text-[8px] badge-amber"
                           >
                             {p.warningCount} warn
                           </Badge>
                         )}
-                        <span className="text-[9px] text-muted-foreground shrink-0">
+                        <span className="text-[9px] text-muted-foreground shrink-0 tabular-nums">
                           {p.citationCount} cit · {p.refCount} ref
                         </span>
                         {/* Per-paragraph "Fix this" button — only for paragraphs
@@ -729,7 +739,7 @@ export function CitationHealthDashboard({
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-5 px-1.5 text-[9px] gap-0.5 shrink-0 text-amber-700 dark:text-amber-400 hover:bg-amber-100/60 dark:hover:bg-amber-950/40"
+                            className="h-5 px-1.5 text-[9px] gap-0.5 shrink-0 text-amber-700 dark:text-amber-400 hover:bg-amber-100/60 dark:hover:bg-amber-950/40 hover:shadow-sm transition-all"
                             disabled={fixing || isFixingThis || isRegenerating}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -755,7 +765,7 @@ export function CitationHealthDashboard({
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-5 px-1.5 text-[9px] gap-0.5 shrink-0 text-primary/70 dark:text-primary/60 hover:bg-primary/10 hover:text-primary"
+                            className="h-5 px-1.5 text-[9px] gap-0.5 shrink-0 text-primary/70 dark:text-primary/60 hover:bg-primary/10 hover:text-primary hover:shadow-sm transition-all"
                             disabled={fixing || isFixingThis || isRegenerating}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -781,7 +791,7 @@ export function CitationHealthDashboard({
                             >
                               <span
                                 className={cn(
-                                  "font-mono font-semibold shrink-0",
+                                  "font-mono font-semibold shrink-0 tabular-nums",
                                   f.verdict === "out-of-range" ||
                                     f.verdict === "missing"
                                     ? "text-red-600 dark:text-red-400"
@@ -804,53 +814,58 @@ export function CitationHealthDashboard({
 
             {/* Article audits */}
             <div className="space-y-1.5">
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-                <Sparkles className="h-3 w-3" />
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1 font-serif-text glass-subtle rounded-md px-2 py-1">
+                <Sparkles className="h-3 w-3 text-primary" />
                 Article audits
               </p>
               {report.articles.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground py-2 px-2 rounded bg-muted/30">
-                  No composed articles yet. Run Compose to generate one.
-                </p>
+                <div className="surface-card rounded-md py-2 px-2 flex items-center gap-2">
+                  <div className="h-5 w-5 rounded-md bg-muted/40 text-muted-foreground flex items-center justify-center">
+                    <BookOpen className="h-3 w-3" />
+                  </div>
+                  <p className="text-[11px] text-muted-foreground font-serif-text">
+                    No composed articles yet. Run Compose to generate one.
+                  </p>
+                </div>
               ) : (
                 <div className="space-y-1 max-h-44 overflow-y-auto scroll-academic">
                   {report.articles.map((a) => (
                     <div
                       key={a.articleId}
                       className={cn(
-                        "rounded-md border px-2 py-1.5 text-[11px]",
+                        "rounded-md border px-2 py-1.5 text-[11px] transition-all shadow-xs hover:shadow-md",
                         a.summary.blockingErrors > 0
-                          ? "border-red-300/50 bg-red-50/40 dark:bg-red-950/15"
+                          ? "border-red-300/60 bg-red-50/40 dark:bg-red-950/15 hover:border-red-400/60"
                           : a.summary.suspect + a.summary.unsupported > 0
-                          ? "border-amber-300/50 bg-amber-50/40 dark:bg-amber-950/15"
-                          : "border-emerald-300/50 bg-emerald-50/40 dark:bg-emerald-950/15"
+                          ? "border-amber-300/60 bg-amber-50/40 dark:bg-amber-950/15 hover:border-amber-400/60"
+                          : "border-emerald-300/60 bg-emerald-50/40 dark:bg-emerald-950/15 hover:border-emerald-400/60"
                       )}
                     >
                       <div className="flex items-center gap-1.5 mb-1">
-                        <span className="font-medium truncate flex-1 min-w-0">
+                        <span className="font-medium truncate flex-1 min-w-0 font-serif-text">
                           {a.title}
                         </span>
-                        <span className="text-[9px] text-muted-foreground shrink-0">
+                        <span className="text-[9px] text-muted-foreground shrink-0 tabular-nums">
                           {a.wordCount}w
                         </span>
                       </div>
                       <div className="flex flex-wrap gap-1">
                         <Badge
                           variant="outline"
-                          className="h-3.5 px-1 text-[8px]"
+                          className="h-3.5 px-1 text-[8px] badge-slate"
                         >
                           {a.totalCitations} cit
                         </Badge>
                         <Badge
                           variant="outline"
-                          className="h-3.5 px-1 text-[8px]"
+                          className="h-3.5 px-1 text-[8px] badge-slate"
                         >
                           {a.totalReferences} ref
                         </Badge>
                         {a.summary.blockingErrors > 0 && (
                           <Badge
                             variant="outline"
-                            className="h-3.5 px-1 text-[8px] border-red-300/60 text-red-700 dark:text-red-400"
+                            className="h-3.5 px-1 text-[8px] badge-rose"
                           >
                             {a.summary.blockingErrors} blocking
                           </Badge>
@@ -858,7 +873,7 @@ export function CitationHealthDashboard({
                         {a.summary.missing > 0 && (
                           <Badge
                             variant="outline"
-                            className="h-3.5 px-1 text-[8px] border-red-300/60 text-red-700 dark:text-red-400"
+                            className="h-3.5 px-1 text-[8px] badge-rose"
                           >
                             {a.summary.missing} missing
                           </Badge>
@@ -866,7 +881,7 @@ export function CitationHealthDashboard({
                         {a.summary.suspect > 0 && (
                           <Badge
                             variant="outline"
-                            className="h-3.5 px-1 text-[8px] border-amber-300/60 text-amber-700 dark:text-amber-400"
+                            className="h-3.5 px-1 text-[8px] badge-teal"
                           >
                             {a.summary.suspect} suspect
                           </Badge>
@@ -874,7 +889,7 @@ export function CitationHealthDashboard({
                         {a.summary.unsupported > 0 && (
                           <Badge
                             variant="outline"
-                            className="h-3.5 px-1 text-[8px] border-amber-300/60 text-amber-700 dark:text-amber-400"
+                            className="h-3.5 px-1 text-[8px] badge-amber"
                           >
                             {a.summary.unsupported} unsup
                           </Badge>
@@ -882,7 +897,7 @@ export function CitationHealthDashboard({
                         {!a.numberingIntegrityOk && (
                           <Badge
                             variant="outline"
-                            className="h-3.5 px-1 text-[8px] border-red-300/60 text-red-700 dark:text-red-400"
+                            className="h-3.5 px-1 text-[8px] badge-rose"
                           >
                             numbering drift
                           </Badge>
@@ -890,7 +905,7 @@ export function CitationHealthDashboard({
                         {a.summary.orphan > 0 && (
                           <Badge
                             variant="outline"
-                            className="h-3.5 px-1 text-[8px] border-amber-300/60 text-amber-700 dark:text-amber-400"
+                            className="h-3.5 px-1 text-[8px] badge-amber"
                           >
                             {a.summary.orphan} orphan
                           </Badge>
@@ -900,7 +915,7 @@ export function CitationHealthDashboard({
                           a.summary.unsupported === 0 && (
                             <Badge
                               variant="outline"
-                              className="h-3.5 px-1 text-[8px] border-emerald-300/60 text-emerald-700 dark:text-emerald-400"
+                              className="h-3.5 px-1 text-[8px] badge-emerald"
                             >
                               ✓ clean
                             </Badge>
@@ -921,14 +936,14 @@ export function CitationHealthDashboard({
       <AlertDialog open={confirmRegen} onOpenChange={setConfirmRegen}>
         <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-base">
+            <AlertDialogTitle className="flex items-center gap-2 text-base font-serif-text tracking-tight">
               <RotateCw className="h-5 w-5 text-primary shrink-0" />
               Regenerate all paragraphs with citation issues?
             </AlertDialogTitle>
             <AlertDialogDescription className="text-sm leading-relaxed space-y-2">
               <span className="block">
                 This will re-write the body text of{" "}
-                <strong className="text-foreground">
+                <strong className="text-foreground font-serif-text">
                   {report?.worstOffenders.filter(
                     (p) => p.blockingCount > 0 || p.warningCount > 0
                   ).length || 0}{" "}
@@ -953,7 +968,7 @@ export function CitationHealthDashboard({
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
-              className="text-xs gap-1.5"
+              className="text-xs gap-1.5 btn-gradient-primary text-primary-foreground hover:shadow-md transition-all"
               onClick={(e) => {
                 e.preventDefault();
                 setConfirmRegen(false);

@@ -46,42 +46,72 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+/* ============================================================
+   SciWrite — Refined Academic Studio design system
+   A warmer, deeper paper palette with a richer emerald primary,
+   layered soft shadows, frosted-glass toolbars and a refined
+   typographic rhythm. All legacy utility class names are
+   preserved so the 60+ existing components keep working.
+   ============================================================ */
+
 :root {
-  --radius: 0.625rem;
-  /* Warm paper neutrals */
-  --background: oklch(0.992 0.004 95);
-  --foreground: oklch(0.21 0.02 150);
+  --radius: 0.75rem;
+
+  /* Paper neutrals — slightly warmer, with a faint cream tint that
+     reads as "scholarly paper" rather than flat white. */
+  --background: oklch(0.985 0.006 95);
+  --foreground: oklch(0.22 0.018 150);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.21 0.02 150);
+  --card-foreground: oklch(0.22 0.018 150);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.21 0.02 150);
-  /* Emerald primary */
-  --primary: oklch(0.52 0.13 162);
-  --primary-foreground: oklch(0.99 0.01 150);
-  --secondary: oklch(0.96 0.012 150);
-  --secondary-foreground: oklch(0.3 0.04 162);
+  --popover-foreground: oklch(0.22 0.018 150);
+
+  /* Emerald primary — deeper and more saturated for a confident,
+     premium feel, while staying within accessible contrast. */
+  --primary: oklch(0.48 0.14 164);
+  --primary-foreground: oklch(0.99 0.012 150);
+  --secondary: oklch(0.965 0.012 150);
+  --secondary-foreground: oklch(0.32 0.045 162);
   --muted: oklch(0.965 0.008 95);
-  --muted-foreground: oklch(0.52 0.02 150);
-  /* Teal accent */
-  --accent: oklch(0.94 0.035 172);
-  --accent-foreground: oklch(0.32 0.06 172);
+  --muted-foreground: oklch(0.5 0.022 150);
+
+  /* Teal accent — slightly cooler for a complementary highlight. */
+  --accent: oklch(0.94 0.038 178);
+  --accent-foreground: oklch(0.3 0.065 178);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.905 0.012 150);
   --input: oklch(0.92 0.012 150);
-  --ring: oklch(0.52 0.13 162);
-  --chart-1: oklch(0.6 0.15 162);
+  --ring: oklch(0.48 0.14 164);
+
+  /* Layered soft shadow system — the single biggest perceived-quality
+     upgrade. Surfaces now lift gently instead of sitting flat. */
+  --shadow-2xs: 0 1px 1px oklch(0.28 0.05 162 / 0.04);
+  --shadow-xs: 0 1px 2px oklch(0.28 0.05 162 / 0.06), 0 1px 1px oklch(0.28 0.05 162 / 0.04);
+  --shadow-sm: 0 1px 3px oklch(0.28 0.05 162 / 0.07), 0 1px 2px oklch(0.28 0.05 162 / 0.05);
+  --shadow-md: 0 4px 8px oklch(0.28 0.05 162 / 0.08), 0 2px 4px oklch(0.28 0.05 162 / 0.05);
+  --shadow-lg: 0 8px 20px oklch(0.28 0.05 162 / 0.1), 0 3px 6px oklch(0.28 0.05 162 / 0.06);
+  --shadow-xl: 0 14px 34px oklch(0.28 0.05 162 / 0.12), 0 6px 12px oklch(0.28 0.05 162 / 0.07);
+  --shadow-glow: 0 0 0 1px oklch(0.48 0.14 164 / 0.18), 0 6px 18px oklch(0.48 0.14 164 / 0.12);
+
+  /* Motion — a single set of easing tokens so transitions feel
+     consistent across the whole app. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-snap: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --chart-1: oklch(0.58 0.16 162);
   --chart-2: oklch(0.62 0.12 185);
   --chart-3: oklch(0.7 0.14 85);
   --chart-4: oklch(0.58 0.18 30);
   --chart-5: oklch(0.55 0.16 300);
-  --sidebar: oklch(0.975 0.006 150);
-  --sidebar-foreground: oklch(0.21 0.02 150);
-  --sidebar-primary: oklch(0.52 0.13 162);
-  --sidebar-primary-foreground: oklch(0.99 0.01 150);
-  --sidebar-accent: oklch(0.94 0.035 172);
-  --sidebar-accent-foreground: oklch(0.32 0.06 172);
+  --sidebar: oklch(0.975 0.007 150);
+  --sidebar-foreground: oklch(0.22 0.018 150);
+  --sidebar-primary: oklch(0.48 0.14 164);
+  --sidebar-primary-foreground: oklch(0.99 0.012 150);
+  --sidebar-accent: oklch(0.94 0.038 178);
+  --sidebar-accent-foreground: oklch(0.3 0.065 178);
   --sidebar-border: oklch(0.905 0.012 150);
-  --sidebar-ring: oklch(0.52 0.13 162);
+  --sidebar-ring: oklch(0.48 0.14 164);
 }
 
 /* ============================================================
@@ -157,38 +187,49 @@
   --sidebar-primary: oklch(0.7 0.2 300);
 }
 
+/* Dark mode — deeper, less flat. The background gets a subtle
+   emerald undertone so dark mode feels like the same product,
+   not a zebra inversion. */
 .dark {
-  --background: oklch(0.17 0.012 160);
-  --foreground: oklch(0.96 0.005 150);
-  --card: oklch(0.21 0.014 160);
-  --card-foreground: oklch(0.96 0.005 150);
-  --popover: oklch(0.22 0.014 160);
-  --popover-foreground: oklch(0.96 0.005 150);
-  --primary: oklch(0.7 0.13 162);
+  --background: oklch(0.165 0.014 162);
+  --foreground: oklch(0.965 0.006 150);
+  --card: oklch(0.205 0.016 162);
+  --card-foreground: oklch(0.965 0.006 150);
+  --popover: oklch(0.215 0.016 162);
+  --popover-foreground: oklch(0.965 0.006 150);
+  --primary: oklch(0.72 0.14 164);
   --primary-foreground: oklch(0.16 0.02 162);
-  --secondary: oklch(0.26 0.018 160);
+  --secondary: oklch(0.255 0.018 162);
   --secondary-foreground: oklch(0.94 0.01 150);
-  --muted: oklch(0.25 0.015 160);
-  --muted-foreground: oklch(0.7 0.015 150);
-  --accent: oklch(0.3 0.05 172);
-  --accent-foreground: oklch(0.92 0.03 172);
+  --muted: oklch(0.245 0.015 162);
+  --muted-foreground: oklch(0.71 0.015 150);
+  --accent: oklch(0.3 0.05 178);
+  --accent-foreground: oklch(0.92 0.03 178);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 16%);
-  --ring: oklch(0.7 0.13 162);
-  --chart-1: oklch(0.7 0.15 162);
-  --chart-2: oklch(0.7 0.12 185);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.72 0.14 164);
+  --chart-1: oklch(0.72 0.15 162);
+  --chart-2: oklch(0.72 0.12 185);
   --chart-3: oklch(0.75 0.14 85);
   --chart-4: oklch(0.65 0.18 30);
   --chart-5: oklch(0.6 0.16 300);
-  --sidebar: oklch(0.2 0.014 160);
-  --sidebar-foreground: oklch(0.96 0.005 150);
-  --sidebar-primary: oklch(0.7 0.13 162);
+  --sidebar: oklch(0.195 0.014 162);
+  --sidebar-foreground: oklch(0.965 0.006 150);
+  --sidebar-primary: oklch(0.72 0.14 164);
   --sidebar-primary-foreground: oklch(0.16 0.02 162);
-  --sidebar-accent: oklch(0.3 0.05 172);
-  --sidebar-accent-foreground: oklch(0.92 0.03 172);
-  --sidebar-border: oklch(1 0 0 / 12%);
-  --sidebar-ring: oklch(0.7 0.13 162);
+  --sidebar-accent: oklch(0.3 0.05 178);
+  --sidebar-accent-foreground: oklch(0.92 0.03 178);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.72 0.14 164);
+
+  --shadow-2xs: 0 1px 1px oklch(0 0 0 / 0.2);
+  --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.28), 0 1px 1px oklch(0 0 0 / 0.2);
+  --shadow-sm: 0 1px 3px oklch(0 0 0 / 0.3), 0 1px 2px oklch(0 0 0 / 0.22);
+  --shadow-md: 0 4px 10px oklch(0 0 0 / 0.32), 0 2px 4px oklch(0 0 0 / 0.24);
+  --shadow-lg: 0 10px 24px oklch(0 0 0 / 0.36), 0 3px 8px oklch(0 0 0 / 0.26);
+  --shadow-xl: 0 18px 40px oklch(0 0 0 / 0.4), 0 6px 14px oklch(0 0 0 / 0.3);
+  --shadow-glow: 0 0 0 1px oklch(0.72 0.14 164 / 0.24), 0 8px 22px oklch(0.72 0.14 164 / 0.16);
 }
 
 @layer base {
@@ -198,6 +239,26 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "ss01", "cv01", "cv03";
+    /* A faint warm radial wash behind everything — gives the app a
+       subtle "studio" depth instead of a flat sheet of paper. */
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -10%, oklch(0.48 0.14 164 / 0.05), transparent 70%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, oklch(0.62 0.12 185 / 0.04), transparent 60%);
+    background-attachment: fixed;
+  }
+  .dark body {
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -10%, oklch(0.72 0.14 164 / 0.09), transparent 70%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, oklch(0.55 0.16 300 / 0.05), transparent 60%);
+  }
+  /* Selection — emerald-tinted so highlights match the brand. */
+  ::selection {
+    background: oklch(0.48 0.14 164 / 0.22);
+    color: oklch(0.2 0.03 150);
+  }
+  .dark ::selection {
+    background: oklch(0.72 0.14 164 / 0.32);
+    color: oklch(0.16 0.02 162);
   }
 }
 
@@ -216,9 +277,6 @@
   line-height: 1.78;
   color: oklch(0.24 0.02 150);
   letter-spacing: 0.003em;
-  /* CJK typography optimizations: slightly looser line-height for Chinese
-     (which needs more vertical breathing room than Latin), and adjust
-     letter-spacing so Chinese characters don't feel cramped. */
   text-justify: inter-ideograph;
   word-break: break-word;
   overflow-wrap: break-word;
@@ -228,10 +286,7 @@
   color: oklch(0.9 0.005 150);
 }
 
-/* ---------- Chinese typography polish ----------
-   When the content contains CJK characters, apply refined spacing rules.
-   Chinese text needs more line-height than Latin (~1.8 vs 1.6) and should
-   not use letter-spacing (which creates awkward gaps between characters). */
+/* ---------- Chinese typography polish ---------- */
 :lang(zh),
 .prose-academic:lang(zh),
 .prose-academic:-webkit-any(:lang(zh)) {
@@ -239,21 +294,135 @@
   letter-spacing: 0;
 }
 
-/* Punctuation kerning for Chinese: prevent full-width punctuation from
-   creating large gaps at line starts (hanging punctuation). */
 .prose-academic {
   text-spacing: trim-start allow-end;
   -ms-text-spacing: trim-start allow-end;
 }
 
-/* Headings: use the serif stack with Chinese fallback for a cohesive
-   academic look. Section titles in Chinese articles should match the
-   serif body text. */
+/* Headings — refined tracking & weight for a more editorial feel. */
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-serif), var(--font-zh-serif), Georgia,
     "Songti SC", "SimSun", serif;
   font-weight: 600;
+  letter-spacing: -0.012em;
 }
+
+/* ============================================================
+   NEW surface utilities — the visual backbone of the redesign.
+   These are consumed by the shell + cards so elevation is
+   consistent across the whole app.
+   ============================================================ */
+
+/* Frosted-glass toolbar — for the top header and bottom footer.
+   Sits over the body's radial wash with a blur + subtle tint. */
+.glass-toolbar {
+  background-color: oklch(1 0 0 / 0.72);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  box-shadow: inset 0 -1px 0 oklch(0.905 0.012 150 / 0.8), 0 1px 3px oklch(0.28 0.05 162 / 0.05);
+}
+.dark .glass-toolbar {
+  background-color: oklch(0.205 0.016 162 / 0.7);
+  box-shadow: inset 0 -1px 0 oklch(1 0 0 / 0.08), 0 1px 3px oklch(0 0 0 / 0.2);
+}
+
+/* A lighter glass variant for sub-panels (workspace header, panel
+   headers) where the full-strength toolbar would feel heavy. */
+.glass-subtle {
+  background-color: oklch(1 0 0 / 0.55);
+  backdrop-filter: blur(8px) saturate(1.25);
+  -webkit-backdrop-filter: blur(8px) saturate(1.25);
+}
+.dark .glass-subtle {
+  background-color: oklch(0.205 0.016 162 / 0.5);
+}
+
+/* Elevated card surface — used by content cards. Sets border-width/style
+   only (not border-color) so the base `* { border-border }` color applies
+   and Tailwind's `border-primary/40` / `hover:border-primary/30` utilities
+   can override it cleanly without an unlayered-vs-layered cascade fight. */
+.surface-card {
+  background-color: var(--card);
+  box-shadow: var(--shadow-xs);
+  border-width: 1px;
+  border-style: solid;
+}
+/* Lifted surface for hover / active focus states — box-shadow only, so it
+   composes cleanly with Tailwind border-color utilities. */
+.surface-raised {
+  box-shadow: var(--shadow-md);
+}
+
+/* Hairline divider — softer than border-border. */
+.hairline {
+  border-color: oklch(0.905 0.012 150 / 0.7);
+}
+.dark .hairline {
+  border-color: oklch(1 0 0 / 0.08);
+}
+
+/* Consistent focus ring for interactive elements. */
+.focus-ring {
+  outline: 2px solid oklch(0.48 0.14 164 / 0.55);
+  outline-offset: 2px;
+}
+.dark .focus-ring {
+  outline-color: oklch(0.72 0.14 164 / 0.6);
+}
+
+/* Brand mark — the logo tile gradient. */
+.brand-tile {
+  background-image: linear-gradient(135deg, oklch(0.52 0.15 164), oklch(0.5 0.13 185));
+  box-shadow: 0 2px 6px oklch(0.48 0.14 164 / 0.32), inset 0 1px 0 oklch(1 0 0 / 0.25);
+}
+.dark .brand-tile {
+  background-image: linear-gradient(135deg, oklch(0.6 0.15 164), oklch(0.55 0.14 185));
+  box-shadow: 0 2px 8px oklch(0.72 0.14 164 / 0.3), inset 0 1px 0 oklch(1 0 0 / 0.18);
+}
+
+/* Primary gradient button — for the headline CTA. */
+.btn-gradient-primary {
+  background-image: linear-gradient(135deg, oklch(0.52 0.15 164), oklch(0.46 0.14 168));
+  box-shadow: 0 2px 6px oklch(0.48 0.14 164 / 0.28), inset 0 1px 0 oklch(1 0 0 / 0.18);
+  transition: box-shadow 0.18s var(--ease-out), transform 0.18s var(--ease-out), filter 0.18s var(--ease-out);
+}
+.btn-gradient-primary:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 4px 12px oklch(0.48 0.14 164 / 0.34), inset 0 1px 0 oklch(1 0 0 / 0.22);
+}
+.btn-gradient-primary:active {
+  transform: translateY(0.5px);
+}
+.dark .btn-gradient-primary {
+  background-image: linear-gradient(135deg, oklch(0.68 0.15 164), oklch(0.6 0.14 168));
+  box-shadow: 0 2px 8px oklch(0.72 0.14 164 / 0.3), inset 0 1px 0 oklch(1 0 0 / 0.14);
+}
+
+/* Refined tab indicator — pill background + soft shadow. */
+.tab-pill {
+  background-color: var(--card);
+  box-shadow: var(--shadow-xs);
+  border: 1px solid oklch(0.905 0.012 150 / 0.9);
+  color: var(--primary);
+}
+.dark .tab-pill {
+  border-color: oklch(1 0 0 / 0.1);
+}
+.tab-pill-inactive {
+  color: var(--muted-foreground);
+  transition: color 0.15s var(--ease-out), background-color 0.15s var(--ease-out);
+}
+.tab-pill-inactive:hover {
+  color: var(--foreground);
+  background-color: oklch(0.905 0.012 150 / 0.4);
+}
+.dark .tab-pill-inactive:hover {
+  background-color: oklch(1 0 0 / 0.05);
+}
+
+/* ============================================================
+   Legacy utility classes — preserved & enhanced.
+   ============================================================ */
 
 /* Citation markers */
 .cite-marker {
@@ -262,40 +431,36 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 0.72em;
   vertical-align: super;
   line-height: 0;
-  color: oklch(0.45 0.11 162);
-  background: oklch(0.94 0.03 172 / 0.6);
-  border-radius: 0.25rem;
-  padding: 0.05em 0.32em;
+  color: oklch(0.42 0.12 164);
+  background: oklch(0.94 0.035 178 / 0.6);
+  border-radius: 0.3rem;
+  padding: 0.06em 0.34em;
   margin: 0 0.04em;
   font-weight: 600;
   cursor: help;
-  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease,
-    box-shadow 0.15s ease;
+  transition: background 0.15s var(--ease-out), color 0.15s var(--ease-out), transform 0.15s var(--ease-out),
+    box-shadow 0.15s var(--ease-out);
 }
 .cite-marker:hover {
-  background: oklch(0.86 0.07 172);
-  color: oklch(0.34 0.1 162);
+  background: oklch(0.86 0.07 178);
+  color: oklch(0.32 0.11 164);
   transform: translateY(-1px) scale(1.06);
-  box-shadow: 0 1px 3px oklch(0.45 0.1 162 / 0.25);
+  box-shadow: 0 1px 3px oklch(0.42 0.12 164 / 0.28);
 }
 .cite-marker:focus-visible {
-  outline: 2px solid oklch(0.55 0.15 162);
+  outline: 2px solid oklch(0.48 0.14 164);
   outline-offset: 1px;
 }
 .dark .cite-marker {
-  color: oklch(0.78 0.1 162);
-  background: oklch(0.3 0.05 172 / 0.5);
+  color: oklch(0.78 0.1 164);
+  background: oklch(0.3 0.05 178 / 0.5);
 }
 .dark .cite-marker:hover {
-  background: oklch(0.4 0.08 172);
-  color: oklch(0.88 0.1 162);
+  background: oklch(0.4 0.08 178);
+  color: oklch(0.88 0.1 164);
 }
 
-/* Adversarial citation-audit marker states (Layer 3 rendering guard).
-   - unresolved: the [n] points to nothing (hallucinated / out-of-range)
-   - missing: the reference entry is absent from the References section
-   - unsupported: very low topical overlap with the citing sentence
-   - suspect: weak overlap — needs manual verification */
+/* Adversarial citation-audit marker states */
 .cite-marker-unresolved {
   color: oklch(0.42 0.11 75);
   background: oklch(0.92 0.06 85 / 0.65);
@@ -356,7 +521,7 @@ h1, h2, h3, h4, h5, h6 {
   border-radius: 2px;
   padding: 0 1px;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s var(--ease-out);
 }
 .ann-highlight:hover {
   background: linear-gradient(
@@ -374,9 +539,7 @@ h1, h2, h3, h4, h5, h6 {
   border-bottom-color: oklch(0.62 0.2 25);
 }
 
-/* Pending annotation selection — preserves the text selection highlight
-   while the annotation popover is open, even after the native selection
-   is lost due to focus moving to the popover. */
+/* Pending annotation selection */
 .pending-selection {
   background: linear-gradient(
     120deg,
@@ -417,7 +580,7 @@ h1, h2, h3, h4, h5, h6 {
     );
 }
 
-/* Custom scrollbar */
+/* Custom scrollbar — refined thumb with subtle gradient. */
 .scroll-academic::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -432,7 +595,7 @@ h1, h2, h3, h4, h5, h6 {
   background-clip: padding-box;
 }
 .scroll-academic::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.72 0.05 162);
+  background: oklch(0.72 0.06 164);
   background-clip: padding-box;
   border: 2px solid transparent;
 }
@@ -440,6 +603,10 @@ h1, h2, h3, h4, h5, h6 {
   background: oklch(0.35 0.02 150);
   background-clip: padding-box;
   border: 2px solid transparent;
+}
+.dark .scroll-academic::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.45 0.06 164);
+  background-clip: padding-box;
 }
 
 /* Subtle fade-in for generated content */
@@ -454,7 +621,7 @@ h1, h2, h3, h4, h5, h6 {
   }
 }
 .acad-fade-in {
-  animation: acad-fade-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: acad-fade-in 0.45s var(--ease-out) both;
 }
 
 /* Typing cursor for streaming */
@@ -465,15 +632,25 @@ h1, h2, h3, h4, h5, h6 {
 .typing-caret::after {
   content: "▌";
   margin-left: 1px;
-  color: oklch(0.52 0.13 162);
+  color: oklch(0.48 0.14 164);
   animation: blink-caret 1s steps(1) infinite;
+}
+.dark .typing-caret::after {
+  color: oklch(0.72 0.14 164);
 }
 
 /* Gradient ring for active states */
 .ring-academic {
   box-shadow:
-    0 0 0 1px oklch(0.52 0.13 162 / 0.25),
-    0 1px 2px oklch(0.3 0.05 162 / 0.08);
+    0 0 0 1px oklch(0.48 0.14 164 / 0.28),
+    0 1px 2px oklch(0.3 0.05 162 / 0.08),
+    0 4px 14px oklch(0.48 0.14 164 / 0.08);
+}
+.dark .ring-academic {
+  box-shadow:
+    0 0 0 1px oklch(0.72 0.14 164 / 0.3),
+    0 1px 2px oklch(0 0 0 / 0.2),
+    0 4px 16px oklch(0.72 0.14 164 / 0.1);
 }
 
 /* Source badge gradients */
@@ -514,19 +691,20 @@ h1, h2, h3, h4, h5, h6 {
     transparent
   );
 }
+.dark .divider-academic::before,
+.dark .divider-academic::after {
+  background: linear-gradient(
+    to right,
+    transparent,
+    oklch(0.35 0.02 150),
+    transparent
+  );
+}
 
 /* ============================================================
    Range slider thumb styling
-   ============================================================
-   Tailwind's `appearance-none` removes the browser's default slider
-   thumb, making the slider look like a plain bar that can't be dragged.
-   These rules restore a visible, grabbable thumb for all
-   input[type=range] elements. The thumb uses the primary color so it
-   matches the app's theme, and is large enough (14px) for easy mouse
-   and touch interaction.
    ============================================================ */
 
-/* Range slider — use class selector for higher specificity than Tailwind v4 preflight */
 .sciwrite-range-slider {
   -webkit-appearance: none;
   appearance: none;
@@ -534,7 +712,6 @@ h1, h2, h3, h4, h5, h6 {
   cursor: pointer;
 }
 
-/* WebKit / Blink (Chrome, Safari, Edge) */
 .sciwrite-range-slider::-webkit-slider-runnable-track {
   height: 6px;
   border-radius: 9999px;
@@ -559,7 +736,6 @@ h1, h2, h3, h4, h5, h6 {
   transform: scale(1.25);
 }
 
-/* Firefox */
 .sciwrite-range-slider::-moz-range-track {
   height: 6px;
   border-radius: 9999px;
@@ -582,7 +758,6 @@ h1, h2, h3, h4, h5, h6 {
   transform: scale(1.25);
 }
 
-/* Focus outline for accessibility */
 .sciwrite-range-slider:focus {
   outline: none;
 }

@@ -71,22 +71,22 @@ export function KnowledgePanel({
   return (
     <>
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Header — v100-1: gradient header with icon container + count badges */}
-      <div className="flex items-center justify-between px-3 py-2 mt-2 mb-1 shrink-0 rounded-lg bg-gradient-to-r from-primary/5 to-transparent border border-border/40">
+      {/* Header — refined floating strip with glass-subtle + icon tile */}
+      <div className="glass-subtle flex items-center justify-between px-3 py-2 mt-2 mb-1 shrink-0 rounded-lg border border-border/40">
         <div className="flex items-center gap-2">
-          <div className="flex items-center justify-center h-6 w-6 rounded-md bg-primary/10 text-primary">
+          <div className="flex items-center justify-center h-6 w-6 rounded-md bg-primary/10 text-primary shrink-0">
             <DatabaseIcon className="h-3.5 w-3.5" />
           </div>
-          <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+          <h3 className="text-[13px] font-semibold tracking-tight font-serif-text text-foreground">
             {t("knowledge.sources")}
-          </span>
+          </h3>
           {dataSources.length > 0 && (
             <Badge variant="outline" className="text-[9px] h-4 px-1.5 gap-0.5 font-mono">
               {dataSources.length}
             </Badge>
           )}
           {references.length > 0 && (
-            <Badge variant="outline" className="text-[9px] h-4 px-1.5 gap-0.5 text-blue-600 border-blue-300/40 bg-blue-500/5">
+            <Badge variant="outline" className="text-[9px] h-4 px-1.5 gap-0.5 text-emerald-700 border-emerald-300/40 bg-emerald-500/5">
               {references.length} refs
             </Badge>
           )}
@@ -234,7 +234,7 @@ function SourcesList({
       <ScrollArea className="h-full scroll-academic">
         <div className="px-3 py-2">
           <EmptyState
-            icon={<DatabaseIcon className="h-7 w-7" />}
+            icon={<DatabaseIcon className="h-5 w-5" />}
             title={t("knowledge.noSources")}
             hint={t("knowledge.noSourcesHint")}
           />
@@ -246,15 +246,15 @@ function SourcesList({
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Horizontal type tab bar — shows ALL types + counts at a glance */}
-      <div className="px-2 pt-1.5 pb-2 border-b border-border/40 shrink-0 bg-gradient-to-r from-muted/15 to-transparent">
+      <div className="px-2 pt-1.5 pb-2 border-b border-border/40 shrink-0 bg-muted/15">
         <div className="flex items-center gap-1 overflow-x-auto scrollbar-thin pb-1">
           {/* "All" tab */}
           <button
             onClick={() => setActiveType("all")}
-            className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide transition-all whitespace-nowrap ${
+            className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide transition-all whitespace-nowrap ${
               activeType === "all"
-                ? "bg-primary/15 text-primary border border-primary/30 shadow-sm"
-                : "bg-muted/40 text-muted-foreground hover:bg-muted border border-transparent"
+                ? "tab-pill"
+                : "tab-pill-inactive"
             }`}
           >
             <span className="text-[11px]">🗂️</span>
@@ -284,10 +284,10 @@ function SourcesList({
               <button
                 key={st}
                 onClick={() => setActiveType(st)}
-                className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide transition-all whitespace-nowrap border ${
+                className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide transition-all whitespace-nowrap ${
                   isActive
-                    ? `${TYPE_BADGE[st] || "badge-slate"} border-primary/30 shadow-sm`
-                    : "bg-muted/40 text-muted-foreground hover:bg-muted border-transparent"
+                    ? `tab-pill ${TYPE_BADGE[st] || "badge-slate"}`
+                    : "tab-pill-inactive"
                 }`}
               >
                 <span className="text-[11px]">{SOURCE_TYPE_ICONS[st] || "📦"}</span>
@@ -429,7 +429,7 @@ function SourceCard({
   const isRcsb = d.source === "rcsb" && d.externalId;
   const analyzed = isRcsb && extraObj?.analyzed === true;
   return (
-    <div className="rounded-lg border border-border/60 bg-card p-2.5 space-y-1 transition-all hover:border-primary/30 hover:shadow-sm">
+    <div className="surface-card rounded-lg p-2.5 space-y-1 transition-all hover:border-primary/30 hover:shadow-md">
       <div className="flex items-start gap-1.5">
         {d.externalId && (
           <span className="text-[9px] font-mono text-muted-foreground">
@@ -458,7 +458,7 @@ function SourceCard({
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 text-sky-600"
+              className="h-6 w-6 text-primary"
               onClick={() => onDeepRead(d.id)}
               disabled={deepReadPending}
               title={t("knowledge.deepReadTitle")}
@@ -584,7 +584,7 @@ function SourceCard({
                 expandedSource === d.id ? null : d.id
               )
             }
-            className="text-[9px] uppercase tracking-wider text-sky-600 font-semibold flex items-center gap-1 hover:text-sky-700"
+            className="text-[9px] uppercase tracking-wider text-primary font-semibold flex items-center gap-1 hover:text-primary/80"
           >
             <Microscope className="h-2.5 w-2.5" />
             {t("knowledge.deepRead")}
@@ -595,7 +595,7 @@ function SourceCard({
             )}
           </button>
           {expandedSource === d.id && (
-            <div className="mt-1 rounded-md bg-sky-50/50 dark:bg-sky-950/20 border border-sky-200/40 dark:border-sky-900/40 p-2 text-[10px] leading-relaxed whitespace-pre-wrap font-sans">
+            <div className="mt-1 rounded-md bg-primary/5 dark:bg-primary/10 border border-primary/20 dark:border-primary/20 p-2 text-[10px] leading-relaxed whitespace-pre-wrap font-sans">
               {d.summary}
             </div>
           )}
@@ -620,9 +620,11 @@ function EmptyState({
   hint: string;
 }) {
   return (
-    <div className="text-center py-10 text-muted-foreground px-4">
-      <div className="opacity-40 flex justify-center mb-2">{icon}</div>
-      <p className="text-xs font-medium">{title}</p>
+    <div className="acad-fade-in flex flex-col items-center text-center py-12 text-muted-foreground px-4">
+      <div className="ring-academic h-11 w-11 rounded-xl flex items-center justify-center mb-3 bg-card text-primary/70">
+        {icon}
+      </div>
+      <p className="text-xs font-serif-text font-medium tracking-tight">{title}</p>
       <p className="text-[10px] mt-1 leading-relaxed">{hint}</p>
     </div>
   );

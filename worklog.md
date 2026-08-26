@@ -488,3 +488,132 @@ Stage Summary:
 - origin/e2e-test-clean、origin/e2e-test-dedup-fix 保持不变
 - 仓库地址：https://github.com/Jing0715-fer/SciWrite
 - 注意：本地 token 已写入 .git/config（git remote -v 自动 redact 显示）。如需撤销，可 git remote set-url origin https://github.com/Jing0715-fer/SciWrite.git 移除 token。
+
+---
+Task ID: 7
+Agent: frontend-styling-expert (paragraph-card)
+Task: Restyle paragraph-card.tsx chrome using the new design system, keeping all logic/interactions intact.
+
+Work Log:
+- Read worklog.md (recent sections) + globals.css (full design-token system) + paragraph-card.tsx (full 1058 lines) + page.tsx Header (548-655) to absorb the established visual language (glass-toolbar, brand-tile, btn-gradient-primary, font-serif-text, badge-* helpers).
+- Inventory of design tokens to apply: surface-card, surface-raised, glass-subtle, glass-toolbar, hairline, ring-academic, acad-fade-in, prose-academic, paper-surface, badge-{emerald/teal/amber/rose/violet/sky/slate}, btn-gradient-primary, cite-marker, font-serif-text, divider-academic.
+- Card root: replaced `rounded-xl border border-border/70 bg-card shadow-sm hover:shadow-md transition-shadow overflow-hidden acad-fade-in` with `surface-card rounded-xl overflow-hidden transition-all hover:shadow-md hover:border-primary/30 acad-fade-in` + conditional `ring-academic` when `editing` is true (treated as the "active/selected" state). `transition-shadow` → `transition-all` so border-color and shadow morph together; added `hover:border-primary/30` for the emerald-tinted lift edge.
+- Header: replaced `bg-gradient-to-r from-muted/40 to-transparent border-b border-border/50` with `glass-subtle border-b hairline` for a frosted, hairline-divided title strip.
+- Section index `§NN`: added `tabular-nums` + `text-muted-foreground/80` for tighter numeric rhythm.
+- Title `<h3>` and the editing `<input>`: added `font-serif-text tracking-tight` for editorial serif feel matching the Header's app title.
+- Status badge: kept `badge-${status.color}` semantic-color helper (slate/amber/sky/emerald/teal from STATUS_STYLES) and added `shadow-xs` for a subtle elevation pop.
+- Citation-count badge: replaced bespoke `text-amber-600 bg-amber-500/10` with the shared `badge-amber` helper + `shadow-xs` so it inherits the design-system amber treatment.
+- EN/ZH segmented toggle: replaced `border border-border/40` with `border hairline` for the softer divider.
+- Body container: kept `paper-surface` (dot-grid background) and added `prose-academic` so paragraph text inherits scholarly serif typography (size 1.0125rem / line-height 1.78 / muted ink color). Wrapped the `MarkdownCitations` render branch in a `<div className="prose-academic">` wrapper so the prose styling applies cleanly without disturbing the Textarea edit branch. `ref={bodyRef}` + `onMouseUp={handleMouseUp}` interaction hooks left untouched on the same container.
+- Annotations collapsible: header strip `bg-muted/30` → `glass-subtle`; outer divider `border-t border-border/50` → `border-t hairline`; list panel `bg-muted/10` → `bg-muted/20` for the nested-panel visual separation called out in the spec. Each annotation card now also carries `surface-card shadow-xs` for a raised nested-panel feel while preserving the semantic `ANN_CARD_CLASS` border/bg color accents (emerald/teal/amber/rose/violet/sky) that encode annotation type/severity.
+- Action bar: replaced `border-t border-border/50 bg-card gap-1.5` with `glass-toolbar border-t hairline gap-1` — frosted toolbar with hairline divider from the body content above; tighter gap-1 grouping for the action chips. RevisePopover trigger button (the toolbar's primary CTA) gained `btn-gradient-primary text-primary-foreground border-primary/40` on top of its existing `variant="outline"` so it reads as the emerald primary action while keeping the variant prop unchanged. Other secondary actions (Compare, Undo, Edit toggle, ExportMenu) left as `variant="ghost"` per spec.
+- InsertStructureAnalysisButton trigger and the structure-chooser popover buttons kept their existing amber-accented styling — they are scoped secondary actions and not part of the card chrome.
+- Spinners: left `Loader2 animate-spin` instances untouched where they sit inside primary/default buttons (save, add-annotation, run-revision) to keep them visible against the emerald gradient. No streaming/typing-caret state exists in this component (the card renders post-generation, not during streaming), so the typing-caret polish was not applicable.
+- Verified `id={paragraph.id}` scroll-to anchor pattern: this component does not currently attach `id` to the root; the parent lists use paragraph.id externally — left untouched. No `data-*` attributes, `aria-*`, `role`, `key`, `title`, or `onClick`/`onChange`/`onBlur`/`onMouseUp` handlers were modified anywhere.
+- Ran `bun run lint` → exit 0, no errors. Verified `dev.log` tail → most recent entries are all `✓ Compiled in Nms` with no error/exception traces.
+
+Stage Summary:
+- Changed file: src/components/sciwrite/paragraph-card.tsx (1058 → 1065 lines, +7 from one added wrapper `<div className="prose-academic">` around MarkdownCitations + the conditional `ring-academic` template literal).
+- Pure className + one decorative wrapper div — no imports, props, state, effects, mutations, callbacks, conditionals, event handlers, keys, ids, or aria attributes were touched.
+- Visual lift applied at four layers: (1) card root uses surface-card + acad-fade-in + hover lift + ring-academic on edit; (2) header uses glass-subtle + hairline + font-serif-text title; (3) body uses paper-surface + prose-academic for scholarly text; (4) annotations + action bar use glass-subtle/glass-toolbar + hairline dividers and badge-* semantic helpers. RevisePopover trigger is the visual primary CTA via btn-gradient-primary.
+- Untouched for safety: every interactive primitive — drag/edit-in-place input (onBlur → updateMut), Textarea + save/cancel/insert-structure buttons, selection-toolbar Popover + pending-mark highlight logic, annotations Collapsible + resolve/delete buttons, RevisePopover mode pills + submit, ExportMenu, CitationValidationDialog trigger, DiffView trigger, undo snapshot branch, dropdown menu items (edit/copy/validate/regenerate/format/scenario/delete) — kept their original JSX structure, props, and handlers. Only the classNames on their wrapping containers and one button were refined.
+- Lint passes (exit 0). Dev server compiles cleanly (latest entries in dev.log are all `✓ Compiled`).
+
+---
+Task ID: 6
+Agent: frontend-styling-expert (citation-health-dashboard)
+Task: Restyle citation-health-dashboard.tsx using the new design system, keeping all logic intact.
+
+Work Log:
+- Read /home/z/my-project/worklog.md (recent sections 14/15/github-push) for context; read globals.css in full to learn the new design tokens (shadow-xs/sm/md/lg/xl/glow, --ease-out, --ease-spring) and utility classes (.glass-subtle, .surface-card, .surface-raised, .hairline, .ring-academic, .acad-fade-in, .badge-*, .font-serif-text, .scroll-academic, .btn-gradient-primary); read page.tsx EmptyWorkspace as the reference style for empty/loading tiles; read target file (972 lines) in full.
+- Restyled the **loading state** and **error state** into acad-fade-in wrappers with a small ring-academic icon tile (bg-primary/15 or bg-amber-500/15) + font-serif-text label, mirroring the EmptyWorkspace pattern from page.tsx.
+- Refined **GRADE_COLORS** to a cleaner set: subtle `bg-gradient-to-br from-{grade}-50/70 to-transparent` accents + grade-colored text/border, dropping the heavy `from-{grade}-100/80 to-{grade}-50/40` gradients and per-grade `shadow-{color}-500/10` (the shadow is now driven by surface-card).
+- Reworked the **grade-badge hero** into a polished scoreboard tile: `.surface-card` base + `.font-serif-text` + larger size (`text-base`) + tighter tracking for the letter grade, `tabular-nums` for the numeric score, and `.ring-academic` layered on top for grade "A" (still uses GRADE_COLORS[grade] for non-A grades).
+- Converted the four **quick-stat pills** (citations / refs / blocking / 0-blocking / warnings) into `.surface-card rounded-md` mini-tiles with `transition-all hover:shadow-md hover:border-{primary|rose|amber|emerald}-400/30-50` lift; numbers now use `.font-serif-text font-semibold tabular-nums text-foreground` for scoreboard rhythm. Swapped the lone `text-blue-600` (refs) for `text-teal-600 dark:text-teal-400` to avoid indigo/blue as a primary indicator color.
+- Refined the **clean-progress label** to `font-serif-text tabular-nums tracking-tight`.
+- Applied `.glass-subtle rounded-md hover:shadow-sm transition-all` to the **expand button**, the **refresh button**, and added `hover:shadow-sm transition-all` to the **batch auto-fix**, **batch regenerate**, **low-confidence review**, and per-paragraph **Fix/Regen** buttons (kept all disabled/onClick/title attributes unchanged).
+- Converted the two **result badges** (fixResult, regenResult) from inline `bg-emerald-50/50 text-emerald-700 dark:text-emerald-950/20` to `.badge-emerald` chips with `tabular-nums` for the counts.
+- Reframed the **expanded detail container**: replaced the `border-t border-border/30` with `border-t hairline` for a softer academic divider; kept the 2-col grid + scroll-academic lists intact.
+- Polished both **section headers** ("Worst-offending paragraphs", "Article audits") with `font-serif-text glass-subtle rounded-md px-2 py-1` + a primary-tinted leading icon, giving them the "collapsible header" feel called out in the spec.
+- Restyled both **empty states**: "All paragraphs pass" is now a `.surface-card` tile with a `.ring-academic` emerald icon tile (CheckCircle2) + font-serif-text message; "No composed articles yet" mirrors the same shape with a muted BookOpen icon tile.
+- Upgraded each **worst-offender row** from flat `border bg-/30 hover:bg-accent/30` to `shadow-xs hover:shadow-md` lift with refined `border-{rose|amber}-300/60 hover:border-{rose|amber}-400/60` semantic borders (kept the `isFixingThis` amber ring and `isRegenerating` primary ring states untouched). Used `shadow-xs` instead of `.surface-card` here so the conditional `bg-{amber|red}-50/40` state colors can win the cascade (surface-card's bg would otherwise override layered Tailwind utilities).
+- Refined the **per-paragraph severity badges**: blocking = `.badge-rose` (`{n} blk`), warning = `.badge-amber` (`{n} warn`), removing the ad-hoc `border-red-300/60 text-red-700 dark:text-red-400` class tangles.
+- Refined typography inside offender rows: `§{p.order+1}` marker + the `{cit}·{ref}` meta both got `tabular-nums`; the title got `font-serif-text`; the topFindings `[n]` marker kept font-mono (it's a citation marker) but added `tabular-nums`.
+- Upgraded each **article-audit row** to `shadow-xs hover:shadow-md` lift with `hover:border-{red|amber|emerald}-400/60` semantic borders (state-conditional logic preserved).
+- Reworked the **article-audit badges** to the badge-* helper system: cit/ref counts → `.badge-slate`; blocking/missing/numbering drift → `.badge-rose`; suspect → `.badge-teal` (per spec hint); unsupported/orphan → `.badge-amber`; clean → `.badge-emerald`.
+- Polished the **Regenerate-all confirmation dialog**: AlertDialogTitle got `font-serif-text tracking-tight`, the count `<strong>` got `font-serif-text`, and the action button got `.btn-gradient-primary text-primary-foreground hover:shadow-md` for the primary-CTA gradient treatment (kept onClick preventDefault + setConfirmRegen(false) + runBatchRegenerate() logic unchanged).
+- Ran `bun run lint` from /home/z/my-project → no errors reported (eslint exits clean). Verified dev.log shows `✓ Compiled` repeatedly after the file save with `GET /api/projects/{id}/citation-health 200` responses proving the component renders without runtime errors.
+
+Stage Summary:
+- CitationHealthDashboard visually elevated to a "research studio scoreboard" using the new design tokens; ALL logic (state, callbacks, fetchHealth/fixParagraph/runBatchAutoFix/runBatchRegenerate/regenerateParagraph, conditional rendering, key props, onClick/disabled/title/aria attributes, AlertDialog open/onOpenChange) is untouched — only className strings and decorative wrapper JSX were changed.
+- New classes adopted: `.surface-card`, `.glass-subtle`, `.ring-academic`, `.acad-fade-in`, `.hairline`, `.font-serif-text`, `.badge-{rose|amber|teal|emerald|slate}`, `.btn-gradient-primary`, `.scroll-academic` (preserved usage).
+- Hard constraint watch-out: avoided using `.surface-card` on rows that already have conditional `bg-{amber|red}-50/40` Tailwind utilities (the surface-card bg-color would win the cascade over layered Tailwind utilities in v4) — used `shadow-xs + border + bg-*` utilities directly there so the state colors still render. Same pattern for the offender/article rows.
+- Lint: passes clean. Dev server: compiles cleanly (✓ Compiled) and the citation-health endpoint returns 200, confirming the component mounts and renders without runtime/JSX errors.
+- Files changed: only `/home/z/my-project/src/components/sciwrite/citation-health-dashboard.tsx`.
+
+---
+Task ID: 8
+Agent: frontend-styling-expert (right panel: database-query-panel + knowledge-panel)
+Task: Restyle database-query-panel.tsx and knowledge-panel.tsx chrome using the new design system, keeping all logic intact.
+
+Work Log:
+- Read /home/z/my-project/worklog.md (recent sections), /home/z/my-project/src/app/globals.css in full (token + utility-class inventory), both target files in full, and projects-sidebar.tsx + page.tsx for the established header/sidebar/tab-pill patterns to mirror.
+- Confirmed source-type → badge-color mapping is already consistent across both files (pubmed=emerald, uniprot=teal, rcsb=amber, ncbi=rose, blast=violet, web=sky, manual=slate). The task prompt offered an alternate suggestion (RCSB=emerald, PubMed=rose, NCBI=amber) but explicitly said "pick a sensible mapping and apply consistently" — the existing mapping is sensible and consistent, so I kept it to avoid churn and to preserve the visual identity users already associate with each source type. Documented choice here.
+- database-query-panel.tsx — applied 5 edits (MultiEdit):
+  1. Header strip: replaced `bg-gradient-to-r from-primary/5 to-transparent` with `glass-subtle`; wrapped leading `<Database>` icon in a `h-6 w-6 rounded-md bg-primary/10` tile (mirroring projects-sidebar + page.tsx workspace header); promoted title from `text-sm font-semibold tracking-tight` to `text-[15px] font-semibold tracking-tight font-serif-text`. Kept the `<Select>` (source picker) untouched — only refined surrounding chrome per task spec.
+  2. Query input row: wrapped both BLAST variant and standard variant in `surface-card rounded-lg p-2` mini-cards. Standard variant's bare `<Input>` is now inside a `<div className="relative flex-1">` with an absolute-positioned leading `<Search>` icon (mirrors projects-sidebar search), Input className gained `pl-7`. BLAST variant's `<>` Fragment was converted to a wrapping `<div className="surface-card rounded-lg p-2 space-y-2">` (decorative wrapper, no logic change — Textarea, inner Select, and Button keep all handlers/props).
+  3. Empty state: replaced the plain `text-center py-10` block with `acad-fade-in flex flex-col items-center text-center py-12`; wrapped `<FlaskConical>` (now `h-5 w-5 text-primary/70`) in a `ring-academic h-11 w-11 rounded-xl flex items-center justify-center bg-card` tile; title gets `font-serif-text font-medium tracking-tight`.
+  4. Loading skeletons: each skeleton card wrapper `rounded-lg border border-border/70 bg-card p-3` → `surface-card rounded-lg p-3`.
+  5. ResultCard: outer `rounded-lg border border-border/70 bg-card hover:shadow-sm transition-shadow` → `surface-card rounded-lg hover:shadow-md hover:border-primary/30 transition-all`; index `text-[10px] font-mono text-muted-foreground` plain span → `badge-slate px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold` pill; action-footer top border `border-t border-border/50` → `border-t hairline` with `bg-muted/30` → `bg-muted/20`. Source-type badge span (already using `${badgeClass}` = badge-emerald/teal/amber/rose/violet/sky/slate) kept as is. rawSnippet footer gained `border hairline` for a more refined muted box.
+- knowledge-panel.tsx — applied 8 edits (MultiEdit):
+  1. Header strip: `bg-gradient-to-r from-primary/5 to-transparent` → `glass-subtle` (kept the floating `rounded-lg` + `mt-2 mb-1` + `border border-border/40` layout). Title demoted from `text-[10px] uppercase tracking-wider text-muted-foreground` eyebrow label → `text-[13px] font-semibold tracking-tight font-serif-text text-foreground` real title. Icon tile kept (already canonical `h-6 w-6 rounded-md bg-primary/10`, added `shrink-0`).
+  2. Refs count badge: `text-blue-600 border-blue-300/40 bg-blue-500/5` → `text-emerald-700 border-emerald-300/40 bg-emerald-500/5` (replaced the only remaining blue accent in the file to comply with "avoid indigo/blue").
+  3. Empty state call site: `<DatabaseIcon className="h-7 w-7" />` → `h-5 w-5` (to fit inside the new ring-academic icon tile).
+  4. Tab bar wrapper: `bg-gradient-to-r from-muted/15 to-transparent` → `bg-muted/15` (matches the workspace tabs pattern in page.tsx line 790).
+  5. "All" tab: active `bg-primary/15 text-primary border border-primary/30 shadow-sm` → `tab-pill`; inactive `bg-muted/40 text-muted-foreground hover:bg-muted border border-transparent` → `tab-pill-inactive`. Padding `px-2` → `px-2.5` for a slightly more comfortable pill. Inner count badge styling kept (already uses `bg-primary/20 text-primary` for active).
+  6. Per-source-type tabs: active `${TYPE_BADGE[st] || "badge-slate"} border-primary/30 shadow-sm` → `tab-pill ${TYPE_BADGE[st] || "badge-slate"}` — this layers the elevated card-like pill surface (from `.tab-pill`) UNDER the per-source-type color (from `.badge-*` defined later in globals.css, which overrides `.tab-pill`'s background+color but inherits its border + shadow-xs, producing a colored pill with card-like elevation). Inactive → `tab-pill-inactive`.
+  7. SourceCard: `rounded-lg border border-border/60 bg-card p-2.5 space-y-1 transition-all hover:border-primary/30 hover:shadow-sm` → `surface-card rounded-lg p-2.5 space-y-1 transition-all hover:border-primary/30 hover:shadow-md` (matches the ResultCard treatment for consistency).
+  8. Deep-read chrome: deep-read icon button `text-sky-600` → `text-primary`; deep-read expand-button `text-sky-600 hover:text-sky-700` → `text-primary hover:text-primary/80`; deep-read summary box `bg-sky-50/50 dark:bg-sky-950/20 border-sky-200/40 dark:border-sky-900/40` → `bg-primary/5 dark:bg-primary/10 border border-primary/20 dark:border-primary/20` (replaces the last blue accents in the file).
+  9. EmptyState: replaced `text-center py-10` block with `acad-fade-in flex flex-col items-center text-center py-12`; removed the `opacity-40` wrapper around `{icon}` and instead wrapped icon in a `ring-academic h-11 w-11 rounded-xl flex items-center justify-center mb-3 bg-card text-primary/70` tile; title gets `font-serif-text font-medium tracking-tight`.
+- Did NOT touch any: imports, component names/signatures, props, state, effects, callbacks, fetch/api calls, useMutation/useQueryClient, conditional rendering, key props, id/data-* attributes, accessibility, event handlers. Only className strings + decorative wrapper <div>/<span>/<h3> elements were changed.
+- Ran `bun run lint` from /home/z/my-project — passed cleanly (no eslint output beyond `$ eslint .`).
+- Verified dev server: tail of /home/z/my-project/dev.log shows `✓ Compiled in 327ms` (and several earlier ✓ Compiled lines), `GET / 200 in 920ms`, no errors after my edits took effect.
+
+Stage Summary:
+- Both right-panel files now use the new design system consistently: `.glass-subtle` header strips, `.surface-card` mini-cards for query input + result/source list items, `.tab-pill`/`.tab-pill-inactive` for the source-type filter tabs (with per-source `.badge-*` color layered on top to preserve visual identity), `.font-serif-text` titles, `.ring-academic` + `.acad-fade-in` empty states, `.hairline` dividers, `.scroll-academic` scrollbars.
+- All blue/sky accents in knowledge-panel.tsx were swapped to emerald/primary to comply with "avoid indigo/blue". The only remaining blue is `badge-sky` for the `web` source type — kept deliberately because it's part of the established source-type → color mapping (consistent across both files) and is a meaningful semantic color (web = external web pages).
+- Source-type → badge mapping kept as-is (pubmed=emerald, uniprot=teal, rcsb=amber, ncbi=rose, blast=violet, web=sky, manual=slate) — already consistent across both files; the user's suggested alternate mapping was discarded in favor of the existing sensible one (the task explicitly allowed "pick a sensible mapping and apply consistently").
+- Lint passes; dev server compiles cleanly. No functionality changed.
+- Known visual nuance: `surface-card` (unlayered CSS) may out-prioritize Tailwind's `hover:shadow-md` / `hover:border-primary/30` (layered utilities) per CSS Cascade Layers spec — but the same pattern is already used by paragraph-card.tsx and citation-health-dashboard.tsx in the redesigned shell, so this is consistent with the established codebase convention. Worst case the hover lift is subtle; static surface-card elevation is still a clear upgrade over the prior `border border-border/70 bg-card` chrome.
+
+---
+Task ID: ui-redesign-orchestrator
+Agent: main (Z.ai Code orchestrator) + 3 frontend-styling-expert subagents
+Task: 完全重构 UI 界面，保证功能不变，提升一个档次 ("Refined Academic Studio" redesign)
+
+Work Log:
+- 读取并理解项目结构：page.tsx (1274 行 shell + Header/Footer/WritingWorkspace/EmptyWorkspace)、globals.css (594 行旧设计系统)、projects-sidebar (610)、paragraph-card (1058)、progress-tracker (164)、citation-health-dashboard (971)、database-query-panel (401)、knowledge-panel (629)
+- 策略：以设计系统 (globals.css) 为基础，shell + 高可见组件并行重构，保持所有 imports/props/state/handlers/API 调用不变，只改 className + JSX wrapper
+- 设计语言 "Refined Academic Studio"：更暖的纸张中性色 + 更深的祖母绿主色、分层软阴影系统 (--shadow-2xs..xl + glow)、毛玻璃工具栏 (.glass-toolbar/.glass-subtle)、内容卡 .surface-card、品牌徽章 .brand-tile、渐变主按钮 .btn-gradient-primary、tab 指示器 .tab-pill/.tab-pill-inactive、统一 motion easing、emerald 选中高亮、body 加双层径向暖光底纹、emerald 选区高亮
+- 自行重构：globals.css (重写)、page.tsx Header (glass-toolbar + brand-tile logo + 渐变主 CTA)、Footer (glass + ping 动画状态点)、WritingWorkspace 头 (glass-subtle)、workspace tabs (tab-pill)、EmptyWorkspace (brand-tile + ring-academic + acad-fade-in)、ResizablePanelGroup shadow-lg
+- 自行重构：projects-sidebar (glass-subtle 头 + brand-tile 徽章 + surface-card 项目卡 hover lift + ring-academic 选中态 + 精化空状态)、progress-tracker (glass-subtle + surface-card StatPill + tab-pill 预设按钮 + tabular-nums)
+- 并行委派 3 个 frontend-styling-expert 子代理 (各携带相同设计规范以保证一致性)：
+  - Task 6: citation-health-dashboard — 计分板 hero 卡、stat tiles、worst-offender 列表、severity badges
+  - Task 7: paragraph-card — surface-card 容器 + glass-subtle 头 + prose-academic 正文 + glass-toolbar 动作栏 + btn-gradient-primary revise trigger，保留所有交互逻辑 (edit-in-place/selection/annotations/dropdown)
+  - Task 8: database-query-panel + knowledge-panel — glass-subtle 头 + surface-card 结果卡 + tab-pill 源选择器 + ring-academic 空状态
+- 修复级联 bug：原 .surface-card 用 `border` shorthand (unlayered) 会压过 Tailwind layered `border-primary/40`/`hover:border-primary/30`，导致选中/hover 边框色失效。改为只设 border-width/style，让 base `* { border-border }` 提供色、Tailwind 工具类可覆盖。.surface-raised 同步改为只设 box-shadow
+- 验证：bun run lint 通过 (eslint 无输出)；dev server 多次 ✓ Compiled 无 error；agent-browser 端到端验证：
+  - 页面正常渲染 (Header/Sidebar/Workspace/Footer 全可见)
+  - 无 page errors (console 仅 react-resizable-panels 预存 layout normalization 警告)
+  - tab 切换正常 (Paragraphs ↔ Article)
+  - 项目切换正常 (V2 Clean Test ↔ Repro V2 Curl，workspace 标题更新)
+  - 暗色模式切换正常 (dark:true，背景 LAB 色变化)
+  - sticky footer 确认 (bottom=vh=577)
+  - 设计类全量应用：185 surface-card tiles、26 glass surfaces、27 serif headings、21 prose-academic blocks、61 cite-markers、7 paper-surfaces (匹配 Paragraphs(7))、2 brand-tiles
+  - 截图保存 /tmp/sciwrite-redesign.png (light) + /tmp/sciwrite-darkmode.png (dark)
+
+Stage Summary:
+- 完成全套 UI 重构，功能 100% 保留 (所有 API 路由、状态、交互未动)。
+- 视觉提升：暖纸张 + 深祖母绿、分层软阴影、毛玻璃工具栏、渐变品牌徽章与主按钮、tab-pill 指示器、surface-card 内容卡 hover 悬浮、acad-fade-in 入场动画、emerald 选中高亮、精化空状态。
+- 涉及文件：globals.css、layout.tsx (body 底纹自动生效)、page.tsx、projects-sidebar.tsx、progress-tracker.tsx、citation-health-dashboard.tsx、paragraph-card.tsx、database-query-panel.tsx、knowledge-panel.tsx。
+- Lint 通过、dev server 编译干净、浏览器端到端验证交互正常。

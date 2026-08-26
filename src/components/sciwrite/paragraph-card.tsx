@@ -319,10 +319,14 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
   };
 
   return (
-    <div className="rounded-xl border border-border/70 bg-card shadow-sm hover:shadow-md transition-shadow overflow-hidden acad-fade-in">
+    <div
+      className={`surface-card rounded-xl overflow-hidden transition-all hover:shadow-md hover:border-primary/30 acad-fade-in${
+        editing ? " ring-academic" : ""
+      }`}
+    >
       {/* Header */}
-      <div className="flex items-start gap-3 px-4 py-3 border-b border-border/50 bg-gradient-to-r from-muted/40 to-transparent">
-        <span className="text-[10px] font-mono text-muted-foreground mt-1 shrink-0">
+      <div className="glass-subtle flex items-start gap-3 px-4 py-3 border-b hairline">
+        <span className="text-[10px] font-mono text-muted-foreground/80 mt-1 shrink-0 tabular-nums">
           §{String(index + 1).padStart(2, "0")}
         </span>
         <div className="flex-1 min-w-0">
@@ -332,16 +336,16 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
               onBlur={(e) =>
                 updateMut.mutate({ title: e.target.value })
               }
-              className="text-sm font-semibold bg-transparent border-b border-dashed border-primary/40 focus:outline-none w-full"
+              className="text-sm font-semibold bg-transparent border-b border-dashed border-primary/40 focus:outline-none w-full font-serif-text tracking-tight"
             />
           ) : (
-            <h3 className="text-sm font-semibold leading-tight truncate">
+            <h3 className="text-sm font-semibold leading-tight truncate font-serif-text tracking-tight">
               {paragraph.title}
             </h3>
           )}
           <div className="flex flex-wrap items-center gap-1 mt-1.5">
             <span
-              className={`badge-${status.color} inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide`}
+              className={`badge-${status.color} inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide shadow-xs`}
             >
               <Icon name={status.icon} className="h-2.5 w-2.5" />
               {status.label}
@@ -360,7 +364,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
               const citCount = (displayContent?.match(/\[\d+(?:[,\-–\s]\d+)*\]/g) || []).length;
               if (citCount > 0) {
                 return (
-                  <span className="inline-flex items-center gap-0.5 text-[9px] text-amber-600 dark:text-amber-400 font-medium bg-amber-500/10 px-1.5 py-0.5 rounded">
+                  <span className="badge-amber inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold shadow-xs">
                     <Quote className="h-2.5 w-2.5" />
                     {citCount} cit
                   </span>
@@ -381,7 +385,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
             )}
             {/* EN/ZH toggle — only when the paragraph has a Chinese translation */}
             {hasZh && !editing && (
-              <div className="ml-auto flex items-center gap-0.5 rounded-md border border-border/40 bg-muted/30 p-0.5">
+              <div className="ml-auto flex items-center gap-0.5 rounded-md border hairline bg-muted/30 p-0.5">
                 <button
                   type="button"
                   onClick={() => setViewLang("en")}
@@ -466,7 +470,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
       </div>
 
       {/* Body */}
-      <div className="px-4 py-3 relative paper-surface" ref={bodyRef} onMouseUp={handleMouseUp}>
+      <div className="px-4 py-3 relative paper-surface prose-academic" ref={bodyRef} onMouseUp={handleMouseUp}>
         {editing ? (
           <div className="space-y-2">
             <Textarea
@@ -503,12 +507,14 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
             </div>
           </div>
         ) : (
-          <MarkdownCitations
-            content={displayContent}
-            annotations={paragraph.annotations}
-            references={effectiveRefs}
-            onAnnotationClick={(a) => setActiveAnnotation(a)}
-          />
+          <div className="prose-academic">
+            <MarkdownCitations
+              content={displayContent}
+              annotations={paragraph.annotations}
+              references={effectiveRefs}
+              onAnnotationClick={(a) => setActiveAnnotation(a)}
+            />
+          </div>
         )}
 
         {/* Floating selection toolbar */}
@@ -534,8 +540,8 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
 
       {/* Footer: annotations + revise */}
       {paragraph.annotations.length > 0 && (
-        <Collapsible open={annOpen} onOpenChange={setAnnOpen} className="border-t border-border/50">
-          <div className="px-4 py-2 flex items-center justify-between bg-muted/30">
+        <Collapsible open={annOpen} onOpenChange={setAnnOpen} className="border-t hairline">
+          <div className="glass-subtle px-4 py-2 flex items-center justify-between">
             <CollapsibleTrigger asChild>
               <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5">
                 <MessageSquare className="h-3.5 w-3.5" />
@@ -549,14 +555,14 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
             </CollapsibleTrigger>
           </div>
           <CollapsibleContent>
-            <div className="px-4 py-2 space-y-2 bg-muted/10">
+            <div className="px-4 py-3 space-y-2 bg-muted/20">
               {paragraph.annotations.map((a) => {
                 const meta = ANNOTATION_TYPES.find((t) => t.id === a.type) || ANNOTATION_TYPES[0];
                 const sev = SEVERITY_STYLES[a.severity as keyof typeof SEVERITY_STYLES] || SEVERITY_STYLES.info;
                 return (
                   <div
                     key={a.id}
-                    className={`rounded-md border p-2.5 text-xs ${
+                    className={`surface-card rounded-md border p-2.5 text-xs shadow-xs ${
                       a.resolved ? "opacity-60" : ""
                     } ${ANN_CARD_CLASS[meta.color] || "border-border bg-muted/30"}`}
                   >
@@ -615,7 +621,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
       )}
 
       {/* Action bar */}
-      <div className="px-4 py-2 border-t border-border/50 flex items-center gap-1.5 bg-card">
+      <div className="glass-toolbar px-4 py-2 border-t hairline flex items-center gap-1">
         <RevisePopover
           unresolvedCount={unresolvedCount}
           isRevising={reviseMut.isPending}
@@ -840,7 +846,7 @@ function RevisePopover({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1.5">
+        <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1.5 btn-gradient-primary text-primary-foreground border-primary/40">
           {isRevising ? (
             <Loader2 className="h-3 w-3 animate-spin" />
           ) : (
