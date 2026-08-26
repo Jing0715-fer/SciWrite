@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chat } from "@/lib/ai";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 45;
@@ -136,7 +137,7 @@ export async function POST(
   const prompt = `You are a scientific figure/table caption writer. For each detected figure or table reference below, generate a publication-quality caption.
 
 ARTICLE TITLE: ${article.title}
-TOPIC: ${article.topic || "(general research)"}
+TOPIC: ${(article as { topic?: string | null }).topic || "(general research)"}
 
 DETECTED FIGURES/TABLES (${toGenerate.length}):
 ${itemsText}
@@ -199,7 +200,7 @@ Generate a caption for every detected item. Be specific to the article's topic.`
   } catch (err: any) {
     console.error("[generate-captions] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Caption generation failed." },
+      { error: safeErrorMessage(err, "Caption generation failed.") },
       { status: 500 }
     );
   }

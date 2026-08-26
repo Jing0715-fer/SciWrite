@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -129,7 +130,7 @@ export async function GET(req: NextRequest) {
   } catch (err: any) {
     console.error("[/api/references/lookup] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Lookup failed." },
+      { error: safeErrorMessage(err, "Lookup failed.") },
       { status: 500 }
     );
   }

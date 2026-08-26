@@ -1163,3 +1163,75 @@ Stage Summary:
   4. jszip 在 src/app/api/export/route.ts:16 直接 import 但未在 package.json 声明 → 新装/CI 即崩
   5. next.config.ts:8 ignoreBuildErrors=true + eslint.config.mjs 关闭 no-undef/no-unused-vars → 把"安全网"全部拆掉，TypeScript error 与 ESLint error 均不阻 build
 - 详细分项见下方"Comprehensive Code Review Report"。
+
+---
+Task ID: fix-type-errors
+Agent: general-purpose
+Task: 修复剩余 33 个 tsc 类型错误（类型层面，不改运行时行为）
+
+Work Log:
+- src/app/api/ai/write/route.ts (6 errors): ① `searchItems` 类型改为 `WebSearchItem[]`（从 @/lib/ai 导入 type），对齐 webSearch() 实际返回类型；② L155 `s.name || s.title` → `s.name`（WebSearchItem 只有 name 字段，无 title，运行时 s.title 恒为 undefined）；③ summarizeDataSource 映射中 `source: d.source` 加 `as DatabaseSource` 断言（Prisma DataSource.source 是 string 列，运行时值就是 DatabaseSource 联合成员）；④ `let paragraph = null` 加显式注解 `Awaited<ReturnType<typeof db.paragraph.create>> | null`（修复推断为 null 的根因）；⑤ ⑥ 赋值收窄生效后 L260/L276 `paragraph.id` 的 possibly-null 错误随之消失，无需断言。
+- src/app/api/articles/[id]/generate-captions/route.ts: L139 `article.topic` → `(article as { topic?: string | null }).topic`。根因：Prisma Article 模型没有 topic 列（topic 在 Project 上），查询也没 include project，运行时恒为 undefined → 始终走 `|| "(general research)"` 回退。类型断言保持运行时行为完全不变。
+- src/app/api/articles/[id]/optimize-structure/route.ts: L87 同上，`(article as { topic?: string | null }).topic || "(not specified)"`。
+- src/app/api/articles/[id]/submission-check/route.ts: L92 同上，提取 `articleTopic` 局部变量 + 断言（该三元表达式两端均为 null，行为不变）。
+- src/app/api/export/route.ts (8 errors): ① L725 epub `new NextResponse(buffer)` → `new NextResponse(new Uint8Array(buffer))`（TS 5.7 起 `Buffer<ArrayBufferLike>` 不满足 BodyInit 的 ArrayBuffer-backed BufferSource；字节内容不变）；② L1238 `return await Packer.toBuffer(doc)` → `return new Uint8Array(await Packer.toBuffer(doc)).buffer`（函数签名声明 Promise<ArrayBuffer>，docx 的 Buffer 转 ArrayBuffer）；③ L1698 同理 `new Uint8Array(await pdfDoc.save(...)).buffer`；④ L1659-1684 两处 `ctx.lookup(ref)` 加 `as PDFDict` 断言并从 pdf-lib 导入 PDFDict（refs 均来自刚 ctx.register(ctx.obj({...})) 注册的 dict，运行时必为 PDFDict；pdf-lib 1.17.1 的 lookup 只声明返回 PDFObject | undefined）。
+- src/lib/types.ts: Article 与 Paragraph 接口各加 `deletedAt?: string | Date | null`（镜像 prisma/schema.prisma 的 `deletedAt DateTime?` 软删列）→ 修复 article-trash-dialog.tsx L226 与 paragraph-trash-dialog.tsx L201。
+- src/components/sciwrite/article-viewer-tabs.tsx (5) + article-insights.tsx + virtualized-article.tsx: 6 处 `contentRef: React.RefObject<HTMLDivElement>` → `React.RefObject<HTMLDivElement | null>`（React 19 的 useRef<HTMLDivElement>(null) 返回 RefObject<T | null>，mutual ref 的 current 是可变属性导致不变型）。组件内部访问均有 `if (!contentRef.current) return` 守卫，无新错误。
+- src/hooks/use-focus-trap.ts: 返回类型注解改为 `React.RefObject<HTMLDivElement | null>`（hook 无调用方，零风险）。
+- src/lib/api-client.ts: `createDataSource` 入参类型 `Partial<DataSource> & { rawJson?: any }` → `Omit<Partial<DataSource>, "rawJson"> & { rawJson?: unknown }`。根因：交叉类型要求 rawJson 同时满足 `string | undefined` 和 any（后者被前者支配），导致传入对象字面量报错；而服务端 POST /api/data-sources 实际接受 string 或任意 JSON 值（自行 JSON.stringify）。→ 修复 data-gathering-dialog.tsx L169 与 database-query-panel.tsx L87。
+- src/components/sciwrite/share-dialog.tsx: L107 `t("share.copy")`（不存在的键）→ `t("para.copyText")`。说明：i18n.tsx 禁改；t() 对缺失键返回键名字符串，故当前按钮实际渲染字面量 "share.copy"（bug）；common.copy 仅存在于 ja/ko/fr（en/zh 缺失，用它仍会渲染字面量），para.copyText（"Copy text"/"复制文本"）是 en+zh 均存在且语义最接近的键，ja/ko/fr 自动回退英文。
+- src/components/sciwrite/virtualized-article.tsx (3): Props 与 VirtualizedSections 的 `references`/`onCitationClick` 从 `Reference` 统一为 `CitationRef`（与内部 globalArticleRefs 及 MarkdownCitations 的期望类型一致；Reference 结构上兼容 CitationRef，调用方可传任意一种），移除未用的 Reference 导入；顺带 contentRef prop 加 null。
+
+Stage Summary:
+- npx tsc --noEmit: src/ 下仅剩 1 个错误 —— src/app/api/projects/[id]/route.ts(43,25)（禁改文件，并行代理负责），其余 33 个已全部清零。
+- bun run lint: 退出码 0，无 error/warning 输出。
+- 仓库其余 26 个 tsc 错误位于 scripts/、examples/、skills/、tests/（均为本次改动前已存在，未触碰）。
+
+---
+Task ID: fix-round-1 (按代码审查建议顺序修复 — 主协调者执行)
+Agent: main (Z.ai Code orchestrator)
+Task: 按代码审查综合报告的推荐顺序，依次修复最致命问题（运行时崩溃/数据丢失/后端加固/限流器）
+
+Work Log:
+- 【修复1 — 前端 CRITICAL 崩溃】page.tsx: setGatherOpen/setOutlineOpen/setWriteOpen/setComposeOpen 全部改写为 UnifiedWritingDialog 的 tab 切换（原先 ReferenceError）；删除死状态 writeOpen/composeOpen、未用导入 TopicComposer/ArticleComposer/DataGatheringDialog/OutlineDialog；project.field ?? undefined 类型修复；api-client getProject 类型补 references 字段；i18n.tsx 删除 en/zh 块中重复的 structure.bfactor/structure.sasa 短键（保留长描述版）；dark mode 切换（命令面板+D键）改走 next-themes useTheme（原先直接 toggle class 导致状态失步）；I18nProvider 同步 document.documentElement.lang（激活 :lang(zh) 中文排版 CSS）；CommandPalette CommandAction.group 改 optional
+- 【修复1 — CSS/杂项】globals.css: 删除死代码 sciwrite-range-slider(71行)/focus-ring/prose-academic.dark-text（含无效 hsl(var(--primary))）；.tab-pill border 简写拆分为分属性（Cascade Layers 修复）；新增 .glass-footer 顶部发丝线变体并移除 Footer 内联 boxShadow（暗色模式适配）；use-toast.ts useEffect deps [state]→[]（listener 抖动）；projects-sidebar 蓝色残留改 teal；replace("-"," ") → replace(/-/g," ") 全局连字符
+- 【修复2 — v1 管线运行时崩溃】generate-full/route.ts: 发现审查未报告的更严重问题 —— catch 错误恢复块引用 try 块作用域变量（generatedParagraphs/sections/project/journalTemplate/savedDataSources），运行时恢复路径必抛 ReferenceError。修复：5 个变量提升到 try 外；补 chatWithSessionStream 缺失导入；never[] 类型注解修复
+- 【修复2 — 子代理 fix-type-errors】委派 general-purpose 代理修复剩余 33 个 tsc 错误（13 文件）：write 路由 WebSearchItem 类型对齐、articles 路由 topic 断言、export 路由 Buffer/ArrayBuffer/pdf-lib 类型、Article/Paragraph 接口补 deletedAt、React 19 RefObject null 兼容、share-dialog 翻译键、virtualized-article CitationRef 统一等
+- 【修复3 — V2 管线数据安全】generate-full-v2/route.ts:
+  * 快照回滚：STEP 1 删除前快照 paragraphs(+references+annotations)/dataSources/articleParagraphs；FATAL catch 中 ≥1 段已生成→保留部分并明示用户；0 段+有旧数据→完整恢复快照（保留原 ID 保链接）；回滚失败也明确报告
+  * abortedDueToRateLimit dead code 修复：流式/fallback/verify 三处 catch RateLimitAbortedError/QuotaExhaustedError → 置标志跳过剩余段落（原"skipped"路径不可达，管线遇到限流直接整崩）
+  * ReadableStream 补 cancel() → clientDisconnected 标志，段落循环检测后跳过（原先浏览器关页后管线继续跑30分钟烧配额）
+  * 静默 catch 全部加遥测（webSearch/gather reference create/dataSource create/clearLLMCache）
+  * 段落+引用保存事务化（$transaction + createMany）；compose 重写事务化（update+deleteMany+createMany 原子）
+  * buildAuditReport(articleContent, []) → 传入真实 globalRefs（编号完整性检查从被跳过变为生效）
+  * previousSectionsDigest：保留末3段摘要 + 新增全量已写章节标题大纲（修复第8节不知道第1-4节存在的重复问题）
+  * articleVersion .catch(()=>{}) → 记录日志
+- 【修复5 — rate-limiter】TokenBucket waiter 竞态：per-waiter setTimeout 改共享 pump interval（原先第二个 waiter 永久滞留）；SlidingWindow 平坦 60s 冷却 → 比例退避 windowMs/threshold=30s（threshold 15→20，V2 运行提速约10分钟）；abort 标志加 TTL 120s 自动过期（原先 stale abort 毒化后续运行 + clearAbort 擦除并发运行标志），v1/v2/adversarial-review 共 5 处 clearAbort 调用移除/保留分类处理
+- 【修复4 — 后端加固】新建 src/lib/api-helpers.ts（safeErrorMessage/serverError/SSRF assertSafeExternalUrl）；34 个 API 路由的 err?.message 原始泄漏 → safeErrorMessage 脱敏（Prisma 错误细节不再外泄）；comments 路由：10K 长度上限 + article/paragraph/parent FK 存在性校验 + 跨文章回复拦截；deep-read 路由 SSRF 防护（私有IP/localhost/元数据端点/.internal 拦截）；projects/[id] PATCH status 枚举校验 + 字段长度上限 + 404/500 分离
+- 【修复6 — llm-session】孤儿用户消息：chatWithSession/chatWithSessionStream 的 user 消息改为 LLM 调用成功后与 assistant 消息一起保存（原先调用失败留下未回复的孤儿消息污染上下文）；loadSessionContext take: maxMessages*2 → maxMessages（1200行/V2运行 → 600行）
+
+Stage Summary:
+- tsc: src/ 下 132 → 0 错误（全部修复）；lint: 0 error/warning
+- 前端运行时崩溃（命令面板 4 个动作）全部修复并统一到 UnifiedWritingDialog
+- v1 管线错误恢复路径从"必崩"修复为可用；v2 管线从"删库后失败=永久空项目"修复为原子语义（快照回滚）
+- 限流器三处结构性缺陷修复，V2 全流程运行时间预计缩短 10+ 分钟
+- 后端 34 路由错误信息脱敏、评论输入校验、SSRF 防护就位
+- 修改文件数：约 55 个（src/app/page.tsx、i18n、globals.css、api-client、command-palette、generate-full v1/v2、rate-limiter、llm-session、comments、deep-read、projects/[id]、api-helpers 新建、34 个错误脱敏路由 + 子代理 13 文件）
+
+---
+Task ID: fix-round-1-verify
+Agent: main (Z.ai Code orchestrator)
+Task: 修复后浏览器 E2E 自检（Agent Browser）
+
+Work Log:
+- 打开 / 页面：正常渲染（桌面 1440x900 + 移动 390x844 双视口），无白屏/无错误边界
+- 命令面板 Ctrl+K → 点击 "Gather sources"（原 ReferenceError: setGatherOpen 崩溃点）→ 正确打开 UnifiedWritingDialog Gather 标签页 ✓
+- 命令面板 → "Generate research outline"（原 setOutlineOpen 崩溃点）→ 正确打开 Outline 标签页 ✓
+- 键盘 D 切换暗色模式 → next-themes 状态同步（主题按钮显示 "Switch to light mode"，原直接 toggle class 会失步）✓
+- 语言切换 中文 → document.documentElement.lang="zh" 生效（激活 :lang(zh) 中文排版 CSS）+ UI 全部中文化 ✓
+- 引用健康面板 / 用户数据对话框 / 移动端标签栏布局均正常渲染
+- browser console 0 errors；page errors 0；dev.log 无新增 error；全部 API 200
+
+Stage Summary:
+- 浏览器验证确认：所有修复的交互路径（命令面板 4 动作、暗色切换、语言切换）行为正确，无回归
+- tsc src/ 0 错误（修复前 132）；eslint 0 输出；dev server 全程稳定

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { MarkdownCitations, parseCitationsBlock, type CitationRef } from "./markdown-citations";
 import { cleanArticleContent } from "@/lib/writing";
-import type { Annotation, Reference } from "@/lib/types";
+import type { Annotation } from "@/lib/types";
 
 /**
  * VirtualizedArticle — renders long article content in sections, only
@@ -32,10 +32,10 @@ interface Props {
   content: string;
   className?: string;
   annotations?: Annotation[];
-  references?: Reference[];
-  onCitationClick?: (ref: Reference, index: number) => void;
+  references?: CitationRef[];
+  onCitationClick?: (ref: CitationRef, index: number) => void;
   onAnnotationClick?: (a: Annotation) => void;
-  contentRef?: React.RefObject<HTMLDivElement>;
+  contentRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 interface Section {
@@ -115,9 +115,11 @@ export function VirtualizedArticle({
   // This is critical for the virtualized case: each section is rendered
   // independently by MarkdownCitations, which can only see its own content.
   // Without this, body sections have no reference data for hover tooltips.
+  // Note: DB `Reference` rows are structurally compatible with CitationRef,
+  // so callers may pass either.
   const globalArticleRefs = React.useMemo<CitationRef[]>(() => {
     // If DB references are passed, use them (they take priority).
-    if (references.length > 0) return references as CitationRef[];
+    if (references.length > 0) return references;
 
     // Otherwise, parse the "## References" or "REFERENCES" section from the
     // full article content. Also check "## 参考文献" for Chinese-translated
@@ -181,8 +183,8 @@ function VirtualizedSections({
 }: {
   sections: Section[];
   annotations: Annotation[];
-  references: Reference[];
-  onCitationClick?: (ref: Reference, index: number) => void;
+  references: CitationRef[];
+  onCitationClick?: (ref: CitationRef, index: number) => void;
   onAnnotationClick?: (a: Annotation) => void;
 }) {
   const [visibleSet, setVisibleSet] = React.useState<Set<number>>(new Set());

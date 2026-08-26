@@ -309,7 +309,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
                                     {sections} §
                                   </span>
                                 )}
-                                <span className="inline-flex items-center px-1 rounded bg-blue-500/10 text-blue-700 dark:text-blue-300 font-semibold tabular-nums">
+                                <span className="inline-flex items-center px-1 rounded bg-teal-500/10 text-teal-700 dark:text-teal-300 font-semibold tabular-nums">
                                   {Math.round(enLen / 6).toLocaleString()}w EN
                                 </span>
                               </div>
@@ -478,7 +478,7 @@ function ProjectItem({
               off-screen. */}
           <div className="flex items-center gap-1 mt-2 pr-1">
             {project._count?.paragraphs !== undefined && (
-              <span className="inline-flex items-center gap-0.5 px-1 py-px rounded bg-blue-500/10 text-blue-700 dark:text-blue-300 text-[9px] font-semibold tabular-nums">
+              <span className="inline-flex items-center gap-0.5 px-1 py-px rounded bg-teal-500/10 text-teal-700 dark:text-teal-300 text-[9px] font-semibold tabular-nums">
                 <FileText className="h-2 w-2" />
                 {project._count.paragraphs}
               </span>
@@ -497,7 +497,7 @@ function ProjectItem({
             )}
             {project.field && (
               <span className="ml-auto text-[9px] uppercase tracking-wider font-medium text-muted-foreground truncate max-w-[70px] pr-1.5">
-                {project.field.replace("-", " ")}
+                {project.field.replace(/-/g, " ")}
               </span>
             )}
           </div>

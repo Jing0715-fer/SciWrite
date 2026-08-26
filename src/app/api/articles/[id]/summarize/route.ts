@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chat } from "@/lib/ai";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -100,7 +101,7 @@ Output JSON only, no preamble.`;
   } catch (err: any) {
     console.error("[summarize] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Summarization failed." },
+      { error: safeErrorMessage(err, "Summarization failed.") },
       { status: 500 }
     );
   }

@@ -7,6 +7,7 @@ import {
   sanitizeOutOfRangeCitations,
   validateCitationsInline,
 } from "@/lib/citation-audit";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -270,7 +271,7 @@ Compose ONE cohesive section without markdown headers. Do NOT add any preamble, 
   } catch (err: any) {
     console.error("[regenerate] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Regeneration failed." },
+      { error: safeErrorMessage(err, "Regeneration failed.") },
       { status: 500 }
     );
   }

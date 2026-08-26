@@ -281,7 +281,6 @@
   word-break: break-word;
   overflow-wrap: break-word;
 }
-.prose-academic.dark-text,
 .dark .prose-academic {
   color: oklch(0.9 0.005 150);
 }
@@ -325,6 +324,15 @@ h1, h2, h3, h4, h5, h6 {
   background-color: oklch(0.205 0.016 162 / 0.7);
   box-shadow: inset 0 -1px 0 oklch(1 0 0 / 0.08), 0 1px 3px oklch(0 0 0 / 0.2);
 }
+/* Footer variant — mirror of .glass-toolbar: the hairline sits on the TOP
+   edge (separating the footer from the content above it) instead of the
+   bottom edge. Colors follow the theme like the header variant. */
+.glass-footer {
+  box-shadow: inset 0 1px 0 oklch(0.905 0.012 150 / 0.8), 0 -1px 3px oklch(0.28 0.05 162 / 0.05);
+}
+.dark .glass-footer {
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.08), 0 -1px 3px oklch(0 0 0 / 0.2);
+}
 
 /* A lighter glass variant for sub-panels (workspace header, panel
    headers) where the full-strength toolbar would feel heavy. */
@@ -361,14 +369,6 @@ h1, h2, h3, h4, h5, h6 {
   border-color: oklch(1 0 0 / 0.08);
 }
 
-/* Consistent focus ring for interactive elements. */
-.focus-ring {
-  outline: 2px solid oklch(0.48 0.14 164 / 0.55);
-  outline-offset: 2px;
-}
-.dark .focus-ring {
-  outline-color: oklch(0.72 0.14 164 / 0.6);
-}
 
 /* Brand mark — the logo tile gradient. */
 .brand-tile {
@@ -398,11 +398,17 @@ h1, h2, h3, h4, h5, h6 {
   box-shadow: 0 2px 8px oklch(0.72 0.14 164 / 0.3), inset 0 1px 0 oklch(1 0 0 / 0.14);
 }
 
-/* Refined tab indicator — pill background + soft shadow. */
+/* Refined tab indicator — pill background + soft shadow.
+   Note: border-width/style are declared per-property (not via the `border`
+   shorthand) so layered Tailwind utilities like `border-primary/40` can
+   still override the border-color at the usage site (per Cascade Layers
+   spec, an unlayered `border` shorthand would always win). */
 .tab-pill {
   background-color: var(--card);
   box-shadow: var(--shadow-xs);
-  border: 1px solid oklch(0.905 0.012 150 / 0.9);
+  border-width: 1px;
+  border-style: solid;
+  border-color: oklch(0.905 0.012 150 / 0.9);
   color: var(--primary);
 }
 .dark .tab-pill {
@@ -701,69 +707,3 @@ h1, h2, h3, h4, h5, h6 {
   );
 }
 
-/* ============================================================
-   Range slider thumb styling
-   ============================================================ */
-
-.sciwrite-range-slider {
-  -webkit-appearance: none;
-  appearance: none;
-  background: transparent;
-  cursor: pointer;
-}
-
-.sciwrite-range-slider::-webkit-slider-runnable-track {
-  height: 6px;
-  border-radius: 9999px;
-}
-.sciwrite-range-slider::-webkit-slider-thumb {
-  -webkit-appearance: none !important;
-  appearance: none !important;
-  width: 14px !important;
-  height: 14px !important;
-  border-radius: 9999px;
-  background: hsl(var(--primary));
-  border: 2px solid hsl(var(--background));
-  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.4), 0 1px 3px rgb(0 0 0 / 0.2);
-  margin-top: -4px;
-  transition: transform 0.1s ease, box-shadow 0.1s ease;
-}
-.sciwrite-range-slider::-webkit-slider-thumb:hover {
-  transform: scale(1.15);
-  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.2), 0 2px 6px rgb(0 0 0 / 0.25);
-}
-.sciwrite-range-slider::-webkit-slider-thumb:active {
-  transform: scale(1.25);
-}
-
-.sciwrite-range-slider::-moz-range-track {
-  height: 6px;
-  border-radius: 9999px;
-}
-.sciwrite-range-slider::-moz-range-thumb {
-  width: 14px !important;
-  height: 14px !important;
-  border-radius: 9999px;
-  background: hsl(var(--primary));
-  border: 2px solid hsl(var(--background));
-  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.4), 0 1px 3px rgb(0 0 0 / 0.2);
-  cursor: pointer;
-  transition: transform 0.1s ease, box-shadow 0.1s ease;
-}
-.sciwrite-range-slider::-moz-range-thumb:hover {
-  transform: scale(1.15);
-  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.2), 0 2px 6px rgb(0 0 0 / 0.25);
-}
-.sciwrite-range-slider::-moz-range-thumb:active {
-  transform: scale(1.25);
-}
-
-.sciwrite-range-slider:focus {
-  outline: none;
-}
-.sciwrite-range-slider:focus::-webkit-slider-thumb {
-  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.3), 0 2px 6px rgb(0 0 0 / 0.25);
-}
-.sciwrite-range-slider:focus::-moz-range-thumb {
-  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.3), 0 2px 6px rgb(0 0 0 / 0.25);
-}

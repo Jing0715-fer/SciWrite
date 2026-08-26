@@ -55,7 +55,9 @@ export async function POST(req: NextRequest) {
 
       // Deduplicate paragraphs by title — keep only the latest version of each title
       const seenTitles = new Set<string>();
-      const dedupedParagraphs = [];
+      // Type annotation needed — an untyped `[]` infers `never[]` and breaks
+      // every downstream reference (unshift/map/spread below).
+      const dedupedParagraphs: typeof ordered = [];
       // Walk in reverse to keep the LAST (newest) version of each duplicate
       for (let i = ordered.length - 1; i >= 0; i--) {
         const title = ordered[i].title || `Untitled ${i}`;
@@ -100,7 +102,7 @@ export async function POST(req: NextRequest) {
         orderBy: { createdAt: "desc" },
         select: { content: true },
       });
-      const priorGlobalRefMap = new Map<number, { type?: string; externalId?: string | null; title: string }>();
+      const priorGlobalRefMap = new Map<number, { type?: string | null; externalId?: string | null; title: string }>();
       if (priorArticle?.content) {
         const refSectionIdx = priorArticle.content.indexOf("## References");
         if (refSectionIdx >= 0) {
@@ -131,7 +133,7 @@ export async function POST(req: NextRequest) {
           const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
             const rangeMatch = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
             if (rangeMatch) {
-              const arr = [];
+              const arr: number[] = [];
               for (let n = parseInt(rangeMatch[1]); n <= parseInt(rangeMatch[2]); n++) arr.push(n);
               return arr;
             }

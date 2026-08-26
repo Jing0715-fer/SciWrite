@@ -1103,9 +1103,7 @@ export const translations = {
     "structure.resSeq": "ResSeq",
     "structure.atomsCount": "Atoms",
     "structure.region": "Region",
-    "structure.bfactor": "B-factor",
     "structure.exposure": "Exposure",
-    "structure.sasa": "SASA (Å²)",
     "structure.volume": "Volume (Å³)",
     "structure.interface": "Interface",
     "structure.area": "Area (Å²)",
@@ -2307,9 +2305,7 @@ export const translations = {
     "structure.resSeq": "残基号",
     "structure.atomsCount": "原子数",
     "structure.region": "区域",
-    "structure.bfactor": "B 因子",
     "structure.exposure": "暴露度",
-    "structure.sasa": "SASA (Å²)",
     "structure.volume": "体积 (Å³)",
     "structure.interface": "界面",
     "structure.area": "面积 (Å²)",
@@ -2751,6 +2747,13 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       }
     } catch {}
   }, []);
+
+  // Keep <html lang> in sync so language-sensitive CSS (:lang(zh) typography
+  // polish in globals.css), screen readers, and browser translation hints
+  // all reflect the active language.
+  React.useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
 
   const setLang = React.useCallback((l: Lang) => {
     setLangState(l);

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { chat, webSearch } from "@/lib/ai";
+import { chat, webSearch, type WebSearchItem } from "@/lib/ai";
 import { chatWithSession } from "@/lib/llm-session";
 import { createSSEStream, SSE_HEADERS } from "@/lib/sse";
 import {
@@ -16,7 +16,7 @@ import {
   sanitizeOutOfRangeCitations,
   validateCitationsInline,
 } from "@/lib/citation-audit";
-import type { WriteRequest } from "@/lib/types";
+import type { DatabaseSource, WriteRequest } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
         : "";
 
       // Optionally run web search to enrich context
-      let searchItems: { title: string; snippet: string; url: string; host_name?: string }[] = [];
+      let searchItems: WebSearchItem[] = [];
       if (body.searchQueries && body.searchQueries.length) {
         send("step", { status: "progress", message: `Running ${body.searchQueries!.slice(0, 3).length} web searches...` });
         const all = await Promise.all(
@@ -126,7 +126,9 @@ export async function POST(req: NextRequest) {
               const items: any[] = raw?.items ?? (raw ? [raw] : []);
               const sub = summarizeDataSource(
                 items.map((it) => ({
-                  source: d.source,
+                  // DataSource.source is a plain string column; narrow it to the
+                  // DatabaseSource union expected by DatabaseResultItem.
+                  source: d.source as DatabaseSource,
                   externalId: it.externalId || d.externalId || "",
                   title: it.title || d.title || d.query,
                   authors: it.authors || d.authors,
@@ -152,7 +154,7 @@ export async function POST(req: NextRequest) {
           searchItems
             .map(
               (s, i) =>
-                `[WEB:${i + 1}] ${s.name || s.title} — ${s.host_name || ""}\n${s.snippet}\n${s.url}`
+                `[WEB:${i + 1}] ${s.name} — ${s.host_name || ""}\n${s.snippet}\n${s.url}`
             )
             .join("\n\n")
         : "";
@@ -231,7 +233,10 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      let paragraph = null;
+      // Explicit type: db.paragraph.create() never returns null, but the
+      // union keeps `paragraph` usable when body.projectId is absent.
+      let paragraph: Awaited<ReturnType<typeof db.paragraph.create>> | null =
+        null;
       if (body.projectId) {
         send("step", { status: "progress", message: "Saving paragraph to database..." });
         const count = await db.paragraph.count({

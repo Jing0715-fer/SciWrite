@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chat } from "@/lib/ai";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -177,7 +178,7 @@ Only recommend sources that are genuinely relevant. If fewer than 3 are relevant
   } catch (err: any) {
     console.error("[suggest-citations] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Suggestion failed." },
+      { error: safeErrorMessage(err, "Suggestion failed.") },
       { status: 500 }
     );
   }

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { chatStream } from "@/lib/ai";
 import { saveSessionMessage } from "@/lib/llm-session";
 import { countWords, sanitizeSectionContent } from "@/lib/writing";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -177,7 +178,7 @@ ${cleanEn}`;
   } catch (err: any) {
     console.error("[retranslate] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Re-translation failed." },
+      { error: safeErrorMessage(err, "Re-translation failed.") },
       { status: 500 }
     );
   }

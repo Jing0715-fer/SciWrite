@@ -28,6 +28,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useI18n } from "@/lib/i18n";
+import type { TranslationKey } from "@/lib/i18n";
 import { api } from "@/lib/api-client";
 import { ProteinStructureAnalysisDialog } from "./protein-structure-analysis-dialog";
 import { toast } from "sonner";
@@ -449,7 +450,10 @@ export function StructureDashboardDialog({ open, onOpenChange, projectId }: Prop
 
 /* ---------------- Comparison Matrix Tab ---------------- */
 
-type TFunc = (key: string, opts?: any) => string;
+// Accept the real i18n key type so the provider `t` function is
+// assignable (a `key: string` parameter is contravariant-incompatible
+// with the union-of-literal-keys signature).
+type TFunc = (key: TranslationKey, opts?: any) => string;
 
 function ComparisonMatrixTab({
   projectId,
@@ -1253,8 +1257,12 @@ function ComparisonDendrogram({
     if (!tree || leaves.length === 0) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const ctxRaw = canvas.getContext("2d");
+    if (!ctxRaw) return;
+    // Re-bind to a non-nullable const so nested function bodies below
+    // (drawNode etc.) keep the narrowed type — TS does not extend control-
+    // flow narrowing into closures for `CanvasRenderingContext2D | null`.
+    const ctx = ctxRaw;
 
     const W = canvas.width;
     const H = canvas.height;

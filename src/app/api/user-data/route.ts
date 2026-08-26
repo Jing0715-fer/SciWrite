@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("[/api/user-data POST] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Failed to save user data." },
+      { error: safeErrorMessage(err, "Failed to save user data.") },
       { status: 500 }
     );
   }

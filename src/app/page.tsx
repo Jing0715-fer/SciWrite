@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTheme } from "next-themes";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -48,8 +49,6 @@ import { KnowledgePanel } from "@/components/sciwrite/knowledge-panel";
 import { ParagraphCard } from "@/components/sciwrite/paragraph-card";
 import { SortableParagraphs } from "@/components/sciwrite/sortable-paragraphs";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { TopicComposer } from "@/components/sciwrite/topic-composer";
-import { ArticleComposer } from "@/components/sciwrite/article-composer";
 import { cleanArticleContent } from "@/lib/writing";
 import { ExportMenu } from "@/components/sciwrite/export-menu";
 import { MarkdownCitations } from "@/components/sciwrite/markdown-citations";
@@ -64,14 +63,8 @@ import { LLMCacheStatsPanel } from "@/components/sciwrite/llm-config-dialog";
 const ArticleViewerWithTabs = React.lazy(() =>
   import("@/components/sciwrite/article-viewer-tabs").then(m => ({ default: m.ArticleViewerWithTabs }))
 );
-const DataGatheringDialog = React.lazy(() =>
-  import("@/components/sciwrite/data-gathering-dialog").then(m => ({ default: m.DataGatheringDialog }))
-);
 const InsightsDialog = React.lazy(() =>
   import("@/components/sciwrite/insights-dialog").then(m => ({ default: m.InsightsDialog }))
-);
-const OutlineDialog = React.lazy(() =>
-  import("@/components/sciwrite/outline-dialog").then(m => ({ default: m.OutlineDialog }))
 );
 const UserDataDialog = React.lazy(() =>
   import("@/components/sciwrite/user-data-dialog").then(m => ({ default: m.UserDataDialog }))
@@ -87,6 +80,7 @@ import type { Article, Project } from "@/lib/types";
 
 export default function Home() {
   const { t } = useI18n();
+  const { resolvedTheme, setTheme } = useTheme();
   const qc = useQueryClient();
   const isMobile = useIsMobile();
   // Mobile layout active panel — on screens < 768px the 3-panel ResizablePanelGroup
@@ -94,8 +88,6 @@ export default function Home() {
   // "projects" | "workspace" | "data".
   const [mobilePanel, setMobilePanel] = React.useState<"projects" | "workspace" | "data">("workspace");
   const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
-  const [writeOpen, setWriteOpen] = React.useState(false);
-  const [composeOpen, setComposeOpen] = React.useState(false);
   const [tipsOpen, setTipsOpen] = React.useState(false);
   const [viewArticle, setViewArticle] = React.useState<Article | null>(null);
   const [insightsOpen, setInsightsOpen] = React.useState(false);
@@ -234,16 +226,15 @@ export default function Home() {
         setUnifiedWriteOpen(true);
       } else if (k === "d") {
         e.preventDefault();
-        const isDark = document.documentElement.classList.contains("dark");
-        document.documentElement.classList.toggle("dark", !isDark);
-        try {
-          localStorage.setItem("theme", isDark ? "light" : "dark");
-        } catch {}
+        // Route through next-themes so the ThemeToggle/ThemeSwitcher UI state
+        // stays in sync with the actual theme (instead of toggling the `dark`
+        // class directly, which desynced next-themes' internal state).
+        setTheme(resolvedTheme === "dark" ? "light" : "dark");
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeProjectId, paragraphs.length]);
+  }, [activeProjectId, paragraphs.length, resolvedTheme, setTheme]);
 
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
@@ -431,7 +422,7 @@ export default function Home() {
           onOpenChange={setUnifiedWriteOpen}
           projectId={activeProjectId}
           topic={project.topic}
-          field={project.field}
+          field={project.field ?? undefined}
           paragraphCount={paragraphs.length}
           initialTab={unifiedWriteTab}
         />
@@ -478,7 +469,10 @@ export default function Home() {
             hint: t("cmd.writeHint"),
             icon: <Sparkles className="h-3.5 w-3.5" />,
             shortcut: "N",
-            onSelect: () => setWriteOpen(true),
+            onSelect: () => {
+              setUnifiedWriteTab("paragraph");
+              setUnifiedWriteOpen(true);
+            },
             group: t("cmd.groupWriting"),
             disabled: !activeProjectId,
           },
@@ -488,7 +482,10 @@ export default function Home() {
             hint: t("cmd.gatherDesc"),
             icon: <Radar className="h-3.5 w-3.5" />,
             shortcut: "G",
-            onSelect: () => setGatherOpen(true),
+            onSelect: () => {
+              setUnifiedWriteTab("gather");
+              setUnifiedWriteOpen(true);
+            },
             group: t("cmd.groupWriting"),
             disabled: !activeProjectId,
           },
@@ -498,7 +495,10 @@ export default function Home() {
             hint: t("cmd.composeHint"),
             icon: <Layers className="h-3.5 w-3.5" />,
             shortcut: "C",
-            onSelect: () => setComposeOpen(true),
+            onSelect: () => {
+              setUnifiedWriteTab("compose");
+              setUnifiedWriteOpen(true);
+            },
             group: t("cmd.groupWriting"),
             disabled: paragraphs.length < 2,
           },
@@ -518,7 +518,10 @@ export default function Home() {
             hint: t("cmd.outlineHint"),
             icon: <ListTree className="h-3.5 w-3.5" />,
             shortcut: "O",
-            onSelect: () => setOutlineOpen(true),
+            onSelect: () => {
+              setUnifiedWriteTab("outline");
+              setUnifiedWriteOpen(true);
+            },
             group: t("cmd.groupWriting"),
             disabled: !activeProjectId,
           },
@@ -528,11 +531,8 @@ export default function Home() {
             icon: <Moon className="h-3.5 w-3.5" />,
             shortcut: "D",
             onSelect: () => {
-              const isDark = document.documentElement.classList.contains("dark");
-              document.documentElement.classList.toggle("dark", !isDark);
-              try {
-                localStorage.setItem("theme", isDark ? "light" : "dark");
-              } catch {}
+              // Route through next-themes (see the "d" keyboard shortcut above).
+              setTheme(resolvedTheme === "dark" ? "light" : "dark");
             },
             group: t("cmd.groupProject"),
           },
@@ -747,7 +747,7 @@ function WritingWorkspace({
               </h2>
               {project.field && (
                 <span className="badge-teal px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide shrink-0">
-                  {String(project.field).replace("-", " ")}
+                  {String(project.field).replace(/-/g, " ")}
                 </span>
               )}
             </div>
@@ -1245,7 +1245,7 @@ function EmptyWorkspace() {
 function Footer({ onOpenPalette }: { onOpenPalette?: () => void }) {
   const { t } = useI18n();
   return (
-    <footer className="glass-toolbar shrink-0 px-4 py-1.5 flex items-center justify-between text-[10px] text-foreground/70 relative z-20" style={{ boxShadow: "inset 0 1px 0 oklch(0.905 0.012 150 / 0.8)" }}>
+    <footer className="glass-toolbar glass-footer shrink-0 px-4 py-1.5 flex items-center justify-between text-[10px] text-foreground/70 relative z-20">
       <div className="flex items-center gap-2">
         <span className="inline-flex items-center gap-1.5 font-medium">
           <span className="relative inline-flex h-2 w-2">

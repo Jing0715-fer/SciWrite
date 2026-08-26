@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("[purge-expired] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Purge failed." },
+      { error: safeErrorMessage(err, "Purge failed.") },
       { status: 500 },
     );
   }

@@ -4,6 +4,7 @@ import {
   analyzeStructureById,
   buildStructureContextMarkdown,
 } from "@/lib/structure-analysis";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -164,7 +165,7 @@ export async function POST(
   } catch (err: any) {
     console.error("[/api/data-sources/[id]/analyze-structure] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Structure analysis failed." },
+      { error: safeErrorMessage(err, "Structure analysis failed.") },
       { status: 500 }
     );
   }

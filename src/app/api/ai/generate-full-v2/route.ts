@@ -30,7 +30,8 @@ import {
 import {
   preFlightQuotaCheck,
   isAborted,
-  clearAbort,
+  RateLimitAbortedError,
+  QuotaExhaustedError,
 } from "@/lib/rate-limiter";
 
 export const runtime = "nodejs";
@@ -91,6 +92,12 @@ export async function POST(req: NextRequest) {
   }
 
   const encoder = new TextEncoder();
+  // FIX (client-disconnect waste): the ReadableStream previously had no
+  // cancel() handler, so when the browser closed the SSE connection the
+  // pipeline kept running for up to 30 minutes — LLM calls + DB writes for
+  // an audience of zero. `cancel()` flips this flag; the section loop checks
+  // it at every iteration boundary and skips all remaining work.
+  let clientDisconnected = false;
   const stream = new ReadableStream({
     async start(controller) {
       let isClosed = false;
@@ -123,6 +130,19 @@ export async function POST(req: NextRequest) {
         citationsRemoved: 0,
         citationsFlagged: 0,
       };
+
+      // Hoisted for the catch block's failure-recovery logic (try-block
+      // declarations are invisible to the sibling catch scope — the same
+      // class of bug that broke v1's error recovery for months).
+      const generatedParagraphs: any[] = [];
+      // Pre-run snapshot for crash-safe rollback (assigned in STEP 1 before
+      // the force-clear deletes; read by the catch on failure).
+      let snapshot: {
+        paragraphs: any[];
+        dataSources: any[];
+        articleParagraphs: any[];
+      } | null = null;
+      let hadPriorWork = false;
 
       try {
         const project = await db.project.findUnique({ where: { id: projectId } });
@@ -161,6 +181,27 @@ export async function POST(req: NextRequest) {
           message: "Clearing existing sources and re-gathering fresh data...",
         });
 
+        // ★ CRITICAL FIX (data-loss guard): the force-clear below DELETEs all
+        // paragraphs/references/dataSources of the project. If the pipeline
+        // then dies before composing (LLM timeout, crash, network drop), the
+        // user's prior work would be gone FOREVER with no recovery path.
+        // Snapshot everything the delete removes; on fatal failure with ZERO
+        // newly-generated sections, restore the snapshot (atomic semantics:
+        // a failed run leaves the project exactly as it was before).
+        snapshot = {
+          paragraphs: await db.paragraph.findMany({
+            where: { projectId },
+            include: { references: true, annotations: true },
+          }),
+          dataSources: await db.dataSource.findMany({ where: { projectId } }),
+          articleParagraphs: await db.articleParagraph.findMany({
+            where: { paragraph: { projectId } },
+          }),
+        };
+        hadPriorWork =
+          snapshot.paragraphs.length > 0 || snapshot.dataSources.length > 0;
+        log(`snapshot: ${snapshot.paragraphs.length} paragraphs, ${snapshot.dataSources.length} data sources (rollback safety net)`);
+
         await db.$transaction([
           db.annotation.deleteMany({ where: { paragraph: { projectId } } }),
           db.articleParagraph.deleteMany({ where: { paragraph: { projectId } } }),
@@ -169,12 +210,19 @@ export async function POST(req: NextRequest) {
           db.reference.deleteMany({ where: { projectId } }),
         ]);
 
-        clearAbort();
+        // NOTE: no clearAbort() here. The abort flag now auto-expires
+        // (rate-limiter.ts ABORT_TTL_MS) so a stale abort from a previous
+        // run can't poison this run, and this run can't erase an in-flight
+        // sibling run's abort either.
         await clearSession(projectId);
         try {
           const { clearLLMCache } = await import("@/lib/llm-cache");
           clearLLMCache();
-        } catch {}
+        } catch (cacheErr: any) {
+          // Non-fatal, but no longer silent — a broken cache module would
+          // otherwise silently serve stale LLM results across runs.
+          log(`init: clearLLMCache failed (continuing with existing cache): ${String(cacheErr?.message ?? cacheErr).slice(0, 100)}`);
+        }
 
         const gatherSystem =
           "You are a research data strategist. Design a COMPREHENSIVE multi-database search plan.";
@@ -307,7 +355,12 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
               status: "progress",
               message: `Web search ${wi + 1}/${webSearchQueries.length}: "${webSearchQueries[wi].slice(0, 50)}" → ${searchResults.length} results`,
             });
-          } catch {}
+          } catch (webErr: any) {
+            // FIX (silent-catch telemetry): failed web-search queries were
+            // previously invisible, making "few sources gathered" bugs
+            // impossible to diagnose from the logs.
+            log(`gather: web search "${webSearchQueries[wi].slice(0, 40)}" failed: ${String(webErr?.message ?? webErr).slice(0, 100)}`);
+          }
           await new Promise((r) => setTimeout(r, 1000));
         }
 
@@ -380,9 +433,16 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
                   },
                 });
                 savedReferences.push(ref);
-              } catch {}
+              } catch (refErr: any) {
+                // FIX (silent-catch telemetry): a failed reference create
+                // previously vanished silently — the final "References: N"
+                // count silently diverged from what the audit expected.
+                log(`gather: reference create failed for "${String(item.title).slice(0, 50)}": ${String(refErr?.message ?? refErr).slice(0, 100)}`);
+              }
             }
-          } catch {}
+          } catch (dsErr: any) {
+            log(`gather: data source create failed for "${String(item.title).slice(0, 50)}": ${String(dsErr?.message ?? dsErr).slice(0, 100)}`);
+          }
         }
 
         send("step", {
@@ -537,7 +597,6 @@ Output JSON only.`;
 
         preFlightQuotaCheck("generate-full-v2:pre-flight");
 
-        const generatedParagraphs: any[] = [];
         let previousSectionsDigest = "";
         let abortedDueToRateLimit = false;
 
@@ -547,13 +606,13 @@ Output JSON only.`;
           const allocation = allocations[i];
           const sectionStart = Date.now();
 
-          if (abortedDueToRateLimit || isAborted()) {
+          if (abortedDueToRateLimit || isAborted() || clientDisconnected) {
             send("step", {
               step: "generate",
               status: "skipped",
               section: sectionNum,
               total: sections.length,
-              message: `Section ${sectionNum} SKIPPED — rate-limit abort.`,
+              message: `Section ${sectionNum} SKIPPED — ${clientDisconnected ? "client disconnected" : "rate-limit abort"}.`,
             });
             continue;
           }
@@ -580,8 +639,17 @@ Output JSON only.`;
 
           const evidenceContext = buildEvidenceContext(allocation, curatedRefs as EvidenceRefInput[]);
 
+          // ★ FIX (narrow digest window): the digest only carries the LAST 3
+          // sections (style reference). By section 8 of a 10-section article
+          // the model had no idea sections 1-4 existed and repeated their
+          // examples. The full outline of every previously-written section is
+          // now always included so nothing is invisible.
+          const allPreviousTitles = sections
+            .slice(0, i)
+            .map((s: any, j: number) => `§${j + 1}: ${s.title}`)
+            .join("\n");
           const continuityBlock = previousSectionsDigest
-            ? `\nPREVIOUS SECTIONS (already written — do NOT repeat their content, match their style):\n${previousSectionsDigest}\n`
+            ? `\nFULL OUTLINE OF SECTIONS ALREADY WRITTEN (do NOT repeat their content or re-open their examples):\n${allPreviousTitles}\n\nMOST RECENT SECTIONS (match their style and flow):\n${previousSectionsDigest}\n`
             : "";
 
           const prompt = `RESEARCH TOPIC: ${project.topic}
@@ -654,19 +722,51 @@ You cite ONLY with {{Rn}} keys — never numeric [n] citations.`;
               }
             );
           } catch (err: any) {
+            // ★ FIX (dead-code repair): RateLimitAbortedError / QuotaExhaustedError
+            // previously fell through to the non-streaming fallback below — which
+            // ALSO rate-limits and rethrows — escaping the section loop entirely and
+            // killing the pipeline with a raw error. The "skipped" path above was
+            // unreachable. Now rate-limit aborts mark the flag so REMAINING sections
+            // are skipped gracefully and the article composes from what exists.
+            if (err instanceof RateLimitAbortedError || err instanceof QuotaExhaustedError) {
+              abortedDueToRateLimit = true;
+              send("step", {
+                step: "generate",
+                status: "skipped",
+                section: sectionNum,
+                total: sections.length,
+                message: `Section ${sectionNum} SKIPPED — rate limit hit; remaining sections will be skipped.`,
+              });
+              continue;
+            }
             send("step", {
               step: "generate",
               status: "progress",
               section: sectionNum,
               message: `Streaming failed, falling back: ${err?.message?.slice(0, 80) || ""}`,
             });
-            chunkContent = await chatWithSession(projectId, prompt, {
-              system,
-              temperature: 0.6,
-              taskType: "generate",
-              maxTokens,
-              metadata: { step: "generate", section: sectionNum, fallback: true },
-            });
+            try {
+              chunkContent = await chatWithSession(projectId, prompt, {
+                system,
+                temperature: 0.6,
+                taskType: "generate",
+                maxTokens,
+                metadata: { step: "generate", section: sectionNum, fallback: true },
+              });
+            } catch (fbErr: any) {
+              if (fbErr instanceof RateLimitAbortedError || fbErr instanceof QuotaExhaustedError) {
+                abortedDueToRateLimit = true;
+                send("step", {
+                  step: "generate",
+                  status: "skipped",
+                  section: sectionNum,
+                  total: sections.length,
+                  message: `Section ${sectionNum} SKIPPED — rate limit hit during fallback; remaining sections will be skipped.`,
+                });
+                continue;
+              }
+              throw fbErr;
+            }
           }
 
           await new Promise((r) => setTimeout(r, 2000));
@@ -731,17 +831,30 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           });
 
           const verifyStart = Date.now();
-          const verifyResult = await adversarialVerifySection(
-            projectId,
-            sectionContent,
-            citedRefs,
-            {
-              batchSize: VERIFY_BATCH_SIZE,
-              removeVerdict: VERIFY_REMOVE_VERDICT,
-              removeConfidence: VERIFY_REMOVE_CONFIDENCE,
-              maxTokens,
+          let verifyResult;
+          try {
+            verifyResult = await adversarialVerifySection(
+              projectId,
+              sectionContent,
+              citedRefs,
+              {
+                batchSize: VERIFY_BATCH_SIZE,
+                removeVerdict: VERIFY_REMOVE_VERDICT,
+                removeConfidence: VERIFY_REMOVE_CONFIDENCE,
+                maxTokens,
+              }
+            );
+          } catch (verifyErr: any) {
+            // Rate-limit aborts during verification also skip gracefully — the
+            // section keeps its citations UNVERIFIED rather than killing the run.
+            if (verifyErr instanceof RateLimitAbortedError || verifyErr instanceof QuotaExhaustedError) {
+              abortedDueToRateLimit = true;
+              log(`verify: section ${sectionNum} skipped — rate limit hit; saving section with unverified citations`);
+              verifyResult = { checked: 0, removedNums: [], flagged: [], removals: [] } as any;
+            } else {
+              throw verifyErr;
             }
-          );
+          }
           stats.citationsChecked += verifyResult.checked;
           stats.citationsRemoved += verifyResult.removedNums.length;
           stats.citationsFlagged += verifyResult.flagged.length;
@@ -766,38 +879,43 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           log(`verify: section ${sectionNum} — checked=${verifyResult.checked} removed=${verifyResult.removedNums.length} flagged=${verifyResult.flagged.length}`);
 
           // ---- Save the paragraph + cited references ----
-          const paragraph = await db.paragraph.create({
-            data: {
-              projectId,
-              title: section.title,
-              content: sectionContent,
-              format: inferFormat(section.title, i, sections.length),
-              scenario: "literature-review",
-              status: "draft",
-              order: i,
-              wordCount: countWords(sectionContent),
-            },
-          });
-
-          for (let idx = 0; idx < citedRefs.length; idx++) {
-            const ref = citedRefs[idx] as any;
-            await db.reference.create({
+          // ★ FIX (atomic section save): paragraph + references were created
+          // sequentially with no transaction — a failure on reference #5 left a
+          // paragraph with partial references, desyncing compose's global
+          // renumbering. One $transaction keeps them all-or-nothing.
+          const paragraph = await db.$transaction(async (tx) => {
+            const p = await tx.paragraph.create({
               data: {
-                type: ref.type || "pubmed",
-                externalId: ref.externalId,
-                title: ref.title,
-                authors: ref.authors,
-                journal: ref.journal,
-                year: ref.year,
-                url: ref.url,
-                doi: ref.doi,
-                abstract: ref.abstract,
                 projectId,
-                paragraphId: paragraph.id,
-                citationOrder: idx,
+                title: section.title,
+                content: sectionContent,
+                format: inferFormat(section.title, i, sections.length),
+                scenario: "literature-review",
+                status: "draft",
+                order: i,
+                wordCount: countWords(sectionContent),
               },
             });
-          }
+            if (citedRefs.length > 0) {
+              await tx.reference.createMany({
+                data: citedRefs.map((ref: any, idx: number) => ({
+                  type: ref.type || "pubmed",
+                  externalId: ref.externalId,
+                  title: ref.title,
+                  authors: ref.authors,
+                  journal: ref.journal,
+                  year: ref.year,
+                  url: ref.url,
+                  doi: ref.doi,
+                  abstract: ref.abstract,
+                  projectId,
+                  paragraphId: p.id,
+                  citationOrder: idx,
+                })),
+              });
+            }
+            return p;
+          });
 
           generatedParagraphs.push({
             id: paragraph.id,
@@ -949,14 +1067,16 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
 
         // Update each paragraph's content + references to GLOBAL numbering so
         // the workspace view matches the article (v70-1 gap-fill pattern).
+        // ★ FIX (atomic rewrite): update + reference deleteMany + reference
+        // creates now run in ONE transaction — previously a failure between the
+        // delete and the re-creates left the paragraph referenceless (citations
+        // [1][2][3] in the body, empty reference panel) with no recovery.
         for (let i = 0; i < renumberedContents.length && i < generatedParagraphs.length; i++) {
           const paraId = generatedParagraphs[i].id;
           const content = renumberedContents[i];
-          await db.paragraph.update({ where: { id: paraId }, data: { content } });
-          await db.reference.deleteMany({ where: { paragraphId: paraId } });
           const citedGlobalNums = new Set<number>();
           let maxCitedNum = 0;
-          const citeRe2 = /\[(\d+(?:[,\-–]\s*\d+)*)\]/g;
+          const citeRe2 = /\[(\d+(?:[,\-–\s]*\d+)*)\]/g;
           let cm;
           while ((cm = citeRe2.exec(content)) !== null) {
             for (const part of cm[1].split(/[,;]\s*/)) {
@@ -971,27 +1091,33 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
               }
             }
           }
+          const refsToCreate: any[] = [];
           for (let globalNum = 1; globalNum <= maxCitedNum; globalNum++) {
             const ref = globalRefs[globalNum - 1];
             if (ref) {
-              await db.reference.create({
-                data: {
-                  type: ref.type || "pubmed",
-                  externalId: ref.externalId,
-                  title: ref.title,
-                  authors: ref.authors,
-                  journal: ref.journal,
-                  year: ref.year,
-                  url: ref.url,
-                  doi: ref.doi,
-                  abstract: ref.abstract,
-                  projectId,
-                  paragraphId: paraId,
-                  citationOrder: globalNum - 1,
-                },
+              refsToCreate.push({
+                type: ref.type || "pubmed",
+                externalId: ref.externalId,
+                title: ref.title,
+                authors: ref.authors,
+                journal: ref.journal,
+                year: ref.year,
+                url: ref.url,
+                doi: ref.doi,
+                abstract: ref.abstract,
+                projectId,
+                paragraphId: paraId,
+                citationOrder: globalNum - 1,
               });
             }
           }
+          await db.$transaction([
+            db.paragraph.update({ where: { id: paraId }, data: { content } }),
+            db.reference.deleteMany({ where: { paragraphId: paraId } }),
+            ...(refsToCreate.length > 0
+              ? [db.reference.createMany({ data: refsToCreate })]
+              : []),
+          ]);
         }
 
         // Save the article
@@ -1018,10 +1144,25 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             label: "v2 evidence-grounded (auto-saved)",
             wordCount: countWords(articleContent),
           },
-        }).catch(() => {});
+        }).catch((versionErr: any) => {
+          // FIX (silent swallow): a failed auto-save used to vanish with
+          // `.catch(() => {})` — the user's undo/version trail silently broke.
+          // Non-fatal (the article itself is already saved) but now logged.
+          log(`compose: version snapshot FAILED: ${String(versionErr?.message ?? versionErr).slice(0, 120)}`);
+        });
 
         // Final mechanical audit of the composed article (Layer-2 deterministic)
-        const audit = buildAuditReport(articleContent, []);
+        // ★ FIX: previously called with `[]` which silently SKIPPED the
+        // numbering-integrity check (body [n] ↔ saved reference [n-1]). Pass the
+        // real composed references so mismatches surface in the final report.
+        const audit = buildAuditReport(
+          articleContent,
+          globalRefs.map((r: any) => ({
+            type: r.type,
+            externalId: r.externalId,
+            title: r.title || "Untitled",
+          })),
+        );
 
         send("step", {
           step: "compose",
@@ -1057,9 +1198,77 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
       } catch (err: any) {
         const errMsg = String(err?.message ?? err);
         log(`FATAL: ${errMsg.slice(0, 300)}`);
-        send("error", { error: `v2 pipeline failed: ${errMsg.slice(0, 300)}` });
+
+        // ★ CRITICAL FIX (crash-safe rollback). Previously ANY failure after
+        // the force-clear left the project EMPTY (the deletes had already
+        // committed; nothing re-created them) — the user's prior work was gone
+        // forever. Recovery strategy:
+        //   - ≥1 section WAS generated → keep the partial work (the user can
+        //     regenerate missing sections) and report clearly.
+        //   - 0 sections AND the project had prior work → restore the pre-run
+        //     snapshot so the project is exactly as it was before (atomic run).
+        //   - 0 sections and no prior work → nothing to protect; plain error.
+        if (generatedParagraphs.length > 0) {
+          send("error", {
+            error: `v2 pipeline failed after ${generatedParagraphs.length} section(s) were saved: ${errMsg.slice(0, 200)}. Partial work was KEPT — regenerate to fill in the missing sections.`,
+            partial: true,
+            savedSections: generatedParagraphs.length,
+          });
+        } else if (hadPriorWork && snapshot) {
+          try {
+            const snap = snapshot;
+            log(`rollback: restoring snapshot (${snap.paragraphs.length} paragraphs, ${snap.dataSources.length} data sources)`);
+            await db.$transaction([
+              db.annotation.deleteMany({ where: { paragraph: { projectId } } }),
+              db.articleParagraph.deleteMany({ where: { paragraph: { projectId } } }),
+              db.paragraph.deleteMany({ where: { projectId } }),
+              db.dataSource.deleteMany({ where: { projectId } }),
+              db.reference.deleteMany({ where: { projectId } }),
+            ]);
+            for (const ds of snap.dataSources) {
+              await db.dataSource.create({ data: { ...ds } });
+            }
+            for (const para of snap.paragraphs) {
+              const { references, annotations, ...paraData } = para as any;
+              // Recreate with the ORIGINAL id so article-paragraph links and
+              // share tokens that reference the id stay valid.
+              await db.paragraph.create({
+                data: {
+                  ...paraData,
+                  ...(references?.length
+                    ? { references: { create: references.map(({ id, paragraphId, ...r }: any) => r) } }
+                    : {}),
+                  ...(annotations?.length
+                    ? { annotations: { create: annotations.map(({ id, paragraphId, ...a }: any) => a) } }
+                    : {}),
+                },
+              });
+            }
+            if (snap.articleParagraphs.length > 0) {
+              await db.articleParagraph.createMany({
+                data: snap.articleParagraphs.map(({ id, ...ap }: any) => ap),
+              });
+            }
+            log(`rollback: restored ${snap.paragraphs.length} paragraphs, ${snap.dataSources.length} data sources, ${snap.articleParagraphs.length} article links`);
+            send("error", {
+              error: `v2 pipeline failed before any section was generated: ${errMsg.slice(0, 180)}. Your previous ${snap.paragraphs.length} paragraphs and ${snap.dataSources.length} data sources were RESTORED — the project is unchanged.`,
+            });
+          } catch (restoreErr: any) {
+            log(`ROLLBACK FAILED: ${String(restoreErr?.message ?? restoreErr).slice(0, 200)}`);
+            send("error", {
+              error: `v2 pipeline failed: ${errMsg.slice(0, 200)} (automatic rollback also failed: ${String(restoreErr?.message ?? restoreErr).slice(0, 120)}). Please contact support / check the server log.`,
+            });
+          }
+        } else {
+          send("error", { error: `v2 pipeline failed: ${errMsg.slice(0, 300)}` });
+        }
         safeClose();
       }
+    },
+    cancel() {
+      // Browser closed the SSE stream (navigate away / refresh / drop).
+      // The start() closure observes this via `clientDisconnected`.
+      clientDisconnected = true;
     },
   });
 

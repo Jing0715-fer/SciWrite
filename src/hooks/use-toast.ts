@@ -174,6 +174,8 @@ function toast({ ...props }: Toast) {
 function useToast() {
   const [state, setState] = React.useState<State>(memoryState)
 
+  // Subscribe once — the `[state]` dependency would re-run this effect on
+  // every dispatch, churning the listener array (unsubscribe + resubscribe).
   React.useEffect(() => {
     listeners.push(setState)
     return () => {
@@ -182,7 +184,7 @@ function useToast() {
         listeners.splice(index, 1)
       }
     }
-  }, [state])
+  }, [])
 
   return {
     ...state,

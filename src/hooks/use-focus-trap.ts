@@ -17,7 +17,7 @@ import * as React from "react";
  * focus is moved to the first focusable element on mount, and Tab/Shift+Tab
  * are intercepted to cycle within the container.
  */
-export function useFocusTrap(active: boolean): React.RefObject<HTMLDivElement> {
+export function useFocusTrap(active: boolean): React.RefObject<HTMLDivElement | null> {
   const ref = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {

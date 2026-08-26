@@ -8,12 +8,13 @@ import {
   HeadingLevel,
   AlignmentType,
 } from "docx";
-import { PDFDocument, StandardFonts, rgb, PDFName, PDFString, PDFNumber } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, PDFName, PDFString, PDFNumber, PDFDict } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import type { Annotation, Reference } from "@/lib/types";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import JSZip from "jszip";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -722,7 +723,9 @@ export async function POST(req: NextRequest) {
         dataSources,
         body.includeAnnotations ? annotations : undefined,
       );
-      return new NextResponse(buffer, {
+      // Buffer<ArrayBufferLike> is not assignable to BodyInit (TS 5.7+
+      // ArrayBuffer-typed BufferSource) — copy into a Uint8Array<ArrayBuffer>.
+      return new NextResponse(new Uint8Array(buffer), {
         headers: {
           "Content-Type": "application/epub+zip",
           "Content-Disposition": `attachment; filename="${buildFilename(filenameTitle, "epub", langSuffix)}"`,
@@ -751,7 +754,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("[/api/export] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Export failed." },
+      { error: safeErrorMessage(err, "Export failed.") },
       { status: 500 }
     );
   }
@@ -1235,7 +1238,10 @@ async function buildDocx(
     },
   });
 
-  return await Packer.toBuffer(doc);
+  // Packer.toBuffer resolves a Node Buffer (ArrayBufferLike-backed), but this
+  // function is declared to resolve an ArrayBuffer — copy into a fresh
+  // Uint8Array<ArrayBuffer> and hand back its .buffer.
+  return new Uint8Array(await Packer.toBuffer(doc)).buffer;
 }
 
 function parseInlineCitations(text: string): TextRun[] {
@@ -1654,9 +1660,11 @@ async function buildPdf(
         return ctx.register(itemDict);
       });
 
-      // Link siblings: each item gets Prev/Next pointers
+      // Link siblings: each item gets Prev/Next pointers.
+      // ctx.lookup() is typed PDFObject | undefined, but every ref here was
+      // just registered from a ctx.obj({...}) dict, so it is always a PDFDict.
       itemRefs.forEach((ref, i) => {
-        const dict = ctx.lookup(ref);
+        const dict = ctx.lookup(ref) as PDFDict;
         if (i > 0) dict.set(PDFName.of("Prev"), itemRefs[i - 1]);
         if (i < itemRefs.length - 1) dict.set(PDFName.of("Next"), itemRefs[i + 1]);
         // Parent will be set to the outlines root below
@@ -1673,7 +1681,7 @@ async function buildPdf(
 
       // Set Parent on each item to the outlines root
       itemRefs.forEach((ref) => {
-        const dict = ctx.lookup(ref);
+        const dict = ctx.lookup(ref) as PDFDict;
         dict.set(PDFName.of("Parent"), outlinesRef);
       });
 
@@ -1695,7 +1703,10 @@ async function buildPdf(
   // which is more efficient but can confuse some older PDF readers (and
   // our own debug tooling). For an article export, raw object layout is
   // preferable — bookmarks work reliably in every PDF reader.
-  return await pdfDoc.save({ useObjectStreams: false });
+  // pdfDoc.save() resolves a Uint8Array<ArrayBufferLike>, but this function
+  // is declared to resolve an ArrayBuffer — copy into a fresh
+  // Uint8Array<ArrayBuffer> and hand back its .buffer.
+  return new Uint8Array(await pdfDoc.save({ useObjectStreams: false })).buffer;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

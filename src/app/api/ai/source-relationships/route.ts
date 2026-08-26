@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chatWithSession } from "@/lib/llm-session";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -179,7 +180,7 @@ Output JSON only. Focus on scientific substance, not metadata similarity.`;
   } catch (err: any) {
     console.error("[/api/ai/source-relationships] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Relationship analysis failed." },
+      { error: safeErrorMessage(err, "Relationship analysis failed.") },
       { status: 500 }
     );
   }

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { chatWithSession } from "@/lib/llm-session";
 import { buildRevisePrompt, countWords } from "@/lib/writing";
 import type { Annotation } from "@/lib/types";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -81,7 +82,7 @@ export async function POST(
       .update({ where: { id }, data: { status: "annotated" } })
       .catch(() => {});
     return NextResponse.json(
-      { error: err?.message || "Revision failed." },
+      { error: safeErrorMessage(err, "Revision failed.") },
       { status: 500 }
     );
   }

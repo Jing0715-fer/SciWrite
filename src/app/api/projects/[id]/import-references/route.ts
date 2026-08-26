@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -345,7 +346,7 @@ export async function POST(
   } catch (err: any) {
     console.error("[/api/projects/[id]/import-references] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Import failed." },
+      { error: safeErrorMessage(err, "Import failed.") },
       { status: 500 },
     );
   }

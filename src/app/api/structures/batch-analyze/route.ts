@@ -4,6 +4,7 @@ import {
   analyzeStructureById,
   buildStructureContextMarkdown,
 } from "@/lib/structure-analysis";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // 5 minutes — batch may process many structures
@@ -186,7 +187,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("[/api/structures/batch-analyze] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Batch analysis failed." },
+      { error: safeErrorMessage(err, "Batch analysis failed.") },
       { status: 500 }
     );
   }

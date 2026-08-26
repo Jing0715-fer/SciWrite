@@ -49,6 +49,10 @@ class TokenBucket {
   private tokens: number;
   private lastRefill: number;
   private waiters: Array<() => void> = [];
+  // Single recurring pump timer — replaces the per-waiter setTimeout that
+  // stranded callers (see below) and guarantees every waiter is served as
+  // soon as a token is available.
+  private pumpTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(capacity = 2, refillIntervalMs = 2000) {
     this.capacity = capacity;
@@ -75,6 +79,11 @@ class TokenBucket {
       const w = this.waiters.shift()!;
       w();
     }
+    // Stop the timer once every waiter has been served — no idle interval.
+    if (this.waiters.length === 0 && this.pumpTimer) {
+      clearInterval(this.pumpTimer);
+      this.pumpTimer = null;
+    }
   }
 
   async acquire(): Promise<void> {
@@ -83,10 +92,23 @@ class TokenBucket {
       this.tokens -= 1;
       return;
     }
+    // FIX (waiter-stranding race): previously each waiter scheduled its own
+    // `setTimeout(pump, refillIntervalMs)`. When two callers queued in the
+    // same tick, the second timer fired ~1ms after the first had already
+    // consumed the fresh token, found `tokens=0`, and exited — leaving the
+    // second waiter stranded until some FUTURE caller scheduled another
+    // timer. A shared recurring pump timer serves all waiters reliably.
     await new Promise<void>((resolve) => {
       this.waiters.push(resolve);
-      const waitMs = this.refillIntervalMs;
-      setTimeout(() => this.pump(), waitMs);
+      if (!this.pumpTimer) {
+        this.pumpTimer = setInterval(() => this.pump(), this.refillIntervalMs);
+        // The interval would keep the process alive if never cleared;
+        // unref so it can't block shutdown (guarded by the pump's own
+        // self-clear when waiters drain).
+        if (typeof this.pumpTimer === "object" && "unref" in this.pumpTimer) {
+          (this.pumpTimer as any).unref();
+        }
+      }
     });
   }
 }
@@ -98,22 +120,29 @@ class TokenBucket {
 class SlidingWindow {
   private windowMs: number;
   private threshold: number;
-  private coolDownMs: number;
   private timestamps: number[] = [];
 
-  constructor(windowMs = 10 * 60 * 1000, threshold = 15, coolDownMs = 60 * 1000) {
+  constructor(windowMs = 10 * 60 * 1000, threshold = 15, _coolDownMs?: number) {
     this.windowMs = windowMs;
     this.threshold = threshold;
-    this.coolDownMs = coolDownMs;
   }
 
-  /** Returns cool-down ms to wait before the next call (0 = no cool-down). */
+  /**
+   * Returns cool-down ms to wait before the next call (0 = no cool-down).
+   *
+   * FIX (proportional pacing): the old implementation returned a flat 60s
+   * for EVERY call past the threshold — call 16 waited 60s, call 17 waited
+   * another 60s, and so on, stacking 10+ minutes of pure waiting onto v2
+   * runs (~30 LLM calls). Now calls past the threshold are paced at
+   * `windowMs / threshold` (one call per threshold-th of the window) which
+   * is the minimum spacing that keeps the rolling window at/below the
+   * threshold — 3× faster than the flat penalty, with the same safety.
+   */
   nextCoolDownMs(): number {
     const now = Date.now();
     this.timestamps = this.timestamps.filter((t) => now - t < this.windowMs);
     if (this.timestamps.length >= this.threshold) {
-      // Cool down for `coolDownMs` since the most recent call
-      return this.coolDownMs;
+      return Math.round(this.windowMs / this.threshold);
     }
     return 0;
   }
@@ -169,25 +198,43 @@ class QuotaState {
 // ---------------------------------------------------------------------------
 
 const bucket = new TokenBucket(2, 2000);
-const window = new SlidingWindow(10 * 60 * 1000, 15, 60 * 1000);
+// Threshold raised 15 → 20 with proportional pacing (see SlidingWindow):
+// the provider allows 30 req/10min; 20 + 30s spacing keeps ~33% headroom
+// while letting bursts of 20 through unimpeded (the old 15@60s config
+// slowed every v2 run by 10+ minutes).
+const window = new SlidingWindow(10 * 60 * 1000, 20);
 const quota = new QuotaState();
 
 // In-memory abort flag — set by the first 429/quota-exhaustion event.
-// Once set, all subsequent calls in the same Node process throw
-// RateLimitAbortedError until clearAbort() is called (used by long-running
-// pipelines like generate-full to short-circuit the rest of the loop).
-let aborted = false;
+//
+// FIX (stale-abort poisoning): the flag used to be a plain boolean that
+// ONLY a manual clearAbort() could reset, so (a) an abort left behind by a
+// crashed run poisoned every subsequent run in the same process, and
+// (b) a NEW run's clearAbort() erased an IN-FLIGHT run's abort, sending it
+// back to hammering the provider with 429s. Aborts now carry a timestamp
+// and auto-expire (ABORT_TTL_MS) — stale ones clear themselves, fresh ones
+// still short-circuit every caller, and no run needs to touch another
+// run's abort state. clearAbort() is kept as a force-reset escape hatch.
+const ABORT_TTL_MS = 120_000;
+let abortInfo: { reason: string; at: number } | null = null;
 
 export function isAborted(): boolean {
-  return aborted;
+  if (!abortInfo) return false;
+  if (Date.now() - abortInfo.at > ABORT_TTL_MS) {
+    console.warn(`[rate-limiter] abort auto-expired (set ${Math.round((Date.now() - abortInfo.at) / 1000)}s ago): ${abortInfo.reason.slice(0, 80)}`);
+    abortInfo = null;
+    return false;
+  }
+  return true;
 }
 
+/** Force-clear the abort flag (escape hatch; stale aborts also self-expire). */
 export function clearAbort() {
-  aborted = false;
+  abortInfo = null;
 }
 
 export function setAbort(reason: string) {
-  aborted = true;
+  abortInfo = { reason, at: Date.now() };
   console.warn(`[rate-limiter] ABORT set: ${reason}`);
 }
 
@@ -231,8 +278,8 @@ export async function withRateLimit<T>(
     setAbort(err.message);
     throw err;
   }
-  // (2) Process-wide abort guard.
-  if (aborted) {
+  // (2) Process-wide abort guard (auto-expiring — see abortInfo above).
+  if (isAborted()) {
     throw new RateLimitAbortedError(
       `previous call aborted; skipping '${label}'`,
     );
@@ -253,7 +300,7 @@ export async function withRateLimit<T>(
   // (5) Retry loop with exponential backoff.
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    if (aborted) {
+    if (isAborted()) {
       throw new RateLimitAbortedError(`abort flag set before attempt ${attempt}`);
     }
     let capturedHeaders: Headers | undefined | null;
@@ -282,7 +329,7 @@ export async function withRateLimit<T>(
 
       const is429 = status === 429 || /rate.?limit|too many requests/i.test(msg);
       const is5xx = typeof status === "number" && status >= 500 && status < 600;
-      const isAbort = aborted;
+      const isAbort = isAborted();
 
       if (isAbort) {
         throw new RateLimitAbortedError(`abort during '${label}'`);
@@ -324,7 +371,7 @@ export function preFlightQuotaCheck(label = "pre-flight"): void {
     setAbort(err.message);
     throw err;
   }
-  if (aborted) {
+  if (isAborted()) {
     throw new RateLimitAbortedError(`pre-flight: abort flag set for '${label}'`);
   }
 }

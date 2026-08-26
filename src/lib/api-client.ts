@@ -45,9 +45,16 @@ export const api = {
     field?: string;
   }) => jfetch<{ project: Project }>("/api/projects", { method: "POST", body: JSON.stringify(input) }),
   getProject: (id: string) =>
-    jfetch<{ project: Project & { paragraphs: any[]; dataSources: DataSource[]; articles: Article[] } }>(
-      `/api/projects/${id}`
-    ),
+    jfetch<{
+      project: Project & {
+        paragraphs: any[];
+        dataSources: DataSource[];
+        articles: Article[];
+        // Project-level references (paragraphId = null) — returned by
+        // GET /api/projects/[id] alongside per-paragraph references.
+        references: Reference[];
+      };
+    }>(`/api/projects/${id}`),
   updateProject: (id: string, input: Partial<Project>) =>
     jfetch<{ project: Project }>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteProject: (id: string) =>
@@ -668,7 +675,10 @@ export const api = {
     jfetch<{ ok: boolean }>(`/api/references/${id}`, { method: "DELETE" }),
 
   /* Data sources */
-  createDataSource: (input: Partial<DataSource> & { rawJson?: any }) =>
+  // rawJson is typed `unknown` (not DataSource["rawJson"] = string) because the
+  // server route accepts EITHER a pre-stringified JSON string or a raw JSON
+  // value (it stringifies the latter itself) — see POST /api/data-sources.
+  createDataSource: (input: Omit<Partial<DataSource>, "rawJson"> & { rawJson?: unknown }) =>
     jfetch<{ dataSource: DataSource }>(`/api/data-sources`, { method: "POST", body: JSON.stringify(input) }),
   updateDataSource: (id: string, input: Partial<DataSource>) =>
     jfetch<{ dataSource: DataSource }>(`/api/data-sources/${id}`, { method: "PATCH", body: JSON.stringify(input) }),

@@ -36,6 +36,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useI18n } from "@/lib/i18n";
+import type { TranslationKey } from "@/lib/i18n";
 import { api } from "@/lib/api-client";
 import { toast } from "sonner";
 
@@ -426,7 +427,10 @@ function Section({ title, icon: Icon, children }: { title: string; icon: any; ch
   );
 }
 
-type TFunc = (key: string, opts?: any) => string;
+// Accept the real i18n key type so the provider `t` function is
+// assignable (a `key: string` parameter is contravariant-incompatible
+// with the union-of-literal-keys signature).
+type TFunc = (key: TranslationKey, opts?: any) => string;
 
 function OverviewTab({ data, t }: { data: AnalysisData; t: TFunc }) {
   const a = data.analysis;
@@ -1827,7 +1831,7 @@ function CompareTab({
             <Input
               value={refChain}
               onChange={(e) => setRefChain(e.target.value.toUpperCase())}
-              placeholder={`${t("referenceChain")} (optional, default A)`}
+              placeholder={`${t("structure.referenceChain")} (optional, default A)`}
               className="h-7 text-xs font-mono mt-1"
             />
           </div>
@@ -1844,7 +1848,7 @@ function CompareTab({
             <Input
               value={mobChain}
               onChange={(e) => setMobChain(e.target.value.toUpperCase())}
-              placeholder={`${t("mobileChain")} (optional, default A)`}
+              placeholder={`${t("structure.mobileChain")} (optional, default A)`}
               className="h-7 text-xs font-mono mt-1"
             />
           </div>

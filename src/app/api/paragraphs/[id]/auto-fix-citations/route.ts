@@ -4,6 +4,7 @@ import { chatWithSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
 import { renumberByAppearance, countWords } from "@/lib/writing";
 import { topicalityScore } from "@/lib/citation-audit";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -341,7 +342,7 @@ Output JSON only.`;
   } catch (err: any) {
     console.error("[/api/paragraphs/[id]/auto-fix-citations] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Auto-fix failed." },
+      { error: safeErrorMessage(err, "Auto-fix failed.") },
       { status: 500 }
     );
   }

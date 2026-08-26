@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chat } from "@/lib/ai";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 45;
@@ -84,7 +85,7 @@ export async function POST(
 
 ARTICLE TITLE: ${article.title}
 TOTAL WORDS: ${totalWords}
-TOPIC: ${article.topic || "(not specified)"}
+TOPIC: ${(article as { topic?: string | null }).topic || "(not specified)"}
 
 CURRENT SECTION ORDER:
 ${sectionSummary}
@@ -151,7 +152,7 @@ Be specific and actionable. Prioritize suggestions by impact (high/medium/low).`
   } catch (err: any) {
     console.error("[optimize-structure] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Structure analysis failed." },
+      { error: safeErrorMessage(err, "Structure analysis failed.") },
       { status: 500 }
     );
   }

@@ -33,14 +33,16 @@ interface CommandAction {
   icon: React.ReactNode;
   shortcut?: string;
   onSelect: () => void;
-  group: string;
+  // Optional — actions without a group land in the default "Actions"
+  // group (see the `a.group || t("cmd.actions")` fallback below).
+  group?: string;
   disabled?: boolean;
 }
 
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  actions: Omit<CommandAction, "group">[];
+  actions: CommandAction[];
 }
 
 export function CommandPalette({ open, onOpenChange, actions }: Props) {
@@ -50,7 +52,7 @@ export function CommandPalette({ open, onOpenChange, actions }: Props) {
     for (const a of actions) {
       const g = a.group || t("cmd.actions");
       if (!groups[g]) groups[g] = [];
-      groups[g].push(a as CommandAction);
+      groups[g].push(a);
     }
     return groups;
   }, [actions, t]);

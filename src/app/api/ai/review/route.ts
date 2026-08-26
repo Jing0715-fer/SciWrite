@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chatWithSession } from "@/lib/llm-session";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -42,7 +43,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("[/api/ai/review] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Review failed." },
+      { error: safeErrorMessage(err, "Review failed.") },
       { status: 500 }
     );
   }

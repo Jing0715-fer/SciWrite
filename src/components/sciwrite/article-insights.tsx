@@ -38,7 +38,7 @@ export function ArticleInsights({
   article: { content: string; contentZh?: string | null; title: string };
   paragraphs: any[];
   viewLang: ViewLang;
-  contentRef: React.RefObject<HTMLDivElement>;
+  contentRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const { t } = useI18n();
 
@@ -723,7 +723,7 @@ export function computeWordFrequency(text: string, isChinese: boolean): { word: 
 export function ReadingProgressIndicator({
   contentRef,
 }: {
-  contentRef: React.RefObject<HTMLDivElement>;
+  contentRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const [progress, setProgress] = React.useState(0);
 

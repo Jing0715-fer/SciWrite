@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { computeComparisonMatrix } from "@/lib/structure-analysis";
 import crypto from "crypto";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // 5 minutes — O(n²) comparisons
@@ -118,7 +119,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("[/api/structures/comparison-matrix] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Comparison matrix failed." },
+      { error: safeErrorMessage(err, "Comparison matrix failed.") },
       { status: 500 }
     );
   }

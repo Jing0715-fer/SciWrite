@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 
@@ -75,7 +76,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("[/api/references POST] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Failed to save reference." },
+      { error: safeErrorMessage(err, "Failed to save reference.") },
       { status: 500 }
     );
   }

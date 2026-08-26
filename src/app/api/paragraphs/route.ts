@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { countWords } from "@/lib/writing";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 
@@ -58,7 +59,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("[/api/paragraphs POST] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Failed to create paragraph." },
+      { error: safeErrorMessage(err, "Failed to create paragraph.") },
       { status: 500 }
     );
   }

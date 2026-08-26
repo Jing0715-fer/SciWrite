@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chat } from "@/lib/ai";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -78,7 +79,7 @@ Output JSON only.`;
   } catch (err: any) {
     console.error("[generate-diagram] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Diagram generation failed." },
+      { error: safeErrorMessage(err, "Diagram generation failed.") },
       { status: 500 }
     );
   }

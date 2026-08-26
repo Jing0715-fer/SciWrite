@@ -62,7 +62,10 @@ export async function loadSessionContext(
   const messages = await db.conversationSession.findMany({
     where,
     orderBy: { createdAt: "desc" },
-    take: maxMessages * 2, // fetch more than needed, then trim by tokens
+    // FIX (wasteful fetch): was `maxMessages * 2` (40 rows fetched, only the
+    // last ~4-20 ever used — ~1200 rows deserialized per V2 run). The walk
+    // below consumes at most `maxMessages` rows; fetching more is pure waste.
+    take: maxMessages,
   });
 
   // Reverse to chronological order
@@ -187,10 +190,12 @@ export async function chatWithSession(
 
   messages.push({ role: "user", content: prompt });
 
-  // Save the user message to session BEFORE calling LLM
+  // FIX (orphan user message): the user message used to be saved BEFORE the
+  // LLM call — if the call threw (rate-limit abort, network drop, spawn
+  // error), the orphaned user message persisted at the tail of the context
+  // and the next call's LLM tried to "answer" both it and the new prompt.
+  // Save user + assistant together AFTER the call succeeds.
   const _t0 = Date.now();
-  await saveSessionMessage(projectId, opts.taskType, "user", prompt, opts.metadata);
-  console.log(`[chatWithSession] +${Date.now() - _t0}ms saved user msg to ConversationSession`);
 
   console.log(`[chatWithSession] +${Date.now() - _t0}ms about to call chat() (taskType=${opts.taskType}, promptLen=${prompt.length})`);
   // Call the LLM via the routed chat() in @/lib/ai so the user's selected
@@ -273,11 +278,9 @@ export async function chatWithSession(
       }, resumed=${resumeSessionId ? "yes" : "no"})`,
   );
 
-  // Save the assistant response to session, carrying the fresh cliSessionId
-  // + provider forward so the next call within the same (taskType, provider)
-  // can resume it. Passing the wrong provider would let a different CLI pick
-  // up this id later — see the lookup above for the matching filter.
+  // Save BOTH turns now that the LLM call succeeded (see the orphan fix above).
   const _t1 = Date.now();
+  await saveSessionMessage(projectId, opts.taskType, "user", prompt, opts.metadata);
   await saveSessionMessage(
     projectId,
     opts.taskType,
@@ -287,7 +290,7 @@ export async function chatWithSession(
     freshSessionId,
     activeProvider ?? undefined,
   );
-  console.log(`[chatWithSession] +${Date.now() - _t1}ms saved assistant msg to ConversationSession`);
+  console.log(`[chatWithSession] +${Date.now() - _t1}ms saved user+assistant msgs to ConversationSession`);
 
   return assistantContent;
 }
@@ -378,10 +381,10 @@ export async function chatWithSessionStream(
 
   messages.push({ role: "user", content: prompt });
 
-  // Save the user message to session BEFORE calling LLM (same as chatWithSession)
+  // FIX (orphan user message): saved AFTER the LLM call succeeds (same fix as
+  // chatWithSession) — a failed call no longer leaves an unanswered user
+  // message at the tail of the context.
   const _t0 = Date.now();
-  await saveSessionMessage(projectId, opts.taskType, "user", prompt, opts.metadata);
-  console.log(`[chatWithSessionStream] +${Date.now() - _t0}ms saved user msg to ConversationSession (taskType=${opts.taskType}, promptLen=${prompt.length})`);
 
   // Build the full prompt + system into a single string, with the same
   // context-window safety compression as chatWithSession().
@@ -484,10 +487,12 @@ export async function chatWithSessionStream(
     );
   }
 
-  // Save the assistant response to session. For CLI providers we persist the
-  // fresh cliSessionId + provider so the NEXT call within the same
-  // (project, taskType, provider) can resume the same CLI session.
+  // Save BOTH turns now that the call succeeded (see the orphan fix above).
+  // For CLI providers we persist the fresh cliSessionId + provider so the
+  // NEXT call within the same (project, taskType, provider) can resume the
+  // same CLI session.
   const _t1 = Date.now();
+  await saveSessionMessage(projectId, opts.taskType, "user", prompt, opts.metadata);
   await saveSessionMessage(
     projectId,
     opts.taskType,
@@ -497,7 +502,7 @@ export async function chatWithSessionStream(
     freshSessionId,
     activeProvider ?? undefined,
   );
-  console.log(`[chatWithSessionStream] +${Date.now() - _t1}ms saved assistant msg to ConversationSession`);
+  console.log(`[chatWithSessionStream] +${Date.now() - _t1}ms saved user+assistant msgs to ConversationSession`);
 
   return assistantContent;
 }

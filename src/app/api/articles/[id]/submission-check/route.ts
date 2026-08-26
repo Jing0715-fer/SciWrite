@@ -89,7 +89,11 @@ export async function POST(
   const references = [...allRefs.values()];
 
   // ── Get journal template (if set) ─────────────────────────────────────────
-  const templateId = article.journalTemplate || article.topic?.includes("nature")
+  // NOTE: `topic` is not a column on the Article model (it lives on Project),
+  // so this access is always `undefined` at runtime. Typed via assertion to
+  // keep the exact runtime behavior.
+  const articleTopic = (article as { topic?: string | null }).topic;
+  const templateId = article.journalTemplate || articleTopic?.includes("nature")
     ? null
     : null;
   const template = JOURNAL_TEMPLATES.find((t) => t.id === article.journalTemplate) || null;

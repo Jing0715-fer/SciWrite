@@ -10,7 +10,7 @@ import {
 } from "@/lib/citation-audit";
 import { removeCitationsAndRenumber } from "@/lib/citation-binding";
 import { countWords } from "@/lib/writing";
-import { clearAbort } from "@/lib/rate-limiter";
+
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -98,10 +98,10 @@ export async function POST(
     autoFix = body?.autoFix !== false;
   } catch {}
 
-  // A stale rate-limit abort flag (set by a previous generation run) must not
-  // silently swallow this manual review — every chatWithSession call would
-  // throw and be caught, producing a misleading "checked: 0" report.
-  clearAbort();
+  // NOTE: no clearAbort() here. The abort flag now auto-expires after
+  // ABORT_TTL_MS (see rate-limiter.ts), so a stale abort from a previous
+  // generation run can't silently swallow this manual review, and clearing
+  // here can no longer erase an in-flight sibling run's abort either.
 
   const article = await db.article.findFirst({
     where: { id, deletedAt: null },
@@ -223,8 +223,9 @@ confidence is 0-100. Output JSON only.`;
           });
         } catch (err: any) {
           if (attempt === 0) {
+            // One retry after a cool-down; aborts auto-expire now, so no
+            // clearAbort() (which would erase sibling runs' abort flags).
             await new Promise((r) => setTimeout(r, 15000));
-            clearAbort();
           } else {
             console.warn("[adversarial-review] batch failed:", err?.message?.slice(0, 120));
           }
@@ -298,7 +299,9 @@ confidence is 0-100. Output JSON only.`;
         label: "adversarial citation review (auto-fix)",
         wordCount: countWords(updatedContent),
       },
-    }).catch(() => {});
+    }).catch((verErr: any) => {
+      console.warn("[adversarial-review] audit report auto-save failed:", String(verErr?.message ?? verErr).slice(0, 120));
+    });
   }
 
   // Deterministic audit of the (possibly updated) article

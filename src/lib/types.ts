@@ -82,6 +82,8 @@ export interface Article {
   content: string;
   contentZh?: string | null;
   journalTemplate?: string | null;
+  /** Soft-delete timestamp — null = active, set = in trash (mirrors Prisma). */
+  deletedAt?: string | Date | null;
   createdAt?: string | Date;
   updatedAt?: string | Date;
   _count?: any;
@@ -102,6 +104,8 @@ export interface Paragraph {
   order: number;
   wordCount: number;
   wordCountZh?: number;
+  /** Soft-delete timestamp — null = active, set = in trash (mirrors Prisma). */
+  deletedAt?: string | Date | null;
   createdAt?: string | Date;
   updatedAt?: string | Date;
   references?: Reference[];

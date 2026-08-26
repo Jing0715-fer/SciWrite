@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { inspectProviders } from "@/lib/llm";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -143,7 +144,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("[/api/llm-config] POST error:", err);
     return NextResponse.json(
-      { error: err?.message || "CLI test failed." },
+      { error: safeErrorMessage(err, "CLI test failed.") },
       { status: 500 },
     );
   }

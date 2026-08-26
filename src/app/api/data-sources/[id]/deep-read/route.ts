@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { readPage, chat } from "@/lib/ai";
+import { safeErrorMessage, assertSafeExternalUrl, UnsafeUrlError } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -22,6 +23,23 @@ export async function POST(
         { error: "This data source has no URL to deep-read." },
         { status: 400 }
       );
+    }
+
+    // ★ FIX (SSRF guard): `source.url` is user-controllable (set during web
+    // gather or project import). Without this check the server would happily
+    // fetch internal targets (cloud metadata endpoints, localhost services,
+    // internal hostnames) and hand the summarized contents back to the caller.
+    try {
+      assertSafeExternalUrl(source.url);
+    } catch (urlErr) {
+      if (urlErr instanceof UnsafeUrlError) {
+        console.warn(`[deep-read] blocked unsafe URL for source ${id}: ${source.url}`);
+        return NextResponse.json(
+          { error: "This URL points to an internal or blocked target and cannot be deep-read." },
+          { status: 400 }
+        );
+      }
+      throw urlErr;
     }
 
     // 1. Fetch the full page content
@@ -74,7 +92,7 @@ Keep each field concise. If a field is not applicable, write "N/A".`;
   } catch (err: any) {
     console.error("[/api/data-sources/[id]/deep-read] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Deep read failed." },
+      { error: safeErrorMessage(err, "Deep read failed.") },
       { status: 500 }
     );
   }

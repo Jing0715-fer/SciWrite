@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { queryDatabase } from "@/lib/databases";
 import type { DatabaseSource } from "@/lib/types";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("[/api/databases] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Database query failed." },
+      { error: safeErrorMessage(err, "Database query failed.") },
       { status: 500 }
     );
   }

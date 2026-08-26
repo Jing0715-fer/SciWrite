@@ -1922,7 +1922,7 @@ function ArticleTOCSidebar({
   contentRef,
 }: {
   sections: { id: string; title: string; index: number; format: string; wordCount: number; hasZh: boolean }[];
-  contentRef: React.RefObject<HTMLDivElement>;
+  contentRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const { t } = useI18n();
   const [activeIdx, setActiveIdx] = React.useState(0);
@@ -2195,7 +2195,7 @@ function ArticleSearchBar({
   query: string;
   onQueryChange: (q: string) => void;
   onClose: () => void;
-  contentRef: React.RefObject<HTMLDivElement>;
+  contentRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const { t } = useI18n();
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -2470,7 +2470,7 @@ function AnalysisTab({
   article: any;
   paragraphs: any[];
   viewLang: any;
-  contentRef: React.RefObject<HTMLDivElement>;
+  contentRef: React.RefObject<HTMLDivElement | null>;
   projectId: string;
 }) {
   const [subTab, setSubTab] = React.useState<"insights" | "audit">("insights");

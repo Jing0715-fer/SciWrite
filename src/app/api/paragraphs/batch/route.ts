@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("[paragraph batch] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Batch operation failed." },
+      { error: safeErrorMessage(err, "Batch operation failed.") },
       { status: 500 },
     );
   }

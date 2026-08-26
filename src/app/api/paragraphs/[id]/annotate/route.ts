@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 
@@ -34,7 +35,7 @@ export async function POST(
   } catch (err: any) {
     console.error("[annotate] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Failed to add annotation." },
+      { error: safeErrorMessage(err, "Failed to add annotation.") },
       { status: 500 }
     );
   }

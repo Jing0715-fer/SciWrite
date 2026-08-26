@@ -3,6 +3,7 @@ import {
   compareStructures,
   buildComparisonContextMarkdown,
 } from "@/lib/structure-analysis";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("[/api/structures/compare] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Structure comparison failed." },
+      { error: safeErrorMessage(err, "Structure comparison failed.") },
       { status: 500 }
     );
   }

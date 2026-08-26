@@ -104,7 +104,7 @@ export function ShareDialog({ open, onOpenChange, projectId, projectTitle }: Pro
                     onClick={copyLink}
                   >
                     <Copy className="h-3 w-3" />
-                    <span className="text-[10px]">{t("share.copy") || "Copy"}</span>
+                    <span className="text-[10px]">{t("para.copyText") || "Copy"}</span>
                   </Button>
                 </div>
                 <p className="text-[9px] text-muted-foreground">

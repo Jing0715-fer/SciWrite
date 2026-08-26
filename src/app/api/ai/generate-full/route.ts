@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { webSearch } from "@/lib/ai";
-import { chatWithSession, clearSession } from "@/lib/llm-session";
+import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
 import { queryDatabase, fetchFullTextForPubMed } from "@/lib/databases";
 import { countWords, renumberByAppearance, sanitizeSectionContent, buildStructureContextFromDataSources } from "@/lib/writing";
 import { validateCitationsInline } from "@/lib/citation-audit";
@@ -26,6 +26,7 @@ import {
   extractSectionKeywords,
   scoreRelevance,
 } from "@/lib/generate-full-helpers";
+import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 export const maxDuration = 1800; // 30 minutes — streaming keeps connection alive
@@ -147,8 +148,21 @@ export async function POST(req: NextRequest) {
       };
       log("controller open, entering try-block");
 
+      // CRITICAL FIX (code review): the catch block below (error-recovery
+      // path that composes a partial article) references these variables.
+      // They used to be declared INSIDE the try block — a sibling scope the
+      // catch cannot see — so the recovery code itself threw
+      // `ReferenceError: generatedParagraphs is not defined` whenever the
+      // pipeline failed, masking the original error and losing the partial
+      // article. Hoisted here so both try and catch can access them.
+      const savedDataSources: any[] = [];
+      let generatedParagraphs: any[] = [];
+      let sections: any[] = [];
+      let project: any = null;
+      let journalTemplate = "generic";
+
       try {
-        const project = await db.project.findUnique({ where: { id: projectId } });
+        project = await db.project.findUnique({ where: { id: projectId } });
         if (!project) {
           send("error", { error: "Project not found." });
           safeClose();
@@ -161,7 +175,7 @@ export async function POST(req: NextRequest) {
         // Chinese is produced in a dedicated translate step afterwards.
         const generationLanguage = "English";
         const targetWords = Math.min(body.targetWords || 5000, 50000);
-        const journalTemplate = body.journalTemplate || "generic";
+        journalTemplate = body.journalTemplate || "generic";
 
         // ---- Advanced tuning parameters (all clamped to safe ranges) ----
         // These come from the UI's "Advanced settings" panel. Defaults match
@@ -289,11 +303,11 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         // fresh results — the user explicitly clicked "generate" so they want
         // new output, not cached results from a previous run.
         // v93-2: clearAbort BEFORE gather — the abort flag from a previous
-        // pipeline run (or session) must be cleared before any LLM call,
-        // including the gather LLM call at line 297. Previously clearAbort
-        // was at line 1032 (after gather), causing RateLimitAbortedError
-        // in gather when the abort flag was set from a previous run.
-        clearAbort();
+        // NOTE: no clearAbort() at pipeline start. The abort flag now
+        // AUTO-EXPIRES (rate-limiter.ts ABORT_TTL_MS = 120s), so a stale
+        // abort from a previous run clears itself; a FRESH abort (<120s old,
+        // e.g. a sibling run just hit 429s) is honored and fails this run
+        // fast instead of hammering the throttled provider.
         await clearSession(projectId);
         try {
           const { clearLLMCache } = await import("@/lib/llm-cache");
@@ -573,7 +587,8 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         // Save ALL data sources with FULL metadata — NO artificial cap.
         // The previous MAX_SOURCES=30 limit discarded ~70% of gathered sources,
         // producing shallow articles. We now keep every unique item.
-        const savedDataSources: any[] = [];
+        // (savedDataSources is hoisted above the try block for the catch's
+        // error-recovery path.)
         const savedReferences: any[] = [];
         const seenExternalIds = new Set<string>(); // Dedup by externalId+source
         const uniqueItems: any[] = [];
@@ -922,7 +937,9 @@ Output JSON only.`;
           planSetCache(planCacheKey, planRaw);
         }
         const planParsed = safeParseJSON(planRaw, { sections: [] });
-        let sections = (planParsed.sections || []).filter(
+        // (sections is hoisted above the try block for the catch's
+        // error-recovery path.)
+        sections = (planParsed.sections || []).filter(
           (s: any) => s.title && s.targetWords
         );
 
@@ -1060,7 +1077,8 @@ Output JSON only.`;
         // per section using keyword overlap between the section focus/title
         // and each ref's title/abstract. This keeps only topically relevant
         // sources in the prompt, dramatically reducing miscitation.
-        let generatedParagraphs: any[] = [];
+        // (generatedParagraphs is hoisted above the try block for the catch's
+        // error-recovery path.)
         const failedSections: number[] = []; // track which sections failed
         let previousSectionsDigest = ""; // running style/flow reference
         let abortedDueToRateLimit = false; // v53-恢复: track rate-limit abort
@@ -1069,10 +1087,8 @@ Output JSON only.`;
 
         // v53-恢复: Pre-flight quota check — if the cached quota state says
         // we have 0 calls left today, bail out BEFORE doing any LLM work.
-        // v91-2: Clear abort flag before pre-flight check. If a previous
-        // pipeline run set the abort flag (e.g. from a different session),
-        // the new run should start fresh.
-        clearAbort();
+        // (v91-2's clearAbort() here removed — aborts auto-expire now, and
+        // clearing unconditionally would erase a sibling run's fresh abort.)
         try {
           preFlightQuotaCheck("generate-full:pre-flight");
         } catch (e: any) {
@@ -2218,7 +2234,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
               const rangeMatch = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
               if (rangeMatch) {
-                const arr = [];
+                const arr: number[] = [];
                 for (let n = parseInt(rangeMatch[1]); n <= parseInt(rangeMatch[2]); n++) arr.push(n);
                 return arr;
               }
@@ -2299,7 +2315,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
               const rangeMatch = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
               if (rangeMatch) {
-                const arr = [];
+                const arr: number[] = [];
                 for (let n = parseInt(rangeMatch[1]); n <= parseInt(rangeMatch[2]); n++) arr.push(n);
                 return arr;
               }
@@ -2342,7 +2358,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             const nums = citeMatch[1].split(/[,;]\s*/).flatMap((s: string) => {
               const rangeMatch = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
               if (rangeMatch) {
-                const arr = [];
+                const arr: number[] = [];
                 for (let n = parseInt(rangeMatch[1]); n <= parseInt(rangeMatch[2]); n++) arr.push(n);
                 return arr;
               }
@@ -2537,7 +2553,9 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               label: "auto-saved pre-audit (v104-1)",
               wordCount: countWords(articleContent),
             },
-          }).catch(() => {});
+          }).catch((verErr: any) => {
+            log(`compose: pre-audit version snapshot FAILED: ${String(verErr?.message ?? verErr).slice(0, 120)}`);
+          });
         } catch (e: any) {
           log(`compose: pre-audit save failed (will retry after audit): ${e?.message?.slice(0, 80)}`);
         }
@@ -2765,7 +2783,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                     while ((m = citeRe.exec(pf.content)) !== null) {
                       const nums = m[1].split(/[,;]\s*/).flatMap((s: string) => {
                         const rm = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
-                        if (rm) { const a = []; for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) a.push(n); return a; }
+                        if (rm) { const a: number[] = []; for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) a.push(n); return a; }
                         const n = parseInt(s); return isNaN(n) ? [] : [n];
                       });
                       for (const n of nums) if (n >= 1 && n <= maxGlobalRef) citedNums.add(n);
@@ -2850,7 +2868,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                           cleaned = cleaned.replace(/\[(\d+(?:[,\-–]\s*\d+)*)\]/g, (match, inner: string) => {
                             const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
                               const rm = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
-                              if (rm) { const a = []; for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) a.push(n); return a; }
+                              if (rm) { const a: number[] = []; for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) a.push(n); return a; }
                               const n = parseInt(s); return isNaN(n) ? [] : [n];
                             });
                             const valid = nums.filter((n: number) => n >= 1 && n <= maxGlobalRef);
@@ -2886,7 +2904,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                           while ((m = citeRe.exec(content)) !== null) {
                             const nums = m[1].split(/[,;]\s*/).flatMap((s: string) => {
                               const rm = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
-                              if (rm) { const a = []; for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) a.push(n); return a; }
+                              if (rm) { const a: number[] = []; for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) a.push(n); return a; }
                               const n = parseInt(s); return isNaN(n) ? [] : [n];
                             });
                             for (const n of nums) {
@@ -3487,7 +3505,7 @@ ${cleanEn}`;
             send("error", { error: `${err?.message || "Generation failed."} (Recovery also failed: ${recoveryErr?.message})` });
           }
         } else {
-          send("error", { error: err?.message || "Generation failed." });
+          send("error", { error: safeErrorMessage(err, "Generation failed.") });
         }
       } finally {
         safeClose();
