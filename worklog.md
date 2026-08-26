@@ -1259,3 +1259,40 @@ Stage Summary:
 - 新增 i18n 键：en 63 / zh 63（citationHealth.* 前缀，简体中文科研语域：Excellent→优秀、Citation Health→引用健康度、Fix→修复、Regen→重写、numbering drift→编号漂移 等）；ja/ko/fr 走 t() 英文回退无需补键
 - 修改文件 2 个：src/components/sciwrite/citation-health-dashboard.tsx（约 60 处硬编码 → t()，含 1 张英文查找表转键表）、src/lib/i18n.tsx（en/zh 块尾各插一个连续键块）
 - tsc 0 错误、lint 0 错误；组件逻辑/hooks/API/JSX 结构零改动；5 处 setError 回退文案也已国际化（虽当前未被渲染，防患于未然）
+
+---
+Task ID: fix-round-2
+Agent: main (Z.ai Code orchestrator)
+Task: 代码审查第二轮修复 — 后端快速修复、share token TTL、配置安全网、前端清理
+
+Work Log:
+- ai.ts: chat()/chatWithSessionId() 非 zai 分支改传 compressedPrompt（原传原始 prompt，CLI argv 超限→ENAMETOOLONG→"returned no output"）；webSearch/readPage 在 CLI provider 下 no-op 时输出一次性 console.warn（原先完全静默）
+- llm-cache.ts: hashString 由 djb2(32位) 改为 crypto sha256（6.5万条目生日碰撞风险→零碰撞）
+- generate-full-v2: globalRefs 重排 indexOf(O(n²) 对象同一性) → 预建 Map 一次 O(n)
+- share token 安全：schema 新增 Project.shareTokenExpiresAt（已 db:push）；POST create 逻辑 = 有效token→复用 / 旧token无戳→补30天戳(链接稳定) / 过期→轮换新token；/api/shared/[token] 过期返回 410 Gone；revoke 同时清空两字段
+- 配置安全网：tsconfig exclude scripts/tests/examples/skills/tool-results/mini-services（tsc 全仓 0 错误）；next.config ignoreBuildErrors: false（恢复类型检查阻构建）；eslint 重启 no-unreachable/no-fallthrough/no-debugger/no-useless-escape/@typescript-eslint/no-unused-vars 为 warn 级（0 error / 166 warning）
+- layout.tsx: 移除遗留 Radix <Toaster/>（与 Sonner 双挂载）；删除死代码 hooks/use-toast.ts + components/ui/toaster.tsx（全 src 无引用）
+- knowledge-panel: 移除从未使用的 articles/onOpenArticle props（page.tsx 两处调用点同步）
+- api-client: jfetch 增加 AbortSignal 超时 — 普通 CRUD 90s、LLM 同步路由(正则识别 ai/*、summarize、verify、compose 等) 5min；超时抛出含 URL 与秒数的明确错误（原先可能永久挂起转圈）
+
+Stage Summary:
+- 验证：tsc 0 / eslint 0 error；浏览器冒烟无错误；share API E2E 全链路（create 200 → DB 过期 → 410 → 再 create 轮换 201）实测通过
+- 提交 520954a 已推送 GitHub main
+
+---
+Task ID: fix-round-3
+Agent: main (Z.ai Code orchestrator + general-purpose 子代理 fix-round-3-i18n)
+Task: 第三轮 — i18n 重构引用健康面板、v2 常量集中、结构化日志、容错 JSON、AlertDialog
+
+Work Log:
+- [子代理 fix-round-3-i18n] citation-health-dashboard.tsx（986行）i18n 完整抽取：63 键 × en/zh（citationHealth.* 命名空间），GRADE 表改键映射渲染期 t()，计数句式全部 {var} 插值，单复数 offenderOne/offendersMany；组件逻辑/JSX/API 调用零改动
+- [主协调者] 新建 lib/v2-config.ts：VERIFY_BATCH_SIZE=10、VERIFY_REMOVE_CONFIDENCE=80、MIN_CITABLE_REFS=20、CITABLE_REFS_PER_WORDS=200、SESSION_MAX_TOTAL_CHARS=28000、maxCitableRefsFor()；generate-full-v2 与 llm-session(两处) 全部改引
+- [主协调者] 新建 lib/logger.ts：LOG_LEVEL 环境变量控制的单行 JSON 结构化日志（level/scope/msg/ctx/ts）；generate-full-v2 的 log() 包装器改为 slog.info(msg,{ms})，FATAL catch 增加 slog.error；其余路由暂保留 console（后续渐进迁移）
+- [主协调者] generate-full-helpers safeParseJSON：策略3插入 JSON5.parse（正确处理尾逗号/无引号键/单引号），原正则修复链降级为最后手段（其会破坏数字键与值内撇号）；安装 json5 + @types/json5
+- [主协调者] projects-sidebar ProjectItem：原生 confirm() → 受控 AlertDialog（stopPropagation、删除中 Loader、destructive 主题按钮）；i18n 新增 projects.deleteTitle en/zh
+- 评估后放弃项：llm.ts execSync WSL 注册表读取 — 实际为 win32-only 早退路径（Linux 不可达），CLI 探测本身已是异步 spawn；盲改 Windows 专属代码风险大于收益
+
+Stage Summary:
+- 验证：tsc 0 / eslint 0 error；中文模式实测 — 引用健康面板渲染「引用健康度/重新运行」等 zh 键、项目删除弹出「删除此项目？」AlertDialog（取消关闭正常）、全页 0 个 i18n 键名泄漏；dev.log 无新增 error
+- 提交 74ee1ae 已推送 GitHub main
+- 遗留（已评估降级）：后端完整鉴权（单机自托管工具，属产品决策）；CHD 绕过 api-client/TanStack（仅做 i18n，行为层重构另行安排）；巨型组件拆分（page.tsx/paragraph-card/CHD）属重构级；quota-status 无鉴权（仅暴露计数）；/tmp provider 文件权限（单用户部署低危）
