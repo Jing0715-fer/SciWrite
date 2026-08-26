@@ -389,3 +389,18 @@ Stage Summary:
 - 关键缺陷 [n,n] 重复引用在 3 个关键函数（convertKeysToNumbers、removeCitationsAndRenumber、sanitizeOutOfRangeCitations）全部修复，内联测试全部通过
 - 改进计划文档已写入仓库（IMPROVEMENT_PLAN.md），列出 5 个等级的后续改进项
 - 改动文件：scripts/full-generation-test.ts（新建）、src/lib/citation-binding.ts（修改）、src/lib/citation-audit.ts（修改）、IMPROVEMENT_PLAN.md（新建）、worklog.md（追加本节）
+
+### Push to GitHub — final status
+
+- Remote configured: `https://github.com/Jing0715-fer/SciWrite.git` (using provided PAT)
+- Local `main` had divergent history vs `origin/main` (local had 5 commits, remote had v114-v118 series); to enable a clean PR, the E2E changes were re-applied onto a fresh branch `e2e-test-clean` based on `origin/main`
+- Final commit: `e5ab88d` on branch `e2e-test-clean` (1 file added: `src/lib/citation-binding.ts`; 1 file modified: `src/lib/citation-audit.ts`; 5 new files: `IMPROVEMENT_PLAN.md`, `scripts/full-generation-test.ts`, `tool-results/{full-gen-test-report,adversarial-review-result}.json`, plus `worklog.md` appended)
+- Push URL: https://github.com/Jing0715-fer/SciWrite/pull/1
+- PR #1 opened automatically via GitHub REST API; state=open; base=main, head=e2e-test-clean
+- Old `e2e-test-dedup-fix` branch retained for reference (based on divergent local history)
+
+Stage Summary:
+- All deliverables are on GitHub: branch `e2e-test-clean` + PR #1
+- Test reproducible: `bun run scripts/full-generation-test.ts`
+- High-priority fix verified: `[n,n]` duplicates collapsed in 3 functions, inline tests pass
+- 5-issue improvement plan documented in `IMPROVEMENT_PLAN.md`
