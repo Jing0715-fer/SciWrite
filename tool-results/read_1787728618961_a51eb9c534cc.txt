@@ -1,0 +1,786 @@
+     1→import type { DatabaseQueryResponse, DatabaseResultItem, DatabaseSource } from "./types";
+     2→
+     3→const UA =
+     4→  "Mozilla/5.0 (compatible; SciWriteAssistant/1.0; +https://example.com/sciwrite)";
+     5→
+     6→async function fetchJson(url: string, init?: RequestInit, timeoutMs = 20000) {
+     7→  const ctrl = new AbortController();
+     8→  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+     9→  try {
+    10→    const res = await fetch(url, {
+    11→      ...init,
+    12→      headers: {
+    13→        "User-Agent": UA,
+    14→        Accept: "application/json",
+    15→        ...(init?.headers || {}),
+    16→      },
+    17→      signal: ctrl.signal,
+    18→    });
+    19→    if (!res.ok) {
+    20→      const text = await res.text().catch(() => "");
+    21→      throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+    22→    }
+    23→    return await res.json();
+    24→  } finally {
+    25→    clearTimeout(t);
+    26→  }
+    27→}
+    28→
+    29→/**
+    30→ * Retry wrapper — retries a fetch operation up to `maxRetries` times with
+    31→ * exponential backoff. Used for database queries that may fail due to
+    32→ * rate limiting (429), temporary network issues, or malformed queries
+    33→ * that can be simplified on retry.
+    34→ *
+    35→ * @param fn     The async function to retry
+    36→ * @param maxRetries  Maximum number of retry attempts (default: 2)
+    37→ * @param baseDelay   Base delay in ms for exponential backoff (default: 1000)
+    38→ * @returns The result of fn(), or throws the last error after all retries fail
+    39→ */
+    40→async function withRetry<T>(
+    41→  fn: () => Promise<T>,
+    42→  maxRetries = 2,
+    43→  baseDelay = 1000
+    44→): Promise<T> {
+    45→  let lastError: any;
+    46→  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    47→    try {
+    48→      return await fn();
+    49→    } catch (err: any) {
+    50→      lastError = err;
+    51→      // Don't retry on the last attempt
+    52→      if (attempt >= maxRetries) break;
+    53→      // Don't retry on 400 Bad Request (query syntax error) — retrying won't help
+    54→      // unless we simplify the query, which we don't do here.
+    55→      const is400 = err?.message?.includes("HTTP 400");
+    56→      if (is400) break;
+    57→      // Exponential backoff: 1s, 2s, 4s, ...
+    58→      const delay = baseDelay * Math.pow(2, attempt);
+    59→      await new Promise((r) => setTimeout(r, delay));
+    60→    }
+    61→  }
+    62→  throw lastError;
+    63→}
+    64→
+    65→/**
+    66→ * Clean a UniProt query string to fix common LLM-generated syntax errors.
+    67→ *
+    68→ * The UniProt REST API has specific syntax requirements:
+    69→ *  - `organism:"Homo sapiens"` is valid but `organism:"Homo sapiens` (missing closing quote) is not
+    70→ *  - `family:"..."` is not a valid field — should be removed or converted to keyword search
+    71→ *  - Multiple field:value pairs must be joined with AND/OR
+    72→ *  - Unmatched quotes cause 400 errors
+    73→ *
+    74→ * This function:
+    75→ *  1. Fixes unmatched quotes
+    76→ *  2. Removes unsupported field prefixes (family, length, etc.)
+    77→ *  3. Simplifies the query to keyword + organism if the complex query fails
+    78→ */
+    79→function cleanUniprotQuery(query: string): string {
+    80→  let q = query.trim();
+    81→
+    82→  // Fix unmatched quotes — count double quotes, add closing if odd
+    83→  const quoteCount = (q.match(/"/g) || []).length;
+    84→  if (quoteCount % 2 !== 0) {
+    85→    q += '"';
+    86→  }
+    87→
+    88→  // Remove unsupported field prefixes that cause 400 errors.
+    89→  // UniProt supports: accession, id, gene, organism, organism_id, protein_name,
+    90→  // keyword, etc. Unsupported fields like "family:" cause 400.
+    91→  // We strip known-unsupported fields and keep the rest as keywords.
+    92→  const unsupportedFields = [
+    93→    "family", "length", "mass", "domain", "site", "feature",
+    94→    "cc:", "ft:", "go:", "interpro", "pfam", "comment",
+    95→  ];
+    96→  for (const field of unsupportedFields) {
+    97→    // Remove "field:value" or "field:"value"" patterns
+    98→    q = q.replace(new RegExp(`\\b${field.replace(":", "\\:")}:("[^"]*"|\\S+)`, "gi"), "");
+    99→  }
+   100→
+   101→  // Clean up: remove extra spaces, dangling AND/OR, etc.
+   102→  q = q.replace(/\s+/g, " ").trim();
+   103→  q = q.replace(/^(AND|OR)\s+/i, "").replace(/\s+(AND|OR)$/i, "").trim();
+   104→
+   105→  // If the query is now empty or just has organism filter, add a fallback keyword
+   106→  if (!q || q.length < 3) {
+   107→    q = "protein";  // minimal fallback
+   108→  }
+   109→
+   110→  return q;
+   111→}
+   112→
+   113→async function fetchText(url: string, init?: RequestInit, timeoutMs = 20000) {
+   114→  const ctrl = new AbortController();
+   115→  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+   116→  try {
+   117→    const res = await fetch(url, {
+   118→      ...init,
+   119→      headers: {
+   120→        "User-Agent": UA,
+   121→        ...(init?.headers || {}),
+   122→      },
+   123→      signal: ctrl.signal,
+   124→    });
+   125→    if (!res.ok) {
+   126→      const text = await res.text().catch(() => "");
+   127→      throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+   128→    }
+   129→    return await res.text();
+   130→  } finally {
+   131→    clearTimeout(t);
+   132→  }
+   133→}
+   134→
+   135→/* ---------------- PubMed (NCBI E-utilities) ---------------- */
+   136→
+   137→/**
+   138→ * FIX (citation-accuracy audit): PubMed esummary does NOT return abstracts.
+   139→ * Without abstracts, every topicality check in the citation audit judges
+   140→ * only on titles — systematically weak scores and false "unsupported"
+   141→ * flags. This helper fetches real abstracts via efetch (XML) for a batch of
+   142→ * PMIDs and returns them as a map.
+   143→ */
+   144→export async function fetchPubMedAbstracts(
+   145→  pmids: string[]
+   146→): Promise<Map<string, string>> {
+   147→  const out = new Map<string, string>();
+   148→  const ids = pmids.filter(Boolean).slice(0, 200);
+   149→  if (!ids.length) return out;
+   150→  try {
+   151→    const url =
+   152→      `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${ids.join(",")}` +
+   153→      `&rettype=abstract&retmode=xml`;
+   154→    const xml = await fetchText(url);
+   155→    // Each article: <MedlineCitation> ... <PMID>123</PMID> ... <Abstract>...
+   156→    // <AbstractText ...>text</AbstractText> ... </Abstract> ... </MedlineCitation>
+   157→    const articles = xml.split("<MedlineCitation").slice(1);
+   158→    for (const art of articles) {
+   159→      const pmidMatch = art.match(/<PMID[^>]*>(\d+)<\/PMID>/);
+   160→      if (!pmidMatch) continue;
+   161→      const pmid = pmidMatch[1];
+   162→      const abstractParts: string[] = [];
+   163→      const absRe = /<AbstractText[^>]*Label="([^"]*)"[^>]*>([\s\S]*?)<\/AbstractText>|<AbstractText[^>]*>([\s\S]*?)<\/AbstractText>/g;
+   164→      let m: RegExpExecArray | null;
+   165→      while ((m = absRe.exec(art))) {
+   166→        const label = m[1];
+   167→        const text = (m[2] ?? m[3] ?? "")
+   168→          .replace(/<[^>]+>/g, "")
+   169→          .replace(/\s+/g, " ")
+   170→          .trim();
+   171→        if (text) abstractParts.push(label ? `${label}: ${text}` : text);
+   172→      }
+   173→      if (abstractParts.length) {
+   174→        out.set(pmid, abstractParts.join(" ").slice(0, 2500));
+   175→      }
+   176→    }
+   177→  } catch (err: any) {
+   178→    console.warn("[fetchPubMedAbstracts] failed:", err?.message?.slice(0, 100));
+   179→  }
+   180→  return out;
+   181→}
+   182→
+   183→export async function searchPubMed(query: string, retmax = 10): Promise<DatabaseQueryResponse> {
+   184→  const cleaned = query.trim();
+   185→  const esearch = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(
+   186→    cleaned
+   187→  )}&retmax=${retmax}&retmode=json&sort=relevance`;
+   188→  const esData = await fetchJson(esearch);
+   189→  const ids: string[] = esData?.esearchresult?.idlist ?? [];
+   190→  const total = parseInt(esData?.esearchresult?.count ?? "0", 10);
+   191→
+   192→  if (ids.length === 0) {
+   193→    return { source: "pubmed", query: cleaned, total: 0, items: [] };
+   194→  }
+   195→
+   196→  const esummary = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${ids.join(
+   197→    ","
+   198→  )}&retmode=json`;
+   199→  const sumData = await fetchJson(esummary);
+   200→  const result = sumData?.result ?? {};
+   201→
+   202→  // FIX: esummary returns NO abstract — fetch real abstracts via efetch so
+   203→  // references carry the metadata the citation audit needs to judge topicality.
+   204→  const abstractMap = await fetchPubMedAbstracts(ids);
+   205→
+   206→  const items: DatabaseResultItem[] = ids.map((id) => {
+   207→    const r = result[id];
+   208→    if (!r) return null;
+   209→    const authors = (r.authors || [])
+   210→      .map((a: any) => a.name)
+   211→      .filter(Boolean)
+   212→      .join(", ");
+   213→    // Extract PMC ID from articleids if available
+   214→    const articleIds: any[] = r.articleids || [];
+   215→    const pmcId = articleIds.find((a) => a.idtype === "pmc")?.value;
+   216→    return {
+   217→      source: "pubmed",
+   218→      externalId: id,
+   219→      title: r.title?.replace(/\.$/, "") ?? "(untitled)",
+   220→      authors: authors || undefined,
+   221→      journal: r.fulljournalname || r.source || undefined,
+   222→      // FIX: "Winter 2023"-style pubdates used to yield "Wint" — parse the
+   223→      // first 4-digit year anywhere in the string instead of slicing.
+   224→      year: (r.pubdate?.match(/\d{4}/) || [])[0],
+   225→      url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
+   226→      doi: r.elocationid?.startsWith("doi:")
+   227→        ? r.elocationid.replace("doi:", "").trim()
+   228→        : undefined,
+   229→      abstract: abstractMap.get(id) || undefined,
+   230→      extra: {
+   231→        pubdate: r.pubdate,
+   232→        pubtype: Array.isArray(r.pubtype) ? r.pubtype.join(", ") : r.pubtype,
+   233→        pmcId: pmcId || undefined,
+   234→        hasFreeFullText: !!pmcId,
+   235→      },
+   236→    };
+   237→  }).filter(Boolean) as DatabaseResultItem[];
+   238→
+   239→  return { source: "pubmed", query: cleaned, total, items };
+   240→}
+   241→
+   242→/**
+   243→ * Fetch full text from PubMed Central (PMC) for free-access articles.
+   244→ * Uses NCBI E-utilities efetch with rettype=full to get the complete article XML,
+   245→ * then extracts the text content (title, abstract, body sections, figures).
+   246→ *
+   247→ * @param pmcId - PMC ID (e.g. "PMC1234567" or just "1234567")
+   248→ * @returns Full text content (up to ~50,000 chars) or null if not available
+   249→ */
+   250→export async function fetchPmcFullText(pmcId: string): Promise<string | null> {
+   251→  const cleanId = pmcId.replace(/^PMC/i, "").trim();
+   252→  if (!cleanId) return null;
+   253→
+   254→  // efetch from PMC database with rettype=full returns XML
+   255→  const efetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=${cleanId}&rettype=full&retmode=xml`;
+   256→
+   257→  try {
+   258→    const xmlText = await fetchText(efetchUrl, undefined, 30000);
+   259→
+   260→    // Check if we got an error response
+   261→    if (xmlText.includes("<ERROR>") || xmlText.length < 100) return null;
+   262→
+   263→    // Extract text content from XML
+   264→    // Remove XML tags but preserve structure for readability
+   265→    let text = xmlText;
+   266→
+   267→    // Extract article title
+   268→    const titleMatch = text.match(/<article-title[^>]*>([\s\S]*?)<\/article-title>/);
+   269→    const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, "").trim() : "";
+   270→
+   271→    // Extract abstract
+   272→    const abstractMatch = text.match(/<abstract[^>]*>([\s\S]*?)<\/abstract>/);
+   273→    const abstract = abstractMatch ? abstractMatch[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "";
+   274→
+   275→    // Extract body sections
+   276→    const bodyMatch = text.match(/<body[^>]*>([\s\S]*?)<\/body>/);
+   277→    let body = "";
+   278→    if (bodyMatch) {
+   279→      body = bodyMatch[1]
+   280→        // Replace section titles with markers
+   281→        .replace(/<title[^>]*>([\s\S]*?)<\/title>/g, "\n\n### $1\n")
+   282→        // Replace paragraph breaks
+   283→        .replace(/<\/p>/g, "\n\n")
+   284→        .replace(/<p[^>]*>/g, "")
+   285→        // Remove all remaining tags
+   286→        .replace(/<[^>]+>/g, "")
+   287→        // Clean up whitespace
+   288→        .replace(/&amp;/g, "&")
+   289→        .replace(/&lt;/g, "<")
+   290→        .replace(/&gt;/g, ">")
+   291→        .replace(/&quot;/g, '"')
+   292→        .replace(/&#x27;/g, "'")
+   293→        .replace(/&nbsp;/g, " ")
+   294→        .replace(/\n{3,}/g, "\n\n")
+   295→        .trim();
+   296→    }
+   297→
+   298→    // Combine
+   299→    const fullText = [
+   300→      title ? `# ${title}` : "",
+   301→      abstract ? `## Abstract\n${abstract}` : "",
+   302→      body ? `## Full Text\n${body}` : "",
+   303→    ].filter(Boolean).join("\n\n");
+   304→
+   305→    // Limit to ~50,000 chars to avoid token overflow
+   306→    return fullText || null;
+   307→  } catch (err) {
+   308→    console.error("[fetchPmcFullText] error:", err);
+   309→    return null;
+   310→  }
+   311→}
+   312→
+   313→/**
+   314→ * Fetch full text for a PubMed article if it has a PMC ID.
+   315→ * Returns the full text or null if not available (not PMC-indexed).
+   316→ *
+   317→ * @param pmid - PubMed ID
+   318→ * @param pmcId - Optional PMC ID (from esummary articleids)
+   319→ * @returns Full text or null
+   320→ */
+   321→export async function fetchFullTextForPubMed(pmid: string, pmcId?: string): Promise<string | null> {
+   322→  // If we have a PMC ID, fetch directly
+   323→  if (pmcId) {
+   324→    return fetchPmcFullText(pmcId);
+   325→  }
+   326→
+   327→  // Otherwise, try to find the PMC ID via ID conversion
+   328→  try {
+   329→    const convertUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi?dbfrom=pubmed&db=pmc&id=${pmid}&retmode=json`;
+   330→    const data = await fetchJson(convertUrl);
+   331→    const linkSets = data?.linksets || [];
+   332→    for (const ls of linkSets) {
+   333→      const linkSetDbs = ls?.linksetdbs || [];
+   334→      for (const lsd of linkSetDbs) {
+   335→        if (lsd?.dbto === "pmc") {
+   336→          const links = lsd?.links || [];
+   337→          if (links.length > 0) {
+   338→            return fetchPmcFullText(String(links[0]));
+   339→          }
+   340→        }
+   341→      }
+   342→    }
+   343→  } catch {
+   344→    // Not available
+   345→  }
+   346→
+   347→  return null;
+   348→}
+   349→
+   350→/* ---------------- UniProt ---------------- */
+   351→export async function searchUniprot(
+   352→  query: string,
+   353→  size = 10
+   354→): Promise<DatabaseQueryResponse> {
+   355→  // Clean the query to fix common LLM-generated syntax errors
+   356→  const cleaned = cleanUniprotQuery(query);
+   357→
+   358→  // Try the full cleaned query first, then fall back to a simplified
+   359→  // keyword-only query (strip organism: filter) if it fails with 400.
+   360→  const tryQuery = async (q: string) => {
+   361→    const url = `https://rest.uniprot.org/uniprotkb/search?query=${encodeURIComponent(
+   362→      q
+   363→    )}&format=json&size=${size}`;
+   364→    return await withRetry(() => fetchJson(url), 2, 1000);
+   365→  };
+   366→
+   367→  let data: any;
+   368→  try {
+   369→    data = await tryQuery(cleaned);
+   370→  } catch (err: any) {
+   371→    // If the cleaned query failed (likely 400), try a simplified version:
+   372→    // strip organism: filter and just search by keywords
+   373→    const simplified = cleaned
+   374→      .replace(/organism(_id)?:("[^"]*"|\S+)/gi, "")
+   375→      .replace(/\s+(AND|OR)\s+/gi, " ")
+   376→      .replace(/\s+/g, " ")
+   377→      .trim();
+   378→    if (simplified && simplified !== cleaned) {
+   379→      try {
+   380→        data = await tryQuery(simplified);
+   381→      } catch {
+   382→        // Both attempts failed — return empty results
+   383→        return { source: "uniprot", query: cleaned, total: 0, items: [] };
+   384→      }
+   385→    } else {
+   386→      return { source: "uniprot", query: cleaned, total: 0, items: [] };
+   387→    }
+   388→  }
+   389→
+   390→  const results = data?.results ?? [];
+   391→  const total = data?.header?.results ?? results.length;
+   392→
+   393→  const items: DatabaseResultItem[] = results.map((r: any) => {
+   394→    const acc = r.primaryAccession;
+   395→    const org = r.organism?.scientificName;
+   396→    const proteinName =
+   397→      r.proteinDescription?.recommendedName?.fullName?.value ||
+   398→      r.proteinDescription?.submissionNames?.[0]?.fullName?.value ||
+   399→      r.proteinDescription?.names?.[0]?.fullName?.value;
+   400→    const gene = r.genes?.[0]?.geneName?.value;
+   401→    const title = `${proteinName || gene || acc}${org ? " [" + org + "]" : ""}`;
+   402→    const comments = (r.comments || [])
+   403→      .map((c: any) => c.texts?.map((t: any) => t.value).join(" "))
+   404→      .filter(Boolean)
+   405→      .join(" ");
+   406→    return {
+   407→      source: "uniprot",
+   408→      externalId: acc,
+   409→      title,
+   410→      authors: org,
+   411→      journal: "UniProtKB",
+   412→      year: r.entryAudit?.lastAnnotationUpdateDate?.slice(0, 4),
+   413→      url: `https://www.uniprot.org/uniprotkb/${acc}`,
+   414→      doi: undefined,
+   415→      abstract:
+   416→        comments.slice(0, 600) ||
+   417→        r.proteinDescription?.recommendedName?.shortNames?.[0]?.value ||
+   418→        undefined,
+   419→      extra: {
+   420→        gene: gene || "",
+   421→        organism: org || "",
+   422→        length: r.sequence?.length ? String(r.sequence.length) : "",
+   423→        function: comments.slice(0, 300),
+   424→      },
+   425→    };
+   426→  });
+   427→
+   428→  return { source: "uniprot", query: cleaned, total, items };
+   429→}
+   430→
+   431→/* ---------------- RCSB PDB ---------------- */
+   432→export async function searchRcsb(
+   433→  query: string,
+   434→  limit = 10
+   435→): Promise<DatabaseQueryResponse> {
+   436→  const cleaned = query.trim();
+   437→  const body = {
+   438→    query: {
+   439→      type: "group",
+   440→      logical_operator: "and",
+   441→      nodes: [
+   442→        {
+   443→          type: "terminal",
+   444→          service: "full_text",
+   445→          parameters: {
+   446→            value: cleaned,
+   447→          },
+   448→        },
+   449→      ],
+   450→    },
+   451→    return_type: "entry",
+   452→    request_options: {
+   453→      paginate: { start: 0, rows: limit },
+   454→      results_content_type: ["experimental"],
+   455→      sort: [{ sort_by: "score", direction: "desc" }],
+   456→    },
+   457→  };
+   458→  const url = "https://search.rcsb.org/rcsbsearch/v2/query?json=" + encodeURIComponent(JSON.stringify(body));
+   459→  const data = await fetchJson(url);
+   460→  const total = data?.total_count ?? 0;
+   461→  const resultSet = data?.result_set ?? [];
+   462→  const ids = resultSet.map((r: any) => r.identifier);
+   463→
+   464→  const items: DatabaseResultItem[] = [];
+   465→  // FIX (citation-accuracy audit): the RCSB /core/pubmed/{id} endpoint does
+   466→  // NOT return title/authors/journal fields — it returns rcsb_pubmed_*
+   467→  // fields (rcsb_id = PMID, rcsb_pubmed_abstract_text = real abstract,
+   468→  // rcsb_pubmed_doi, rcsb_pubmed_central_id). The previous code read
+   469→  // pubData.title / .authors / .journal_abbreviation / .pub_date / .doi /
+   470→  // .abstract — ALL undefined — so every RCSB reference was saved with
+   471→  // authors=<organism name>, journal="PDB · METHOD", year=PDB release year,
+   472→  // and a fake "Method · Resolution · Organism" pseudo-abstract. That
+   473→  // corrupted the final reference list AND every topicality audit.
+   474→  //
+   475→  // Correct strategy:
+   476→  //   1. read the real PMID (rcsb_id) + real abstract + DOI from RCSB
+   477→  //   2. batch-fetch PubMed esummary for those PMIDs → real title/authors/
+   478→  //      journal/year
+   479→  //   3. fall back to structure metadata when no publication is linked
+   480→  const pmidByPdb = new Map<string, string>();
+   481→  const entryMeta = new Map<string, any>();
+   482→
+   483→  for (const id of ids) {
+   484→    try {
+   485→      const meta = await fetchJson(`https://data.rcsb.org/rest/v1/core/entry/${id}`);
+   486→      entryMeta.set(id, meta);
+   487→      const method = meta?.exptl?.[0]?.method;
+   488→      const res = meta?.rcsb_entry_info?.resolution_combined?.[0];
+   489→      const org = meta?.rcsb_entry_info?.organism_scientific_name?.join(", ");
+   490→      const date = meta?.rcsb_accession_info?.initial_release_date;
+   491→
+   492→      // Structure-metadata fallback reference
+   493→      let pubTitle: string | undefined = meta?.struct?.title || id;
+   494→      let pubAuthors: string | undefined = org;
+   495→      let pubJournal: string | undefined = method ? `PDB · ${method}` : "RCSB PDB";
+   496→      let pubYear: string | undefined = date?.slice(0, 4);
+   497→      let pubDoi: string | undefined = meta?.rcsb_entry_container_identifiers?.doi;
+   498→      let pubAbstract: string | undefined = [
+   499→        method ? `Method: ${method}` : "",
+   500→        res ? `Resolution: ${res} Å` : "",
+   501→        org ? `Organism: ${org}` : "",
+   502→      ].filter(Boolean).join(" · ");
+   503→      let hasPub = false;
+   504→      let pmcId: string | undefined;
+   505→
+   506→      try {
+   507→        const pubData = await fetchJson(`https://data.rcsb.org/rest/v1/core/pubmed/${id}`);
+   508→        if (pubData && pubData.rcsb_id) {
+   509→          const pmid = String(pubData.rcsb_id);
+   510→          pmidByPdb.set(id, pmid);
+   511→          hasPub = true;
+   512→          // Real abstract + DOI from RCSB (fields actually present)
+   513→          if (pubData.rcsb_pubmed_abstract_text) {
+   514→            pubAbstract = String(pubData.rcsb_pubmed_abstract_text).slice(0, 2500);
+   515→          }
+   516→          if (pubData.rcsb_pubmed_doi) pubDoi = String(pubData.rcsb_pubmed_doi);
+   517→          if (pubData.rcsb_pubmed_central_id) {
+   518→            pmcId = String(pubData.rcsb_pubmed_central_id);
+   519→          }
+   520→        }
+   521→      } catch {
+   522→        // No associated publication — structure metadata only
+   523→      }
+   524→
+   525→      items.push({
+   526→        source: "rcsb",
+   527→        externalId: id,
+   528→        title: pubTitle || id,
+   529→        authors: pubAuthors,
+   530→        journal: pubJournal,
+   531→        year: pubYear,
+   532→        url: `https://www.rcsb.org/structure/${id}`,
+   533→        doi: pubDoi,
+   534→        abstract: pubAbstract,
+   535→        extra: {
+   536→          method: method || "",
+   537→          resolution: res ? String(res) : "",
+   538→          organism: org || "",
+   539→          pdbId: id,
+   540→          pmid: pmidByPdb.get(id) || "",
+   541→          pmcId: pmcId || "",
+   542→          hasPublication: hasPub,
+   543→        },
+   544→      });
+   545→    } catch {
+   546→      items.push({
+   547→        source: "rcsb",
+   548→        externalId: id,
+   549→        title: id,
+   550→        url: `https://www.rcsb.org/structure/${id}`,
+   551→      });
+   552→    }
+   553→  }
+   554→
+   555→  // Enrich RCSB items that have a linked publication with REAL publication
+   556→  // metadata (title/authors/journal/year) from PubMed esummary.
+   557→  if (pmidByPdb.size > 0) {
+   558→    try {
+   559→      const pmids = [...new Set([...pmidByPdb.values()])];
+   560→      const esummaryUrl =
+   561→        `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${pmids.join(",")}&retmode=json`;
+   562→      const sumData = await fetchJson(esummaryUrl);
+   563→      const sumResult = sumData?.result ?? {};
+   564→      for (const item of items) {
+   565→        if (item.source !== "rcsb") continue;
+   566→        const pmid = pmidByPdb.get(String(item.externalId));
+   567→        if (!pmid) continue;
+   568→        const r = sumResult[pmid];
+   569→        if (!r) continue;
+   570→        const authors = (r.authors || [])
+   571→          .map((a: any) => a.name)
+   572→          .filter(Boolean)
+   573→          .join(", ");
+   574→        if (r.title) item.title = String(r.title).replace(/\.$/, "");
+   575→        if (authors) item.authors = authors;
+   576→        if (r.fulljournalname || r.source) {
+   577→          item.journal = r.fulljournalname || r.source;
+   578→        }
+   579→        const yr = (r.pubdate?.match(/\d{4}/) || [])[0];
+   580→        if (yr) item.year = yr;
+   581→        item.url = `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
+   582→        if (item.extra) {
+   583→          (item.extra as any).pubmedId = pmid;
+   584→        }
+   585→      }
+   586→    } catch (err: any) {
+   587→      console.warn("[searchRcsb] pubmed enrichment failed:", err?.message?.slice(0, 100));
+   588→    }
+   589→  }
+   590→
+   591→  return { source: "rcsb", query: cleaned, total, items };
+   592→}
+   593→
+   594→/* ---------------- NCBI Gene ---------------- */
+   595→export async function searchNcbiGene(
+   596→  query: string,
+   597→  retmax = 10
+   598→): Promise<DatabaseQueryResponse> {
+   599→  const cleaned = query.trim();
+   600→  const esearch = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=gene&term=${encodeURIComponent(
+   601→    cleaned
+   602→  )}&retmax=${retmax}&retmode=json`;
+   603→  const esData = await fetchJson(esearch);
+   604→  const ids: string[] = esData?.esearchresult?.idlist ?? [];
+   605→  const total = parseInt(esData?.esearchresult?.count ?? "0", 10);
+   606→
+   607→  if (ids.length === 0) {
+   608→    return { source: "ncbi", query: cleaned, total: 0, items: [] };
+   609→  }
+   610→
+   611→  const esummary = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=gene&id=${ids.join(
+   612→    ","
+   613→  )}&retmode=json`;
+   614→  const sumData = await fetchJson(esummary);
+   615→  const result = sumData?.result ?? {};
+   616→
+   617→  const items: DatabaseResultItem[] = ids.map((id) => {
+   618→    const r = result[id];
+   619→    if (!r) return null;
+   620→    return {
+   621→      source: "ncbi",
+   622→      externalId: id,
+   623→      title: r.name ? `${r.name} — ${r.description || ""}`.trim() : r.description || id,
+   624→      authors: r.organism?.scientificname || r.organism?.commonname,
+   625→      journal: "NCBI Gene",
+   626→      year: undefined,
+   627→      url: `https://www.ncbi.nlm.nih.gov/gene/${id}`,
+   628→      abstract: r.summary || undefined,
+   629→      extra: {
+   630→        symbol: r.name || "",
+   631→        chromosome: r.chromosome || "",
+   632→        maplocation: r.maplocation || "",
+   633→        organism: r.organism?.scientificname || "",
+   634→      },
+   635→    };
+   636→  }).filter(Boolean) as DatabaseResultItem[];
+   637→
+   638→  return { source: "ncbi", query: cleaned, total, items };
+   639→}
+   640→
+   641→/* ---------------- BLAST (RID polling) ---------------- */
+   642→export async function runBlast(
+   643→  sequence: string,
+   644→  opts: { program?: "blastp" | "blastn"; database?: string } = {}
+   645→): Promise<DatabaseQueryResponse> {
+   646→  const program = opts.program ?? "blastp";
+   647→  const database = opts.database ?? "nr";
+   648→  const cleaned = sequence.replace(/\s+/g, "").slice(0, 4000);
+   649→  if (!cleaned) {
+   650→    return { source: "blast", query: sequence.slice(0, 200), total: 0, items: [] };
+   651→  }
+   652→
+   653→  // Submit BLAST job
+   654→  const putParams = new URLSearchParams({
+   655→    CMD: "Put",
+   656→    PROGRAM: program,
+   657→    DATABASE: database,
+   658→    QUERY: sequence,
+   659→    HITLIST_SIZE: "10",
+   660→    EXPECT: "10",
+   661→    FORMAT_TYPE: "JSON2",
+   662→  });
+   663→  const putRes = await fetchText(
+   664→    "https://blast.ncbi.nlm.nih.gov/blast/Blast.cgi",
+   665→    {
+   666→      method: "POST",
+   667→      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+   668→      body: putParams.toString(),
+   669→    }
+   670→  );
+   671→  const ridMatch = putRes.match(/RID\s*=\s*(\S+)/);
+   672→  if (!ridMatch) {
+   673→    throw new Error("Failed to obtain BLAST RID");
+   674→  }
+   675→  const rid = ridMatch[1];
+   676→
+   677→  // Poll for readiness (max ~60s)
+   678→  let ready = false;
+   679→  for (let i = 0; i < 20; i++) {
+   680→    await new Promise((r) => setTimeout(r, 3000));
+   681→    const checkParams = new URLSearchParams({
+   682→      CMD: "Get",
+   683→      RID: rid,
+   684→      FORMAT_OBJECT: "SearchInfo",
+   685→    });
+   686→    const info = await fetchText(
+   687→      "https://blast.ncbi.nlm.nih.gov/blast/Blast.cgi?" + checkParams.toString()
+   688→    );
+   689→    const statusMatch = info.match(/Status=(\w+)/);
+   690→    const status = statusMatch?.[1];
+   691→    if (status === "READY") {
+   692→      ready = true;
+   693→      break;
+   694→    }
+   695→    if (status === "FAILED" || status === "UNKNOWN") {
+   696→      throw new Error(`BLAST job ${status.toLowerCase()} (RID=${rid})`);
+   697→    }
+   698→  }
+   699→  if (!ready) {
+   700→    return {
+   701→      source: "blast",
+   702→      query: `RID=${rid}`,
+   703→      total: 0,
+   704→      items: [],
+   705→      rawSnippet: `BLAST job ${rid} is still running. Try again later.`,
+   706→    };
+   707→  }
+   708→
+   709→  // Fetch JSON2 results
+   710→  const getParams = new URLSearchParams({
+   711→    CMD: "Get",
+   712→    RID: rid,
+   713→    FORMAT_TYPE: "JSON2",
+   714→    ALIGNMENTS: "10",
+   715→    DESCRIPTIONS: "10",
+   716→  });
+   717→  const raw = await fetchText(
+   718→    "https://blast.ncbi.nlm.nih.gov/blast/Blast.cgi?" + getParams.toString()
+   719→  );
+   720→
+   721→  let hits: any[] = [];
+   722→  try {
+   723→    const parsed = JSON.parse(raw);
+   724→    hits = parsed?.BlastOutput2?.[0]?.report?.results?.search?.hits ?? [];
+   725→  } catch {
+   726→    // fallback: not JSON
+   727→  }
+   728→
+   729→  const items: DatabaseResultItem[] = hits.slice(0, 10).map((h: any) => {
+   730→    const desc = h.description?.[0] || {};
+   731→    const hsps = h.hsps?.[0] || {};
+   732→    const acc = desc.accession || h.num;
+   733→    const title = desc.title || desc.accession || `Hit ${h.num}`;
+   734→    return {
+   735→      source: "blast",
+   736→      externalId: acc,
+   737→      title,
+   738→      authors: desc.taxid ? `taxid:${desc.taxid}` : desc.sciname,
+   739→      journal: `${program} vs ${database}`,
+   740→      year: undefined,
+   741→      url: `https://www.ncbi.nlm.nih.gov/protein/${acc}`,
+   742→      abstract: [
+   743→        hsps["bit-score"] ? `Bit-score: ${hsps["bit-score"]}` : "",
+   744→        hsps.evalue ? `E-value: ${hsps.evalue}` : "",
+   745→        hsps.identity ? `Identity: ${hsps.identity}/${hsps.align_len}` : "",
+   746→        hsps["positive"] ? `Positives: ${hsps["positive"]}/${hsps.align_len}` : "",
+   747→      ].filter(Boolean).join(" · "),
+   748→      extra: {
+   749→        score: hsps["bit-score"] ? String(hsps["bit-score"]) : "",
+   750→        evalue: hsps.evalue ? String(hsps.evalue) : "",
+   751→        identity: hsps.identity ? `${hsps.identity}/${hsps.align_len}` : "",
+   752→      },
+   753→    };
+   754→  });
+   755→
+   756→  return {
+   757→    source: "blast",
+   758→    query: sequence.slice(0, 120),
+   759→    total: items.length,
+   760→    items,
+   761→    rawSnippet: `BLAST ${program} vs ${database} · RID=${rid}`,
+   762→  };
+   763→}
+   764→
+   765→/* ---------------- Router ---------------- */
+   766→export async function queryDatabase(
+   767→  source: DatabaseSource,
+   768→  query: string,
+   769→  opts: { program?: "blastp" | "blastn"; database?: string } = {}
+   770→): Promise<DatabaseQueryResponse> {
+   771→  switch (source) {
+   772→    case "pubmed":
+   773→      return searchPubMed(query, 20);
+   774→    case "uniprot":
+   775→      return searchUniprot(query, 20);
+   776→    case "rcsb":
+   777→      return searchRcsb(query, 20);
+   778→    case "ncbi":
+   779→      return searchNcbiGene(query, 20);
+   780→    case "blast":
+   781→      return runBlast(query, opts);
+   782→    default:
+   783→      throw new Error(`Unsupported database source: ${source}`);
+   784→  }
+   785→}
+   786→

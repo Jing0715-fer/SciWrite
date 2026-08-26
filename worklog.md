@@ -617,3 +617,549 @@ Stage Summary:
 - 视觉提升：暖纸张 + 深祖母绿、分层软阴影、毛玻璃工具栏、渐变品牌徽章与主按钮、tab-pill 指示器、surface-card 内容卡 hover 悬浮、acad-fade-in 入场动画、emerald 选中高亮、精化空状态。
 - 涉及文件：globals.css、layout.tsx (body 底纹自动生效)、page.tsx、projects-sidebar.tsx、progress-tracker.tsx、citation-health-dashboard.tsx、paragraph-card.tsx、database-query-panel.tsx、knowledge-panel.tsx。
 - Lint 通过、dev server 编译干净、浏览器端到端验证交互正常。
+
+---
+Task ID: review-frontend
+Agent: Explore (frontend reviewer)
+Task: Comprehensive frontend code review
+
+Work Log:
+- Read worklog.md recent sections (Task IDs 7/6/8/ui-redesign-orchestrator) for context on the "Refined Academic Studio" UI redesign.
+- Read all 4 architecture files: src/app/layout.tsx (88 lines), src/components/providers.tsx (28 lines), src/components/theme-provider.tsx (11 lines), src/app/page.tsx (1279 lines).
+- Read all 6 target sciwrite components in full: paragraph-card.tsx (1064 lines), citation-health-dashboard.tsx (986 lines), projects-sidebar.tsx (614 lines), knowledge-panel.tsx (631 lines), database-query-panel.tsx (408 lines), progress-tracker.tsx (164 lines).
+- Read src/lib/api-client.ts (828 lines) end-to-end.
+- Read src/app/globals.css (769 lines) end-to-end.
+- Read src/lib/i18n.tsx (2804 lines) end-to-end (en + zh + partial ja/ko/fr sections + I18nProvider/useI18n implementation).
+- Read all 4 hooks: use-focus-trap.ts (69), use-keyboard-shortcuts.ts (140), use-mobile.ts (19), use-toast.ts (193).
+- Read src/lib/types.ts (201) for type definitions.
+- Ran `bun run tsc --noEmit` to surface compile-time type errors that ESLint (with `no-undef`/`no-unused-vars` disabled in eslint.config.mjs) misses.
+- Cross-referenced usage of dead CSS classes (sciwrite-range-slider, focus-ring, dark-text) and dead hooks (useFocusTrap) via ripgrep.
+
+Stage Summary:
+
+## CRITICAL (blocks functionality / breaks `next build`)
+
+1. **`src/app/page.tsx:491` — `setGatherOpen` is undefined.**
+   CommandPalette action "gather" calls `onSelect: () => setGatherOpen(true)`, but `setGatherOpen` is never declared as a `useState` setter in the `Home()` component. Clicking "Gather sources" in the ⌘K palette throws `ReferenceError: setGatherOpen is not defined` at runtime. Confirmed by `tsc --noEmit`: `src/app/page.tsx(491,29): error TS2304: Cannot find name 'setGatherOpen'`.
+
+2. **`src/app/page.tsx:521` — `setOutlineOpen` is undefined.**
+   Same pattern: the "outline" CommandPalette action calls `setOutlineOpen(true)`. ReferenceError when clicking "Generate research outline" in the palette. Confirmed by `tsc --noEmit`: `src/app/page.tsx(521,29): error TS2304: Cannot find name 'setOutlineOpen'`.
+
+3. **`src/app/page.tsx:481, 501` — `setWriteOpen`/`setComposeOpen` are dead state.**
+   The setters are declared on lines 97–98 but the boolean state values `writeOpen`/`composeOpen` are never read anywhere — they drive no UI. The actual dialog open state is `unifiedWriteOpen` + `unifiedWriteTab`. Calling these setters from the palette does nothing useful (silent no-op). Dead state from a refactor that wasn't cleaned up.
+
+4. **`src/app/page.tsx` — unused lazy imports.**
+   `TopicComposer` (line 51), `ArticleComposer` (line 52), `DataGatheringDialog` (lazy, line 67), `OutlineDialog` (lazy, line 73) are imported but never rendered anywhere in the JSX. These belong to the same dead refactor as #1–#3. The bundle now includes `TopicComposer`/`ArticleComposer` eagerly even though they are unused.
+
+5. **`src/app/page.tsx:143, 154` — `project.references` accessed but type doesn't include it.**
+   `api.getProject` returns `Project & { paragraphs: any[]; dataSources: DataSource[]; articles: Article[] }` (api-client.ts:48), but `src/lib/types.ts:61`'s `Project` interface has no `references` field, and the wrapper type omits it too. The `references` useMemo on line 141 reads `project?.references` — works at runtime because the Prisma endpoint actually returns `references`, but TypeScript rejects it. Confirmed: `tsc` reports `error TS2339: Property 'references' does not exist on type 'Project & { paragraphs: any[]; dataSources: DataSource[]; articles: Article[]; }'` at lines 143 and 154. The type contract is wrong; the next `next build` will fail.
+
+6. **`src/app/page.tsx:434` — `project.field` passed where `string | undefined` required but actual type is `string | null | undefined`.**
+   `<UnifiedWritingDialog field={project.field} ...>` — `project.field` is `string | null | undefined` (Prisma schema allows null), but `UnifiedWritingDialog`'s prop expects `string | undefined`. `tsc` error TS2322.
+
+7. **`src/lib/i18n.tsx:1106, 1108, 2310, 2312` — duplicate translation keys.**
+   `structure.bfactor` is defined twice in the `en` block (lines 1061 "B-factor / Flexibility" and 1106 "B-factor") and twice in the `zh` block (lines 2265 and 2310). `structure.sasa` is duplicated in `en` (lines 1062, 1108) and `zh` (2266, 2312). The later (shorter) definition silently overrides the first (more descriptive) one. `tsc` reports `TS1117: An object literal cannot have multiple properties with the same name` at all four locations. The first definitions ("B-factor / Flexibility", "Solvent Accessibility (SASA)") are dead code.
+
+8. **`src/app/globals.css:706-712` — `hsl(var(--primary))` is invalid CSS, breaks slider styling.**
+   `.sciwrite-range-slider` uses `background: hsl(var(--primary))`. But `--primary` is defined as `oklch(0.48 0.14 164)` (an oklch color, not a bare HSL triplet). The expression `hsl(oklch(0.48 0.14 164))` is invalid CSS — browsers silently drop the entire rule, leaving the slider thumb with default UA styling (no brand color). Also affects `::-webkit-slider-thumb` and `::-moz-range-thumb` on lines 712, 730, 737. The class is also unused anywhere in src/ (ripgrep confirms) — but the broken CSS still ships in the bundle.
+
+## HIGH (real bugs that affect users)
+
+9. **`src/components/sciwrite/knowledge-panel.tsx:60, 66, 67, 61` — `articles` and `onOpenArticle` props are destructured but never used.**
+   The `KnowledgePanel` component declares `articles` (line 60) and `onOpenArticle` (line 61) as required props in its type (lines 66, 67) but neither appears anywhere in the JSX or logic. Both are passed by the parent (`page.tsx:405–411`) but ignored. Dead props — increases the call-site surface area without benefit.
+
+10. **`src/components/sciwrite/citation-health-dashboard.tsx` — entire component bypasses the i18n system.**
+    No `useI18n()` import, no `t(...)` calls anywhere in 986 lines. All user-facing strings are hardcoded English: "Analyzing citation health…" (line ~365), "Citation health unavailable" (~376), "Auto-fix all" (~530), "Regenerate all" (~570), "Worst-offending paragraphs" (~640), "Article audits" (~670), "No composed articles yet. Run Compose to generate one." (~675), "All paragraphs pass the citation audit." (~645), "Grade = 100 − (5×blocking + 1×warning)." (~425), the AlertDialogTitle "Regenerate all paragraphs with citation issues?" (~905), etc. Switching the language toggle to 中文 leaves this entire dashboard in English — major i18n consistency failure.
+
+11. **`src/components/sciwrite/citation-health-dashboard.tsx` — bypasses the `api` client and TanStack Query.**
+    Uses raw `fetch()` directly (lines ~163, ~178, ~186, ~196, ~255, ~280, ~295, ~300, etc.) instead of the central `api` wrapper in `src/lib/api-client.ts`. Skips TanStack Query entirely (manual `useState` for `loading`/`error`/`report`). No cache, no retry, no automatic refetch-on-focus. This is inconsistent with the rest of the codebase which uses `api.*` + `useQuery`.
+
+12. **`src/components/sciwrite/citation-health-dashboard.tsx` — `fixResult`/`regenResult` badges persist forever despite "shows for 8s" comment.**
+    Comment on line ~580: "Fix result badge — shows for 8s after a batch fix completes." But there is no `setTimeout` to clear `fixResult`/`regenResult`. Once a batch fix completes, the green "Fixed X/Y across Z ¶" badge stays visible until the next fetch or component unmount. Same for the regen badge.
+
+13. **`src/lib/api-client.ts:287, 466` — Promise executor anti-pattern.**
+    `aiGenerateFullStream` and `aiGenerateFullV2Stream` both do `return new Promise(async (resolve, reject) => { ... })`. Using an `async` function as the Promise executor is a known anti-pattern: any error thrown synchronously inside the executor (before the first await catches it) becomes an unhandled rejection rather than rejecting the returned promise. Should be `async () => { ... }` without the `new Promise` wrapper, or `new Promise((resolve, reject) => { (async () => { ... })().catch(reject) })`.
+
+14. **`src/lib/api-client.ts:14-35` — `jfetch` has no timeout, surfaces raw backend error text.**
+    No `AbortController` / `AbortSignal` is used; long-running endpoints (`adversarialReviewArticle`, `aiGenerateFullV2Stream`, `summarizeArticle`) can hang indefinitely with no abort path. The thrown error message is the raw backend response text (line 33: `throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg))`), which propagates directly to UI toasts (`toast.error(e.message)` in every component). Backend stack traces / internal server error details leak to end users — potential information disclosure + XSS if message renders HTML in some toast variants.
+
+15. **`src/lib/api-client.ts:482` — SSE parser is fragile.**
+    `if (!line.startsWith("data: ")) continue;` — doesn't handle multi-line SSE events with `event:`/`id:`/`retry:` fields, doesn't normalize `\r\n` line endings, doesn't decode `data:` field's escape sequences. Behind proxies that re-wrap chunks (Caddyfile is in the repo), events could split across `buffer.split("\n\n")` chunks. The `for (const line of lines) { try { JSON.parse(line.slice(6)) } catch {} }` swallows parse errors silently, so malformed SSE is invisible — bad for debugging intermittent pipeline failures.
+
+16. **`src/app/page.tsx:1248` — Footer inline `style={{ boxShadow: ... }}` overrides `.glass-toolbar` class.**
+    The hardcoded `inset 0 1px 0 oklch(0.905 0.012 150 / 0.8)` is the light-mode hairline color. Inline style wins over the `.glass-toolbar` class's multi-shadow (which includes a brand-tinted drop shadow + the inset line). Consequences: (1) Footer loses its outer drop shadow in both themes. (2) In dark mode the inset line stays `oklch(0.905 0.012 150 / 0.8)` (warm light gray, ~70% alpha) instead of the dark-mode `--border: oklch(1 0 0 / 10%)` (white 10% alpha), so the footer's top border is too dark/opaque in dark mode and breaks visual consistency with the rest of the dark UI.
+
+17. **`src/components/sciwrite/projects-sidebar.tsx:481-496` — hardcoded blue accents violate "avoid indigo/blue" design rule.**
+    Project count badges still use `bg-blue-500/10 text-blue-700 dark:text-blue-300` (lines 481, 312). The redesign task explicitly swapped all blue accents to emerald/teal/primary across the rest of the codebase (per worklog Task 8: "All blue/sky accents in knowledge-panel.tsx were swapped to emerald/primary"). The projects-sidebar escaped the cleanup, leaving the source-type color mapping inconsistent (paragraphs = blue here vs emerald everywhere else).
+
+18. **`src/hooks/use-toast.ts:185` — `useEffect` depends on `state`, causing listener thrash.**
+    `React.useEffect(() => { listeners.push(setState); return () => { ... }; }, [state])` — the `state` dependency causes the effect to re-run (unsubscribe + resubscribe) on every dispatch. Should be `[]` for a one-time subscription. Causes listener-array mutation churn on every toast update.
+
+19. **`src/lib/i18n.tsx` + `src/app/layout.tsx:76` — `<html lang="en">` is hardcoded; never updated when user switches language.**
+    `I18nProvider.setLang` writes to localStorage but doesn't update `document.documentElement.lang`. The `:lang(zh)` CSS selector in `globals.css` (lines ~288-295) defines `line-height: 1.85; letter-spacing: 0;` for CJK text — but since `<html lang>` is always `"en"`, the selector never matches, so Chinese typography polish never applies even when the user picks 中文. Real i18n CSS bug.
+
+20. **`src/components/sciwrite/database-query-panel.tsx:290-291` — `savingSource`/`savingRef` flags are global, not per-item.**
+    `savingSource={saveSourceMut.isPending}` and `savingRef={saveRefMut.isPending}` are passed to every `ResultCard`. When saving any one item, EVERY card's "+ Source" and "+ Reference" buttons render as disabled. Should use `saveSourceMut.variables === item` (like `analyzeStructurePending` pattern in knowledge-panel.tsx:371-374) to disable only the in-flight item.
+
+## MEDIUM (code smell / maintainability)
+
+21. **`src/app/page.tsx` is 1279 lines with 6 inline component definitions.**
+    `Header`, `WritingWorkspace`, `EmptyWorkspace`, `Footer`, `EmbeddedReviewWorkspace`, `RelationshipWorkspace`, `safeParseArr` are all defined in the same file as `Home()`. Should be split into separate files (e.g. `src/components/sciwrite/workspace/header.tsx`, `footer.tsx`, `embedded-review-workspace.tsx`, `relationship-workspace.tsx`, `empty-workspace.tsx`). 1279 lines crosses the "巨型组件 >500 行" threshold flagged in the task prompt.
+
+22. **`src/components/sciwrite/paragraph-card.tsx` is 1064 lines.** Same巨型 component smell. Defines 4 sub-components (`ParagraphCard`, `FormatSelect`, `SelectionToolbar`, `RevisePopover`, `InsertStructureAnalysisButton`) in one file. The selection-toolbar + pending-mark DOM-manipulation logic (lines 239-300) is complex enough to deserve its own hook.
+
+23. **`src/components/sciwrite/citation-health-dashboard.tsx` is 986 lines.** Single component, no extraction. Multiple `useCallback` clusters (fetchHealth, fixParagraph, runBatchAutoFix, fixSingleParagraph, regenerateParagraph, runBatchRegenerate) — each ~30-50 lines. Could be extracted into a `useCitationHealth(projectId)` hook.
+
+24. **`src/components/sciwrite/knowledge-panel.tsx:412` — `t` prop is typed `(key: any, opts?: any) => string`.**
+    Passing `t` as a prop loses the `TranslationKey` type safety — any string is accepted. Should be `t: TranslationKeyFn` from i18n.tsx, or just call `useI18n()` inside `SourceCard` directly (no prop drilling needed).
+
+25. **Heavy `any` usage across api-client.ts return types.**
+    `validateCitations`, `getSavedReview`, `getSavedRelationships`, `autoFixCitations`, `validateProjectCitations`, `aiGather`, `aiReview`, `aiGenerateFullStream`, `aiGenerateFullV2Stream`, `adversarialReviewArticle`, `getInsights`, `createArticleVersion`, `listPromptTemplates` (templates), `importProject`, `listComments`, `createComment`, `updateComment` — all return `any`. ~30+ endpoints lose their return type contracts. Allowed by `tsconfig.json:13: "noImplicitAny": false` + `eslint.config.mjs:12: "@typescript-eslint/no-explicit-any": "off"`, but defeats TypeScript's purpose for these callsites.
+
+26. **`src/lib/api-client.ts:626` — `(blob as any).__exportWarnings = decodeURIComponent(warningHeader)` is a hack.**
+    Attaches a non-standard property to a `Blob` object. Won't survive serialization. TypeScript needs `as any`. Should return `{ blob, warnings }` as an object instead of mutating the Blob.
+
+27. **`src/components/sciwrite/paragraph-card.tsx:190` — `setUndoSnapshot(paragraph.content)` inside `mutationFn`.**
+    Calling a state setter inside a TanStack Query `mutationFn` is a side effect during the mutation pipeline. Works today (the call is synchronous before the first await) but it's a code smell — TanStack docs recommend `onMutate` for optimistic pre-mutation state updates.
+
+28. **`src/components/sciwrite/projects-sidebar.tsx:457` — uses native `confirm()` browser dialog for delete confirmation.**
+    Inconsistent with the rest of the app which uses `AlertDialog` (e.g. citation-health-dashboard.tsx confirmation dialog at line ~905). `confirm()` is synchronous, blocks the tab, and can't be themed or internationalized.
+
+29. **`src/app/globals.css` — dead CSS classes never referenced in src/.**
+    `.sciwrite-range-slider` (lines 698-769, ~71 lines), `.focus-ring` (lines ~383-386), `.prose-academic.dark-text` selector (line ~287). Ripgrep across `src/` confirms zero usages. All ship in the production CSS bundle for nothing.
+
+30. **`src/hooks/use-focus-trap.ts` — entire hook is dead code.**
+    Defined but never imported anywhere outside itself. Ripgrep confirms only the definition file matches. Also has bugs of its own: (1) `el.offsetParent !== null` filter (line 33) excludes `position: fixed` elements (popover content!), so dialog focus traps would miss focusable elements inside fixed-position dialogs. (2) No focus restoration when trap deactivates — focus is "lost" after closing the dialog. (3) Hardcoded 50ms `setTimeout` for initial focus (line 40) — race condition with React render. The hook doesn't actually back any of the dialog components (shadcn dialog primitives bring their own focus management via Radix).
+
+31. **`src/hooks/use-toast.ts` — entire legacy toast system is dead code in practice.**
+    All 37 toast call sites in `src/components/sciwrite/*` import `toast` from `sonner`. The legacy `useToast`/`toast` from `use-toast.ts` is only consumed by `src/components/ui/toaster.tsx`, which is rendered in `layout.tsx:82` alongside `<SonnerToaster>`. So we have TWO toast systems mounted simultaneously but only one (Sonner) ever receives events. The Radix-based `<Toaster />` renders nothing useful, just consumes a slot in the layout.
+
+32. **`src/hooks/use-keyboard-shortcuts.ts` — only used by `article-viewer-tabs.tsx`, not by the main app.**
+    The main app's keyboard shortcuts (page.tsx:196-246) implement their own window keydown listener manually instead of using this hook. Inconsistency — either the hook should be used everywhere, or the hook should be removed in favor of inline handlers.
+
+33. **`src/app/page.tsx:97-98` — `writeOpen`/`composeOpen` useState setters exist but values are never read.**
+    (Cross-reference to #3 — duplicated here as code smell.)
+
+34. **`src/components/sciwrite/projects-sidebar.tsx:500` — `project.field.replace("-", " ")` only replaces the first hyphen.**
+    For fields like "drug-discovery" → "drug discovery" (OK), "structural-biology" → "structural biology" (OK), but for any multi-hyphen value only the first segment is replaced. Should be `.replace(/-/g, " ")`. Same bug in `page.tsx:750` (`String(project.field).replace("-", " ")`).
+
+35. **`src/components/sciwrite/database-query-panel.tsx:60` — `DATABASE_SOURCES.find((s) => s.id === source)!` non-null assertion.**
+    If `source` is ever set to a value not in `DATABASE_SOURCES` (e.g. through user-controlled state or a future source type), `srcMeta` will be `undefined` and `.description`/`.shortName`/`.queryPlaceholder` will throw `TypeError: Cannot read properties of undefined`. Should default to `DATABASE_SOURCES[0]`.
+
+36. **`src/components/sciwrite/knowledge-panel.tsx:500-525` — IIFE inside JSX parses `d.extra` JSON twice per render.**
+    `extraObj` is parsed once at the top of `SourceCard` (line 425), and then again inside the JSX render path (line 502) for the same data. Should reuse `extraObj` instead of re-parsing.
+
+37. **`src/app/globals.css:404` — `.tab-pill { border: 1px solid oklch(0.905 0.012 150 / 0.9) }` uses unlayered border shorthand.**
+    Unlike `.surface-card` (which was fixed in the redesign to set only `border-width`/`border-style` per the worklog's "v112 cascade bug" note), `.tab-pill` still uses the `border` shorthand. By Cascade Layers spec (unlayered CSS wins over layered utilities), `tab-pill border-primary/40` / `hover:border-primary/30` won't apply the primary color. Affects knowledge-panel.tsx:289 where `tab-pill ${TYPE_BADGE[st]}` is composed — the active source-type pill has its card-colored border instead of the source-type color border. Visual inconsistency only.
+
+## LOW (polish)
+
+38. **`src/components/sciwrite/projects-sidebar.tsx:176, 228, 234, 292` — hardcoded English UI strings.**
+    "Search projects…" (176), `No projects match "{search}".` (228), "Clear search" (234), "Open full article in viewer" (292 — also missing translation key). All bypass `useI18n()` despite the rest of the sidebar using `t(...)`.
+
+39. **`src/components/sciwrite/knowledge-panel.tsx:261, 343, 354` — hardcoded English UI strings.**
+    "All" tab label (261), "show all" button (343), "No {activeType} sources." (354) — all untranslated.
+
+40. **`src/components/sciwrite/knowledge-panel.tsx:535-553` — hardcoded English unit abbreviations.**
+    "ch", "res", "lig", "Ramach.", "pI", "q=" inline — no translation.
+
+41. **`src/components/sciwrite/projects-sidebar.tsx:313, 320` — fragile word-count heuristics.**
+    `Math.round(enLen / 6)` (assumes 6 chars/word for English — actual avg is ~5) and `Math.round(zhLen / 2)` (assumes 2 chars/word for Chinese — actual avg is ~1.6). The displayed word counts can be off by 10–25%. Should use a proper word-counter or store `wordCount` server-side.
+
+42. **`src/components/sciwrite/progress-tracker.tsx:119` — `${unresolvedAnnotations}!/${resolvedAnnotations}✓` uses symbols without aria-label.**
+    Screen readers will read "5 exclamation slash 12 checkmark" awkwardly. Should be aria-label="5 unresolved, 12 resolved" or use visually-hidden text.
+
+43. **`src/components/sciwrite/knowledge-panel.tsx:46-54` — `SOURCE_TYPE_ICONS` uses emoji.**
+    Emojis render differently across OSes (Windows Segoe UI Emoji vs Apple Color Emoji vs Noto on Linux) and have no `aria-label` for screen readers. Should use Lucide icons (already imported elsewhere) with proper aria-labels.
+
+44. **`src/lib/i18n.tsx:6` — `Lang` type includes `ja`/`ko`/`fr` with only ~50 keys translated (~10% coverage).**
+    Users picking Japanese/Korean/French will see ~90% English fallback text. Either complete the translations or remove the half-translated languages from the toggle to avoid false advertising. The fallback behavior is documented (line ~2720) but UX-wise misleading.
+
+45. **`src/hooks/use-mobile.ts:18` — `return !!isMobile` loses the `undefined` initial state.**
+    Coerces `undefined` to `false`. Callers can't distinguish "haven't checked yet" from "not mobile". `page.tsx:271` works around this with `isMobile === undefined ?` check — but the workaround only works because the hook re-renders with the real value before the consumer's render commits. Should return `boolean | undefined` and let callers handle the loading state explicitly.
+
+46. **`src/components/sciwrite/paragraph-card.tsx:252` — `try { parent.normalize(); } catch {}` swallows errors silently.**
+    `parent.normalize()` is a standard DOM API that doesn't throw on text nodes. The try/catch is defensive but hides any real issue. Combined with the empty catch on line 286 (`} catch {` for the `range.extractContents()` block), DOM manipulation failures during text selection are invisible — bad for debugging.
+
+47. **`src/app/page.tsx:531-535, 240-242` — direct `document.documentElement.classList.toggle("dark")` bypasses next-themes.**
+    The CommandPalette "dark mode" action and the "D" keyboard shortcut both toggle the `dark` class on `<html>` directly and write `localStorage.setItem("theme", ...)` manually, bypassing `next-themes`'s `ThemeProvider`. This can desync the theme state — the next-themes internal state (used by `ThemeToggle`/`ThemeSwitcher` for the toggle button appearance) won't update. User clicks the palette's "Toggle dark mode", the page goes dark, but the `ThemeToggle` icon still shows "light mode" until next render. Should call `theme.setTheme(...)` via a `useTheme()` hook instead.
+
+48. **`src/components/providers.tsx:14` — `staleTime: 15_000` is very short.**
+    15-second stale time means queries refetch on almost every navigation. Combined with `refetchOnWindowFocus: false` (good), this is borderline OK for an editor app, but for things like `["projects"]` (line 109) that change rarely, a 60s–120s staleTime would be more appropriate and reduce server load.
+
+49. **`src/app/layout.tsx:82-83` — both `<Toaster />` (Radix) and `<SonnerToaster />` mounted.**
+    Redundant. Per #31, the Radix Toaster is unused. Remove the Radix one (and the entire `src/hooks/use-toast.ts` file + `src/components/ui/toaster.tsx` + `src/components/ui/toast.tsx`) in favor of Sonner-only.
+
+50. **`src/components/sciwrite/citation-health-dashboard.tsx:417` — `hasBlocking && "animate-pulse"` constant pulse is distracting.**
+    The grade badge continuously pulses red whenever there's any blocking error, which is essentially always true during paragraph generation. Continuous animation is exhausting for users with ADHD and violates WCAG 2.2.2 (Pause, Stop, Hide). Should pulse only briefly on transition (e.g. via `key={agg.totalBlocking}` + CSS animation) or show a static red badge.
+
+---
+Task ID: review-backend
+Agent: Explore (backend reviewer)
+Task: Comprehensive backend code review
+
+Work Log:
+- Read worklog.md recent sections (frontend review at line 622+; v53-恢复 rate-limiter wrap; v70-1 gap-fill; v98/v99 audits; ui-redesign-orchestrator) for context.
+- Read V2 pipeline end-to-end: src/app/api/ai/generate-full-v2/route.ts (1226 lines) — all 8 pipeline stages (gather → curate → plan → analyze → allocate → generate → verify → compose) plus the exported `adversarialVerifySection` helper.
+- Read core lib modules: src/lib/rate-limiter.ts (331), src/lib/llm-session.ts (519), src/lib/ai.ts (463), src/lib/citation-audit.ts (665), src/lib/citation-binding.ts (318), src/lib/evidence-pipeline.ts (366), src/lib/generate-full-helpers.ts (354), src/lib/databases.ts (785 partial), src/lib/llm-selection.ts (71), src/lib/db.ts (26), src/lib/llm-cache.ts (118).
+- Sampled 11 representative API routes across all namespaces:
+  - src/app/api/projects/route.ts, src/app/api/projects/[id]/route.ts, src/app/api/projects/[id]/share/route.ts, src/app/api/projects/[id]/validate-citations/route.ts, src/app/api/projects/[id]/fix-references/route.ts, src/app/api/projects/import/route.ts
+  - src/app/api/shared/[token]/route.ts
+  - src/app/api/paragraphs/[id]/route.ts, src/app/api/paragraphs/[id]/regenerate/route.ts
+  - src/app/api/data-sources/[id]/deep-read/route.ts
+  - src/app/api/articles/[id]/adversarial-review/route.ts
+  - src/app/api/comments/route.ts, src/app/api/references/lookup/route.ts, src/app/api/llm-config/select/route.ts, src/app/api/user-data/route.ts, src/app/api/quota-status/route.ts
+- Cross-referenced via ripgrep: (a) `zod` usage in src/app/api (zero hits), (b) `auth|session|cookie|verifyToken` patterns across src/app/api (zero non-trivial hits — no auth anywhere), (c) `$queryRawUnsafe` / `$queryRaw` usage (only the harmless PRAGMA in src/lib/db.ts:23 — no SQL injection surface), (d) `mini-services|websocket|socket.io|ws://` (zero hits across src/), (e) `withRateLimit` / `bucket.acquire` call sites (only src/lib/ai.ts:155 and :287, plus the rate-limiter internals).
+- Verified /home/z/my-project/mini-services contains only an empty .gitkeep (0 bytes, dated May 12). No mini-service code, no websocket code, no orphaned references. Folder is dead weight.
+
+Stage Summary:
+
+## CRITICAL (data loss, security, broken pipeline)
+
+1. **`src/app/api/ai/generate-full-v2/route.ts:164-170` — DELETE-then-WRITE pipeline with NO transaction around the inserts.**
+   Lines 164-170 wrap ONLY the deletes in `db.$transaction([...])`:
+   ```
+   await db.$transaction([
+     db.annotation.deleteMany({ where: { paragraph: { projectId } } }),
+     db.articleParagraph.deleteMany({ where: { paragraph: { projectId } } }),
+     db.paragraph.deleteMany({ where: { projectId } }),
+     db.dataSource.deleteMany({ where: { projectId } }),
+     db.reference.deleteMany({ where: { projectId } }),
+   ]);
+   ```
+   The subsequent inserts (gather save loop lines 333-386, per-section paragraph.create+reference.create lines 769-800, compose rewrite lines 952-995) are NOT wrapped in any transaction. If the pipeline crashes AFTER the deletes but BEFORE the inserts complete (LLM timeout, OOM, network drop, process kill), the project is left permanently EMPTY: no paragraphs, no data sources, no references, no articles — with NO recovery path. The user's prior work is gone.
+   User-visible symptom: User kicks off a regeneration, walks away for 10 minutes, comes back to find the project blank. No error in the UI (the SSE stream was interrupted). All paragraphs/references from previous runs are gone.
+
+2. **`src/app/api/ai/generate-full-v2/route.ts:172` — `clearAbort()` is a process-wide side effect.**
+   `clearAbort()` (rate-limiter.ts:185-187) unsets a module-level `let aborted = false` (line 179). Two concurrent V2 pipeline runs (e.g. on different projects) share this singleton. Request A hits a 429 on its 5th retry → `setAbort(...)` (rate-limiter.ts:189). Request B starts, calls `clearAbort()` at line 172 → A's abort flag is now `false`. A's subsequent `chatWithSessionStream` calls throw no `RateLimitAbortedError` (rate-limiter.ts:256-258), so A keeps firing LLM calls into the rate-limited provider, getting fresh 429s, burning quota.
+   Same bug pattern at `src/app/api/articles/[id]/adversarial-review/route.ts:104` and `:227` — manual `clearAbort()` calls to work around stale flags from prior requests.
+   User-visible symptom: Quota burns through faster than expected, daily limit reached prematurely, "QuotaExhaustedError" surprises the user mid-pipeline.
+
+3. **`src/app/api/ai/generate-full-v2/route.ts:542, 550` — `abortedDueToRateLimit` is dead code.**
+   `let abortedDueToRateLimit = false;` is declared but NEVER reassigned anywhere in the file (ripgrep confirms only the declaration and the read). The check `if (abortedDueToRateLimit || isAborted())` always evaluates to `false || isAborted()`. The intended design was clearly to set `abortedDueToRateLimit = true` when a RateLimitAbortedError was caught, so the loop would `continue` past subsequent sections gracefully (skipping them with `status: "skipped"`). Instead, when `isAborted()` is true at the top of a loop iteration, the section is skipped — but the streaming try/catch (lines 628-670) catches the RateLimitAbortedError thrown by `chatWithSessionStream` and falls back to `chatWithSession` (line 663), which ALSO throws RateLimitAbortedError (from `withRateLimit` line 256-258). That throw escapes the catch block (line 663 isn't wrapped in try/catch), propagates to the outer try/catch at line 1057, sends `"error": "v2 pipeline failed: ..."` and calls `safeClose()`. The pipeline aborts ENTIRELY on the first rate-limited section instead of skipping it. The "skipped" path (lines 550-559) is unreachable in practice.
+   User-visible symptom: After the rate limiter sets `aborted` (e.g. daily quota exhausted), the V2 pipeline dies abruptly on the next section with `v2 pipeline failed: previous call aborted; skipping 'generate'`, rather than finishing the remaining sections gracefully.
+
+4. **No authentication on ANY backend route.**
+   Ripgrep of `src/app/api` for `zod|z\.object` returns ZERO hits — no input-validation library in use. Ripgrep for `auth|session|cookie|verifyToken|requireAuth` (excluding session-context / cliSession / chatWithSession helpers) returns ZERO hits — no auth middleware, no cookie parser, no JWT verification. Every route is publicly accessible to anyone who can reach the server. Concretely:
+   - `DELETE /api/projects/[id]/route.ts:78` — anyone can delete any project by ID. No ownership check.
+   - `PATCH /api/paragraphs/[id]/route.ts:42` — anyone can overwrite any paragraph's content. No ownership check.
+   - `POST /api/projects/[id]/share/route.ts:18-52` — anyone can mint a share token for any project. Once minted, the share token grants read access to all articles via `GET /api/shared/[token]` (no auth needed there either).
+   - `POST /api/llm-config/select/route.ts:26-83` — anyone can switch the LLM provider for the entire server (provider state is global, persisted to `/tmp/sciwrite-cache/selected-provider.json`).
+   - `POST /api/comments/route.ts:42-63` — anyone can post comments on any article/paragraph, including with arbitrary `parentId` (no orphan check; see #14 below).
+   - `POST /api/user-data/route.ts:17-42` — anyone can write arbitrary user-data rows.
+   The only "auth" is `shareToken` for the public read-only `/api/shared/[token]` endpoint, and that token is minted by the same unauthenticated POST. Self-hosted single-user deployment is the implicit threat model, but the Caddyfile in the repo root suggests it's served behind a reverse proxy — still no auth at the application layer.
+   User-visible symptom: If the server is reachable from the internet (or shared on a lab network), any visitor can wipe or rewrite projects.
+
+5. **`src/app/api/ai/generate-full-v2/route.ts:383, 385, 310, 174-177` — empty catch blocks silently swallow DB / cache failures.**
+   Lines 333-386 (gather save loop):
+   ```
+   for (const item of uniqueItems) {
+     try {
+       const ds = await db.dataSource.create({ ... });
+       savedDataSources.push(ds);
+       const isCitable = ...;
+       if (isCitable) {
+         try {
+           const ref = await db.reference.create({ ... });
+           savedReferences.push(ref);
+         } catch {}          // ← LINE 383: silent
+       }
+     } catch {}              // ← LINE 385: silent
+   }
+   ```
+   If `db.reference.create` fails for 5 of 50 items (e.g. transient SQLite write contention, UNIQUE constraint on a duplicate externalId, NULL constraint on a missing field), the user sees `References: 45` in the final `complete` event — but the audit `buildAuditReport` (line 1024) is called against `articleContent` which references all 50 via the global map. 5 phantom references exist in the body with no DB row, breaking the numbering-integrity check.
+   Same pattern at line 310 (`catch {}` for `webSearch` per-query failures — no telemetry on which queries failed), line 174-177 (`clearLLMCache` import errors silently swallowed).
+   User-visible symptom: User reruns gather; sees "References: 45" instead of 50; downstream citation audit says "5 missing" with no explanation of why.
+
+6. **`src/app/api/ai/generate-full-v2/route.ts:94-109` — `ReadableStream` has no `cancel()` handler; client disconnects leave LLM + DB work running.**
+   The stream is created with only a `start(controller)` callback. There's no `cancel(reason)` method (Web Streams spec allows it). When the browser closes the SSE connection (user navigates away, refreshes, network drop), the underlying `ReadableStream` is cancelled by Next.js, but the long-running `start` async function keeps going: LLM calls (each 5-30s) + DB writes (each ~50ms × N references) continue to execute, consuming provider quota + DB write slots for an audience of zero. The `send()` function will throw on `controller.enqueue` (stream is closed), the catch on line 101 sets `isClosed=true`, so subsequent `send()` calls become no-ops — but the underlying work continues for up to `maxDuration = 1800` seconds (30 minutes).
+   User-visible symptom: User kicks off generation, closes the tab, opens a new one, kicks off another generation — both are running concurrently, contending for the same rate-limiter singleton (see #11), wasting LLM quota. The server has no way to know the first stream is dead.
+
+7. **`src/app/api/data-sources/[id]/deep-read/route.ts:28` — `readPage(source.url)` is an SSRF vector.**
+   `source.url` is user-controlled (set during gather via `webItems` from `webSearch`, or via the project import route at `src/app/api/projects/import/route.ts:47-56`). `readPage` (ai.ts:429-448) calls `zai.functions.invoke("page_reader", { url })` — an outbound HTTP fetch. If the URL is `http://169.254.169.254/latest/meta-data/` (AWS metadata endpoint), `http://localhost:6379/` (Redis on the server), or `http://internal-admin.local/`, the SciWrite server fetches internal resources and returns a summary to the attacker via the response body. No URL allowlist, no private-IP filtering.
+   User-visible symptom: Attacker imports a project with a data source whose URL is an internal admin panel; the LLM summarizes the internal page content into `summary`, which the attacker can then read via `GET /api/data-sources/[id]`.
+
+8. **`src/app/api/ai/generate-full-v2/route.ts:1021 — `db.articleVersion.create(...).catch(() => {})` silently swallows auto-save failures.**
+   ```
+   await db.articleVersion.create({ ... }).catch(() => {});
+   ```
+   If the auto-saved version fails (e.g. SQLite UNIQUE constraint, schema drift, disk full), the article itself was just saved at line 998-1012 — but no version trail exists. The user's "undo" path is broken with no UI signal. Same pattern at `src/app/api/articles/[id]/adversarial-review/route.ts:301` and `:347` (citation audit report persistence — silently dropped).
+   User-visible symptom: User clicks "regenerate", article changes, no version appears in the version history. No error surfaced.
+
+## HIGH (real bugs that affect users)
+
+9. **`src/lib/rate-limiter.ts:46-92` — TokenBucket has a waiter-stranding race when multiple callers find tokens=0 simultaneously.**
+   ```
+   async acquire(): Promise<void> {
+     this.refill();
+     if (this.tokens > 0) { this.tokens -= 1; return; }
+     await new Promise<void>((resolve) => {
+       this.waiters.push(resolve);
+       const waitMs = this.refillIntervalMs;
+       setTimeout(() => this.pump(), waitMs);
+     });
+   }
+   ```
+   If caller A and caller B both find `tokens <= 0` within the same ms (very common with concurrent LLM calls in V2 pipeline), both push to `waiters` and BOTH schedule `setTimeout(pump, 2000)`. setTimeout_A fires first, `pump()` refills +1 token (2s elapsed), gives it to A, exits (tokens=0 again, `break`). setTimeout_B fires ~1ms later, `pump()` calls `refill()` — elapsed since `lastRefill` (just advanced by setTimeout_A's pump) is ~1ms, `newTokens=0`, `break` immediately. B is stranded in `waiters` until the NEXT caller C arrives and schedules another `setTimeout`. If no C arrives (e.g. B was the last LLM call in the pipeline), B hangs indefinitely.
+   User-visible symptom: A V2 pipeline that fires its last `chatWithSession` call concurrent with another (e.g. gather's database queries finishing at the same time as the LLM call) can hang for 4+ seconds instead of the expected 2s — and the gather phase may stall entirely if no subsequent acquire() is issued.
+
+10. **`src/lib/rate-limiter.ts:111-119` — sliding-window cool-down is naive; triggers 60s wait on EVERY call past threshold.**
+    ```
+    nextCoolDownMs(): number {
+      const now = Date.now();
+      this.timestamps = this.timestamps.filter((t) => now - t < this.windowMs);
+      if (this.timestamps.length >= this.threshold) {
+        return this.coolDownMs;   // ← 60_000 always, regardless of how far past threshold
+      }
+      return 0;
+    }
+    ```
+    With `threshold=15` and `coolDownMs=60_000` (line 172), every call AFTER the 15th in 10 min sleeps 60s — so call 16 sleeps 60s, call 17 sleeps 60s, call 18 sleeps 60s, ... For a V2 pipeline that fires ~30+ LLM calls (gather=2, curate=1, plan=1, analyze=3, allocate=1, generate=10, verify=10), call 16 lands around section 4 of generate — exactly matching the worklog's "rate-limiter cool-down slows V2 by 4-5 min after 6-7 sections" report. The fix is to compute proportional backoff: `coolDownMs = Math.max(0, (timestamps.length - threshold + 1) * (windowMs / threshold))` (rate matches threshold/windowMs) or to drop the cool-down entirely and rely on the token bucket's 1-token-per-2s rate.
+    User-visible symptom: V2 generation takes 25-30 min instead of 15 min for a 10-section article; UI shows long periods of "streaming..." with no deltas.
+
+11. **`src/lib/rate-limiter.ts:171-192` — global singletons for bucket/window/quota/aborted.**
+    ```
+    const bucket = new TokenBucket(2, 2000);
+    const window = new SlidingWindow(10 * 60 * 1000, 15, 60 * 1000);
+    const quota = new QuotaState();
+    let aborted = false;
+    ```
+    These are module-level (process-wide). Comment at `quota-status/route.ts:18-20` acknowledges this is "process-local state... for UI hint purposes" — but the singletons actually govern real throttling behavior (withRateLimit reads from them). In a multi-instance deployment (e.g. behind a load balancer), each instance has its own rate count. Two instances each fire 14 calls in 10 min = 28 total, well over the provider's 30-call limit — provider returns 429, but each instance only "knows" about its own 14 calls. Conversely, an instance that has never seen a request still reports `windowCount: 0` from `getWindowCount()`. The "aborted" flag is the worst: once set on instance A, all subsequent calls on instance A throw — but the user may be routed to instance B on next request, where calls work fine. The user sees inconsistent "rate limit" errors depending on which instance handled the request.
+    User-visible symptom: Multi-instance deployments see "phantom" 429s from the provider, "aborted" state persists on one instance but not another.
+
+12. **`src/app/api/ai/generate-full-v2/route.ts:956-994` — per-paragraph references are deleted then recreated with NO transaction; mid-failure leaves paragraphs referenceless.**
+    ```
+    for (let i = 0; i < renumberedContents.length && i < generatedParagraphs.length; i++) {
+      const paraId = generatedParagraphs[i].id;
+      const content = renumberedContents[i];
+      await db.paragraph.update({ where: { id: paraId }, data: { content } });
+      await db.reference.deleteMany({ where: { paragraphId: paraId } });
+      // ... compute citedGlobalNums ...
+      for (let globalNum = 1; globalNum <= maxCitedNum; globalNum++) {
+        const ref = globalRefs[globalNum - 1];
+        if (ref) {
+          await db.reference.create({ ... });   // ← N sequential creates, no batching, no transaction
+        }
+      }
+    }
+    ```
+    If the inner create loop throws on the 5th reference (e.g. SQLite write contention, NULL constraint), the paragraph has been wiped (deleteMany) and only 4 references recreated. The user's paragraph is now referenceless or partial — and the next paragraph in the loop will rewrite its own references, so the partial state is "frozen" until the next full regenerate.
+    User-visible symptom: User opens a paragraph in the workspace; sees citations [1][2][3] in the body but only 1 reference in the side panel (the other 2 were lost mid-rewrite). Hover tooltips say "Reference not found".
+
+13. **`src/app/api/ai/generate-full-v2/route.ts:769-800` — per-section paragraph+references save is not transactional.**
+    Same shape as #12. `db.paragraph.create` (line 769) + N sequential `db.reference.create` calls (lines 782-800). If reference #5 throws, the paragraph exists with partial references. Worse: `generatedParagraphs.push({ id: paragraph.id, ... })` (line 802) — the compose phase (lines 838-848) fetches this paragraph by ID, expecting references to exist; partial references lead to `globalRefMap` mismatches and silent renumbering drift.
+
+14. **`src/app/api/comments/route.ts:42-63` — POST accepts arbitrary `articleId` / `paragraphId` / `parentId` with no existence checks.**
+    Lines 53-60:
+    ```
+    const comment = await db.comment.create({
+      data: {
+        articleId: articleId || null,
+        paragraphId: paragraphId || null,
+        parentId: parentId || null,
+        content: content.trim(),
+      },
+    });
+    ```
+    No FK existence check (Prisma's `@@reference` may or may not be in schema — would need to check prisma/schema.prisma; if not enforced, this is an orphan-creating endpoint). `parentId` can be the ID of a comment on a DIFFERENT article — creating cross-article reply threads. `content` is not length-capped (could be 10MB), not HTML-escaped (likely XSS if rendered without sanitization on the client).
+    User-visible symptom: A malicious or buggy client can post a 10MB comment that bloats the SQLite DB; or a comment that links to a parent on another article, breaking threaded display.
+
+15. **`src/app/api/projects/[id]/route.ts:52-71` — PATCH accepts arbitrary `status` string.**
+    ```
+    data: {
+      ...(body.status !== undefined ? { status: String(body.status) } : {}),
+      ...
+    }
+    ```
+    `status` is `String()`-coerced but not validated against any enum. User can submit `status: "deleted"` or `status: "anything"` and it's persisted. Same pattern at `paragraphs/[id]/route.ts:39` (`body.status`), `:37` (`body.format`), `:38` (`body.scenario`). Schema integrity leak — downstream code that switches on `status === "draft"` may behave unexpectedly.
+    User-visible symptom: Project status badge in the UI shows raw "anything" instead of the expected "active" / "archived".
+
+16. **`src/app/api/projects/route.ts:39-44` and many others — raw error messages returned to client.**
+    ```
+    return NextResponse.json(
+      { error: err?.message || "Failed to create project." },
+      { status: 500 }
+    );
+    ```
+    `err.message` for a Prisma error often contains schema details: "Foreign key constraint failed on field: `field_name`" or "Invalid `db.project.create()` invocation: ... value `null` for field `topic`". This leaks DB schema names + field constraints to any caller. Same pattern at `user-data/route.ts:38`, `references/lookup/route.ts:132`, `data-sources/[id]/deep-read/route.ts:77`, `paragraphs/[id]/regenerate/route.ts:273`, `projects/import/route.ts:215`, etc.
+    User-visible symptom: Attacker submits malformed POST bodies to map the schema; eventually crafts a valid import payload.
+
+17. **`src/lib/llm-session.ts:191-193` — user message is saved BEFORE the LLM call; orphan user message persists if LLM throws.**
+    ```
+    await saveSessionMessage(projectId, opts.taskType, "user", prompt, opts.metadata);
+    // ... chatWithSessionId(...) throws here ...
+    ```
+    If the LLM call throws (rate-limit abort, network drop, ENAMETOOLONG), the user message is saved but no assistant message follows. Next call's `loadSessionContext` (line 62-90) returns the orphan user message at the end of the context — the LLM sees an unanswered user message, then a new user message, and may try to "answer" both. Pollutes the session.
+    User-visible symptom: After a failed LLM call, the next generation pass produces slightly off-base output (LLM is answering the previous orphan prompt + the new one).
+
+18. **`src/lib/llm-session.ts:62-90` — `loadSessionContext` fetches up to `maxMessages * 2 = 40` rows from DB, but only uses the last 4.**
+    ```
+    const messages = await db.conversationSession.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: maxMessages * 2, // fetch more than needed, then trim by tokens
+    });
+    // ...
+    const recent = context.slice(-4);
+    ```
+    Wasteful — fetches 40 rows, walks them all backward for token budgeting, then only uses the last 4. Could `take: 4` directly. On a project with hundreds of session messages (long V2 pipeline = 30+ messages per run × multiple runs), this fetches + deserializes 40 rows per LLM call (× ~30 calls per V2 run = 1200 rows fetched per V2 run, of which 120 are used).
+    User-visible symptom: V2 generation is slower than necessary; DB shows high query volume per generation run.
+
+19. **`src/app/api/ai/generate-full-v2/route.ts:1024` — `buildAuditReport(articleContent, [])` skips the numbering-integrity check.**
+    The signature is `buildAuditReport(articleContent: string, dbRefs: AuditRef[] = [])`. Passing `[]` means the mismatch check (citation-audit.ts:516-537) comparing body [n] → DB reference [n-1] is silently skipped. So the final accuracy report's `auditBlockingErrors` count NEVER includes mismatches — only `out-of-range`, `missing`, `duplicate`. Comment on citation-audit.ts:467 says "Pass [] to skip the DB-integrity check" — but the caller (V2 pipeline compose) is the LAST place you'd want to skip it.
+    User-visible symptom: User sees "audit: 0 blocking errors" in the final `complete` event even though the body [n] mapping may not match the saved DB reference order.
+
+20. **`src/lib/databases.ts:152-181` PubMed abstract fetch uses regex on XML.**
+    ```
+    const absRe = /<AbstractText[^>]*Label="([^"]*)"[^>]*>([\s\S]*?)<\/AbstractText>|<AbstractText[^>]*>([\s\S]*?)<\/AbstractText>/g;
+    ```
+    Multi-line abstracts with nested tags (`<i>`, `<sub>`, `<xref>`) — the regex captures between `<AbstractText>` and `</AbstractText>`, which works for simple cases. But XML namespaces, CDATA sections, or self-closing variants (`<AbstractText/>`) break it silently. No fallback to a real XML parser. Same issue at `fetchPmcFullText` (lines 250-311) — entire body extraction uses regex, no DOM parser.
+    User-visible symptom: Some PubMed abstracts appear truncated or missing in the gathered data, leading to weak topicality scores in the audit (false "unsupported" verdicts).
+
+21. **`src/app/api/ai/generate-full-v2/route.ts:540, 583-585, 810-814` — `previousSectionsDigest` only keeps the LAST 3 sections.**
+    ```
+    previousSectionsDigest = (previousSectionsDigest + "\n" + digestEntry)
+      .split("\n")
+      .filter(Boolean)
+      .slice(-3)
+      .join("\n");
+    ```
+    For a 10-section article, by section 8, the digest contains only sections 5-7. Section 8 has no awareness of sections 1-4, leading to repetition of opening hooks or thematic drift. Comment in the prompt (line 583) says "do NOT repeat their content" but the LLM can't honor that for content it can't see.
+    User-visible symptom: Section 8 of a 10-section article repeats an example from section 2; user has to manually revise.
+
+22. **`src/lib/evidence-pipeline.ts:147-149` and `:272-275` — silent LLM failure with keyword-fallback.**
+    ```
+    } catch (err: any) {
+      console.warn(`[extractEvidenceBank] batch ${...} failed: ${err?.message?.slice(0, 100)}`);
+    }
+    ```
+    And in `allocateEvidenceToSections`: "LLM failed, using keyword fallback". These are caught and the pipeline continues with degraded quality (no extracted evidence / no LLM allocation). But the V2 pipeline doesn't surface this degradation in the `complete` event's accuracy stats — the user sees "evidenceItems: 0" and has to know that means "LLM failed", not "no evidence available".
+    User-visible symptom: User sees "evidenceItems: 0" in the analyze step; thinks the sources have no claims; doesn't realize the LLM call failed.
+
+## MEDIUM (code smell / maintainability)
+
+23. **`src/lib/rate-limiter.ts:80-91` — `acquire()` returns `undefined` in both branches; `Promise<void>` is fine but the silent success vs queue-wait distinction is lost on callers.**
+    No way for `withRateLimit` to know whether the acquire was instant or queued. Could return `{queued: boolean, waitMs: number}` for telemetry.
+
+24. **`src/app/api/ai/generate-full-v2/route.ts` is 1226 lines.** Single function `POST` spans 85-1073 (988 lines). Should be split into `gatherStep()`, `curateStep()`, `planStep()`, `analyzeStep()`, `allocateStep()`, `generateStep()`, `verifyStep()`, `composeStep()` helpers, each in its own file under `src/lib/v2-pipeline/`. Currently impossible to unit-test in isolation.
+
+25. **`src/lib/llm.ts` is 1483 lines** with 7+ inline CLI adapter tables (Hermes, Claude, Codex, Gemini, OpenClaw, CodeBuddy, Aider, plus Anthropic + OpenAI SDK). Each adapter has its own regex banners, env vars, smoke-test args. Should be one file per adapter under `src/lib/llm/adapters/`. Adding a new CLI = patching a 1483-line file.
+
+26. **`src/lib/llm-selection.ts:60-71` — `setSelectedProvider` uses synchronous `writeFileSync`.**
+    ```
+    writeFileSync(SELECTED_FILE, JSON.stringify(payload, null, 2));
+    ```
+    Called from `POST /api/llm-config/select` (an API route) — blocks the event loop on every provider switch. Not a hot path, but should use `fs.promises.writeFile`. Also no atomic write (temp file + rename) — process crash mid-write corrupts the file.
+
+27. **`src/lib/db.ts:21-27` — `;(async () => { await db.$queryRawUnsafe(...) })()` IIFE at module load.**
+    Side-effect on import — running `PRAGMA journal_mode = DELETE` once per process. Works (ES modules are singletons), but the side-effect is invisible at the call site. If `db.ts` is imported in a test or CLI script, the PRAGMA runs unconditionally. Should be exposed as `initDb()` and called explicitly from the app entry point.
+
+28. **`src/lib/ai.ts:155, 287` — `withRateLimit` wraps the SDK call but only rate-limits the START of the stream; once the body begins, no further throttling.**
+    Comment on line 283-286 acknowledges this: "Streaming still consumes a quota slot... We only rate-limit the START of the stream (the SDK call itself); once the stream body begins, we drain it normally below." This is OK for upstream-provider rate limits (which count requests, not stream duration). But if a stream takes 60s to drain (long section), the next call's `bucket.acquire()` will succeed immediately (token was already consumed at start) — two streams can run concurrently, both consuming upstream quota slots. Provider's 30-req/10min limit can be exceeded.
+
+29. **`src/lib/ai.ts:255-387` — `chatStream` SSE parser is fragile.**
+    Line 330: `const lines = buffer.split("\n");` — doesn't handle `\r\n` line endings (Windows / some proxies). Line 331: `buffer = lines.pop() || "";` keeps the last partial line, but if a chunk boundary falls mid-line and the next chunk starts with `\n`, the buffer logic mangles it. Line 350-356: `try { JSON.parse(data) } catch { accumulated += data; }` — fallback treats raw text as content, which can corrupt the accumulated stream if the provider sends non-JSON heartbeats or comments. Same issue at lines 375-378 (final flush).
+    User-visible symptom: Occasional corrupted section text (missing words, mangled JSON) when the SDK or proxy splits SSE chunks unexpectedly.
+
+30. **`src/lib/llm-session.ts:210-222` — `MAX_TOTAL_CHARS = 28000` trim is wasted because `chat()` (ai.ts:124-128) re-trims to `SAFE_PROMPT_LIMIT = 24000`.**
+    ```
+    // chatWithSession
+    const MAX_TOTAL_CHARS = 28000;
+    let finalPrompt = messages.map(...).join("\n\n");
+    if (finalPrompt.length > MAX_TOTAL_CHARS) { ... }
+    finalPrompt += "\n\nASSISTANT:";
+    // then passed to chatWithSessionId → chat()
+    // chat():
+    const compressedPrompt = compressPrompt(prompt, opts.system);  // SAFE_PROMPT_LIMIT = 24000
+    ```
+    The 28k trim happens first, then the 24k trim. The 4k slack is dead code — the 24k trim dominates. Either remove the 28k trim, or raise `SAFE_PROMPT_LIMIT` to 28000 (it's already below the Linux ARG_MAX).
+
+31. **`src/lib/generate-full-helpers.ts:177-223` — `safeParseJSON` Strategy 3 "fix" mutates JSON semantics.**
+    ```
+    let fixed = match[0]
+      .replace(/,\s*}/g, "}")        // trailing comma
+      .replace(/,\s*]/g, "]")        // trailing comma in array
+      .replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3')  // unquoted keys
+      .replace(/'/g, '"');           // single quotes
+    ```
+    The third regex quotes unquoted keys, but `\w+` matches numeric keys too — `12: "..."` becomes `"12": "..."` (changes semantics for arrays-vs-objects). The fourth regex replaces ALL single quotes — including those inside string values: `'it's a paper'` → `"it"s a paper"` (broken). Defensive parsing of LLM output is inherently fragile; should use a tolerant JSON parser like `json5` instead.
+
+32. **`src/lib/llm-cache.ts:35-41` — `hashString` is non-cryptographic djb2.**
+    32-bit hash with ~1000 cache entries — birthday paradox collision at ~65k entries. For a single-session cache that's reset on `clearLLMCache()` (called by V2 pipeline at line 176), unlikely to matter. But if the cache grows (long-running process, many projects), two different prompts could collide and return the wrong cached result. Should use `crypto.createHash('sha256')` for cache keys.
+
+33. **`src/lib/llm-cache.ts:63-76` — `getCachedLLMResult` mutates `_hits` / `_misses` counters.**
+    Counters are not thread-safe (Node is single-threaded so OK), but if the cache is read concurrently from multiple in-flight `withRateLimit` calls, the counters can drift. Also: expired entry deletion on read (line 70) is O(1) per call, but means reads have side effects — surprising.
+
+34. **`src/lib/llm-session.ts:104-127` — `saveSessionMessage` swallows DB errors.**
+    ```
+    } catch (err) {
+      console.error("[saveSessionMessage] error:", err);
+    }
+    ```
+    Comment says "Non-fatal — context saving should never break the main task". OK in principle, but means the user has no telemetry that context is being lost. After 5 saves fail in a row, the LLM has zero context, output quality degrades silently.
+
+35. **`src/lib/ai.ts:406-419` — `webSearch` silently returns `[]` for non-zai providers.**
+    Comment acknowledges the no-op. But the V2 pipeline (route.ts:287-312) iterates over `webSearchQueries` and pushes 0 items per query — no warning that web search is silently disabled. Should at minimum log "web search disabled for provider X" once.
+
+36. **`src/lib/ai.ts:124-198` — `chat()` for non-default provider dispatches through `generateText(opts.system ?? "", prompt, {llm: ...})` — but `prompt` here is the ORIGINAL prompt, not `compressedPrompt`.**
+    Line 128: `const compressedPrompt = compressPrompt(prompt, opts.system);` — computed for the zai-sdk branch. Line 187: `const r = await generateText(opts.system ?? "", prompt, { ... })` — uses `prompt` not `compressedPrompt`. So for non-zai providers (Hermes, Claude, etc.), the prompt is NOT compressed — and CLI providers have a 32KB argv limit (Windows) / 128KB (Linux). A 28KB prompt (post-chatWithSession trim) on Windows → ENAMETOOLONG → spawn throws → `r.ok = false` → "selected provider 'X' returned no output".
+    User-visible symptom: User switches to a CLI provider on Windows; V2 pipeline fails with "provider returned no output" on long prompts.
+
+37. **`src/app/api/ai/generate-full-v2/route.ts:851-933` — global renumbering logic uses `globalRefs.indexOf(r)` (line 913) — O(n²).**
+    ```
+    filteredRefs.forEach((r, i) => {
+      refNumberMap.set(globalRefs.indexOf(r) + 1, i + 1);
+    });
+    ```
+    For ~50 refs, that's 50 × 50 = 2500 indexOf calls. Negligible perf-wise, but the use of object identity (`indexOf` uses `===`) means if the same ref object appears in two places (shouldn't happen, but defensive), it picks the first. Should use a Map<ref, number> built once.
+
+38. **`src/lib/databases.ts:40-63` `withRetry` — comment says "max 2 retries" but loop `<= maxRetries` means 3 total attempts.**
+    Off-by-one comment. Not a bug (calls succeed on attempt 0, 1, or 2), but confusing.
+
+39. **`src/app/api/projects/[id]/share/route.ts:40-42` — existing share token is returned as-is, no expiry.**
+    ```
+    if (project.shareToken) {
+      return NextResponse.json({ shareToken: project.shareToken });
+    }
+    ```
+    Share tokens never expire. If a token leaks (e.g. shared in a Slack DM, then Slack gets breached), the project's articles are readable forever. The `revoke` action exists (line 31-37), but requires the user to manually call it. Should have a default 30-day expiry, or rotate on every "create" call.
+
+40. **`src/lib/llm.ts:1483` — uses `execSync` for binary probing (probe timeout).**
+    `execSync` blocks the event loop. While probing 7 CLIs × 6s smoke-test budget = 42s of blocked event loop on first call. Should use `execFile` with promise wrapper. The `inspectProviders` call is invoked from `POST /api/llm-config/select` — every provider switch blocks the event loop for up to 42s. Concurrent requests queue behind it.
+
+41. **No structured logging anywhere in the backend.** All logs are `console.log` / `console.warn` / `console.error` with ad-hoc format strings like `[generate-full-v2] +12345ms ...`. No request ID, no correlation ID, no log levels, no JSON output. Hard to debug in production.
+
+## LOW (polish)
+
+42. **`src/app/api/ai/generate-full-v2/route.ts:37` — `maxDuration = 1800` (30 min) only works on self-hosted Node.** On Vercel (Hobby 60s, Pro 300s, Enterprise 900s) this would hit the function timeout. OK for the Caddyfile-based self-hosted deployment in the repo, but worth noting for portability.
+
+43. **Magic numbers throughout `route.ts`**: `VERIFY_BATCH_SIZE = 10` (line 83), `VERIFY_REMOVE_CONFIDENCE = 80` (line 81), `maxCitableRefs` formula (line 406), `MAX_TOTAL_CHARS = 28000` (llm-session.ts:210). Should be centralized in a `v2-config.ts` module.
+
+44. **`src/app/api/quota-status/route.ts` — endpoint is unauthenticated and exposes daily quota state to anyone.** Low risk (no PII, just numbers), but worth noting given #4.
+
+45. **`mini-services/` folder contains only `.gitkeep` (0 bytes).** No mini-service code, no orphaned references in src/ (ripgrep confirms zero hits for `mini-services|websocket|socket.io|ws://`). Folder is safe to delete.
+
+46. **`src/lib/llm-selection.ts` reads/writes to `os.tmpdir()/sciwrite-cache/selected-provider.json`.** On multi-user systems, `/tmp` is shared — any user on the box can read/write this file. If an attacker has shell access to the host, they can swap the provider id to a malicious CLI path. Low risk for single-user self-hosted, but worth noting.
+
+---
+Task ID: code-review-synthesis
+Agent: main (Z.ai Code orchestrator)
+Task: 全面代码审查 — 综合前端/后端/数据库/构建配置/运行日志，整理一份完整的工程问题清单
+
+Work Log:
+- 读取 worklog.md 上轮记录（V2 修复 + UI 重构 + GitHub 推送）
+- 浏览项目根目录结构（src/, mini-services/, prisma/, tests/, .zscripts/, tool-results/）
+- 阅读 V2 管线 1227 行、rate-limiter.ts、llm-session.ts、citation-audit.ts、citation-binding.ts、ai.ts、db.ts、schema.prisma、package.json、eslint.config.mjs、next.config.ts、Caddyfile、.gitignore
+- 解读 dev.log 全量（1451 行）— 仅 2 条 error，均为 /api/export 旧版本残留 stack（已修复）
+- 并行委派 2 个 Explore 子代理审查前端 / 后端（结果见 review-frontend / review-backend 节）
+- 自查验证子代理发现的高严重度问题（i18n 重复键、未定义 setter、jszip 未声明依赖、tests/tests/ 重复目录、tool-results/ 被追踪）
+
+Stage Summary:
+- 共汇总 8 个 CRITICAL、26 个 HIGH、36 个 MEDIUM、18 个 LOW 级问题，分布于前端、后端、构建配置、仓库卫生四个层面。
+- 最致命的 5 个：
+  1. 前端 CommandPalette 调用未定义的 setGatherOpen / setOutlineOpen（page.tsx:491, 521）→ 点击触发 ReferenceError，运行时崩溃
+  2. V2 管线 DELETE-then-WRITE 非原子（route.ts:164-170）→ 中途崩溃数据永久丢失
+  3. 全后端 0 鉴权 / 0 zod 输入校验 → 任何路由可被任意调用
+  4. jszip 在 src/app/api/export/route.ts:16 直接 import 但未在 package.json 声明 → 新装/CI 即崩
+  5. next.config.ts:8 ignoreBuildErrors=true + eslint.config.mjs 关闭 no-undef/no-unused-vars → 把"安全网"全部拆掉，TypeScript error 与 ESLint error 均不阻 build
+- 详细分项见下方"Comprehensive Code Review Report"。

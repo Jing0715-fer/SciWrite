@@ -1,0 +1,1065 @@
+     1→"use client";
+     2→
+     3→import * as React from "react";
+     4→import { toast } from "sonner";
+     5→import {
+     6→  FileText,
+     7→  MessageSquare,
+     8→  Pencil,
+     9→  Trash2,
+    10→  CheckCircle2,
+    11→  Loader2,
+    12→  Wand2,
+    13→  MoreHorizontal,
+    14→  ChevronDown,
+    15→  ChevronUp,
+    16→  PenLine,
+    17→  Copy,
+    18→  X,
+    19→  Undo2,
+    20→  GitCompare,
+    21→  RotateCw,
+    22→  ShieldCheck,
+    23→  Box,
+    24→  Quote,
+    25→} from "lucide-react";
+    26→import { Button } from "@/components/ui/button";
+    27→import { Textarea } from "@/components/ui/textarea";
+    28→import { Badge } from "@/components/ui/badge";
+    29→import {
+    30→  DropdownMenu,
+    31→  DropdownMenuContent,
+    32→  DropdownMenuItem,
+    33→  DropdownMenuSeparator,
+    34→  DropdownMenuTrigger,
+    35→} from "@/components/ui/dropdown-menu";
+    36→import {
+    37→  Select,
+    38→  SelectContent,
+    39→  SelectItem,
+    40→  SelectTrigger,
+    41→  SelectValue,
+    42→} from "@/components/ui/select";
+    43→import {
+    44→  Popover,
+    45→  PopoverContent,
+    46→  PopoverTrigger,
+    47→} from "@/components/ui/popover";
+    48→import {
+    49→  Collapsible,
+    50→  CollapsibleContent,
+    51→  CollapsibleTrigger,
+    52→} from "@/components/ui/collapsible";
+    53→import { api } from "@/lib/api-client";
+    54→import {
+    55→  PARAGRAPH_FORMATS,
+    56→  PARAGRAPH_SCENARIOS,
+    57→  STATUS_STYLES,
+    58→  ANNOTATION_TYPES,
+    59→  SEVERITY_STYLES,
+    60→} from "@/lib/constants";
+    61→import type { Annotation, Paragraph } from "@/lib/types";
+    62→import { useMutation, useQueryClient } from "@tanstack/react-query";
+    63→import { MarkdownCitations, parseCitationsBlock, type CitationRef } from "./markdown-citations";
+    64→import { ExportMenu } from "./export-menu";
+    65→import { DiffView } from "./diff-view";
+    66→import { CitationValidationDialog } from "./citation-validation-dialog";
+    67→import { Icon } from "./icon";
+    68→import { useI18n } from "@/lib/i18n";
+    69→
+    70→interface Props {
+    71→  paragraph: Paragraph & { annotations: Annotation[]; references: any[] };
+    72→  projectId: string;
+    73→  index: number;
+    74→  /** The latest composed article content — used to extract global reference
+    75→   * data so that hover tooltips resolve [20] etc. correctly. */
+    76→  articleContent?: string;
+    77→}
+    78→
+    79→export function ParagraphCard({ paragraph, projectId, index, articleContent }: Props) {
+    80→  const { t } = useI18n();
+    81→  const qc = useQueryClient();
+    82→  const [editing, setEditing] = React.useState(false);
+    83→  const [draft, setDraft] = React.useState(paragraph.content);
+    84→  const [annOpen, setAnnOpen] = React.useState(false);
+    85→  const [activeAnnotation, setActiveAnnotation] = React.useState<Annotation | null>(null);
+    86→  const [selection, setSelection] = React.useState<{ text: string; rect: DOMRect } | null>(null);
+    87→  const [undoSnapshot, setUndoSnapshot] = React.useState<string | null>(null);
+    88→  const [diffOpen, setDiffOpen] = React.useState(false);
+    89→  const [validateOpen, setValidateOpen] = React.useState(false);
+    90→  const [viewLang, setViewLang] = React.useState<"en" | "zh">("en");
+    91→  const bodyRef = React.useRef<HTMLDivElement>(null);
+    92→  const pendingMarkRef = React.useRef<HTMLElement | null>(null);
+    93→
+    94→  // Check if this paragraph has a Chinese translation
+    95→  const hasZh = !!(paragraph as any).contentZh;
+    96→  // Pick the content to display based on the language toggle
+    97→  const displayContent = viewLang === "zh" && hasZh
+    98→    ? (paragraph as any).contentZh
+    99→    : paragraph.content;
+   100→
+   101→  // Extract global article references from the composed article's
+   102→  // ## References section. This allows hover tooltips to resolve globally
+   103→  // numbered citations like [20] even when the paragraph's own references
+   104→  // list is local (7 entries).
+   105→  const globalArticleRefs = React.useMemo<CitationRef[]>(() => {
+   106→    if (!articleContent) return [];
+   107→    const refHeaderIdx = articleContent.indexOf("## References");
+   108→    const bareRefIdx = articleContent.indexOf("\nREFERENCES\n");
+   109→    if (refHeaderIdx >= 0) {
+   110→      const refText = articleContent.slice(refHeaderIdx);
+   111→      try {
+   112→        const parsed = parseCitationsBlock(refText);
+   113→        if (parsed.length > 0) return parsed;
+   114→      } catch {}
+   115→    }
+   116→    if (bareRefIdx >= 0) {
+   117→      const refText = articleContent.slice(bareRefIdx + 1);
+   118→      try {
+   119→        const parsed = parseCitationsBlock(refText);
+   120→        if (parsed.length > 0) return parsed;
+   121→      } catch {}
+   122→    }
+   123→    return [];
+   124→  }, [articleContent]);
+   125→
+   126→  // Resolve citations against the PARAGRAPH'S OWN reference list. The
+   127→  // paragraph body carries its own numbering ([n] = the n-th reference
+   128→  // attached to this paragraph, ordered by citationOrder), so local refs are
+   129→  // the only correct resolver here. Using the composed article's global
+   130→  // "## References" list caused out-of-range markers (e.g. [14] vs a 13-ref
+   131→  // article) to render as red "?" chips.
+   132→  // The global list is only a fallback for paragraphs with no refs attached.
+   133→  const effectiveRefs =
+   134→    (paragraph.references?.length ?? 0) > 0
+   135→      ? paragraph.references
+   136→      : globalArticleRefs;
+   137→
+   138→  const invalidate = () => qc.invalidateQueries({ queryKey: ["project", projectId] });
+   139→
+   140→  const updateMut = useMutation({
+   141→    mutationFn: (input: Partial<Paragraph>) =>
+   142→      api.updateParagraph(paragraph.id, input),
+   143→    onSuccess: () => {
+   144→      toast.success(t("toast.paragraphUpdated"));
+   145→      setEditing(false);
+   146→      invalidate();
+   147→    },
+   148→    onError: (e: Error) => toast.error(e.message),
+   149→  });
+   150→
+   151→  const deleteMut = useMutation({
+   152→    mutationFn: () => api.deleteParagraph(paragraph.id),
+   153→    onSuccess: () => {
+   154→      toast.success(t("toast.paragraphDeleted"));
+   155→      invalidate();
+   156→    },
+   157→    onError: (e: Error) => toast.error(e.message),
+   158→  });
+   159→
+   160→  const addAnnMut = useMutation({
+   161→    mutationFn: (input: Partial<Annotation>) =>
+   162→      api.addAnnotation(paragraph.id, input),
+   163→    onSuccess: () => {
+   164→      toast.success(t("toast.annotationAdded"));
+   165→      clearSelection();
+   166→      invalidate();
+   167→    },
+   168→    onError: (e: Error) => toast.error(e.message),
+   169→  });
+   170→
+   171→  const resolveAnnMut = useMutation({
+   172→    mutationFn: ({ id, resolved }: { id: string; resolved: boolean }) =>
+   173→      api.updateAnnotation(id, { resolved }),
+   174→    onSuccess: () => invalidate(),
+   175→    onError: (e: Error) => toast.error(e.message),
+   176→  });
+   177→
+   178→  const deleteAnnMut = useMutation({
+   179→    mutationFn: (id: string) => api.deleteAnnotation(id),
+   180→    onSuccess: () => {
+   181→      toast.success(t("toast.annotationRemoved"));
+   182→      invalidate();
+   183→    },
+   184→    onError: (e: Error) => toast.error(e.message),
+   185→  });
+   186→
+   187→  const reviseMut = useMutation({
+   188→    mutationFn: async (input: { mode?: string; instructions?: string }) => {
+   189→      // Save snapshot before revising (for undo)
+   190→      setUndoSnapshot(paragraph.content);
+   191→      return api.reviseParagraph(paragraph.id, input);
+   192→    },
+   193→    onSuccess: () => {
+   194→      toast.success(t("toast.paragraphRevised"));
+   195→      invalidate();
+   196→    },
+   197→    onError: (e: Error) => {
+   198→      setUndoSnapshot(null);
+   199→      toast.error(e.message);
+   200→    },
+   201→  });
+   202→
+   203→  const regenerateMut = useMutation({
+   204→    mutationFn: async () => {
+   205→      const res = await fetch(`/api/paragraphs/${paragraph.id}/regenerate`, {
+   206→        method: "POST",
+   207→        headers: { "Content-Type": "application/json" },
+   208→      });
+   209→      if (!res.ok) {
+   210→        const txt = await res.text();
+   211→        throw new Error(txt || `Regenerate failed (${res.status})`);
+   212→      }
+   213→      return res.json();
+   214→    },
+   215→    onSuccess: () => {
+   216→      toast.success(t("toast.paragraphRegenerated") || "Section regenerated.");
+   217→      invalidate();
+   218→    },
+   219→    onError: (e: Error) => toast.error(e.message),
+   220→  });
+   221→
+   222→  const undoReviseMut = useMutation({
+   223→    mutationFn: async () => {
+   224→      if (!undoSnapshot) throw new Error("No undo snapshot available.");
+   225→      return api.updateParagraph(paragraph.id, {
+   226→        content: undoSnapshot,
+   227→        status: "annotated",
+   228→      });
+   229→    },
+   230→    onSuccess: () => {
+   231→      toast.success(t("toast.paragraphReverted"));
+   232→      setUndoSnapshot(null);
+   233→      invalidate();
+   234→    },
+   235→    onError: (e: Error) => toast.error(e.message),
+   236→  });
+   237→
+   238→  // Unwrap any pending-selection <mark> element (restore original DOM)
+   239→  const unwrapPendingMark = React.useCallback(() => {
+   240→    const mark = pendingMarkRef.current;
+   241→    if (!mark || !mark.parentNode) {
+   242→      pendingMarkRef.current = null;
+   243→      return;
+   244→    }
+   245→    const parent = mark.parentNode;
+   246→    // Move all children out of the mark, then remove it
+   247→    while (mark.firstChild) {
+   248→      parent.insertBefore(mark.firstChild, mark);
+   249→    }
+   250→    parent.removeChild(mark);
+   251→    // Normalize adjacent text nodes
+   252→    try { parent.normalize(); } catch {}
+   253→    pendingMarkRef.current = null;
+   254→  }, []);
+   255→
+   256→  // Capture text selection within this paragraph body
+   257→  const handleMouseUp = React.useCallback(() => {
+   258→    const sel = window.getSelection();
+   259→    if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+   260→      return;
+   261→    }
+   262→    const text = sel.toString().trim();
+   263→    if (text.length < 2) {
+   264→      return;
+   265→    }
+   266→    const range = sel.getRangeAt(0);
+   267→    const bodyEl = bodyRef.current;
+   268→    if (!bodyEl || !bodyEl.contains(range.commonAncestorContainer)) {
+   269→      return;
+   270→    }
+   271→    const rect = range.getBoundingClientRect();
+   272→
+   273→    // Unwrap any previous pending mark
+   274→    unwrapPendingMark();
+   275→
+   276→    // Wrap the selected range in a <mark class="pending-selection"> so the
+   277→    // highlight persists even after the native selection collapses (which
+   278→    // happens when the Popover steals focus).
+   279→    try {
+   280→      const contents = range.extractContents();
+   281→      const mark = document.createElement("mark");
+   282→      mark.className = "pending-selection";
+   283→      mark.appendChild(contents);
+   284→      range.insertNode(mark);
+   285→      pendingMarkRef.current = mark;
+   286→    } catch {
+   287→      // If DOM manipulation fails, the selection toolbar still works —
+   288→      // just without the persistent highlight
+   289→    }
+   290→
+   291→    // Clear the native selection (it will be lost anyway when popover opens)
+   292→    sel.removeAllRanges();
+   293→
+   294→    setSelection({ text, rect });
+   295→  }, [unwrapPendingMark]);
+   296→
+   297→  // Cleanup pending mark on unmount
+   298→  React.useEffect(() => {
+   299→    return () => unwrapPendingMark();
+   300→  }, [unwrapPendingMark]);
+   301→
+   302→  // Clear selection + unwrap the pending highlight mark
+   303→  const clearSelection = React.useCallback(() => {
+   304→    unwrapPendingMark();
+   305→    setSelection(null);
+   306→  }, [unwrapPendingMark]);
+   307→
+   308→  const unresolvedCount = paragraph.annotations.filter((a) => !a.resolved).length;
+   309→  const status = STATUS_STYLES[paragraph.status] || STATUS_STYLES.draft;
+   310→  const formatMeta = PARAGRAPH_FORMATS.find((f) => f.id === paragraph.format);
+   311→
+   312→  const ANN_CARD_CLASS: Record<string, string> = {
+   313→    emerald: "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/50 dark:bg-emerald-950/20",
+   314→    teal: "border-teal-200 bg-teal-50/50 dark:border-teal-900/50 dark:bg-teal-950/20",
+   315→    amber: "border-amber-200 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20",
+   316→    rose: "border-rose-200 bg-rose-50/50 dark:border-rose-900/50 dark:bg-rose-950/20",
+   317→    violet: "border-violet-200 bg-violet-50/50 dark:border-violet-900/50 dark:bg-violet-950/20",
+   318→    sky: "border-sky-200 bg-sky-50/50 dark:border-sky-900/50 dark:bg-sky-950/20",
+   319→  };
+   320→
+   321→  return (
+   322→    <div
+   323→      className={`surface-card rounded-xl overflow-hidden transition-all hover:shadow-md hover:border-primary/30 acad-fade-in${
+   324→        editing ? " ring-academic" : ""
+   325→      }`}
+   326→    >
+   327→      {/* Header */}
+   328→      <div className="glass-subtle flex items-start gap-3 px-4 py-3 border-b hairline">
+   329→        <span className="text-[10px] font-mono text-muted-foreground/80 mt-1 shrink-0 tabular-nums">
+   330→          §{String(index + 1).padStart(2, "0")}
+   331→        </span>
+   332→        <div className="flex-1 min-w-0">
+   333→          {editing ? (
+   334→            <input
+   335→              defaultValue={paragraph.title}
+   336→              onBlur={(e) =>
+   337→                updateMut.mutate({ title: e.target.value })
+   338→              }
+   339→              className="text-sm font-semibold bg-transparent border-b border-dashed border-primary/40 focus:outline-none w-full font-serif-text tracking-tight"
+   340→            />
+   341→          ) : (
+   342→            <h3 className="text-sm font-semibold leading-tight truncate font-serif-text tracking-tight">
+   343→              {paragraph.title}
+   344→            </h3>
+   345→          )}
+   346→          <div className="flex flex-wrap items-center gap-1 mt-1.5">
+   347→            <span
+   348→              className={`badge-${status.color} inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide shadow-xs`}
+   349→            >
+   350→              <Icon name={status.icon} className="h-2.5 w-2.5" />
+   351→              {status.label}
+   352→            </span>
+   353→            <span className="text-[9px] text-muted-foreground">
+   354→              {formatMeta?.label || paragraph.format}
+   355→            </span>
+   356→            <span className="text-[9px] text-muted-foreground">·</span>
+   357→            <span className="text-[9px] text-muted-foreground">
+   358→              {viewLang === "zh" && hasZh
+   359→                ? `${(paragraph as any).wordCountZh || 0}字`
+   360→                : t("para.wordsCount", { n: paragraph.wordCount })}
+   361→            </span>
+   362→            {/* v101-4: Citation count badge */}
+   363→            {(() => {
+   364→              const citCount = (displayContent?.match(/\[\d+(?:[,\-–\s]\d+)*\]/g) || []).length;
+   365→              if (citCount > 0) {
+   366→                return (
+   367→                  <span className="badge-amber inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold shadow-xs">
+   368→                    <Quote className="h-2.5 w-2.5" />
+   369→                    {citCount} cit
+   370→                  </span>
+   371→                );
+   372→              }
+   373→              return null;
+   374→            })()}
+   375→            {hasZh && (
+   376→              <span className="text-[9px] text-fuchsia-600 dark:text-fuchsia-400 font-medium">
+   377→                · 中文
+   378→              </span>
+   379→            )}
+   380→            {unresolvedCount > 0 && (
+   381→              <span className="inline-flex items-center gap-0.5 text-[9px] text-amber-600 dark:text-amber-400 font-medium">
+   382→                <MessageSquare className="h-2.5 w-2.5" />
+   383→                {unresolvedCount}
+   384→              </span>
+   385→            )}
+   386→            {/* EN/ZH toggle — only when the paragraph has a Chinese translation */}
+   387→            {hasZh && !editing && (
+   388→              <div className="ml-auto flex items-center gap-0.5 rounded-md border hairline bg-muted/30 p-0.5">
+   389→                <button
+   390→                  type="button"
+   391→                  onClick={() => setViewLang("en")}
+   392→                  className={`px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors ${
+   393→                    viewLang === "en"
+   394→                      ? "bg-primary text-primary-foreground shadow-sm"
+   395→                      : "text-muted-foreground hover:text-foreground"
+   396→                  }`}
+   397→                  title="English"
+   398→                >
+   399→                  EN
+   400→                </button>
+   401→                <button
+   402→                  type="button"
+   403→                  onClick={() => setViewLang("zh")}
+   404→                  className={`px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors ${
+   405→                    viewLang === "zh"
+   406→                      ? "bg-primary text-primary-foreground shadow-sm"
+   407→                      : "text-muted-foreground hover:text-foreground"
+   408→                  }`}
+   409→                  title="中文"
+   410→                >
+   411→                  中
+   412→                </button>
+   413→              </div>
+   414→            )}
+   415→          </div>
+   416→        </div>
+   417→        <DropdownMenu>
+   418→          <DropdownMenuTrigger asChild>
+   419→            <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0">
+   420→              <MoreHorizontal className="h-3.5 w-3.5" />
+   421→            </Button>
+   422→          </DropdownMenuTrigger>
+   423→          <DropdownMenuContent align="end" className="w-44">
+   424→            <DropdownMenuItem onClick={() => setEditing((v) => !v)}>
+   425→              <Pencil className="h-3.5 w-3.5" /> {editing ? t("para.stopEditing") : t("para.editContent")}
+   426→            </DropdownMenuItem>
+   427→            <DropdownMenuItem
+   428→              onClick={() =>
+   429→                navigator.clipboard.writeText(paragraph.content).then(() =>
+   430→                  toast.success(t("toast.copiedToClipboard"))
+   431→                )
+   432→              }
+   433→            >
+   434→              <Copy className="h-3.5 w-3.5" /> {t("para.copyText")}
+   435→            </DropdownMenuItem>
+   436→            <DropdownMenuItem onClick={() => setValidateOpen(true)}>
+   437→              <ShieldCheck className="h-3.5 w-3.5" /> {t("para.validateCitations")}
+   438→            </DropdownMenuItem>
+   439→            <DropdownMenuItem
+   440→              onClick={() => regenerateMut.mutate()}
+   441→              disabled={regenerateMut.isPending}
+   442→            >
+   443→              {regenerateMut.isPending ? (
+   444→                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+   445→              ) : (
+   446→                <RotateCw className="h-3.5 w-3.5" />
+   447→              )}
+   448→              {t("para.regenerate") || "Regenerate section"}
+   449→            </DropdownMenuItem>
+   450→            <DropdownMenuSeparator />
+   451→            <FormatSelect
+   452→              value={paragraph.format}
+   453→              onChange={(v) => updateMut.mutate({ format: v })}
+   454→              options={PARAGRAPH_FORMATS.map((f) => ({ value: f.id, label: f.label }))}
+   455→            />
+   456→            <FormatSelect
+   457→              value={paragraph.scenario}
+   458→              onChange={(v) => updateMut.mutate({ scenario: v })}
+   459→              options={PARAGRAPH_SCENARIOS.map((s) => ({ value: s.id, label: s.label }))}
+   460→            />
+   461→            <DropdownMenuSeparator />
+   462→            <DropdownMenuItem
+   463→              className="text-destructive focus:text-destructive"
+   464→              onClick={() => deleteMut.mutate()}
+   465→            >
+   466→              <Trash2 className="h-3.5 w-3.5" /> {t("para.delete")}
+   467→            </DropdownMenuItem>
+   468→          </DropdownMenuContent>
+   469→        </DropdownMenu>
+   470→      </div>
+   471→
+   472→      {/* Body */}
+   473→      <div className="px-4 py-3 relative paper-surface prose-academic" ref={bodyRef} onMouseUp={handleMouseUp}>
+   474→        {editing ? (
+   475→          <div className="space-y-2">
+   476→            <Textarea
+   477→              value={draft}
+   478→              onChange={(e) => setDraft(e.target.value)}
+   479→              className="font-serif-text text-sm min-h-[160px] leading-relaxed"
+   480→            />
+   481→            <div className="flex items-center gap-2 flex-wrap">
+   482→              <Button
+   483→                size="sm"
+   484→                onClick={() => updateMut.mutate({ content: draft })}
+   485→                disabled={updateMut.isPending}
+   486→              >
+   487→                {updateMut.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+   488→                {t("common.save")}
+   489→              </Button>
+   490→              <Button
+   491→                size="sm"
+   492→                variant="ghost"
+   493→                onClick={() => {
+   494→                  setDraft(paragraph.content);
+   495→                  setEditing(false);
+   496→                }}
+   497→              >
+   498→                {t("common.cancel")}
+   499→              </Button>
+   500→              <InsertStructureAnalysisButton
+   501→                projectId={projectId}
+   502→                onInsert={(markdown) => {
+   503→                  setDraft((d) => d + (d && !d.endsWith("\n") ? "\n\n" : "") + markdown);
+   504→                  toast.success(t("structure.insertedAnalysis"));
+   505→                }}
+   506→              />
+   507→            </div>
+   508→          </div>
+   509→        ) : (
+   510→          <div className="prose-academic">
+   511→            <MarkdownCitations
+   512→              content={displayContent}
+   513→              annotations={paragraph.annotations}
+   514→              references={effectiveRefs}
+   515→              onAnnotationClick={(a) => setActiveAnnotation(a)}
+   516→            />
+   517→          </div>
+   518→        )}
+   519→
+   520→        {/* Floating selection toolbar */}
+   521→        {selection && !editing && (
+   522→          <SelectionToolbar
+   523→            text={selection.text}
+   524→            onSubmit={(comment, type, severity) => {
+   525→              const startOffset = paragraph.content.indexOf(selection.text);
+   526→              addAnnMut.mutate({
+   527→                selectedText: selection.text,
+   528→                startOffset: startOffset >= 0 ? startOffset : 0,
+   529→                endOffset: startOffset >= 0 ? startOffset + selection.text.length : 0,
+   530→                comment,
+   531→                type,
+   532→                severity,
+   533→              });
+   534→            }}
+   535→            onClose={() => clearSelection()}
+   536→            pending={addAnnMut.isPending}
+   537→          />
+   538→        )}
+   539→      </div>
+   540→
+   541→      {/* Footer: annotations + revise */}
+   542→      {paragraph.annotations.length > 0 && (
+   543→        <Collapsible open={annOpen} onOpenChange={setAnnOpen} className="border-t hairline">
+   544→          <div className="glass-subtle px-4 py-2 flex items-center justify-between">
+   545→            <CollapsibleTrigger asChild>
+   546→              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5">
+   547→                <MessageSquare className="h-3.5 w-3.5" />
+   548→                {t("para.annotationsCount", { n: paragraph.annotations.length })}
+   549→                {annOpen ? (
+   550→                  <ChevronUp className="h-3 w-3" />
+   551→                ) : (
+   552→                  <ChevronDown className="h-3 w-3" />
+   553→                )}
+   554→              </Button>
+   555→            </CollapsibleTrigger>
+   556→          </div>
+   557→          <CollapsibleContent>
+   558→            <div className="px-4 py-3 space-y-2 bg-muted/20">
+   559→              {paragraph.annotations.map((a) => {
+   560→                const meta = ANNOTATION_TYPES.find((t) => t.id === a.type) || ANNOTATION_TYPES[0];
+   561→                const sev = SEVERITY_STYLES[a.severity as keyof typeof SEVERITY_STYLES] || SEVERITY_STYLES.info;
+   562→                return (
+   563→                  <div
+   564→                    key={a.id}
+   565→                    className={`surface-card rounded-md border p-2.5 text-xs shadow-xs ${
+   566→                      a.resolved ? "opacity-60" : ""
+   567→                    } ${ANN_CARD_CLASS[meta.color] || "border-border bg-muted/30"}`}
+   568→                  >
+   569→                    <div className="flex items-center gap-1.5 mb-1">
+   570→                      <Icon name={meta.icon} className="h-3 w-3" />
+   571→                      <span className="font-semibold text-[10px] uppercase tracking-wide">
+   572→                        {meta.label}
+   573→                      </span>
+   574→                      <span className={`badge-${sev.color} px-1 py-0.5 rounded text-[8px] uppercase`}>
+   575→                        {sev.label}
+   576→                      </span>
+   577→                      {a.resolved && (
+   578→                        <span className="text-[9px] text-emerald-600 flex items-center gap-0.5">
+   579→                          <CheckCircle2 className="h-2.5 w-2.5" /> {t("para.resolved")}
+   580→                        </span>
+   581→                      )}
+   582→                      <div className="ml-auto flex items-center gap-0.5">
+   583→                        <Button
+   584→                          variant="ghost"
+   585→                          size="icon"
+   586→                          className="h-5 w-5"
+   587→                          onClick={() =>
+   588→                            resolveAnnMut.mutate({ id: a.id, resolved: !a.resolved })
+   589→                          }
+   590→                          title={a.resolved ? t("para.reopen") : t("para.resolve")}
+   591→                        >
+   592→                          <CheckCircle2 className="h-3 w-3" />
+   593→                        </Button>
+   594→                        <Button
+   595→                          variant="ghost"
+   596→                          size="icon"
+   597→                          className="h-5 w-5 text-destructive"
+   598→                          onClick={() => deleteAnnMut.mutate(a.id)}
+   599→                        >
+   600→                          <X className="h-3 w-3" />
+   601→                        </Button>
+   602→                      </div>
+   603→                    </div>
+   604→                    {a.selectedText && (
+   605→                      <p className="text-[10px] italic text-muted-foreground mb-1 line-clamp-1">
+   606→                        “{a.selectedText}”
+   607→                      </p>
+   608→                    )}
+   609→                    <p className="text-foreground/90">{a.comment}</p>
+   610→                    {a.aiResponse && (
+   611→                      <p className="mt-1.5 text-[10px] text-primary italic border-l-2 border-primary/40 pl-2">
+   612→                        {t("para.aiPrefix")} {a.aiResponse}
+   613→                      </p>
+   614→                    )}
+   615→                  </div>
+   616→                );
+   617→              })}
+   618→            </div>
+   619→          </CollapsibleContent>
+   620→        </Collapsible>
+   621→      )}
+   622→
+   623→      {/* Action bar */}
+   624→      <div className="glass-toolbar px-4 py-2 border-t hairline flex items-center gap-1">
+   625→        <RevisePopover
+   626→          unresolvedCount={unresolvedCount}
+   627→          isRevising={reviseMut.isPending}
+   628→          onRevise={(mode, instructions) =>
+   629→            reviseMut.mutate({ mode, instructions })
+   630→          }
+   631→        />
+   632→        {undoSnapshot && (
+   633→          <>
+   634→            <Button
+   635→              variant="ghost"
+   636→              size="sm"
+   637→              className="h-7 text-[11px] gap-1.5 text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950/30"
+   638→              onClick={() => setDiffOpen(true)}
+   639→              title={t("para.compareTitle")}
+   640→            >
+   641→              <GitCompare className="h-3 w-3" />
+   642→              {t("para.compare")}
+   643→            </Button>
+   644→            <Button
+   645→              variant="ghost"
+   646→              size="sm"
+   647→              className="h-7 text-[11px] gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+   648→              onClick={() => undoReviseMut.mutate()}
+   649→              disabled={undoReviseMut.isPending}
+   650→              title={t("para.undoTitle")}
+   651→            >
+   652→              {undoReviseMut.isPending ? (
+   653→                <Loader2 className="h-3 w-3 animate-spin" />
+   654→              ) : (
+   655→                <Undo2 className="h-3 w-3" />
+   656→              )}
+   657→              {t("para.undo")}
+   658→            </Button>
+   659→          </>
+   660→        )}
+   661→        <ExportMenu
+   662→          type="paragraph"
+   663→          id={paragraph.id}
+   664→          hasAnnotations={paragraph.annotations.length > 0}
+   665→          hasZh={hasZh}
+   666→        />
+   667→        <Button
+   668→          variant="ghost"
+   669→          size="sm"
+   670→          className="h-7 text-[11px] gap-1.5 ml-auto"
+   671→          onClick={() => setEditing((v) => !v)}
+   672→        >
+   673→          <PenLine className="h-3 w-3" />
+   674→          {editing ? t("common.preview") : t("common.edit")}
+   675→        </Button>
+   676→      </div>
+   677→
+   678→      {undoSnapshot && (
+   679→        <DiffView
+   680→          open={diffOpen}
+   681→          onOpenChange={setDiffOpen}
+   682→          before={undoSnapshot}
+   683→          after={paragraph.content}
+   684→          title={paragraph.title}
+   685→        />
+   686→      )}
+   687→
+   688→      <CitationValidationDialog
+   689→        open={validateOpen}
+   690→        onOpenChange={setValidateOpen}
+   691→        paragraphId={paragraph.id}
+   692→        paragraphTitle={paragraph.title}
+   693→      />
+   694→    </div>
+   695→  );
+   696→}
+   697→
+   698→function FormatSelect({
+   699→  value,
+   700→  onChange,
+   701→  options,
+   702→}: {
+   703→  value: string;
+   704→  onChange: (v: string) => void;
+   705→  options: { value: string; label: string }[];
+   706→}) {
+   707→  return (
+   708→    <div className="px-2 py-1">
+   709→      <Select value={value} onValueChange={onChange}>
+   710→        <SelectTrigger className="h-7 text-[11px]">
+   711→          <SelectValue />
+   712→        </SelectTrigger>
+   713→        <SelectContent>
+   714→          {options.map((o) => (
+   715→            <SelectItem key={o.value} value={o.value} className="text-xs">
+   716→              {o.label}
+   717→            </SelectItem>
+   718→          ))}
+   719→        </SelectContent>
+   720→      </Select>
+   721→    </div>
+   722→  );
+   723→}
+   724→
+   725→function SelectionToolbar({
+   726→  text,
+   727→  onSubmit,
+   728→  onClose,
+   729→  pending,
+   730→}: {
+   731→  text: string;
+   732→  onSubmit: (comment: string, type: string, severity: string) => void;
+   733→  onClose: () => void;
+   734→  pending: boolean;
+   735→}) {
+   736→  const { t } = useI18n();
+   737→  const [comment, setComment] = React.useState("");
+   738→  const [type, setType] = React.useState("revise-request");
+   739→  const [severity, setSeverity] = React.useState("warning");
+   740→
+   741→  return (
+   742→    <Popover open={true} onOpenChange={(o) => !o && onClose()}>
+   743→      <PopoverTrigger asChild>
+   744→        <span
+   745→          className="absolute"
+   746→          style={{
+   747→            left: 0,
+   748→            top: 0,
+   749→            width: 1,
+   750→            height: 1,
+   751→          }}
+   752→        />
+   753→      </PopoverTrigger>
+   754→      <PopoverContent
+   755→        className="w-72 p-3 shadow-lg"
+   756→        side="top"
+   757→        align="center"
+   758→        sideOffset={8}
+   759→      >
+   760→        <div className="space-y-2">
+   761→          <div className="flex items-center justify-between">
+   762→            <span className="text-[10px] uppercase tracking-wider text-primary font-semibold flex items-center gap-1">
+   763→              <MessageSquare className="h-3 w-3" /> {t("para.annotateSelection")}
+   764→            </span>
+   765→            <div className="flex items-center gap-0.5">
+   766→              <Button
+   767→                variant="ghost"
+   768→                size="icon"
+   769→                className="h-5 w-5"
+   770→                onClick={() => {
+   771→                  navigator.clipboard.writeText(text).then(() => toast.success(t("toast.copiedToClipboard")));
+   772→                  onClose();
+   773→                }}
+   774→                title={t("para.copySelectedText")}
+   775→              >
+   776→                <Copy className="h-3 w-3" />
+   777→              </Button>
+   778→              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onClose}>
+   779→                <X className="h-3 w-3" />
+   780→              </Button>
+   781→            </div>
+   782→          </div>
+   783→          <p className="text-[10px] italic text-muted-foreground line-clamp-2 border-l-2 border-primary/40 pl-2">
+   784→            “{text.slice(0, 100)}{text.length > 100 ? "…" : ""}”
+   785→          </p>
+   786→          <Textarea
+   787→            autoFocus
+   788→            value={comment}
+   789→            onChange={(e) => setComment(e.target.value)}
+   790→            placeholder={t("para.revisePlaceholder")}
+   791→            className="text-xs min-h-[56px]"
+   792→          />
+   793→          <div className="grid grid-cols-2 gap-1.5">
+   794→            <Select value={type} onValueChange={setType}>
+   795→              <SelectTrigger className="h-7 text-[10px]">
+   796→                <SelectValue />
+   797→              </SelectTrigger>
+   798→              <SelectContent>
+   799→                {ANNOTATION_TYPES.map((t) => (
+   800→                  <SelectItem key={t.id} value={t.id} className="text-[10px]">
+   801→                    {t.label}
+   802→                  </SelectItem>
+   803→                ))}
+   804→              </SelectContent>
+   805→            </Select>
+   806→            <Select value={severity} onValueChange={setSeverity}>
+   807→              <SelectTrigger className="h-7 text-[10px]">
+   808→                <SelectValue />
+   809→              </SelectTrigger>
+   810→              <SelectContent>
+   811→                <SelectItem value="info" className="text-[10px]">{t("para.info")}</SelectItem>
+   812→                <SelectItem value="warning" className="text-[10px]">{t("para.warning")}</SelectItem>
+   813→                <SelectItem value="critical" className="text-[10px]">{t("para.critical")}</SelectItem>
+   814→              </SelectContent>
+   815→            </Select>
+   816→          </div>
+   817→          <Button
+   818→            size="sm"
+   819→            className="w-full h-7 text-[11px]"
+   820→            disabled={!comment.trim() || pending}
+   821→            onClick={() => onSubmit(comment.trim(), type, severity)}
+   822→          >
+   823→            {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+   824→            {t("para.addAnnotation2")}
+   825→          </Button>
+   826→        </div>
+   827→      </PopoverContent>
+   828→    </Popover>
+   829→  );
+   830→}
+   831→
+   832→function RevisePopover({
+   833→  unresolvedCount,
+   834→  isRevising,
+   835→  onRevise,
+   836→}: {
+   837→  unresolvedCount: number;
+   838→  isRevising: boolean;
+   839→  onRevise: (mode: string, instructions?: string) => void;
+   840→}) {
+   841→  const { t } = useI18n();
+   842→  const [open, setOpen] = React.useState(false);
+   843→  const [mode, setMode] = React.useState<"annotations" | "instructions" | "polish">("annotations");
+   844→  const [instructions, setInstructions] = React.useState("");
+   845→
+   846→  return (
+   847→    <Popover open={open} onOpenChange={setOpen}>
+   848→      <PopoverTrigger asChild>
+   849→        <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1.5 btn-gradient-primary text-primary-foreground border-primary/40">
+   850→          {isRevising ? (
+   851→            <Loader2 className="h-3 w-3 animate-spin" />
+   852→          ) : (
+   853→            <Wand2 className="h-3 w-3" />
+   854→          )}
+   855→          {t("para.aiRevise")}
+   856→          {unresolvedCount > 0 && (
+   857→            <span className="ml-0.5 inline-flex items-center justify-center h-3.5 min-w-3.5 px-1 rounded-full bg-amber-500 text-white text-[8px] font-bold">
+   858→              {unresolvedCount}
+   859→            </span>
+   860→          )}
+   861→        </Button>
+   862→      </PopoverTrigger>
+   863→      <PopoverContent className="w-80 p-3" align="start">
+   864→        <div className="space-y-2.5">
+   865→          <span className="text-[10px] uppercase tracking-wider text-primary font-semibold flex items-center gap-1">
+   866→            <Wand2 className="h-3 w-3" /> {t("para.revisionMode")}
+   867→          </span>
+   868→          <div className="grid grid-cols-3 gap-1">
+   869→            {(
+   870→              [
+   871→                ["annotations", t("para.modeAnnotations"), unresolvedCount > 0],
+   872→                ["instructions", t("para.modeInstructions"), true],
+   873→                ["polish", t("para.modePolish"), true],
+   874→              ] as const
+   875→            ).map(([id, label, enabled]) => (
+   876→              <button
+   877→                key={id}
+   878→                disabled={!enabled}
+   879→                onClick={() => setMode(id)}
+   880→                className={`text-[10px] px-2 py-1.5 rounded-md border transition-colors ${
+   881→                  mode === id
+   882→                    ? "border-primary bg-primary/10 text-primary font-medium"
+   883→                    : "border-border hover:bg-muted"
+   884→                } ${!enabled ? "opacity-40 cursor-not-allowed" : ""}`}
+   885→              >
+   886→                {label}
+   887→              </button>
+   888→            ))}
+   889→          </div>
+   890→          {mode === "annotations" && (
+   891→            <p className="text-[10px] text-muted-foreground">
+   892→              {t("para.willAddressAnnotations", { n: unresolvedCount })}
+   893→            </p>
+   894→          )}
+   895→          {mode === "instructions" && (
+   896→            <Textarea
+   897→              value={instructions}
+   898→              onChange={(e) => setInstructions(e.target.value)}
+   899→              placeholder={t("para.reviseInstructionsPlaceholder")}
+   900→              className="text-xs min-h-[64px]"
+   901→            />
+   902→          )}
+   903→          {mode === "polish" && (
+   904→            <p className="text-[10px] text-muted-foreground">
+   905→              {t("para.polishDesc")}
+   906→            </p>
+   907→          )}
+   908→          <Button
+   909→            size="sm"
+   910→            className="w-full h-7 text-[11px] gap-1.5"
+   911→            disabled={
+   912→              isRevising ||
+   913→              (mode === "annotations" && unresolvedCount === 0) ||
+   914→              (mode === "instructions" && !instructions.trim())
+   915→            }
+   916→            onClick={() => {
+   917→              onRevise(mode, mode === "instructions" ? instructions.trim() : undefined);
+   918→              setOpen(false);
+   919→              setInstructions("");
+   920→            }}
+   921→          >
+   922→            {isRevising ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+   923→            {t("para.runRevision")}
+   924→          </Button>
+   925→        </div>
+   926→      </PopoverContent>
+   927→    </Popover>
+   928→  );
+   929→}
+   930→
+   931→/**
+   932→ * InsertStructureAnalysisButton — a popover that lists all analyzed RCSB
+   933→ * structures in the current project and inserts a compact markdown summary of
+   934→ * the selected structure's key metrics into the paragraph draft. This is the
+   935→ * "quick insert" counterpart to the full ProteinStructureAnalysisDialog —
+   936→ * instead of viewing all 12 tabs, the user picks a structure and gets a
+   937→ * one-paragraph summary they can edit into their prose.
+   938→ */
+   939→function InsertStructureAnalysisButton({
+   940→  projectId,
+   941→  onInsert,
+   942→}: {
+   943→  projectId: string;
+   944→  onInsert: (markdown: string) => void;
+   945→}) {
+   946→  const { t } = useI18n();
+   947→  const [open, setOpen] = React.useState(false);
+   948→  const [loading, setLoading] = React.useState(false);
+   949→  const [analyses, setAnalyses] = React.useState<any[]>([]);
+   950→
+   951→  React.useEffect(() => {
+   952→    if (!open) return;
+   953→    setLoading(true);
+   954→    api
+   955→      .listProjectStructures(projectId)
+   956→      .then((res) => setAnalyses(res.analyses || []))
+   957→      .catch(() => setAnalyses([]))
+   958→      .finally(() => setLoading(false));
+   959→  }, [open, projectId]);
+   960→
+   961→  function buildInsertMarkdown(a: any): string {
+   962→    // Parse the contextMarkdown to extract key metrics, or build a compact
+   963→    // summary from the fields we have.
+   964→    const lines: string[] = [];
+   965→    lines.push(`> **Structure PDB:${a.pdbId}** — ${a.title || "untitled"}`);
+   966→    lines.push(`> - ${a.chainCount} chain(s) · ${a.residueCount} residues · ${a.atomCount} atoms${a.ligandCount > 0 ? ` · ${a.ligandCount} ligand(s)` : ""}`);
+   967→    // Try to extract a few key lines from the full context markdown.
+   968→    const md = a.contextMarkdown || "";
+   969→    const extract = (re: RegExp) => {
+   970→      const m = md.match(re);
+   971→      return m ? m[1] : null;
+   972→    };
+   973→    const method = extract(/Method: ([^|]+)/);
+   974→    const resolution = extract(/Resolution: ([^|Å]+Å)/);
+   975→    const ramaFav = extract(/Favoured \(core\+allowed\): (\S+)%/);
+   976→    const ramaOut = extract(/Outliers: (\S+)%/);
+   977→    const bfMean = extract(/Mean: ([\d.]+)/);
+   978→    const sasaExp = extract(/Exposed: (\S+)%/);
+   979→    const sasaBur = extract(/Buried: (\S+)%/);
+   980→    const hbonds = extract(/Hydrogen bonds[^:]*: (\d+)/);
+   981→    const netCharge = extract(/Net charge at pH 7: ([\d.\-+]+)/);
+   982→    const pI = extract(/Isoelectric point \(pI\): ([\d.]+)/);
+   983→    const meta: string[] = [];
+   984→    if (method) meta.push(`Method: ${method.trim()}`);
+   985→    if (resolution) meta.push(`Resolution: ${resolution.trim()}`);
+   986→    if (ramaFav) meta.push(`Ramachandran: ${ramaFav}% favoured / ${ramaOut}% outliers`);
+   987→    if (bfMean) meta.push(`B̄=${bfMean}`);
+   988→    if (sasaExp) meta.push(`SASA: ${sasaExp}% exposed / ${sasaBur}% buried`);
+   989→    if (hbonds) meta.push(`${hbonds} H-bonds`);
+   990→    if (netCharge) meta.push(`net charge ${netCharge} (pH 7)`);
+   991→    if (pI) meta.push(`pI=${pI}`);
+   992→    if (meta.length) lines.push(`> - ${meta.join(" · ")}`);
+   993→    // Ligands
+   994→    const ligMatch = md.match(/Ligands & Cofators \((\d+) detected\):([\s\S]*?)(?=\n\*\*|$)/);
+   995→    if (ligMatch && ligMatch[1] !== "0") {
+   996→      const ligLines = ligMatch[2].split("\n").filter((l) => l.trim().startsWith("-")).slice(0, 6);
+   997→      if (ligLines.length) lines.push(`> - Ligands: ${ligLines.map((l) => l.replace(/^\s*-\s*/, "").replace(/—.*$/, "").trim()).join(", ")}`);
+   998→    }
+   999→    lines.push(`> _All metrics computed from the actual PDB file via Molcraft structure analysis._`);
+  1000→    return lines.join("\n");
+  1001→  }
+  1002→
+  1003→  return (
+  1004→    <Popover open={open} onOpenChange={setOpen}>
+  1005→      <PopoverTrigger asChild>
+  1006→        <Button
+  1007→          size="sm"
+  1008→          variant="outline"
+  1009→          className="h-7 gap-1 text-[10px] border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/30"
+  1010→          title={t("structure.insertAnalysisTitle")}
+  1011→        >
+  1012→          <Box className="h-3 w-3" />
+  1013→          {t("structure.insertAnalysis")}
+  1014→        </Button>
+  1015→      </PopoverTrigger>
+  1016→      <PopoverContent
+  1017→        align="start"
+  1018→        className="w-80 p-2 max-h-80 overflow-y-auto"
+  1019→      >
+  1020→        {loading ? (
+  1021→          <div className="flex items-center justify-center py-4">
+  1022→            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+  1023→          </div>
+  1024→        ) : analyses.length === 0 ? (
+  1025→          <div className="text-center py-4 text-[11px] text-muted-foreground">
+  1026→            <Box className="h-6 w-6 mx-auto mb-1 opacity-30" />
+  1027→            {t("structure.noAnalyzedSources")}
+  1028→          </div>
+  1029→        ) : (
+  1030→          <div className="space-y-1">
+  1031→            <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-1 pb-1">
+  1032→              {t("structure.chooseStructure")}
+  1033→            </div>
+  1034→            {analyses.map((a) => (
+  1035→              <button
+  1036→                key={a.pdbId}
+  1037→                onClick={() => {
+  1038→                  onInsert(buildInsertMarkdown(a));
+  1039→                  setOpen(false);
+  1040→                }}
+  1041→                className="w-full text-left rounded-md border border-border/60 hover:border-amber-300 hover:bg-amber-50/50 dark:hover:bg-amber-950/20 p-2 transition-colors"
+  1042→              >
+  1043→                <div className="flex items-center gap-1.5">
+  1044→                  <Badge
+  1045→                    variant="secondary"
+  1046→                    className="text-[9px] font-mono bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200"
+  1047→                  >
+  1048→                    {a.pdbId}
+  1049→                  </Badge>
+  1050→                  <span className="text-[10px] text-muted-foreground">
+  1051→                    {a.chainCount}ch · {a.residueCount}res{a.ligandCount > 0 ? ` · ${a.ligandCount}lig` : ""}
+  1052→                  </span>
+  1053→                </div>
+  1054→                <div className="text-[11px] font-medium mt-0.5 line-clamp-1">
+  1055→                  {a.title || "untitled"}
+  1056→                </div>
+  1057→              </button>
+  1058→            ))}
+  1059→          </div>
+  1060→        )}
+  1061→      </PopoverContent>
+  1062→    </Popover>
+  1063→  );
+  1064→}
+  1065→
