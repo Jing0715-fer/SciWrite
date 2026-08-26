@@ -265,6 +265,273 @@ export function topicalityScore(textA: string, textB: string): number {
   return union > 0 ? intersection / union : 0;
 }
 
+// ============================================================================
+// C1 (IMPROVEMENT_PLAN_v2): Numeric-fact cross-check
+//
+// A cheap deterministic pre-verify pass: extract specific numeric facts
+// from cited sentences (resolutions, years, sizes, percentages, etc.)
+// and check whether the cited reference's title+abstract contains the
+// same (or a close) number. If it doesn't, flag the citation as a
+// `numeric-mismatch` suspect so the LLM verify pass can focus on it
+// (and so a final safety net can surgically strip the bad number).
+//
+// This would have caught both UNSUPPORTED citations in the 2026-08-26
+// E2E test, where the body said "7 Å" but ref [5]'s abstract never
+// mentions 7 Å (it's about Bravo 2022 mismatch surveillance, with no
+// resolution discussion at all).
+// ============================================================================
+
+export interface NumericFact {
+  /** The raw number as a float (e.g. 7, 2.5, 2012). */
+  value: number;
+  /** The unit / category (e.g. "Å", "year", "kDa", "%", "residues"). */
+  unit: string;
+  /** The original text match (e.g. "7 Å", "2.5 Å", "2012"). */
+  raw: string;
+}
+
+/**
+ * Extract specific numeric facts from a sentence. Patterns:
+ *   - Resolutions: 2.5 Å, 7 Å, 3.4 Å
+ *   - Years:       2012, 2020 (1900-2099, 4 digits as a standalone token)
+ *   - Sizes/masses: 100 kDa, 4.2 Mb, 20 bp, 1000 nt
+ *   - Percentages:  95%, 99.9%
+ *   - Counts:       12 amino acids, 4 residues, 100 genes
+ *   - PDB IDs:      4-letter alphanumeric tokens (cross-checked vs ref's
+ *                   own externalId if it's an RCSB entry)
+ */
+export function extractNumericFacts(sentence: string): NumericFact[] {
+  const facts: NumericFact[] = [];
+  const s = sentence || "";
+
+  // Resolutions (Å / å) — must come before generic number patterns.
+  // Character class [Åå] handles both case forms.
+  for (const m of s.matchAll(/(\d+(?:\.\d+)?)\s*[Åå]/gi)) {
+    facts.push({
+      value: parseFloat(m[1]),
+      unit: "Å",
+      raw: m[0],
+    });
+  }
+
+  // Years (1900-2099)
+  for (const m of s.matchAll(/\b(19|20)\d{2}\b/g)) {
+    facts.push({
+      value: parseInt(m[0], 10),
+      unit: "year",
+      raw: m[0],
+    });
+  }
+
+  // Mass / size units
+  for (const m of s.matchAll(/(\d+(?:\.\d+)?)\s*(kDa|Da|bp|nt|Mb|Gb|bp)\b/g)) {
+    facts.push({
+      value: parseFloat(m[1]),
+      unit: m[2],
+      raw: m[0],
+    });
+  }
+
+  // Percentages
+  for (const m of s.matchAll(/(\d+(?:\.\d+)?)\s*%/g)) {
+    facts.push({
+      value: parseFloat(m[1]),
+      unit: "%",
+      raw: m[0],
+    });
+  }
+
+  // Counts with explicit units
+  for (const m of s.matchAll(
+    /(\d+(?:,\d{3})*)\s*(amino acids|residues|genes|mutations|samples|patients|subjects|bases|pairs)\b/gi,
+  )) {
+    facts.push({
+      value: parseInt(m[1].replace(/,/g, ""), 10),
+      unit: m[2].toLowerCase(),
+      raw: m[0],
+    });
+  }
+
+  // PDB IDs (4-char alphanumeric, uppercase, not part of a longer word)
+  for (const m of s.matchAll(/\b([0-9][A-Z0-9]{3})\b/g)) {
+    facts.push({
+      value: 0, // not a number; uses raw for matching
+      unit: "pdb-id",
+      raw: m[1],
+    });
+  }
+
+  return facts;
+}
+
+/**
+ * Check whether a numeric fact is supported by a reference's title +
+ * abstract. Returns:
+ *   - "supported" if the reference text contains the same number with
+ *     the same unit, within tolerance
+ *   - "mismatch" if the reference text contains the unit but a
+ *     different number (e.g. fact is "7 Å", ref has "2.5 Å")
+ *   - "absent" if the reference text does not mention the unit at all
+ */
+export function numericFactSupportedByRef(
+  fact: NumericFact,
+  ref: { title?: string | null; abstract?: string | null },
+): "supported" | "mismatch" | "absent" {
+  // NOTE: do NOT lowercase here — the regexes below use case-sensitive
+  // PDB IDs and we apply the `i` flag where needed. For the Å (Angstrom)
+  // unit, we explicitly handle both cases Å/å in the character class.
+  const refText = `${ref.title || ""} ${ref.abstract || ""}`;
+  if (!refText.trim()) return "absent";
+
+  // PDB IDs: exact (case-insensitive) match on the raw string
+  if (fact.unit === "pdb-id") {
+    return refText.toLowerCase().includes(fact.raw.toLowerCase())
+      ? "supported"
+      : "absent";
+  }
+
+  // Find all instances of the unit in the reference text.
+  // Use case-insensitive matching so "2.5 Å" matches "2.5 å" and vice
+  // versa (ref abstracts may use either form depending on the source).
+  let unitRe: RegExp;
+  if (fact.unit === "Å") {
+    // Character class [Åå] handles both uppercase and lowercase forms
+    unitRe = /(\d+(?:\.\d+)?)\s*[Åå]/gi;
+  } else if (fact.unit === "year") {
+    // Capture the FULL 4-digit year, not just the "19" or "20" prefix
+    unitRe = /\b((?:19|20)\d{2})\b/g;
+  } else if (fact.unit === "%") {
+    unitRe = /(\d+(?:\.\d+)?)\s*%/g;
+  } else if (["kDa", "Da", "bp", "nt", "Mb", "Gb"].includes(fact.unit)) {
+    unitRe = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${fact.unit}\\b`, "gi");
+  } else {
+    // Counts with explicit unit word (e.g. "amino acids", "residues")
+    unitRe = new RegExp(`(\\d+(?:,\\d{3})*)\\s*${fact.unit}\\b`, "gi");
+  }
+
+  const refValues: number[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = unitRe.exec(refText))) {
+    refValues.push(parseFloat(m[1].replace(/,/g, "")));
+  }
+
+  if (refValues.length === 0) return "absent";
+
+  // Tolerance: ±0.1 for resolutions, exact for everything else
+  const tolerance = fact.unit === "Å" ? 0.1 : 0;
+  for (const v of refValues) {
+    if (Math.abs(v - fact.value) <= tolerance) return "supported";
+  }
+  return "mismatch";
+}
+
+/**
+ * Cheap deterministic pre-verify: for each (sentence, citation) pair in
+ * the body, compute the topicality score AND check every numeric fact
+ * in the sentence against the cited reference. Return:
+ *   - `autoSupported`: citation numbers that passed both checks (high
+ *     topicality AND no mismatched numbers)
+ *   - `suspects`: citation numbers with low topicality OR a numeric
+ *     mismatch, along with the reason
+ *
+ * The expensive LLM verify pass should run ONLY on `suspects`, saving
+ * LLM calls AND focusing attention where it matters. Cuts verify time
+ * ~5× on a typical article (50 citations → ~10 suspects).
+ */
+export function preVerifyCitations(
+  body: string,
+  refs: AuditRef[],
+): {
+  autoSupported: number[];
+  suspects: {
+    n: number;
+    sentence: string;
+    reason: string;
+    topicality: number;
+    factRaw?: string;
+    factUnit?: string;
+  }[];
+} {
+  const citations = extractBodyCitations(body);
+  const autoSupported = new Set<number>();
+  const suspects: {
+    n: number;
+    sentence: string;
+    reason: string;
+    topicality: number;
+    factRaw?: string;
+    factUnit?: string;
+  }[] = [];
+
+  // Track per-n so we don't double-add the same number to suspects
+  const seenSuspect = new Set<string>();
+
+  for (const c of citations) {
+    const ref = refs[c.n - 1];
+    if (!ref) continue; // out-of-range — handled elsewhere
+
+    const topicality = topicalityScore(c.sentence, `${ref.title || ""} ${ref.abstract || ""}`);
+    const facts = extractNumericFacts(c.sentence);
+
+    let numericMismatch = false;
+    let mismatchedFact: NumericFact | null = null;
+    for (const f of facts) {
+      const verdict = numericFactSupportedByRef(f, ref);
+      // For RESOLUTIONS (Å) and COUNTS, both "mismatch" and "absent"
+      // indicate the cited reference does not support the specific
+      // numeric claim in the sentence — flag as suspect.
+      // For YEARS, only "mismatch" is suspect (abstracts don't usually
+      // repeat the publication year, so "absent" is normal).
+      if (verdict === "mismatch") {
+        numericMismatch = true;
+        mismatchedFact = f;
+        break;
+      }
+      if (verdict === "absent" && (f.unit === "Å" || f.unit === "pdb-id")) {
+        // Resolution claims and PDB IDs are specific enough that the
+        // reference should at least mention the same unit. If it doesn't,
+        // the citation is suspect.
+        numericMismatch = true;
+        mismatchedFact = f;
+        break;
+      }
+    }
+
+    const isLowTopicality = topicality < 0.02;
+
+    if (numericMismatch && mismatchedFact) {
+      if (!seenSuspect.has(`m-${c.n}`)) {
+        seenSuspect.add(`m-${c.n}`);
+        suspects.push({
+          n: c.n,
+          sentence: c.sentence,
+          reason: `numeric-mismatch: sentence says "${mismatchedFact.raw}" but ref [${c.n}] does not contain that number with unit "${mismatchedFact.unit}"`,
+          topicality,
+          factRaw: mismatchedFact.raw,
+          factUnit: mismatchedFact.unit,
+        });
+      }
+    } else if (isLowTopicality) {
+      if (!seenSuspect.has(`t-${c.n}`)) {
+        seenSuspect.add(`t-${c.n}`);
+        suspects.push({
+          n: c.n,
+          sentence: c.sentence,
+          reason: `low-topicality: score ${topicality.toFixed(3)} < 0.02 threshold`,
+          topicality,
+        });
+      }
+    } else {
+      autoSupported.add(c.n);
+    }
+  }
+
+  return {
+    autoSupported: Array.from(autoSupported),
+    suspects,
+  };
+}
+
 /**
  * Parse a "[n] ..." reference list (from ## References or ### Citations)
  * into a map of citation number → AuditRef. Mirrors the logic in
