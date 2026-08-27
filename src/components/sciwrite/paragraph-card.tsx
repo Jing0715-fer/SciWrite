@@ -185,11 +185,13 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
   });
 
   const reviseMut = useMutation({
-    mutationFn: async (input: { mode?: string; instructions?: string }) => {
-      // Save snapshot before revising (for undo)
-      setUndoSnapshot(paragraph.content);
-      return api.reviseParagraph(paragraph.id, input);
-    },
+    // Snapshot BEFORE revising (for undo). onMutate is the idiomatic
+    // TanStack hook for pre-flight state — it runs synchronously before
+    // the async request, so the snapshot can never race a re-render
+    // (setState used to live inside mutationFn).
+    onMutate: () => setUndoSnapshot(paragraph.content),
+    mutationFn: (input: { mode?: string; instructions?: string }) =>
+      api.reviseParagraph(paragraph.id, input),
     onSuccess: () => {
       toast.success(t("toast.paragraphRevised"));
       invalidate();

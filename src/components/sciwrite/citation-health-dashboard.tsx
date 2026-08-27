@@ -159,6 +159,10 @@ export function CitationHealthDashboard({
     totalBefore: number;
     paragraphsProcessed: number;
   } | null>(null);
+  // Timeout refs so a stale auto-dismiss from a PREVIOUS run can't clear a
+  // fresh badge when the user re-runs the batch quickly.
+  const fixResultTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const regenResultTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   // Live progress for batch fix: { done, total, currentTitle }.
   const [fixProgress, setFixProgress] = React.useState<{
     done: number;
@@ -253,6 +257,10 @@ export function CitationHealthDashboard({
         totalBefore,
         paragraphsProcessed: processed,
       });
+      // Auto-dismiss after 8s (the comment always promised this — the badge
+      // used to persist forever and mask newer results).
+      if (fixResultTimer.current) clearTimeout(fixResultTimer.current);
+      fixResultTimer.current = setTimeout(() => setFixResult(null), 8_000);
       // Re-fetch health to reflect the fixes.
       await fetchHealth();
     } catch (err: any) {
@@ -353,6 +361,9 @@ export function CitationHealthDashboard({
         }
       }
       setRegenResult({ processed, total: offenders.length });
+      // Auto-dismiss after 8s — matches the fixResult badge behavior.
+      if (regenResultTimer.current) clearTimeout(regenResultTimer.current);
+      regenResultTimer.current = setTimeout(() => setRegenResult(null), 8_000);
       await fetchHealth();
     } catch (err: any) {
       setError(err?.message || t("citationHealth.batchRegenFailed"));

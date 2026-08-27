@@ -211,6 +211,20 @@ export async function POST(req: NextRequest) {
         renumberByAppearance(content, references);
       content = renumberedContent;
 
+      // FIX (W3 — citation-accuracy audit): renumberByAppearance renumbers
+      // the body but passes the "### Citations" tail through UNTOUCHED —
+      // its numbering is the LLM's original numbering and no longer matches
+      // the renumbered body. The frontend gives the parsed Citations block
+      // PRIORITY over DB references for hover tooltips, and downstream
+      // validate/auto-fix routes use it to build aiCitationMap — so a stale
+      // tail poisons both with false "exists"/"missing" verdicts. The DB
+      // Reference rows linked below are the source of truth; strip the tail
+      // (same policy as regenerate route's sanitizeSectionContent step 1).
+      const staleTailIdx = content.indexOf("### Citations");
+      if (staleTailIdx >= 0) {
+        content = content.slice(0, staleTailIdx).trim();
+      }
+
       // Layer 1 — run the inline validator on the renumbered content to log
       // topicality warnings (suspect/unsupported). These do not block the
       // save (false positives are common with short titles) but are recorded
@@ -259,12 +273,29 @@ export async function POST(req: NextRequest) {
         send("step", { status: "progress", message: `Linking ${reorderedRefs.length} cited references...` });
         for (let idx = 0; idx < reorderedRefs.length; idx++) {
           const ref = reorderedRefs[idx];
-          const existing = await db.reference.findFirst({
-            where: {
-              externalId: ref.externalId,
-              paragraphId: paragraph.id,
-            },
-          });
+          // FIX (W1 — citation-accuracy audit): the previous findFirst always
+          // filtered on `externalId: ref.externalId`. When externalId is null
+          // (manual refs — common), Prisma matched ANY same-paragraph ref with
+          // a null externalId, so with ≥2 such refs only the first was created
+          // and every later one collapsed into a citationOrder update on the
+          // WRONG row (reference rows lost, body [n] misaligned with DB).
+          // When undefined, Prisma ignored the filter entirely — even worse.
+          // Identity rule (mirrors refIdentity in citation-audit.ts):
+          // externalId present → type+externalId; otherwise → title (+type).
+          const existing = ref.externalId
+            ? await db.reference.findFirst({
+                where: {
+                  externalId: ref.externalId,
+                  paragraphId: paragraph.id,
+                },
+              })
+            : await db.reference.findFirst({
+                where: {
+                  paragraphId: paragraph.id,
+                  title: ref.title,
+                  type: ref.type || "manual",
+                },
+              });
           if (!existing) {
             await db.reference.create({
               data: {

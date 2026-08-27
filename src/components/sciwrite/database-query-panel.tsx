@@ -287,8 +287,16 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
                 index={idx}
                 onAddSource={() => saveSourceMut.mutate(item)}
                 onAddRef={() => saveRefMut.mutate(item)}
-                savingSource={saveSourceMut.isPending}
-                savingRef={saveRefMut.isPending}
+                // Per-item saving state: compare mutate()'s variables against
+                // this item — the previous global `isPending` flags made EVERY
+                // result card show a spinner while any single save was in
+                // flight, hiding which row was actually being saved.
+                savingSource={
+                  saveSourceMut.isPending && saveSourceMut.variables === item
+                }
+                savingRef={
+                  saveRefMut.isPending && saveRefMut.variables === item
+                }
               />
             ))}
           {results && results.rawSnippet && (

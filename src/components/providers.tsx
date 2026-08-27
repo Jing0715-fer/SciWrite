@@ -11,7 +11,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 15_000,
+            // Single-user local app: 60s freshness is plenty and cuts
+            // redundant refetches (was 15s — every panel remount re-fetched).
+            staleTime: 60_000,
             retry: 1,
             refetchOnWindowFocus: false,
           },
