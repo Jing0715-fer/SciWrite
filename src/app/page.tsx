@@ -53,6 +53,7 @@ const UnifiedWritingDialog = React.lazy(() =>
 import { useI18n } from "@/lib/i18n";
 import type { Article } from "@/lib/types";
 import { SessionGate } from "@/components/sciwrite/session-gate";
+import { AUTH_ENABLED } from "@/lib/auth-mode";
 
 // Auth gate (round-7): while anonymous, the SessionGate renders the login
 // card and the app below never mounts (so no query fires without a session
@@ -443,18 +444,24 @@ function Home() {
             },
             group: t("cmd.groupProject"),
           },
-          {
-            id: "signout",
-            label: t("auth.signOut"),
-            icon: <LogOut className="h-3.5 w-3.5" />,
-            onSelect: () => {
-              // signOut clears the session cookie then reloads "/" — the
-              // SessionGate re-checks /api/auth/session and shows the login
-              // card again.
-              signOut({ callbackUrl: "/" });
-            },
-            group: t("cmd.groupProject"),
-          },
+          // Only offered while the login gate is actually active — with the
+          // gate toggled off there is no session to sign out of.
+          ...(AUTH_ENABLED
+            ? [
+                {
+                  id: "signout",
+                  label: t("auth.signOut"),
+                  icon: <LogOut className="h-3.5 w-3.5" />,
+                  onSelect: () => {
+                    // signOut clears the session cookie then reloads "/" — the
+                    // SessionGate re-checks /api/auth/session and shows the login
+                    // card again.
+                    signOut({ callbackUrl: "/" });
+                  },
+                  group: t("cmd.groupProject"),
+                },
+              ]
+            : []),
         ]}
       />
     </div>

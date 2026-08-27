@@ -7,9 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useI18n } from "@/lib/i18n";
+import { AUTH_ENABLED } from "@/lib/auth-mode";
 
 /**
- * SessionGate (round-7 backend auth).
+ * SessionGate (round-7 backend auth, toggleable).
  *
  * Client-side gate for the single "/" route: while anonymous, renders the
  * login card instead of the app; once signed in, mounts the app fresh so
@@ -17,15 +18,26 @@ import { useI18n } from "@/lib/i18n";
  *
  * The actual enforcement lives in src/proxy.ts (every /api/* route returns
  * 401 without a valid session) — this component only provides the UI.
+ *
+ * When NEXT_PUBLIC_AUTH_ENABLED is not "true" (default), the gate is
+ * bypassed entirely: children render immediately, no session check,
+ * no login card — the app behaves exactly like pre-round-7.
  */
 
 type AuthStatus = "checking" | "signed-out" | "signed-in";
 
 export function SessionGate({ children }: { children: React.ReactNode }) {
   const { t } = useI18n();
-  const [status, setStatus] = React.useState<AuthStatus>("checking");
+  // Auth disabled → start "signed-in" so children mount immediately;
+  // the effect below also skips its session round-trip. All hooks still
+  // run unconditionally (rules-of-hooks safe — AUTH_ENABLED is a
+  // build-time module constant).
+  const [status, setStatus] = React.useState<AuthStatus>(
+    AUTH_ENABLED ? "checking" : "signed-in"
+  );
 
   React.useEffect(() => {
+    if (!AUTH_ENABLED) return;
     let cancelled = false;
     const check = async () => {
       try {
@@ -44,6 +56,11 @@ export function SessionGate({ children }: { children: React.ReactNode }) {
       window.removeEventListener("focus", check);
     };
   }, []);
+
+  // Gate bypassed (toggle off): render the app right away.
+  if (!AUTH_ENABLED) {
+    return <>{children}</>;
+  }
 
   if (status === "checking") {
     return (

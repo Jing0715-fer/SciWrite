@@ -1412,3 +1412,27 @@ Stage Summary:
 - 登录凭据：researcher / 5f75e45f8069231a（存于本地 .env，不入库；用户可改）
 - 综合审查清单：MEDIUM 36/36 全部完成；LOW 项 quota-status 顺带修复
 - 提交信息：feat(round-7): NextAuth credentials auth, API gatekeeper proxy, SessionGate login UI
+
+---
+Task ID: round-8
+Agent: main (Z.ai Code orchestrator)
+Task: 取消登录验证（用户反馈：新建 project 显示未验证）— 将 round-7 鉴权改为默认关闭的 env 开关
+
+Work Log:
+- 根因：round-7 的 src/proxy.ts 拦截所有 /api/* 未登录请求返回 401（前端显示为"未验证"错误），SessionGate 又要求登录后才挂载应用；沙箱预览环境下 session cookie 不可靠导致新建 project 直接被挡
+- 方案决策：不做整体删除（round-7 是审查清单最后一项 MEDIUM 的成果），改为 NEXT_PUBLIC_AUTH_ENABLED 单一开关、默认关闭（= 回到 round-7 之前的开放行为），日后设 true + 重启即可重新启用
+- 新建 src/lib/auth-mode.ts：模块级常量 AUTH_ENABLED = process.env.NEXT_PUBLIC_AUTH_ENABLED === "true"，零 import（edge-safe，proxy.ts 可用）；注释说明三个消费方与编译期内联需重启的注意点
+- src/proxy.ts：入口处 AUTH_ENABLED !== true 时 NextResponse.next() 直通（不做 token 查询）；文档注释更新为 toggleable
+- session-gate.tsx：hooks 全部无条件执行（rules-of-hooks 安全）；disabled 时 useState 初值直接 "signed-in"、useEffect 跳过 session 轮询、渲染前提前 return children（无登录卡、无 checking spinner）
+- page.tsx：命令面板 Sign out 动作改为 ...(AUTH_ENABLED ? [action] : []) 条件展开——门禁关闭时无会话可登出
+- .env 追加 NEXT_PUBLIC_AUTH_ENABLED=false；.env.example 重写 auth 段：开关文档化（默认关闭语义、重启要求、其余 3 个变量仅在启用时生效）
+- 重启 dev server（kill 7331/7344 → python3 .zscripts/dev-daemon.py，pid 9231 链路），使 NEXT_PUBLIC_* 编译期内联生效
+- 验证（curl）：匿名 GET /api/projects 200（原 401）→ 匿名 POST /api/projects 200 建成 "Auth Toggle Verification"（原 401）→ DELETE 200 清理
+- 验证（agent-browser E2E）：打开 / 直接渲染完整应用（无登录卡）→ 点 New 按钮 → 填 title/topic → Create project → 对话框关闭、侧栏出现新项目、工作区 heading 切换为新项目名；命令面板（Ctrl+K）无 Sign out 条目；errors 0 / console error 0（仅预存 resizable-panels 布局 warning）；测试项目已删；dev.log 无 error/401
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 160 warning（与 round-6 基线持平）
+
+Stage Summary:
+- 登录验证已取消：应用恢复无门禁直用，新建 project 全链路（curl + 浏览器 UI）实测通过
+- round-7 鉴权代码全保留（auth.ts/NextAuth 路由/LoginCard/i18n auth.* 15 键），由 NEXT_PUBLIC_AUTH_ENABLED 控制，默认 false；.env.example 已文档化重新启用步骤（设 true + 重启）
+- 单一事实源 src/lib/auth-mode.ts 被 proxy/SessionGate/page 三方消费；purge-expired 的 401 是独立 CRON_SECRET 检查，未动
+- 提交信息：feat(round-8): default-off auth toggle — revert login gate blocking project creation

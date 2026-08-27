@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
+import { AUTH_ENABLED } from "@/lib/auth-mode";
 
 /**
- * API gatekeeper (round-7 backend auth).
+ * API gatekeeper (round-7 backend auth, toggleable).
  *
- * - Guards every /api/* route except an explicit public allowlist.
+ * - DISABLED by default: unless NEXT_PUBLIC_AUTH_ENABLED=true, every
+ *   request passes straight through (pre-round-7 open behavior — the
+ *   login gate was rolled back because it blocked project creation in
+ *   the sandbox preview; re-enable via env when needed).
+ * - When enabled, guards every /api/* route except an explicit public
+ *   allowlist.
  * - Unauthenticated API calls receive a clean 401 JSON (no redirect —
  *   the frontend api-client surfaces the error message directly).
  * - The page itself ("/") is NOT gated here: the SessionGate client
@@ -27,6 +33,11 @@ import { getToken } from "next-auth/jwt";
 const PUBLIC_PREFIXES = ["/api/auth", "/api/shared"];
 
 export default async function proxy(req: NextRequest) {
+  // Toggle off → pass through everything, no session lookup at all.
+  if (!AUTH_ENABLED) {
+    return NextResponse.next();
+  }
+
   const { pathname } = req.nextUrl;
 
   if (!pathname.startsWith("/api/")) {
