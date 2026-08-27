@@ -1583,3 +1583,24 @@ Stage Summary:
 - 管线四处加固：预印本/正式版机械去重（curate 前）、零引用章节门控重写、生成与验证提示词的引用密度+类型匹配规则、遥测扩展——本轮 4 类问题在新生成中均有对应防线
 - 测试资产：修复脚本 scripts/fix-tmc-article-round14.ts（--apply 落库 / 默认 dry-run）、去重离线测试 scripts/test-dedupe-round14.ts、docx 验证 scripts/verify-docx-round14.ts；DB 快照版本"pre-round14"可随时回滚；/home/z/tmc-fix/ 含修复前后文章、导出样本、渲染 PDF
 - 提交信息：fix(round-14): repair TMC article citations + harden pipeline (preprint dedupe, zero-citation gate)
+
+---
+Task ID: round-15
+Agent: main (Z.ai Code orchestrator)
+Task: 重新从头跑一遍 TMC1/TMC2 2500 词全文生成，验证 round-14 修复的 6 类问题是否复发；修复残留问题并加固管线
+
+Work Log:
+- 回归测试（项目 cmtbfcd1603e4qv4twolga935 → 文章 cmtbfklif042mqv4tk9j9nr2c，UI 默认参数 targetWords=2500，双 fork 守护 SSE，单实例 6.2 分钟）：8 节 / 20 篇文献 / 2992 词；curate 阶段机械去重 12 个预印本重复（preprintDuplicatesDropped=12）；67 处引用对抗验证移除 2 处类型错配；审计 0 阻断错误
+- 6 类问题对照结论：✅ 零引用章节（各节 5/7/5/5/6/6/4/2 处引用，治疗节 222 词 [13,17] 不再为零）；✅ 预印本重复（20 篇 0 重复，Giese/Wang/Clark 全为正式版）；✅ lipid 类型错配（scramblase 论断挂 Lee/Ballesteros 原始工作）；⚠️ 结构原始论文覆盖部分改善（Clark 2024 PNAS 入列 + 专设 Cryo-EM 节，但 Jeong 2022 Nature 在池中未被 curate 选中）；❌ 跨节论断重复复发（dimer/TMEM16 [5]、cysteine mutagenesis [5]、CIB2 电荷表面 [9] 三处论断各在三节逐字重复）；❌ 相邻括号格式复发 1 处（§7 [3][14]）；新发现：verify 移除错配后治疗节引用荒（基因治疗/药理论断仍无治疗文献，Askew 2015 在池中未被 curate）
+- 管线加固四处（generate-full-v2/route.ts + generate-full-helpers.ts）：① ensurePrimaryPaperCoverage —— plan 之后机械覆盖断言：从 topic+章节标题提取 structure（≥2 篇原始结构论文）/therapy（≥1 篇治疗论文）信号，不足时从去重候选池补入、优先替换综述；离线测试（真实池数据）Jeong 2022 + Nist-Lund 2019 正确补入替换两篇综述，幂等性/无信号对照 PASS；② generate 提示词新增 NO REPETITION ACROSS SECTIONS 硬规则；③ previousSectionsDigest 从"开头 160 字符"升级为论断级（每节含引用句子前 6 条，防下游节重述已建立论断）；④ compose 相邻括号归一化（[3][14]→[3,14]，链式循环合并）；complete 遥测新增 adjacentCitationsMerged + coverageBackfills
+- 本文修正（scripts/fix-tmc-article-round15.ts，9 处手术 + 键控全局重编号 20→24 篇）：补入 Jeong 2022 Nature（TMC-1 复合物 cryo-EM）+ Askew 2015 + Nist-Lund 2019 + Shibata 2016（PubMed esummary 核实元数据）；§3 Cryo-EM 节重构为科学准确表述（线虫 TMC-1/TMC-2 复合物结构已解析 + 脊椎动物全长结构未解析为领域开放问题）；跨节去重 9 处（§2 删 dimer/cysteine/OSCA1.1/CIB 细节重复句并指向 §4/§5 主场、§3 删重复、§5 压缩钙渗透性重复、§7 删 OSCA1.1 重复）+ §2 补 Giese 2025 复合物重建论断；§8 治疗节三个论断挂 Askew/Nist-Lund/Shibata、小分子句子改写为有据开放问题；[3][14]→[3,14]；落库含 ArticleVersion 快照 "pre-round15" + 8 段落 content 同步 + Reference 前缀切片行重建（compose 存储语义复刻）
+- 修正后验证：citation-health 审计 blockingErrors=0；正文 1980 词 / 24 篇参考文献 / 编号 1..24 连续全被引 / 每节引用 6-10 处；逐字级跨节重复探针归零（剩余共现词均为不同论断的合法词汇）；Word 导出（curl 解包）：120 fldData 双载荷 + EN.REFLIST、begin/end 121/121 平衡、0 dirty、0 INVALID、traveling library 24/24 标题正确（4 篇新文献全部在库）、文件名"标题+时间戳"；LibreOffice 渲染 8 页 PDF：[1]-[24] 连续、无相邻括号、无 INVALID、治疗内容渲染正常；质量门 tsc 0 错误 / lint 0 error 161 warning（src 无新增，scripts 工具类 +3）；浏览器 E2E（agent-browser）：项目工作区（8 段/60 引用/覆盖率 100%）、Article 弹窗修正内容渲染（"No atomic structure of a full-length vertebrate..."、dual-vector 治疗句）、导出菜单 6 格式、UI 触发 Word 导出 0 page error / 0 console error
+- 事故处置：E2E 中途 dev server 进程消失（HTTP 000）——用 .zscripts/dev-daemon.py 双 fork 守护重启恢复，与代码改动无关
+
+Stage Summary:
+- 回归测试结论：round-14 的 4 类修复（零引用门控、预印本去重、类型匹配验证、引用密度提示词）在真实重跑中全部生效；2 类残留（跨节论断重复、相邻括号格式）+ 1 类新发现（verify 移除错配后的治疗节引用荒）已在本轮全部加固修复
+- 管线新增 4 道防线：机械覆盖断言（结构/治疗原始论文必须入列）、论断级 digest（下游节可见已建立论断）、防重复提示词、compose 相邻括号归一化——对应 4 类已确认缺陷的复发路径全部关闭
+- 修正后文章：24 篇全真实文献（新增 Jeong 2022/Askew 2015/Nist-Lund 2019/Shibata 2016 均经 PubMed 核实）、Cryo-EM 节 2 篇原始结构论文支撑且科学表述准确、治疗节 5 处引用位、跨节零逐字重复、引用格式统一
+- 测试资产：项目 cmtbfcd1603e4qv4twolga935（Regression）保留；/home/z/tmc-rerun/ 含 SSE 日志、修正前后文章、导出 docx/PDF、渲染验证；离线测试 scripts/test-coverage-round15.ts；修正脚本 scripts/fix-tmc-article-round15.ts（--apply 落库 / 默认 dry-run）
+- 已知设计内行为：[9] Lee 2025 bioRxiv 为孤立预印本（无正式版配对，与 Peineau 2025 为同实验室姊妹工作非同一工作），按 round-14 设计保留；正文 1980 词低于 2500 目标（-21%，去重与科学纠偏的代价，质量优先）
+- 提交信息：fix(round-15): regression rerun verifies round-14 fixes; add coverage assertion, claim-level digest, cross-section dedup, bracket normalization

@@ -146,6 +146,112 @@ export function dedupePreprintVersions(references: any[]): PreprintDedupeResult 
   return { refs: kept, dropped };
 }
 
+// ---------------------------------------------------------------------------
+// round-15: primary-paper coverage assertion
+// ---------------------------------------------------------------------------
+
+/** Journal/title heuristics for "this is a review, not primary research". */
+function looksLikeReview(r: any): boolean {
+  const j = String(r?.journal || "").toLowerCase();
+  const t = String(r?.title || "").toLowerCase();
+  return /review|perspect|current opinion|opinion|primer|insight|outlook|survey/.test(j) || /^(\ba\b\s+)?(review|perspective|opinion|primer)\b/.test(t);
+}
+
+/** True if the reference is a primary structure-determination paper. */
+function isPrimaryStructurePaper(r: any): boolean {
+  const t = String(r?.title || "").toLowerCase();
+  if (looksLikeReview(r)) return false;
+  return /\bstructure of\b|\bstructures of\b|\bstructural basis\b|\bcryo-?em\b|\bcryo-?electron\b|\barchitecture of\b|\bx-ray structure\b|\bcrystal structure\b/.test(t);
+}
+
+/** True if the reference is a primary therapy/intervention paper. */
+function isPrimaryTherapyPaper(r: any): boolean {
+  const t = String(r?.title || "").toLowerCase();
+  if (looksLikeReview(r)) return false;
+  return /\bgene therapy\b|\btherapeutic\b|\brestores (auditory|hearing|function)\b|\btreatment of\b|\brna interference\b|\bgene editing\b|\bcrispr\b|\baav\b|\bantisense\b/.test(t);
+}
+
+export interface CoverageBackfillResult {
+  refs: any[];
+  backfilled: { signal: string; addedTitle: string; replacedTitle: string | null }[];
+}
+
+/**
+ * round-15: mechanical coverage assertion AFTER curation + planning.
+ *
+ * E2E regression finding: an article titled "…cryo-EM structures of TMC1/TMC2"
+ * shipped with ZERO primary structure papers (claims hung on reviews), and a
+ * Therapeutic-Approaches section had no therapy papers in the curated pool
+ * (Askew 2015 gene-therapy paper was in the gather pool but never curated).
+ * The LLM curation prompt asks for primary papers (priority 5), but prompt
+ * rules alone proved unreliable — this function enforces it mechanically.
+ *
+ * Signals are derived from the topic + planned section titles:
+ *   - structure signal (structur/architect/cryo/morpholog/anatomy) → curated
+ *     list must contain ≥ 2 primary structure papers
+ *   - therapy signal (therapeut/treatment/gene therapy/clinic/restor) → ≥ 1
+ *     primary therapy paper
+ * Missing papers are pulled from the deduped candidate pool, replacing the
+ * most expendable REVIEWS first (reviews are the safest swaps: their claims
+ * are second-hand and other sections usually cite the primaries anyway). If
+ * no review is expendable, the paper is appended (max +2 over the cap).
+ */
+export function ensurePrimaryPaperCoverage(
+  topic: string,
+  sectionTitles: string[],
+  candidates: any[],
+  curated: any[],
+): CoverageBackfillResult {
+  const corpus = `${topic}\n${sectionTitles.join("\n")}`.toLowerCase();
+  const backfilled: CoverageBackfillResult["backfilled"] = [];
+  const refs = [...curated];
+  const refKey = (r: any) => `${String(r?.title || "").toLowerCase().replace(/\s+/g, " ").trim()}|${String(r?.doi || r?.url || r?.externalId || "").toLowerCase()}`;
+  const inCurated = new Set(refs.map(refKey));
+
+  const signals: { name: string; active: boolean; test: (r: any) => boolean; min: number }[] = [
+    {
+      name: "structure",
+      active: /structur|architect|cryo|morpholog|anatom/.test(corpus),
+      test: isPrimaryStructurePaper,
+      min: 2,
+    },
+    {
+      name: "therapy",
+      active: /therapeut|treatment|gene therapy|clinic|restor|translational/.test(corpus),
+      test: isPrimaryTherapyPaper,
+      min: 1,
+    },
+  ];
+
+  for (const sig of signals) {
+    if (!sig.active) continue;
+    let have = refs.filter(sig.test).length;
+    if (have >= sig.min) continue;
+    // Find candidates for this signal, best first (newest, and title keyword
+    // density as a light relevance sort), skipping anything already curated.
+    const pool = candidates
+      .filter((c) => sig.test(c) && !inCurated.has(refKey(c)))
+      .sort((a, b) => refYear(b) - refYear(a));
+    for (const cand of pool) {
+      if (have >= sig.min) break;
+      // Prefer replacing a review; otherwise append (bounded at +2).
+      const reviewIdx = refs.findIndex(looksLikeReview);
+      if (reviewIdx >= 0) {
+        const replaced = refs[reviewIdx];
+        refs[reviewIdx] = cand;
+        backfilled.push({ signal: sig.name, addedTitle: String(cand.title || ""), replacedTitle: String(replaced.title || "") });
+      } else {
+        if (refs.length >= curated.length + 2) break;
+        refs.push(cand);
+        backfilled.push({ signal: sig.name, addedTitle: String(cand.title || ""), replacedTitle: null });
+      }
+      inCurated.add(refKey(cand));
+      have++;
+    }
+  }
+  return { refs, backfilled };
+}
+
 /**
  * Generate web search queries to supplement database queries.
  * Capped at maxQueries to avoid JSON truncation by the LLM's output token limit.

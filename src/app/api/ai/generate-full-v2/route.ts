@@ -26,6 +26,7 @@ import {
   countBySource,
   curateReferences,
   dedupePreprintVersions,
+  ensurePrimaryPaperCoverage,
   generateWebSearchQueries,
   inferFormat,
   safeParseJSON,
@@ -136,6 +137,9 @@ export async function POST(req: NextRequest) {
         // round-14: citation-management hardening telemetry
         zeroCitationRetries: 0,
         preprintDuplicatesDropped: 0,
+        // round-15: regression-hardening telemetry
+        adjacentCitationsMerged: 0,
+        coverageBackfills: [] as { signal: string; addedTitle: string; replacedTitle: string | null }[],
       };
 
       // Hoisted for the catch block's failure-recovery logic (try-block
@@ -485,7 +489,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           );
         }
         const maxCitableRefs = maxCitableRefsFor(targetWords, deduped.refs.length);
-        const curatedRefs = await curateReferences(
+        let curatedRefs = await curateReferences(
           projectId, deduped.refs, project.topic, project.field || "life sciences", maxCitableRefs, maxTokens
         );
         send("step", {
@@ -563,6 +567,35 @@ Output JSON only.`;
           message: `Planned ${sections.length} sections.`,
         });
         log(`plan: ${sections.length} sections`);
+
+        // ★ round-15: mechanical primary-paper coverage assertion. The LLM
+        // curation prompt (priority 5) asks for primary structure/therapy
+        // papers, but the TMC regression run still shipped a "Cryo-EM
+        // Advances" section whose only structure paper was one PNAS paper
+        // (Jeong 2022 Nature sat unused in the gather pool), and a therapeutic
+        // section with zero therapy references (Askew 2015 never curated).
+        // Enforce coverage mechanically now that the section titles are known.
+        const coverage = ensurePrimaryPaperCoverage(
+          project.topic,
+          sections.map((s: any) => `${s.title} ${s.focus || ""}`),
+          deduped.refs,
+          curatedRefs,
+        );
+        if (coverage.backfilled.length > 0) {
+          curatedRefs = coverage.refs;
+          stats.coverageBackfills = coverage.backfilled;
+          log(
+            `plan: coverage backfill — ` +
+              coverage.backfilled
+                .map((b) => `[${b.signal}] +"${b.addedTitle.slice(0, 60)}"${b.replacedTitle ? ` replacing review "${b.replacedTitle.slice(0, 50)}"` : " (appended)"}`)
+                .join(" | ")
+          );
+          send("step", {
+            step: "plan",
+            status: "progress",
+            message: `Coverage assertion: backfilled ${coverage.backfilled.length} primary paper(s) — ${coverage.backfilled.map((b) => b.signal).join(", ")}.`,
+          });
+        }
 
         // ============ STEP 4: ★ Analyze — extract evidence bank ============
         send("step", {
@@ -670,7 +703,7 @@ Output JSON only.`;
             .map((s: any, j: number) => `§${j + 1}: ${s.title}`)
             .join("\n");
           const continuityBlock = previousSectionsDigest
-            ? `\nFULL OUTLINE OF SECTIONS ALREADY WRITTEN (do NOT repeat their content or re-open their examples):\n${allPreviousTitles}\n\nMOST RECENT SECTIONS (match their style and flow):\n${previousSectionsDigest}\n`
+            ? `\nFULL OUTLINE OF SECTIONS ALREADY WRITTEN (do NOT repeat their content or re-open their examples):\n${allPreviousTitles}\n\nCLAIMS ALREADY ESTABLISHED IN RECENT SECTIONS (do NOT restate these — not even in reworded form):\n${previousSectionsDigest}\n`
             : "";
 
           const prompt = `RESEARCH TOPIC: ${project.topic}
@@ -704,6 +737,17 @@ CITATION SYSTEM (STRUCTURAL — the most important rule):
   are listed. Never cite a purely functional study as evidence for a
   structural finding, or a review as the source of a primary finding the
   review merely summarizes.
+
+NO REPETITION ACROSS SECTIONS (round-15):
+- The outline and "CLAIMS ALREADY ESTABLISHED" list above show what earlier
+  sections already said. NEVER restate an established claim — not even
+  reworded, and ESPECIALLY not with the same citation. If a brief link to a
+  prior point is needed for flow, refer to it in ONE short clause WITHOUT a
+  citation and move on.
+- Spend the entire word budget on NEW claims drawn from THIS section's
+  allocated references. When two sections would naturally cite the same
+  reference for the same fact, let the more topical section own that fact and
+  let the other section skip it entirely.
 
 EVIDENCE FIDELITY:
 - Write FROM the VERIFIED EVIDENCE claims listed above — those claims were
@@ -970,12 +1014,26 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             wordCount: paragraph.wordCount,
           });
 
-          const opening = sectionContent.slice(0, 160).replace(/\n+/g, " ");
-          const digestEntry = `§${sectionNum} "${section.title}": opens "${opening}..." [${citedRefs.length} refs]`;
+          // ★ round-15: claim-level digest. The old digest (first 160 chars)
+          // carried style but not substance — the TMC regression repeated the
+          // dimer/TMEM16 and cysteine-mutagenesis claims verbatim across three
+          // sections because later sections never SAW those claims. Now each
+          // digest entry lists the citation-bearing sentences so downstream
+          // sections know exactly what is already established.
+          const claimSentences = sectionContent
+            .split(/(?<=[.!?])\s+/)
+            .filter((s: string) => /\[\d/.test(s))
+            .slice(0, 6)
+            .map((s: string) => s.replace(/\s+/g, " ").replace(/^[-•*]\s*/, "").slice(0, 150));
+          const digestEntry =
+            `§${sectionNum} "${section.title}" established:\n` +
+            (claimSentences.length > 0
+              ? claimSentences.map((s: string) => `- ${s}`).join("\n")
+              : `- (opening: ${sectionContent.slice(0, 140).replace(/\n+/g, " ")}...)`);
           previousSectionsDigest = (previousSectionsDigest + "\n" + digestEntry)
             .split("\n")
             .filter(Boolean)
-            .slice(-3)
+            .slice(-24)
             .join("\n");
 
           send("step", {
@@ -1049,6 +1107,17 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             globalNums.sort((a, b) => a - b);
             return `[${globalNums.join(",")}]`;
           });
+          // ★ round-15: normalize adjacent bracket pairs. The LLM sometimes
+          // emits two separate citation markers back-to-back ("[3][14]" —
+          // user-reported format inconsistency). Merge them into the canonical
+          // comma form, chained ([1][2][3] → [1,2,3]), AFTER global
+          // renumbering so the merged numbers are final.
+          let prevMerged = "";
+          while (prevMerged !== result) {
+            prevMerged = result;
+            result = result.replace(/\[(\d+(?:,\d+)*)\]\s*\[(\d+(?:,\d+)*)\]/g, (_m, a: string, b: string) => `[${a},${b}]`);
+            if (result !== prevMerged) stats.adjacentCitationsMerged++;
+          }
           return result;
         });
 
@@ -1238,6 +1307,8 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             gateRetries: stats.gateRetries,
             zeroCitationRetries: stats.zeroCitationRetries,
             preprintDuplicatesDropped: stats.preprintDuplicatesDropped,
+            adjacentCitationsMerged: stats.adjacentCitationsMerged,
+            coverageBackfills: stats.coverageBackfills,
             citationsChecked: stats.citationsChecked,
             citationsRemoved: stats.citationsRemoved,
             citationsFlagged: stats.citationsFlagged,
