@@ -30,6 +30,7 @@ import {
   generateWebSearchQueries,
   inferFormat,
   removeCrossSectionDuplicates,
+  trailingUncitedClaimWords,
   safeParseJSON,
 } from "@/lib/generate-full-helpers";
 import {
@@ -137,6 +138,7 @@ export async function POST(req: NextRequest) {
         citationsFlagged: 0,
         // round-14: citation-management hardening telemetry
         zeroCitationRetries: 0,
+        trailingUncitedRetries: 0,
         preprintDuplicatesDropped: 0,
         // round-15: regression-hardening telemetry
         adjacentCitationsMerged: 0,
@@ -562,6 +564,27 @@ Output JSON only.`;
           if (!s.focus) s.focus = `Discussion of ${s.title} in the context of ${project.topic}`;
         }
 
+        // ★ round-17: dedup/verify word reserve. The compose-stage mechanical
+        // cross-section dedup + adversarial citation verification strip
+        // content AFTER allocation (third E2E run: 15 sentences ≈ 360 words +
+        // 8 citation removals → 2119 words against a 2500 target, -15%).
+        // Budget a 12% headroom (capped at 1.18× target) so the composed
+        // article still lands within the ±10% band.
+        {
+          const plannedTotal = sections.reduce(
+            (s: number, x: any) => s + (Number(x.targetWords) || 0),
+            0,
+          );
+          const cappedTotal = Math.round(targetWords * 1.18);
+          if (plannedTotal > 0 && plannedTotal < cappedTotal) {
+            const scale = Math.min(1.12, cappedTotal / plannedTotal);
+            for (const s of sections) {
+              s.targetWords = Math.round((Number(s.targetWords) || 0) * scale);
+            }
+            log(`plan: word reserve ×${scale.toFixed(3)} applied (${plannedTotal} → ${sections.reduce((s: number, x: any) => s + (Number(x.targetWords) || 0), 0)} planned) for dedup/verify loss`);
+          }
+        }
+
         send("step", {
           step: "plan",
           status: "done",
@@ -865,17 +888,23 @@ You cite ONLY with {{Rn}} keys — never numeric [n] citations.`;
           chunkContent = sanitizeSectionContent(chunkContent);
 
           // ---- ★ VALIDATION GATE (deepseek-harness-style step validation) ----
-          // If the output contains raw numeric [n] markers, malformed keys, or
+          // If the output contains raw numeric [n] markers, malformed keys,
           // ZERO citations (round-14: a "Therapeutic Perspectives" section
           // shipped with 0 citations while asserting concrete gene-therapy and
-          // CRISPR claims), retry ONCE with a corrective instruction.
+          // CRISPR claims), or a TRAILING UNCITED CLAIM BLOCK (round-17: §8 of
+          // the E2E run made substantive therapeutic claims for its last ~100
+          // words while all {{Rn}} keys sat in the first paragraph), retry
+          // ONCE with a corrective instruction.
           const gate = keyedCitationsAreValid(chunkContent, sectionRefs.length);
           const keyedCount = (chunkContent.match(/\{\{R\d+\}\}/g) || []).length;
           const zeroCite = keyedCount === 0;
-          if (zeroCite || (!gate.ok && (gate.rawNumericMarkers > 0 || gate.outOfRangeKeys > 0))) {
+          const trailingBlock = trailingUncitedClaimWords(chunkContent);
+          const trailingGate = !zeroCite && keyedCount > 0 && trailingBlock !== null;
+          if (zeroCite || trailingGate || (!gate.ok && (gate.rawNumericMarkers > 0 || gate.outOfRangeKeys > 0))) {
             stats.gateRetries++;
             if (zeroCite) stats.zeroCitationRetries++;
-            log(`generate: section ${sectionNum} FAILED validation gate (zeroCite=${zeroCite}, raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
+            if (trailingGate) stats.trailingUncitedRetries++;
+            log(`generate: section ${sectionNum} FAILED validation gate (zeroCite=${zeroCite}, trailing=${trailingGate ? `${trailingBlock}w` : "no"}, raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
             send("step", {
               step: "generate",
               status: "progress",
@@ -883,14 +912,20 @@ You cite ONLY with {{Rn}} keys — never numeric [n] citations.`;
               total: sections.length,
               message: zeroCite
                 ? `Section ${sectionNum}: validation gate triggered (ZERO citations) — retrying with grounding instruction...`
-                : `Section ${sectionNum}: validation gate triggered (raw numeric markers: ${gate.rawNumericMarkers}) — retrying with corrective instruction...`,
+                : trailingGate
+                  ? `Section ${sectionNum}: validation gate triggered (trailing ${trailingBlock} uncited claim words) — retrying with grounding instruction...`
+                  : `Section ${sectionNum}: validation gate triggered (raw numeric markers: ${gate.rawNumericMarkers}) — retrying with corrective instruction...`,
             });
             try {
               const retryPrompt = prompt + (zeroCite
                 ? `
 
 CORRECTION: your previous output contained ZERO {{Rn}} citations, but this section has ${sectionRefs.length} citable references allocated to it. A review section must ground its claims in the listed references. Rewrite the SAME section so that every factual claim — including each therapeutic strategy, experimental approach, or projected development — cites the specific listed reference that supports it, using {{Rn}} keys. If a claim cannot be supported by any listed reference, rephrase it as an explicitly open question or replace it with content drawn from the references. Output the corrected section only.`
-                : `
+                : trailingGate
+                  ? `
+
+CORRECTION: in your previous output, the last ${trailingBlock} words make substantive factual claims (experimental findings, therapeutic advances, mechanistic assertions) WITHOUT any {{Rn}} citation, while all citations sit earlier in the section. Every claim sentence — especially in closing/outlook paragraphs — must cite the specific listed reference that supports it, using {{Rn}} keys. Rewrite the SAME section, either grounding those trailing claims in the listed references or reframing them as explicitly open questions. Output the corrected section only.`
+                  : `
 
 CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] or [2], or invalid keys. Rewrite the SAME section content using ONLY {{Rn}} citation keys from the list. Every citation must be a {{Rn}} key. Output the corrected section only.`);
               const retryContent = await chatWithSession(projectId, retryPrompt, {
@@ -903,9 +938,15 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
               const sanitizedRetry = sanitizeSectionContent(retryContent);
               const retryGate = keyedCitationsAreValid(sanitizedRetry, sectionRefs.length);
               const retryKeyed = (sanitizedRetry.match(/\{\{R\d+\}\}/g) || []).length;
-              const improved = zeroCite
-                ? retryKeyed > 0 && retryGate.rawNumericMarkers === 0
-                : retryGate.rawNumericMarkers < gate.rawNumericMarkers;
+              const retryTrailing = trailingUncitedClaimWords(sanitizedRetry);
+              let improved: boolean;
+              if (zeroCite) {
+                improved = retryKeyed > 0 && retryGate.rawNumericMarkers === 0;
+              } else if (trailingGate) {
+                improved = retryTrailing === null || (retryTrailing ?? 0) < (trailingBlock ?? 0);
+              } else {
+                improved = retryGate.rawNumericMarkers < gate.rawNumericMarkers;
+              }
               if (improved) {
                 chunkContent = sanitizedRetry;
                 log(`generate: section ${sectionNum} retry improved (keyed ${keyedCount}→${retryKeyed}, raw ${gate.rawNumericMarkers}→${retryGate.rawNumericMarkers})`);
@@ -1340,6 +1381,7 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             strippedNumeric: stats.strippedNumeric,
             gateRetries: stats.gateRetries,
             zeroCitationRetries: stats.zeroCitationRetries,
+            trailingUncitedRetries: stats.trailingUncitedRetries,
             preprintDuplicatesDropped: stats.preprintDuplicatesDropped,
             adjacentCitationsMerged: stats.adjacentCitationsMerged,
             coverageBackfills: stats.coverageBackfills,
