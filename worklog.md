@@ -1459,3 +1459,27 @@ Stage Summary:
 - 修复两处引用审计缺陷：URL 内嵌 ID 提取（消除全量误报）+ CHD 文章审计补传 dbRefs（恢复静默跳过的编号完整性检查）
 - 引用准确性门禁全链路验证有效：{{Rn}} 键控引用 → 对抗性验证（61 查 3 移除）→ 全局重编号 → 机械审计（0 blocking）
 - 提交信息：fix(round-9): citation audit false mismatches — URL-embedded id extraction + CHD numbering-integrity
+
+---
+Task ID: round-10
+Agent: main (Z.ai Code orchestrator)
+Task: 优化 Word/PDF 导出为正式论文排版 — 只保留正文+参考文献，去除 markdown 表格与审查内容
+
+Work Log:
+- 需求确认：用户反馈导出的 docx/PDF 混入了 Data Source Inventory（markdown 表格）、Citation Validation Report（审查内容）、Annotations、User Data 附录，且正文残留 **粗体标记** 与表格竖线，不像正式论文
+- 内容净化（新增 4 个模块级 helper）：preparePaperContent（剔除 markdown 表块与水平线）、stripInlineMarkdown（PDF 纯文本路径去 **/`/列表符 + 长_URL 断行）、parseInlineMarkdown（docx 行内解析：**粗体**→bold、*斜体*→italic、[n]→上标引用）、allowWordWrap（docx 长 URL 零宽空格断行）
+- 调用点修改：docx/pdf 分支不再拼接 fullAppendix（数据源清单/引用验证/用户数据附录）、不再传 annotations——只有正文与 References；markdown/epub 保持原行为（附录仍在，curl 验证 Data Source Inventory 保留）
+- 引用列表一致性修复（v115）：refLines 优先取文章正文 "## References" 段的 [n] 行（v2 compose 是编号唯一事实源；段落派生 references 数组在对抗性移除后会过期导致编号错位），仅当解析出连续 1..N 编号时才覆盖
+- buildDocx 重写：Times New Roman 衡线体（nature/science 模板用 Arial）、全文黑色（去除 teal 0F766E 主题色）、标题居中 16pt、摘要缩进块、## 节自动编号（1. / 1.1）、正文 11pt 两端对齐+首行缩进 0.25"+1.4 倍行距、[n] 上标、References 新起一页+悬挂缩进 0.25"+页脚居中页码（Footer+PageNumber.CURRENT）；双语导出的 # 分卷标题自动分页
+- buildPdf 重写：Helvetica→Times-Roman 衡线族（CJK 仍走 NotoSansSC 子集嵌入）、标题/摘要居中、正文 10pt 两端对齐（词间距均匀分布实现 justify，末行左对齐）+首行缩进、节编号加粗、References 新起一页+悬挂缩进 14pt+长 URL 断词、页码 "n / total" 保留、章节书签 outline 保留、PDF 元数据 setTitle/setCreator
+- 删除旧 parseInlineCitations（被 parseInlineMarkdown 取代）；sanitizeForPdf 原样保留
+- 验证（curl 解包）：docx 16/16 检查通过——编号节、References、[1] Jumper、无附录/无表格竖线/无 ** 标记/无 teal 色、上标引用、两端对齐、页脚页码、悬挂缩进、Times 字体；PDF 提取文本 11 项检查通过（页码 "6/6" 为 pdftotext 去空格所致）；段落级 docx 导出 200；markdown 导出附录保留
+- 验证（VLM 视觉）：docx（LibreOffice 渲染）——标题居中加粗✓ 编号节✓ 两端对齐+首行缩进✓ 上标引用✓ 无 markdown 残留✓ 参考文献页标题/编号/悬挂缩进/URL 不越界✓ 页码✓；PDF——首页排版同上全部✓ 参考文献页✓
+- 验证（浏览器）：导出菜单展开正常（Word/PDF/Markdown/LaTeX 项齐全）、UI 触发 PDF 导出 0 console error / 0 page error
+- 质量门：tsc 0 错误 / eslint 0 error（160 warning 与基线持平）
+
+Stage Summary:
+- Word/PDF 导出达到正式论文排版：衡线体、黑色、编号章节、两端对齐、首行缩进、上标引用（Word）、独立参考文献页（悬挂缩进）、页脚页码；PDF 保留章节书签
+- 内容边界清晰：docx/pdf = 正文+参考文献；markdown/epub = 完整诊断导出（含数据源清单/引用验证附录）
+- 引用编号一致性：导出引用列表现以文章正文 References 段为唯一事实源，杜绝对抗性移除后的编号错位
+- 提交信息：feat(round-10): paper-grade Word/PDF exports — formal typography, body+refs only

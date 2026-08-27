@@ -5,7 +5,8 @@ import {
   Packer,
   Paragraph,
   TextRun,
-  HeadingLevel,
+  Footer,
+  PageNumber,
   AlignmentType,
 } from "docx";
 import { PDFDocument, StandardFonts, rgb, PDFName, PDFString, PDFNumber, PDFDict } from "pdf-lib";
@@ -295,7 +296,7 @@ export async function POST(req: NextRequest) {
                      journalTemplate === "ieee" ? "References" :
                      "References";
 
-    const refLines = references.length
+    let refLines = references.length
       ? references.map((r, i) => {
           const n = i + 1;
           // Export validation: warn about missing fields (logged server-side)
@@ -333,6 +334,25 @@ export async function POST(req: NextRequest) {
           }
         })
       : [];
+
+    // v115: Prefer the reference list exactly as composed inside the article
+    // body ("## References"). v2 compose is the single source of truth for
+    // the body's [n] numbering; the paragraph-derived `references` array can
+    // be STALE after adversarial removal (v112-2), which would renumber
+    // entries and desync [n] markers from the exported list. Body-derived
+    // lines guarantee [n] ↔ entry consistency in every exported format.
+    {
+      const refStart = content.indexOf("## References");
+      if (refStart >= 0) {
+        const refSection = content.substring(refStart);
+        const matches = [...refSection.matchAll(/^\s*\[(\d{1,3})\]\s*(.+)$/gm)]
+          .map((m) => ({ n: parseInt(m[1], 10), line: `[${m[1]}] ${m[2].trim()}` }))
+          .sort((a, b) => a.n - b.n);
+        if (matches.length > 0 && matches.every((x, i) => x.n === i + 1)) {
+          refLines = matches.map((x) => x.line);
+        }
+      }
+    }
 
     // ============ Data Source Inventory & Citation Validation ============
     // Fetch every gathered DataSource for the project so we can show:
@@ -663,12 +683,15 @@ export async function POST(req: NextRequest) {
     }
 
     if (body.format === "docx") {
+      // v115 paper-grade export: body + references only. Audit appendices
+      // (data-source inventory / citation validation / user data) and
+      // annotations are intentionally excluded from the Word/PDF paper
+      // formats — they remain available in the markdown/epub exports.
       const buffer = await buildDocx(
         exportTitle,
         abstract,
-        cleanContent + (fullAppendix ? "\n\n" + fullAppendix.trim() : ""),
+        cleanContent,
         refLines,
-        body.includeAnnotations ? annotations : undefined,
         journalTemplate,
       );
       return new NextResponse(buffer, {
@@ -685,9 +708,8 @@ export async function POST(req: NextRequest) {
       const buffer = await buildPdf(
         exportTitle,
         abstract,
-        cleanContent + (fullAppendix ? "\n\n" + fullAppendix.trim() : ""),
-        refLines,
-        body.includeAnnotations ? annotations : undefined
+        cleanContent,
+        refLines
       );
       return new NextResponse(buffer, {
         headers: {
@@ -1054,170 +1076,225 @@ function buildLatex(
   return parts.join("\n");
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// v115 PAPER-GRADE EXPORTS (Word + PDF)
+// ═══════════════════════════════════════════════════════════════════════════
+// Formal manuscript typography per user request:
+//   - body + references ONLY (no annotations, no data-source inventory, no
+//     citation-validation appendix, no user-data appendix, no markdown tables)
+//   - serif body (Times New Roman / Times-Roman), black text
+//   - numbered sections, justified paragraphs, first-line indent
+//   - superscript [n] citations (Word), inline [n] (PDF)
+//   - references on a fresh page with hanging indent + footer page numbers
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Remove content blocks that do not belong in a formal paper export:
+ * markdown table blocks (pipe rows + separator) and horizontal rules.
+ * The "## References" / "### Citations" sections are already stripped by
+ * stripReferencesFromContent before this runs.
+ */
+function preparePaperContent(content: string): string {
+  const blocks = content.split(/\n\n+/);
+  const out: string[] = [];
+  for (const raw of blocks) {
+    const b = raw.trim();
+    if (!b) continue;
+    // Markdown table: ≥2 pipe-delimited lines (with or without a separator row)
+    const lines = b.split("\n");
+    const pipeLines = lines.filter((l) => l.trim().startsWith("|"));
+    const hasSeparator = lines.some((l) => /^\s*\|?[\s:\-|]+\|?\s*$/.test(l) && l.includes("-"));
+    if (pipeLines.length >= 2 && (hasSeparator || pipeLines.length === lines.length)) continue;
+    // Horizontal rule (--- / *** / ___)
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(b)) continue;
+    out.push(b);
+  }
+  return out.join("\n\n");
+}
+
+/**
+ * Reduce inline markdown to plain prose (PDF plain-text path):
+ * **bold** / *italic* / `code` markers are removed, leading list bullets
+ * are stripped. Long URL-ish tokens get spaces after separators so they
+ * wrap instead of overflowing the text column.
+ */
+function stripInlineMarkdown(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/^\s*[-*•]\s+/, "")
+    .replace(/\S{48,}/g, (tok) => tok.replace(/(\/|=|&|\?)/g, "$1 "));
+}
+
+/**
+ * Parse inline markdown into Word runs: **bold** → bold, *italic* → italic,
+ * `code` → plain, [n] / [n,m] / [n-m] → superscript citation. Everything
+ * else becomes a plain run. All runs share the manuscript font/size.
+ */
+function parseInlineMarkdown(text: string, font: string, size: number): TextRun[] {
+  const runs: TextRun[] = [];
+  const re = /(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(`[^`\n]+`)|(\[\d{1,3}(?:[,\-–\s]\d{1,3})*\])/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    if (m.index > last) {
+      runs.push(new TextRun({ text: text.slice(last, m.index), font, size }));
+    }
+    const tok = m[0];
+    if (tok.startsWith("**")) {
+      runs.push(new TextRun({ text: tok.slice(2, -2), bold: true, font, size }));
+    } else if (tok.startsWith("`")) {
+      runs.push(new TextRun({ text: tok.slice(1, -1), font, size }));
+    } else if (tok.startsWith("[")) {
+      runs.push(new TextRun({ text: tok, superScript: true, font, size }));
+    } else {
+      runs.push(new TextRun({ text: tok.slice(1, -1), italics: true, font, size }));
+    }
+    last = m.index + tok.length;
+  }
+  if (last < text.length) {
+    runs.push(new TextRun({ text: text.slice(last), font, size }));
+  }
+  return runs.length ? runs : [new TextRun({ text, font, size })];
+}
+
+/**
+ * Word: insert zero-width spaces after "/" in long URL tokens so reference
+ * entries wrap at the margin instead of overflowing into the right margin.
+ */
+function allowWordWrap(line: string): string {
+  return line.replace(/\S{48,}/g, (tok) => tok.replace(/\//g, "/\u200b"));
+}
+
 async function buildDocx(
   title: string,
   abstract: string,
   content: string,
   refLines: string[],
-  annotations?: Annotation[],
   journalTemplate?: string,
 ): Promise<ArrayBuffer> {
   const children: Paragraph[] = [];
 
-  // Journal-specific styling
+  // Formal manuscript fonts: Times New Roman serif; Nature/Science house
+  // style uses a sans stack.
   const isNature = journalTemplate === "nature";
-  const isCell = journalTemplate === "cell";
   const isScience = journalTemplate === "science";
-  // Font: Nature/Science use sans-serif, Cell uses serif, generic uses Georgia
-  const titleFont = isNature || isScience ? "Arial" : isCell ? "Times New Roman" : "Georgia";
-  const bodyFont = isNature || isScience ? "Arial" : isCell ? "Times New Roman" : "Calibri";
-  const titleSize = isNature ? 28 : isCell ? 30 : 36; // Nature has smaller titles
-  const refSize = isNature ? 18 : 19; // Nature has smaller refs
+  const font = isNature || isScience ? "Arial" : "Times New Roman";
+  const bodySize = 22;  // 11 pt
+  const smallSize = 20; // 10 pt
+  const refSize = 18;   // 9 pt
 
-  // Title — journal-specific font and size
+  // ---- Title ----
   children.push(
     new Paragraph({
-      heading: HeadingLevel.TITLE,
       alignment: AlignmentType.CENTER,
-      children: [new TextRun({ text: title, bold: true, size: titleSize, font: titleFont })],
-      spacing: { after: 120 },
+      children: [new TextRun({ text: title, bold: true, size: 32, font, color: "000000" })],
+      spacing: { after: 80, line: 320 },
     })
   );
 
-  // Horizontal rule
-  children.push(
-    new Paragraph({
-      children: [],
-      border: { bottom: { style: "single", size: 6, color: "0F766E", space: 1 } },
-      spacing: { after: 200 },
-    })
-  );
-
-  // Abstract
+  // ---- Abstract ----
   if (abstract) {
     children.push(
       new Paragraph({
-        children: [
-          new TextRun({ text: "Abstract", bold: true, size: 22, font: "Georgia", color: "0F766E" }),
-        ],
-        spacing: { after: 80 },
+        alignment: AlignmentType.CENTER,
+        children: [new TextRun({ text: "Abstract", bold: true, size: bodySize, font, color: "000000" })],
+        spacing: { before: 160, after: 80 },
       })
     );
     children.push(
       new Paragraph({
-        children: [
-          new TextRun({ text: abstract, italics: true, color: "444444", size: 21 }),
-        ],
-        spacing: { after: 240, line: 340 },
-        indent: { left: 360, right: 360 },
+        children: parseInlineMarkdown(abstract, font, smallSize),
         alignment: AlignmentType.JUSTIFIED,
+        indent: { left: 567, right: 567 },
+        spacing: { after: 240, line: 300 },
       })
     );
   }
 
-  // Body: split by markdown headings and paragraphs
-  const blocks = content.split(/\n\n+/);
-  for (const block of blocks) {
-    const trimmed = block.trim();
-    if (!trimmed) continue;
-    if (trimmed.startsWith("### ")) {
+  // ---- Body ----
+  const blocks = preparePaperContent(content).split(/\n\n+/);
+  let h2 = 0;
+  let h3 = 0;
+  let sawSection = false;
+  for (const raw of blocks) {
+    const b = raw.trim();
+    if (!b) continue;
+    if (b.startsWith("### ")) {
+      h3 += 1;
       children.push(
         new Paragraph({
-          heading: HeadingLevel.HEADING_3,
-          children: [new TextRun({ text: trimmed.replace(/^###\s+/, ""), font: "Georgia", color: "333333" })],
-          spacing: { before: 200, after: 80 },
+          children: [
+            new TextRun({
+              text: `${h2}.${h3} ${b.replace(/^###\s+/, "")}`,
+              bold: true, size: 24, font, color: "000000",
+            }),
+          ],
+          spacing: { before: 240, after: 100 },
         })
       );
-    } else if (trimmed.startsWith("## ")) {
+    } else if (b.startsWith("## ")) {
+      h2 += 1;
+      h3 = 0;
       children.push(
         new Paragraph({
-          heading: HeadingLevel.HEADING_2,
-          children: [new TextRun({ text: trimmed.replace(/^##\s+/, ""), font: "Georgia", color: "0F766E", bold: true })],
-          spacing: { before: 280, after: 100 },
-          border: { bottom: { style: "single", size: 2, color: "D1D5DB", space: 4 } },
+          children: [
+            new TextRun({
+              text: `${h2}. ${b.replace(/^##\s+/, "")}`,
+              bold: true, size: 26, font, color: "000000",
+            }),
+          ],
+          spacing: { before: sawSection ? 320 : 120, after: 120 },
         })
       );
-    } else if (trimmed.startsWith("# ")) {
+      sawSection = true;
+    } else if (b.startsWith("# ")) {
+      // Language-part title (bilingual export halves) or a rare standalone
+      // top heading — centered, starts a new page when not the first block.
+      h2 = 0;
+      h3 = 0;
       children.push(
         new Paragraph({
-          heading: HeadingLevel.HEADING_1,
-          children: [new TextRun({ text: trimmed.replace(/^#\s+/, ""), font: "Georgia", color: "0F766E", bold: true })],
-          spacing: { before: 280, after: 100 },
+          alignment: AlignmentType.CENTER,
+          children: [new TextRun({ text: b.replace(/^#\s+/, ""), bold: true, size: 30, font, color: "000000" })],
+          pageBreakBefore: sawSection,
+          spacing: { after: 200 },
         })
       );
     } else {
-      const runs = parseInlineCitations(trimmed);
+      // Prose paragraph: join soft-wrapped lines, strip list bullets.
+      const para = b.split("\n").map((l) => l.replace(/^\s*[-*•]\s+/, "")).join(" ");
       children.push(
         new Paragraph({
-          children: runs,
-          spacing: { after: 160, line: 340 },
+          children: parseInlineMarkdown(para, font, bodySize),
           alignment: AlignmentType.JUSTIFIED,
+          spacing: { after: 140, line: 340 },
           indent: { firstLine: 360 },
         })
       );
     }
   }
 
-  // Annotations
-  if (annotations && annotations.length) {
-    children.push(
-      new Paragraph({
-        heading: HeadingLevel.HEADING_2,
-        children: [new TextRun({ text: "Annotations", font: "Georgia", color: "0F766E", bold: true })],
-        spacing: { before: 300, after: 100 },
-        border: { bottom: { style: "single", size: 2, color: "D1D5DB", space: 4 } },
-      })
-    );
-    annotations.forEach((a, i) => {
-      children.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: `[${i + 1}] ${a.type} (${a.severity})${a.resolved ? " — resolved" : ""}`,
-              bold: true, size: 21, font: "Calibri",
-            }),
-          ],
-          spacing: { after: 40 },
-        })
-      );
-      if (a.selectedText) {
-        children.push(
-          new Paragraph({
-            children: [new TextRun({ text: `“${a.selectedText}”`, italics: true, color: "666666", size: 20 })],
-            indent: { left: 360 },
-            spacing: { after: 40 },
-          })
-        );
-      }
-      children.push(
-        new Paragraph({
-          children: [new TextRun({ text: a.comment, size: 21, font: "Calibri" })],
-          indent: { left: 360 },
-          spacing: { after: 120 },
-        })
-      );
-    });
-  }
-
-  // References
+  // ---- References (fresh page, hanging indent) ----
   if (refLines.length) {
     children.push(
       new Paragraph({
-        heading: HeadingLevel.HEADING_2,
-        children: [new TextRun({ text: "References", font: "Georgia", color: "0F766E", bold: true })],
-        spacing: { before: 360, after: 120 },
-        border: { bottom: { style: "single", size: 2, color: "D1D5DB", space: 4 } },
+        pageBreakBefore: true,
+        children: [new TextRun({ text: "References", bold: true, size: 26, font, color: "000000" })],
+        spacing: { after: 160 },
       })
     );
-    refLines.forEach((line) => {
+    for (const line of refLines) {
       children.push(
         new Paragraph({
-          children: [new TextRun({ text: line, size: 19, font: "Calibri", color: "333333" })],
-          spacing: { after: 60, line: 280 },
+          children: [new TextRun({ text: allowWordWrap(line), size: refSize, font, color: "000000" })],
+          alignment: AlignmentType.JUSTIFIED,
+          spacing: { after: 80, line: 260 },
           indent: { left: 360, hanging: 360 },
         })
       );
-    });
+    }
   }
 
   const doc = new Document({
@@ -1225,15 +1302,23 @@ async function buildDocx(
       properties: {
         page: { margin: { top: 1440, bottom: 1440, left: 1440, right: 1440 } },
       },
+      footers: {
+        default: new Footer({
+          children: [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new TextRun({ children: [PageNumber.CURRENT], size: 18, font, color: "555555" }),
+              ],
+            }),
+          ],
+        }),
+      },
       children,
     }],
     styles: {
       default: {
-        document: { run: { font: bodyFont, size: 22 } },
-        heading1: { run: { font: titleFont, size: 28, bold: true, color: "0F766E" } },
-        heading2: { run: { font: titleFont, size: 26, bold: true, color: "0F766E" } },
-        heading3: { run: { font: titleFont, size: 24, color: "333333" } },
-        title: { run: { font: titleFont, size: titleSize, bold: true, color: "1F2937" } },
+        document: { run: { font, size: bodySize } },
       },
     },
   });
@@ -1243,7 +1328,6 @@ async function buildDocx(
   // Uint8Array<ArrayBuffer> and hand back its .buffer.
   return new Uint8Array(await Packer.toBuffer(doc)).buffer;
 }
-
 function parseInlineCitations(text: string): TextRun[] {
   const runs: TextRun[] = [];
   const re = /\[(\d{1,3}(?:[,\-–\s]\d{1,3})*|[A-Z]{2,12}:\s?[^\]]{1,60})\]/g;
@@ -1310,21 +1394,21 @@ async function buildPdf(
   abstract: string,
   content: string,
   refLines: string[],
-  annotations?: Annotation[]
 ): Promise<ArrayBuffer> {
   const pdfDoc = await PDFDocument.create();
   // Register fontkit so we can embed custom TrueType/OpenType fonts (e.g. NotoSansSC for CJK).
   pdfDoc.registerFontkit(fontkit);
+  pdfDoc.setTitle(title);
+  pdfDoc.setCreator("SciWrite");
 
   // Detect whether any content contains CJK characters.
   // If so, we use the embedded NotoSansSC font (which supports both CJK and Latin).
-  // Otherwise, we use the legacy StandardFonts.Helvetica + sanitizeForPdf path.
+  // Otherwise, we use the formal serif Times family + sanitizeForPdf path.
   const hasCJK =
     containsCJK(title) ||
     containsCJK(abstract) ||
     containsCJK(content) ||
-    refLines.some(containsCJK) ||
-    (annotations?.some((a) => containsCJK(a.comment) || containsCJK(a.selectedText || "")) ?? false);
+    refLines.some(containsCJK);
 
   let font: any;
   let boldFont: any;
@@ -1335,300 +1419,321 @@ async function buildPdf(
     const cjkBytes = await loadCJKFont();
     if (cjkBytes) {
       // NotoSansSC includes Latin glyphs, so we use it for all three roles.
-      // There's no bold/italic variant in this single file, but we use
-      // color + size differentiation to convey emphasis.
       font = await pdfDoc.embedFont(cjkBytes, { subset: true });
-      boldFont = font; // same font; we use color/size to differentiate
+      boldFont = font;
       italicFont = font;
       useCJK = true;
     } else {
-      // CJK detected but font not available — fall back to Helvetica with sanitization.
-      // CJK characters will be rendered as "?" but the document will still be valid.
+      // CJK detected but font not available — fall back with sanitization.
       console.warn("[export] CJK content detected but NotoSansSC font not available — CJK chars will be '?'.");
-      font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-      italicFont = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+      font = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+      boldFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+      italicFont = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
     }
   } else {
-    font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-    italicFont = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+    font = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+    boldFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+    italicFont = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
   }
 
   const pageWidth = 595.28; // A4
   const pageHeight = 841.89;
-  const margin = 56;
-  const maxWidth = pageWidth - margin * 2;
-  let y = pageHeight - margin;
+  const marginX = 64;
+  const marginTop = 66;
+  const marginBottom = 58;
+  const maxWidth = pageWidth - marginX * 2;
+  const ink = rgb(0, 0, 0);
+  const softInk = rgb(0.15, 0.15, 0.15);
 
-  const drawPage = pdfDoc.addPage([pageWidth, pageHeight]);
-  y = pageHeight - margin;
+  let currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
+  let y = 0;
+  const startPage = () => { y = pageHeight - marginTop; };
+  startPage();
 
-  let currentPage = drawPage;
-
-  /**
-   * Word-wrap a single line of text. For Latin text we wrap by word (split on spaces);
-   * for CJK text we wrap by character (CJK has no spaces between words).
-   * Mixed text (Latin + CJK) is wrapped by character, which works for both.
-   */
-  const writeLine = (
-    text: string,
-    opts: { font?: any; size?: number; color?: any; indent?: number } = {}
-  ) => {
-    // v111-4: Split on newlines first — drawText fails on embedded \n
-    // ("WinAnsi cannot encode \n (0x000a)"). Each \n becomes a new line.
-    const lines = text.split("\n");
-    for (const ln of lines) {
-      writeSingleLine(ln, opts);
+  const newPageIfNeeded = (needed: number): boolean => {
+    if (y - needed < marginBottom) {
+      currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
+      startPage();
+      return true;
     }
+    return false;
   };
 
-  const writeSingleLine = (
-    text: string,
-    opts: { font?: any; size?: number; color?: any; indent?: number } = {}
-  ) => {
-    // Only sanitize when using the WinAnsi Helvetica font — the CJK font supports Unicode.
-    const sanitized = useCJK ? text : sanitizeForPdf(text);
-    const f = opts.font || font;
-    const size = opts.size || 10;
-    const indent = opts.indent || 0;
-    const color = opts.color || rgb(0.15, 0.15, 0.15);
-    const availableWidth = maxWidth - indent;
-
-    // Split into "wrap units" — for CJK each char is a unit; for Latin each word is a unit.
-    // We detect CJK at the string level: if the line contains any CJK, we wrap by char.
-    // This produces better results for mixed text (e.g. Chinese with English citations).
-    const units = useCJK || containsCJK(sanitized)
-      ? Array.from(sanitized) // by character (handles surrogate pairs correctly)
-      : sanitized.split(" ");
-
+  /** Left-aligned wrapped heading text (bold, black). */
+  const drawLeft = (text: string, f: any, size: number, color = ink) => {
+    const sani = useCJK ? text : sanitizeForPdf(text);
+    const cjk = containsCJK(sani);
+    const units = cjk ? Array.from(sani) : sani.split(" ");
+    const sep = cjk ? "" : " ";
     let line = "";
-    for (let i = 0; i < units.length; i++) {
-      const u = units[i];
-      // For word-wrapped (non-CJK) text, join with spaces. For char-wrapped, no space.
-      const sep = (useCJK || containsCJK(sanitized)) ? "" : " ";
+    const flush = (ln: string) => {
+      newPageIfNeeded(size * 1.4);
+      try { currentPage.drawText(ln, { x: marginX, y, size, font: f, color }); } catch {}
+      y -= size * 1.34;
+    };
+    for (const u of units) {
       const test = line ? line + sep + u : u;
-      if (f.widthOfTextAtSize(test, size) > availableWidth) {
-        if (y - size * 1.3 < margin) {
-          currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-          y = pageHeight - margin;
-        }
-        try {
-          currentPage.drawText(line, { x: margin + indent, y, size, font: f, color });
-        } catch (e) {
-          // If a glyph is missing from the font, pdf-lib throws. Skip the line silently.
-        }
-        y -= size * 1.35;
+      if (f.widthOfTextAtSize(test, size) > maxWidth) {
+        if (line) flush(line);
         line = u;
       } else {
         line = test;
       }
     }
-    if (line) {
-      if (y - size * 1.3 < margin) {
-        currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
-        y = pageHeight - margin;
-      }
-      try {
-        currentPage.drawText(line, { x: margin + indent, y, size, font: f, color });
-      } catch {}
-      y -= size * 1.35;
-    }
+    if (line) flush(line);
   };
 
-  const writeWrapped = (text: string, opts: any = {}) => {
-    writeLine(text, opts);
-  };
-
-  // Title — large, bold, themed color
-  const titleSize = 16;
-  const titleText = useCJK ? title : sanitizeForPdf(title);
-  // Wrap title by character when CJK (Chinese titles have no spaces)
-  if (useCJK || containsCJK(title)) {
-    const chars = Array.from(titleText);
+  /** Centered wrapped line (title / part titles). */
+  const drawCentered = (text: string, f: any, size: number, lead: number) => {
+    const sani = useCJK ? text : sanitizeForPdf(text);
+    const cjk = containsCJK(sani);
+    const units = cjk ? Array.from(sani) : sani.split(" ");
+    const sep = cjk ? "" : " ";
     let line = "";
-    for (const ch of chars) {
-      const test = line + ch;
-      if (boldFont.widthOfTextAtSize(test, titleSize) > maxWidth) {
-        try {
-          currentPage.drawText(line, {
-            x: margin,
-            y,
-            size: titleSize,
-            font: boldFont,
-            color: rgb(0.1, 0.35, 0.3),
-          });
-        } catch {}
-        y -= titleSize * 1.3;
-        line = ch;
+    const flush = (ln: string) => {
+      newPageIfNeeded(size * 1.4);
+      try {
+        const w = f.widthOfTextAtSize(ln, size);
+        currentPage.drawText(ln, { x: (pageWidth - w) / 2, y, size, font: f, color: ink });
+      } catch {}
+      y -= lead;
+    };
+    for (const u of units) {
+      const test = line ? line + sep + u : u;
+      if (f.widthOfTextAtSize(test, size) > maxWidth) {
+        if (line) flush(line);
+        line = u;
       } else {
         line = test;
       }
     }
-    if (line) {
-      try {
-        currentPage.drawText(line, {
-          x: margin,
-          y,
-          size: titleSize,
-          font: boldFont,
-          color: rgb(0.1, 0.35, 0.3),
-        });
-      } catch {}
-      y -= titleSize * 1.5;
+    if (line) flush(line);
+  };
+
+  /**
+   * Justified paragraph with optional first-line indent (Latin) or
+   * left-aligned character wrapping (CJK). Justification distributes the
+   * leftover line width evenly across inter-word gaps on all but the last
+   * line of each paragraph — the classic journal look.
+   */
+  const drawJustifiedBlock = (
+    text: string,
+    opts: {
+      size?: number;
+      leading?: number;
+      firstLineIndent?: number;
+      left?: number;
+      right?: number;
+      f?: any;
+      color?: any;
+    } = {}
+  ) => {
+    const size = opts.size ?? 10;
+    const leading = opts.leading ?? size * 1.42;
+    const left = opts.left ?? 0;
+    const right = opts.right ?? 0;
+    const first = opts.firstLineIndent ?? 0;
+    const f = opts.f ?? font;
+    const color = opts.color ?? softInk;
+    const avail = maxWidth - left - right;
+
+    if (useCJK || containsCJK(text)) {
+      // Character-wrapped, left aligned (CJK has no inter-word gaps).
+      const chars = Array.from(text);
+      let line = "";
+      let indent = first;
+      const flush = (ln: string, ind: number) => {
+        newPageIfNeeded(leading);
+        try { currentPage.drawText(ln, { x: marginX + left + ind, y, size, font: f, color }); } catch {}
+        y -= leading;
+      };
+      for (const ch of chars) {
+        const test = line + ch;
+        if (f.widthOfTextAtSize(test, size) > avail - indent) {
+          flush(line, indent);
+          indent = 0;
+          line = ch;
+        } else {
+          line = test;
+        }
+      }
+      if (line) flush(line, indent);
+      return;
     }
-  } else {
-    // Latin title — wrap by word (original behavior)
-    const titleWords = titleText.split(" ");
-    let titleLine = "";
-    for (const w of titleWords) {
-      const test = titleLine ? titleLine + " " + w : w;
-      if (boldFont.widthOfTextAtSize(test, titleSize) > maxWidth) {
-        currentPage.drawText(titleLine, {
-          x: margin,
-          y,
-          size: titleSize,
-          font: boldFont,
-          color: rgb(0.1, 0.35, 0.3),
-        });
-        y -= titleSize * 1.3;
-        titleLine = w;
+
+    // Pre-layout all lines of the paragraph.
+    const words = text.split(/\s+/).filter(Boolean);
+    const lines: { words: string[]; width: number; indent: number }[] = [];
+    let cur: string[] = [];
+    let curIndent = first;
+    for (const w of words) {
+      const test = cur.length ? cur.join(" ") + " " + w : w;
+      if (f.widthOfTextAtSize(test, size) > avail - curIndent && cur.length > 0) {
+        lines.push({ words: cur, width: f.widthOfTextAtSize(cur.join(" "), size), indent: curIndent });
+        cur = [w];
+        curIndent = 0;
       } else {
-        titleLine = test;
+        cur.push(w);
       }
     }
-    if (titleLine) {
-      currentPage.drawText(titleLine, {
-        x: margin,
-        y,
-        size: titleSize,
-        font: boldFont,
-        color: rgb(0.1, 0.35, 0.3),
-      });
-      y -= titleSize * 1.5;
+    if (cur.length) {
+      lines.push({ words: cur, width: f.widthOfTextAtSize(cur.join(" "), size), indent: curIndent });
     }
-  }
 
-  if (abstract) {
-    writeWrapped(abstract, { font: italicFont, size: 10, color: rgb(0.4, 0.4, 0.4) });
-    y -= 6;
-  }
+    lines.forEach((ln, i) => {
+      const isLast = i === lines.length - 1;
+      newPageIfNeeded(leading);
+      if (isLast || ln.words.length === 1) {
+        try {
+          currentPage.drawText(ln.words.join(" "), { x: marginX + left + ln.indent, y, size, font: f, color });
+        } catch {}
+      } else {
+        const gaps = ln.words.length - 1;
+        const spaceW = f.widthOfTextAtSize(" ", size);
+        const extra = Math.max(0, (avail - ln.indent - ln.width) / gaps);
+        let x = marginX + left + ln.indent;
+        for (const w of ln.words) {
+          try { currentPage.drawText(w, { x, y, size, font: f, color }); } catch {}
+          x += f.widthOfTextAtSize(w, size) + spaceW + extra;
+        }
+      }
+      y -= leading;
+    });
+  };
+
+  /** Hanging-indent block (references): first line flush, continuation indented. */
+  const drawHangingBlock = (
+    text: string,
+    opts: { size?: number; leading?: number; hang?: number } = {}
+  ) => {
+    const size = opts.size ?? 8.5;
+    const leading = opts.leading ?? size * 1.36;
+    const hang = opts.hang ?? 14;
+    const f = font;
+    const words = useCJK ? Array.from(text) : text.split(/\s+/).filter(Boolean);
+    let cur: string[] = [];
+    let curIndent = 0;
+    const isCJK = useCJK || containsCJK(text);
+    const flush = () => {
+      if (!cur.length) return;
+      newPageIfNeeded(leading);
+      const ln = isCJK ? cur.join("") : cur.join(" ");
+      try {
+        currentPage.drawText(ln, { x: marginX + curIndent, y, size, font: f, color: softInk });
+      } catch {}
+      y -= leading;
+      curIndent = hang;
+      cur = [];
+    };
+    for (const w of words) {
+      const test = isCJK ? cur.join("") + w : cur.length ? cur.join(" ") + " " + w : w;
+      if (f.widthOfTextAtSize(test, size) > maxWidth - curIndent && cur.length > 0) {
+        flush();
+        cur = [w];
+      } else {
+        cur.push(w);
+      }
+    }
+    if (cur.length) flush();
+  };
 
   // Track section bookmarks — each `## ` header becomes a PDF outline entry.
-  // We capture the current page ref + y position so the bookmark jumps to
-  // the start of that section.
   const sectionBookmarks: { title: string; pageRef: any; y: number }[] = [];
 
-  // Body
-  const blocks = content.split(/\n\n+/);
-  for (const block of blocks) {
-    const trimmed = block.trim();
-    if (!trimmed) continue;
-    if (trimmed.startsWith("## ")) {
-      // Record bookmark BEFORE writing the header (so it points to the
-      // top of the section, not after the heading text)
-      sectionBookmarks.push({
-        title: trimmed.replace(/^##\s+/, "").slice(0, 100),
-        pageRef: currentPage.ref,
-        y: y,
-      });
-      y -= 4;
-      writeWrapped(trimmed.replace(/^##\s+/, ""), {
-        font: boldFont,
-        size: 12,
-        color: rgb(0.12, 0.3, 0.27),
-      });
-      y -= 4;
-    } else if (trimmed.startsWith("# ")) {
-      // Top-level (# ) headers also get bookmarks (rare in our content)
-      sectionBookmarks.push({
-        title: trimmed.replace(/^#\s+/, "").slice(0, 100),
-        pageRef: currentPage.ref,
-        y: y,
-      });
-      y -= 4;
-      writeWrapped(trimmed.replace(/^#\s+/, ""), {
-        font: boldFont,
-        size: 13,
-        color: rgb(0.1, 0.35, 0.3),
-      });
-      y -= 4;
+  // ---- Title ----
+  drawCentered(title, boldFont, 15, 20);
+  y -= 10;
+
+  // ---- Abstract ----
+  if (abstract) {
+    drawCentered("Abstract", boldFont, 10, 14);
+    y -= 2;
+    drawJustifiedBlock(stripInlineMarkdown(abstract), {
+      size: 9,
+      leading: 12.5,
+      left: 40,
+      right: 40,
+      f: italicFont,
+      color: rgb(0.25, 0.25, 0.25),
+    });
+    y -= 10;
+  }
+
+  // ---- Body ----
+  const blocks = preparePaperContent(content).split(/\n\n+/);
+  let h2 = 0;
+  let h3 = 0;
+  let sawSection = false;
+  for (const raw of blocks) {
+    const b = raw.trim();
+    if (!b) continue;
+    if (b.startsWith("### ")) {
+      h3 += 1;
+      const t = `${h2}.${h3} ${stripInlineMarkdown(b.replace(/^###\s+/, ""))}`;
+      sectionBookmarks.push({ title: t.slice(0, 100), pageRef: currentPage.ref, y });
+      y -= 6;
+      drawLeft(t, boldFont, 11);
+      y -= 3;
+    } else if (b.startsWith("## ")) {
+      h2 += 1;
+      h3 = 0;
+      const t = `${h2}. ${stripInlineMarkdown(b.replace(/^##\s+/, ""))}`;
+      sectionBookmarks.push({ title: t.slice(0, 100), pageRef: currentPage.ref, y });
+      newPageIfNeeded(40);
+      y -= sawSection ? 12 : 2;
+      drawLeft(t, boldFont, 12.5);
+      y -= 5;
+      sawSection = true;
+    } else if (b.startsWith("# ")) {
+      // Language-part title (bilingual halves) — new page unless first.
+      h2 = 0;
+      h3 = 0;
+      if (y < pageHeight - marginTop - 5) {
+        currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
+        startPage();
+      }
+      drawCentered(b.replace(/^#\s+/, ""), boldFont, 14, 18);
+      y -= 8;
+      sawSection = false;
     } else {
-      // strip inline citation brackets for PDF (plain text rendering)
-      const plain = trimmed.replace(/\[([^\]]+)\]/g, "[$1]");
-      writeWrapped(plain, { size: 10 });
-      y -= 4;
+      const para = b.split("\n").map((l) => stripInlineMarkdown(l)).join(" ");
+      drawJustifiedBlock(useCJK ? para : sanitizeForPdf(para), {
+        size: 10,
+        leading: 14.2,
+        firstLineIndent: 18,
+      });
+      y -= 6;
     }
   }
 
-  // Annotations
-  if (annotations && annotations.length) {
-    // Bookmark for Annotations section
-    sectionBookmarks.push({
-      title: "Annotations",
-      pageRef: currentPage.ref,
-      y: y,
-    });
-    y -= 8;
-    writeWrapped("Annotations", {
-      font: boldFont,
-      size: 12,
-      color: rgb(0.12, 0.3, 0.27),
-    });
-    y -= 4;
-    annotations.forEach((a, i) => {
-      writeWrapped(
-        `[${i + 1}] ${a.type} (${a.severity})${a.resolved ? " — resolved" : ""}`,
-        { font: boldFont, size: 9 }
-      );
-      if (a.selectedText) {
-        writeWrapped(`"${a.selectedText}"`, { font: italicFont, size: 9, indent: 12 });
-      }
-      writeWrapped(a.comment, { size: 9, indent: 12 });
-      y -= 2;
-    });
-  }
-
-  // References — header language depends on content language
+  // ---- References (fresh page, hanging indent) ----
   if (refLines.length) {
-    // Bookmark for References section
+    currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
+    startPage();
     const refsHeader = useCJK ? "参考文献 (References)" : "References";
-    sectionBookmarks.push({
-      title: refsHeader,
-      pageRef: currentPage.ref,
-      y: y,
-    });
-    y -= 8;
-    writeWrapped(refsHeader, {
-      font: boldFont,
-      size: 12,
-      color: rgb(0.12, 0.3, 0.27),
-    });
-    y -= 4;
-    refLines.forEach((line) => {
-      writeWrapped(line, { size: 8, indent: 0 });
-      y -= 1;
-    });
+    sectionBookmarks.push({ title: refsHeader, pageRef: currentPage.ref, y });
+    drawLeft(refsHeader, boldFont, 13);
+    y -= 7;
+    for (const line of refLines) {
+      const txt = stripInlineMarkdown(line);
+      drawHangingBlock(useCJK ? txt : sanitizeForPdf(txt), { size: 8.5, leading: 11.5, hang: 14 });
+      y -= 2.5;
+    }
   }
 
-  // Add page numbers to every page (footer) — useful for cross-referencing
-  // when reading long PDFs. Renders "page / total" at the bottom center.
-  // Uses the same font as the body (CJK font when content is Chinese, so
-  // Chinese characters in the page number — if any — render correctly;
-  // Helvetica otherwise to keep file size small).
+  // Add page numbers to every page (footer center).
   const pages = pdfDoc.getPages();
   const total = pages.length;
-  // Reuse the already-embedded body font (no extra font bytes added)
-  const pageNumFont = useCJK ? boldFont : await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const pageNumFont = useCJK ? boldFont : font;
   for (let idx = 0; idx < pages.length; idx++) {
     const page = pages[idx];
     const pageText = `${idx + 1} / ${total}`;
     try {
       const textWidth = pageNumFont.widthOfTextAtSize(pageText, 8);
-      const pageWidth = page.getWidth();
+      const pw = page.getWidth();
       page.drawText(pageText, {
-        x: (pageWidth - textWidth) / 2,
-        y: 24,
+        x: (pw - textWidth) / 2,
+        y: 26,
         size: 8,
         font: pageNumFont,
         color: rgb(0.4, 0.4, 0.4),
@@ -1645,11 +1750,10 @@ async function buildPdf(
       // Create one outline item per section
       const itemRefs: any[] = sectionBookmarks.map((bm) => {
         // Destination: [pageRef, /XYZ, x, y, zoom=0]
-        // Using /XYZ keeps the user's zoom and scrolls to (x, y).
         const destArray = ctx.obj([
           bm.pageRef,
           PDFName.of("XYZ"),
-          PDFNumber.of(56), // left margin
+          PDFNumber.of(marginX), // left margin
           PDFNumber.of(Math.max(bm.y, 56)), // top position (clamp to margin)
           PDFNumber.of(0), // zoom = 0 means "keep current zoom"
         ]);
@@ -1661,13 +1765,10 @@ async function buildPdf(
       });
 
       // Link siblings: each item gets Prev/Next pointers.
-      // ctx.lookup() is typed PDFObject | undefined, but every ref here was
-      // just registered from a ctx.obj({...}) dict, so it is always a PDFDict.
       itemRefs.forEach((ref, i) => {
         const dict = ctx.lookup(ref) as PDFDict;
         if (i > 0) dict.set(PDFName.of("Prev"), itemRefs[i - 1]);
         if (i < itemRefs.length - 1) dict.set(PDFName.of("Next"), itemRefs[i + 1]);
-        // Parent will be set to the outlines root below
       });
 
       // Create the outlines root dict
@@ -1699,10 +1800,6 @@ async function buildPdf(
   }
 
   // Save without object streams for maximum PDF reader compatibility.
-  // Object streams compress multiple small objects into a single stream,
-  // which is more efficient but can confuse some older PDF readers (and
-  // our own debug tooling). For an article export, raw object layout is
-  // preferable — bookmarks work reliably in every PDF reader.
   // pdfDoc.save() resolves a Uint8Array<ArrayBufferLike>, but this function
   // is declared to resolve an ArrayBuffer — copy into a fresh
   // Uint8Array<ArrayBuffer> and hand back its .buffer.
