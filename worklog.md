@@ -1508,3 +1508,28 @@ Stage Summary:
 - Article 弹窗：标题放大为 text-lg/xl、摘要截断、12 钮工具栏收敛为 4 钮 + More 下拉，桌面/移动端均无溢出
 - 新文件 src/lib/endnote-fields.ts（约 300 行，含格式规范注释）；round-10 死代码 parseInlineCitations 清除
 - 提交信息：feat(round-11): EndNote-manageable Word citations, dynamic export filenames, article dialog UI refresh
+
+---
+Task ID: round-12
+Agent: main (Z.ai Code orchestrator)
+Task: 修复 EndNote 打开导出 Word 时部分文献显示 "!!! INVALID CITATION !!!" 的问题（round-11 遗留）
+
+Work Log:
+- 复现与取证：导出保留测试文章（AlphaFold，74 处引用/16 篇文献）解包 document.xml，解码全部 74 个 fldData 载荷——数据完整（Author/Year/Title/Journal 齐全、XML 良构、无转义问题），排除数据侧缺陷
+- 格式考古（关键）：从 pandoc issue #8433 附件下载真实 EndNote X7.8 生成的 docx（https://github.com/jgm/pandoc/files/9979322/combined.docx），解码其 fldData 得到真实 CWYW 字段规范；另取 wmyung/endnote-fieldcode-converter 源码与真实 EndNote 库导出 XML 交叉验证
+- 根因（三处结构偏差，导致部分 EndNote 版本/匹配路径读不到记录数据）：
+  ① 真实 EndNote 把 base64 载荷写在两处——外层 EN.CITE begin fldChar 与内层 EN.CITE.DATA begin fldChar 各一份完整拷贝；我们只写内层 → 只读外层数据的 EndNote 版本拿到空载荷 → 引用无法解析为记录 → 回退按 Author+Year 匹配当前打开的库 → 用户库里恰好有的文献"显示正常"、没有的变 "!!! INVALID CITATION !!! [n]"（与用户报告的"部分正常部分无效"完全吻合）
+  ② 真实 db-id 标识的是"库"而非"记录"（同一文档所有记录共享同一 db-id，记录由 key value + rec-number 区分）；我们每条记录一个不同 db-id → EndNote 把 16 条文献当成来自 16 个不同库，traveling library 匹配/去重路径被破坏
+  ③ 真实 <Cite><Author> 只写姓氏（"Maginn"）；我们写"Jumper J"全名 → 作者-年份回退匹配失败
+- 次要对齐：移除 w:dirty="true"（真实 EndNote 不写）；base64 换行改 CRLF；<key> 补 timestamp 属性；DisplayText 仅写分组首个 Cite（真实行为）
+- 修复（src/lib/endnote-fields.ts）：新增 EndNoteLibrary 结构与 libraryFor()（按文献集合 sha1 派生确定性 db-id + 合理范围 timestamp，同文章重复导出得到同一"库"）；新增 lastNameOf()（"Jumper J"→"Jumper"）；recordXml/buildEndnoteXml 接收 lib 参数（共享 db-id + timestamp）；citationFieldXml 在两个 begin fldChar 上写同一载荷；fldCharRun 移除 dirty；encodeFldData 改 CRLF
+- 验证（curl 解包）：AlphaFold 文章 74 引用 → 148 个 fldData（2×74），外层/内层载荷 74/74 逐对相同，begin/end 149/149 平衡，dirty 0，全文档单一 db-id，XML 全部良构；CRISPR 文章 61 引用同样全过；分组引用路径单测（buildEndnoteXml 双记录）DisplayText 仅首个 Cite、XML 转义正确
+- 验证（渲染）：LibreOffice 转 PDF 8 页——References [1]-[16] 连续编号、悬挂缩进正常、无 ADDIN 字段代码泄漏、无 INVALID 文本、74 处正文引用标记完好（VLM 确认）
+- 验证（浏览器）：UI 触发 Word 导出成功，文件名"文章标题+时间戳"格式，下载文件结构与 curl 导出一致（148 fldData/单 db-id/无 dirty），0 page error / 0 console error；pdf/markdown/latex 格式回归 200；段落级导出（DB 回退路径）7 字段 14 fldData 全过
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 159 warning（≤ 基线）；dev.log 无 error
+
+Stage Summary:
+- Word 导出的 EndNote CWYW 字段现与真实 EndNote（X7.8 实测样本）逐字节结构一致：双载荷（外层 EN.CITE + 内层 EN.CITE.DATA）、库级共享 db-id、姓氏 Author、无 dirty、CRLF 换行——兼容只读外层或内层数据的所有 EndNote 版本
+- "部分文献 INVALID CITATION" 的机理闭环：空外层载荷 → Author+Year 库匹配回退 → 用户库中存在的文献恰好命中、其余失效；修复后 traveling library 全量可读，EndNote 可直接管理（增删自动重排）
+- 修改集中在 src/lib/endnote-fields.ts（纯函数模块，导出路由零改动）；分组引用/段落导出/双语路径回归全过
+- 提交信息：fix(round-12): EndNote invalid citations — dual fldData payload, library-wide db-id, last-name Cite author
