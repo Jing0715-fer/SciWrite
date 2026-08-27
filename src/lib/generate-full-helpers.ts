@@ -600,3 +600,149 @@ export function scoreRelevance(keywords: string[], refText: string): number {
   }
   return score;
 }
+
+// ---------------------------------------------------------------------------
+// Cross-section near-duplicate claim removal (round-16 hardening)
+//
+// E2E regression finding (TMC1/TMC2, two consecutive fresh runs): despite the
+// round-15 claim-level digest + NO-REPETITION prompt rule, the LLM still
+// restated the same citation-bearing claim in 2+ sections nearly verbatim
+// ("at least a dozen components [4]", "cysteine residues within the pore
+// region [7]", "assemble as dimers … TMEM16 [7]", "lipid-mediated subunit
+// contacts [9]", "phosphatidylserine externalization [11]"). Prompt-level
+// defenses reduce but cannot eliminate this — so compose now applies a
+// MECHANICAL pass: any claim sentence (contains a citation marker) in a LATER
+// section that near-matches the claim pool of an EARLIER section is dropped
+// (first occurrence wins).
+//
+// Match rule (calibrated on the two E2E corpuses, see
+// scripts/test-dedupe-round16.ts):
+//   duplicate ⟺ containment ≥ 0.66  OR  (longest common word run ≥ 5
+//   AND containment ≥ 0.45), where containment = |words(s) ∩ pool_j| /
+//   |words(s)| over content words (stopwords stripped). The 0.66 line sits
+//   between the closest false positive measured on the calibration corpus
+//   (a §4 Cib2-knockout phenotype sentence at 0.652 — specific evidence whose
+//   overlap with §1 was inflated by generic words) and the closest true
+//   duplicate caught by containment alone (0.667); true duplicates below
+//   0.66 are still caught by the run branch (e.g. 0.650 + run 5).
+// Guards: sentence must carry ≥ 8 content words; ≤ 3 removals per section;
+// a section always keeps ≥ 1 citation; empty paragraphs are collapsed.
+// ---------------------------------------------------------------------------
+
+export type CrossSectionDedupRemoval = {
+  section: number; // 1-based, the section that lost the sentence
+  matchedSection: number; // 1-based, where the claim was first established
+  snippet: string; // ≤ 90 chars of the removed sentence
+};
+
+function dedupContentWords(sentence: string): string[] {
+  return sentence
+    .replace(/\[\d+(?:[,\-–;]\s*\d+)*\]/g, " ") // numeric citation markers
+    .replace(/\{\{R\d+\}\}/g, " ") // keyed citations (pre-renumber safety)
+    .replace(/[*_`#>]/g, " ") // markdown emphasis
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 1 && !STOPWORDS.has(w));
+}
+
+function longestCommonRun(a: string[], b: string[]): number {
+  let best = 0;
+  for (let i = 0; i < a.length; i++) {
+    for (let j = 0; j < b.length; j++) {
+      let run = 0;
+      while (i + run < a.length && j + run < b.length && a[i + run] === b[j + run]) run++;
+      if (run > best) best = run;
+    }
+  }
+  return best;
+}
+
+export function removeCrossSectionDuplicates(contents: string[]): {
+  contents: string[];
+  removals: CrossSectionDedupRemoval[];
+} {
+  const removals: CrossSectionDedupRemoval[] = [];
+  if (contents.length < 2) return { contents, removals };
+
+  // Pre-parse: per section, paragraphs → sentences; claim sentences + word pool.
+  const sectionClaims: string[][] = contents.map((c) => {
+    const sentences = c.split(/(?<=[.!?])\s+/).filter((s) => /\[\d/.test(s));
+    return sentences;
+  });
+  const sectionPools: Set<string>[] = sectionClaims.map((sents) => {
+    const pool = new Set<string>();
+    for (const s of sents) for (const w of dedupContentWords(s)) pool.add(w);
+    return pool;
+  });
+  // Word arrays per claim sentence, for run computation.
+  const claimWordArrays: string[][][] = sectionClaims.map((sents) =>
+    sents.map((s) => dedupContentWords(s)),
+  );
+
+  const result = contents.map((c) => c);
+  const removedInSection = new Array(contents.length).fill(0);
+
+  for (let i = 1; i < contents.length; i++) {
+    if (removedInSection[i] >= 3) continue;
+    // Guard basis: total citations in this section minus what removals have
+    // already taken — a section must always keep ≥ 1 citation.
+    const sectionCitations = (contents[i].match(/\[\d/g) || []).length;
+    let citationsRemoved = 0;
+    const paragraphs = contents[i].split(/\n\n+/);
+    const rebuiltParagraphs: string[] = [];
+
+    for (const para of paragraphs) {
+      const sentences = para.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
+      const kept: string[] = [];
+
+      for (const sentence of sentences) {
+        const isClaim = /\[\d/.test(sentence);
+        const words = dedupContentWords(sentence);
+        let duplicateOf = -1;
+
+        if (isClaim && words.length >= 8 && removedInSection[i] < 3) {
+          const wordSet = new Set(words);
+          for (let j = 0; j < i; j++) {
+            // containment against section j's claim pool
+            let inter = 0;
+            for (const w of wordSet) if (sectionPools[j].has(w)) inter++;
+            const containment = wordSet.size ? inter / wordSet.size : 0;
+            // longest common run against section j's claim sentences
+            let maxRun = 0;
+            for (let k = 0; k < sectionClaims[j].length; k++) {
+              const run = longestCommonRun(words, claimWordArrays[j][k]);
+              if (run > maxRun) maxRun = run;
+            }
+            if (containment >= 0.66 || (maxRun >= 5 && containment >= 0.45)) {
+              duplicateOf = j;
+              break;
+            }
+          }
+        }
+
+        if (duplicateOf >= 0) {
+          const sentenceCitations = (sentence.match(/\[\d/g) || []).length;
+          if (sectionCitations - citationsRemoved - sentenceCitations <= 0) {
+            kept.push(sentence); // never strip the LAST citation of a section
+            continue;
+          }
+          removedInSection[i]++;
+          citationsRemoved += sentenceCitations;
+          removals.push({
+            section: i + 1,
+            matchedSection: duplicateOf + 1,
+            snippet: sentence.replace(/\s+/g, " ").trim().slice(0, 90),
+          });
+          continue; // drop the sentence
+        }
+        kept.push(sentence);
+      }
+      const joined = kept.join(" ").replace(/\s+/g, " ").trim();
+      if (joined) rebuiltParagraphs.push(joined);
+    }
+    result[i] = rebuiltParagraphs.join("\n\n");
+  }
+
+  return { contents: result, removals };
+}

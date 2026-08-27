@@ -29,6 +29,7 @@ import {
   ensurePrimaryPaperCoverage,
   generateWebSearchQueries,
   inferFormat,
+  removeCrossSectionDuplicates,
   safeParseJSON,
 } from "@/lib/generate-full-helpers";
 import {
@@ -140,6 +141,8 @@ export async function POST(req: NextRequest) {
         // round-15: regression-hardening telemetry
         adjacentCitationsMerged: 0,
         coverageBackfills: [] as { signal: string; addedTitle: string; replacedTitle: string | null }[],
+        // round-16: mechanical cross-section dedup telemetry
+        crossSectionDuplicatesRemoved: [] as { section: number; matchedSection: number; snippet: string }[],
       };
 
       // Hoisted for the catch block's failure-recovery logic (try-block
@@ -738,6 +741,17 @@ CITATION SYSTEM (STRUCTURAL — the most important rule):
   structural finding, or a review as the source of a primary finding the
   review merely summarizes.
 
+STRUCTURE-CLAIM HONESTY (round-16):
+- Only write "cryo-EM/NMR/X-ray structures have revealed/shown X" when a
+  listed reference IS a primary structure determination of that exact
+  complex/species (its title typically contains "structure(s)", "architecture",
+  or "cryo-EM"). Check the species: a worm/invertebrate structure does not
+  establish the vertebrate protein's architecture.
+- If NO listed reference determined the subject's structure, state that gap
+  explicitly (e.g., "no atomic structure of X has yet been reported") and
+  attribute architectural inferences to homology modeling, mutagenesis, or
+  biochemical reconstitution with the citations that actually did that work.
+
 NO REPETITION ACROSS SECTIONS (round-15):
 - The outline and "CLAIMS ALREADY ESTABLISHED" list above show what earlier
   sections already said. NEVER restate an established claim — not even
@@ -1122,6 +1136,26 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
         });
 
         // Keep only refs actually cited in the body; renumber 1..N
+        // ★ round-16: mechanical cross-section near-duplicate removal. The
+        // round-15 prompt rule + claim-level digest reduced but did NOT
+        // eliminate verbatim claim restatements across sections (two
+        // consecutive E2E runs repeated 5+ claims). This deterministic pass
+        // drops any citation-bearing sentence in a LATER section that
+        // near-matches an EARLIER section's claim pool (first occurrence
+        // wins; ≤3 removals/section; a section always keeps ≥1 citation).
+        // Runs BEFORE the orphan-ref filter so references that lose their
+        // only citation are pruned from the final list automatically.
+        const crossSectionDeduped = removeCrossSectionDuplicates(renumberedContents);
+        if (crossSectionDeduped.removals.length > 0) {
+          for (let di = 0; di < renumberedContents.length; di++) {
+            renumberedContents[di] = crossSectionDeduped.contents[di];
+          }
+          stats.crossSectionDuplicatesRemoved = crossSectionDeduped.removals;
+          log(
+            `compose: cross-section dedup removed ${crossSectionDeduped.removals.length} near-duplicate claim sentences: ` +
+              crossSectionDeduped.removals.map((r) => `§${r.section}←§${r.matchedSection}`).join(", "),
+          );
+        }
         let articleBody = renumberedContents
           .map((c, i) => `## ${generatedParagraphs[i]?.title || `Section ${i + 1}`}\n\n${c}`)
           .join("\n\n");
@@ -1309,6 +1343,8 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             preprintDuplicatesDropped: stats.preprintDuplicatesDropped,
             adjacentCitationsMerged: stats.adjacentCitationsMerged,
             coverageBackfills: stats.coverageBackfills,
+            crossSectionDuplicatesRemoved: stats.crossSectionDuplicatesRemoved.length,
+            crossSectionDuplicateDetails: stats.crossSectionDuplicatesRemoved,
             citationsChecked: stats.citationsChecked,
             citationsRemoved: stats.citationsRemoved,
             citationsFlagged: stats.citationsFlagged,

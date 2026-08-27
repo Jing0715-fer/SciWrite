@@ -1604,3 +1604,27 @@ Stage Summary:
 - 测试资产：项目 cmtbfcd1603e4qv4twolga935（Regression）保留；/home/z/tmc-rerun/ 含 SSE 日志、修正前后文章、导出 docx/PDF、渲染验证；离线测试 scripts/test-coverage-round15.ts；修正脚本 scripts/fix-tmc-article-round15.ts（--apply 落库 / 默认 dry-run）
 - 已知设计内行为：[9] Lee 2025 bioRxiv 为孤立预印本（无正式版配对，与 Peineau 2025 为同实验室姊妹工作非同一工作），按 round-14 设计保留；正文 1980 词低于 2500 目标（-21%，去重与科学纠偏的代价，质量优先）
 - 提交信息：fix(round-15): regression rerun verifies round-14 fixes; add coverage assertion, claim-level digest, cross-section dedup, bracket normalization
+
+---
+Task ID: round-16
+Agent: main (Z.ai Code orchestrator)
+Task: 最终验证重跑（round-15 防线首次 E2E）+ 残留问题闭环（跨节论断重复、cryo-EM 过度声称）
+
+Work Log:
+- 上下文恢复：确认上一会话 round-15 已完成回归重跑（项目 cmtbfcd1603e4qv4twolga935 → 文章 cmtbfklif042mqv4tk9j9nr2c，8 节 24 篇文献为人工修正版）并提交 3501b74，但 round-15 新增的 4 道管线防线（覆盖断言/论断级 digest/防重复提示词/括号归一化）从未经过真实 E2E 验证
+- 发起全新生成（项目 cmtbgxiyk0000qvhug1dyeyma "Final Regression"，UI 默认参数 targetWords=2500，双 fork 守护 SSE，8.2 分钟）：9 节 / 20 篇文献 / 2884 词；遥测证实防线全部生效——preprintDuplicatesDropped=10、coverageBackfills=[structure:Clark 2024 替换综述, therapy:Marcovich 2022 追加]、zeroCitationRetries=0、adjacentCitationsMerged=0、auditBlockingErrors=0
+- 6 类问题对照结论：✅ 零引用章节（各节 4-9 处引用）；✅ 预印本重复（20 篇 0 重复 PM）；⚠️ 结构覆盖部分复发（Jeong 2022 再次未被 gather 召回，§2 开头仍写 "cryo-EM studies have revealed the three-dimensional architecture of TMC proteins... These structures demonstrate that TMC1 and TMC2 assemble as dimers [7]"——脊椎动物结构不存在，[7][8] 均非 cryo-EM 论文）；❌ 跨节论断重复复发 5 处（"at least a dozen components [4]" §1/§6、"cysteine residues within the pore region [7]" §2/§3、"assemble as dimers" §2/§3、"lipid-mediated subunit contacts [9]" §2/§7、"phosphatidylserine externalization [11]" §3/§5）——证明 round-15 提示词+digest 防线降低但不消除重复；✅ 治疗引用荒未复发（Marcovich 2022 自动补入 §8）；✅ 相邻括号格式（0 处）；新发现 2 处笔误：§1 "**TMC2**) proteins" 多余右括号、§8 "inner- ear" 空格
+- 管线加固 ①：generate-full-helpers.ts 新增 removeCrossSectionDuplicates——compose 阶段机械跨节近重复句删除（后节中含引用句与前置各节"论断词池"比对：containment≥0.66 或 [最长公共词序列≥5 且 containment≥0.45] 判重；首现保留；≤3 句/节；节内引用数≥1 守卫；空段折叠）。阈值经校准测试标定（0.66 线位于最近误报 0.652 与最近真重复 0.667 之间，低分真重复由 run 分支兜底如 0.650+run5）；离线测试 scripts/test-dedupe-round16.ts（本次未修复语料）：5 处人工确认重复全部检出 + 3 处额外真重复（§4 CIB 复合物重述、§4 establish-CIB2 重述、§6 obligatory-subunits 重述），Cib2-KO 表型句等 4 处合法复述零误伤，结构不变量全过
+- 管线加固 ②：生成提示词新增 STRUCTURE-CLAIM HONESTY 硬规则（"structures have revealed X" 仅当所引文献为该复合物/物种的原始结构测定论文——标题含 structure(s)/architecture/cryo-EM，且需核对物种：线虫结构不能确立脊椎动物架构；无结构论文时必须显式陈述空白并将架构推断归因于同源建模/突变/生化重建）
+- 管线加固 ③：complete 遥测新增 crossSectionDuplicatesRemoved + crossSectionDuplicateDetails
+- 本文修正（scripts/fix-tmc-article-round16.ts，10 处手术 + 键控全局重编号 20→21 篇）：§1 修多余括号、删 dozen 重复句（§6 为主场）；§2 整段重构为"三行证据+诚实声明"框架（"No atomic structure of a full-length vertebrate TMC1 or TMC2 channel has yet been reported" + Jeong 2022 Nature 补入 + Clark/TMEM16/生化重建归因准确化）；§3 删 PS 双句（§5 为主场）+ 指向句；§4 删 TMC-CIB 复合物重述句与 establish-CIB2 重述句；§6 删 obligatory-subunits 重述句；§7a 继承事实改引综述 [3]（原误挂 Wu 2025 机制论文）；§7b 修 "inner- ear"；§8 §5 PS 句改写消除句内重复；段落 wordCount 同步更新
+- 修正后验证：citation-health 审计 blockingErrors=0（8 unsupported + 6 suspect 为无摘要 PubMed 引用的已知启发式误报，抽查全部语义正确）；机械去重探针=0 残留；逐字探针全部单节化（dozen/cysteine/dimers/lipid-mediated/PS/obligatory-subunits 各 1 次，TMEM16 2 次不同框架）；21 篇全部被引、编号连续、无相邻括号、笔误清零；Word 导出（curl 解包）：50 EN.CITE + 200 fldData + begin/end 101/101 平衡 + 0 dirty + 0 INVALID + EN.REFLIST、traveling library 含 Jeong 2022/Marcovich 2022 全部新文献；PDF 导出 200 渲染 7 页无 INVALID；markdown 导出首句已修；浏览器 E2E（agent-browser）：工作区 9 段/引用健康 0 阻断、Article 弹窗修正内容渲染（"No atomic structure..."、Jeong 标题、"at least a dozen" 仅 1 次、Optimized AAV 可见）、0 page error / 0 console error
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 161 warning（= round-15 基线，无新增）
+
+Stage Summary:
+- 最终验证结论：round-14 全部防线 + round-15 覆盖断言/括号归一化在真实 E2E 中确认生效；round-15 的提示词级防重复防线不足（5 处近逐字重复仍复发）——已用 compose 机械去重（removeCrossSectionDuplicates）闭环，其复发路径自此由确定性代码保证关闭
+- cryo-EM 过度声称的复发路径双保险关闭：提示词 STRUCTURE-CLAIM HONESTY 规则（事前预防）+ 本轮 §2 人工重构示范（事后修复模板）
+- 修正后文章：21 篇全真实文献（Jeong 2022 经 PubMed 核实 PMID 36224384）、§2 科学准确（诚实陈述脊椎动物结构空白 + 线虫结构/同源建模/生化重建三行证据）、跨节零近重复（机械探针 0）、格式零瑕疵
+- 已知设计内行为：正文 1911 词低于 2500 目标（-24%，三轮去重与科学纠偏的累积代价，质量优先）；Jeong 2022 的 gather 召回不稳定（两次运行均未召回，靠覆盖断言兜底——但断言只查候选池，若 gather 未召回则池中无此文献可补，§2 诚实声明规则为此场景的最终防线）
+- 测试资产：项目 cmtbgxiyk0000qvhug1dyeyma（Final Regression）与文章 cmtbh85wg00ppqvhutwdbbou2 保留；/home/z/tmc-final/ 含修复前后文章、SSE 日志、docx/PDF 导出、浏览器截图；离线测试 scripts/test-dedupe-round16.ts；修正脚本 scripts/fix-tmc-article-round16.ts（--apply 落库 / 默认 dry-run）；DB 快照版本 "pre-round16" 可回滚
+- 提交信息：fix(round-16): final E2E verification — mechanical cross-section dedup at compose, structure-claim honesty rule, TMC article round-16 repairs
