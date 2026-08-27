@@ -1317,3 +1317,22 @@ Stage Summary:
 - tsc 0 / eslint 0 error / 浏览器冒烟干净；提交 9f33ada 推送 GitHub main
 - 文献准确性 Top-10 至此全部修复完毕
 - 下一阶段候选：CHD 对齐 api-client/TanStack（#11）、SSE 解析器加固（#15）、api-client Promise executor 反模式（#13）、巨型组件拆分（重构级）
+
+---
+Task ID: fix-round-5
+Agent: main (Z.ai Code orchestrator)
+Task: 前端基础设施加固 — SSE 解析器、api-client 反模式、CHD 对齐 api-client、UX 微调
+
+Work Log:
+- sse.ts consumeSSEStream 重写（#15）：SSE 规范事件分帧 \n\n（原按行 split，多行 data 必坏）、兼容 "data:x" 与 "data: x"、流关闭时 drain 末尾半帧、异常退出 reader.cancel() 释放连接；新增 opts { emitComplete, rejectOnError } 支持调用方行为差异
+- api-client（#13）：aiGenerateFullStream/aiGenerateFullV2Stream 各 50 行 new Promise(async...) executor 反模式 + 重复 SSE 逻辑 → 一行委托 consumeSSEStream({emitComplete:true, rejectOnError:true})，行为完全保留
+- CHD 对齐（#11）：6 处裸 fetch 全部迁移到 api 客户端 — getCitationHealth/validateCitations/autoFixCitations/regenerateParagraph；新增后两个 api 方法；regenerate + citation-health 纳入 LLM 超时正则（5min 预算）
+- #50：blocking 时等级徽章的无限 animate-pulse → 静态 amber 环
+- W2 措辞：sanitize 进度消息区分 [$REF] 替换 vs 混合组丢弃
+- 验证：bun 行为测试 — emitComplete 事件顺序 step,step,complete + final 捕获 ✓、rejectOnError 抛 boom ✓；浏览器实测 CHD 经新路径加载真实数据（2/7 clean、5 offenders、126 citations/75 refs/1 blocking/40 warnings、worst-offenders 列表渲染）
+
+Stage Summary:
+- tsc 0 / eslint 0 error（warning 166→165）
+- 提交 55bd246 推送 GitHub main
+- 综合审查清单至此：CRITICAL 8/8 ✓ HIGH 26/26 ✓ MEDIUM 34/36 ✓（余 2：巨型组件拆分=重构级、后端鉴权=产品决策）LOW 15/18
+- 剩余可选方向：page.tsx/paragraph-card/CHD 组件拆分、NextAuth 鉴权、quota-status 保护、/tmp provider 文件权限
