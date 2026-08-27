@@ -125,7 +125,16 @@ export async function POST(req: NextRequest) {
     if (body.type === "paragraph") {
       const p = await db.paragraph.findUnique({
         where: { id: body.id },
-        include: { references: true, annotations: true },
+        // orderBy citationOrder: the paragraph body's [n] markers map to its
+        // references by citationOrder (v2 compose writes citationOrder =
+        // globalNum - 1). Without an explicit orderBy, Prisma returns rows in
+        // an unspecified order — if deep-audit/auto-fix later re-ordered
+        // citationOrder, the reference list AND the EndNote records would be
+        // numbered against the wrong rows.
+        include: {
+          references: { orderBy: { citationOrder: "asc" } },
+          annotations: true,
+        },
       });
       if (!p) return NextResponse.json({ error: "Not found." }, { status: 404 });
       title = p.title;
@@ -296,13 +305,6 @@ export async function POST(req: NextRequest) {
 
     // Build reference list text — apply journal template format if specified
     const journalTemplate = body.journalTemplate;
-    const refLabel = journalTemplate === "nature" ? "References" :
-                     journalTemplate === "cell" ? "References" :
-                     journalTemplate === "science" ? "References" :
-                     journalTemplate === "jbc" ? "References" :
-                     journalTemplate === "plos" ? "References" :
-                     journalTemplate === "ieee" ? "References" :
-                     "References";
 
     let refLines = references.length
       ? references.map((r, i) => {

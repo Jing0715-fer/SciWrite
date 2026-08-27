@@ -1533,3 +1533,33 @@ Stage Summary:
 - "部分文献 INVALID CITATION" 的机理闭环：空外层载荷 → Author+Year 库匹配回退 → 用户库中存在的文献恰好命中、其余失效；修复后 traveling library 全量可读，EndNote 可直接管理（增删自动重排）
 - 修改集中在 src/lib/endnote-fields.ts（纯函数模块，导出路由零改动）；分组引用/段落导出/双语路径回归全过
 - 提交信息：fix(round-12): EndNote invalid citations — dual fldData payload, library-wide db-id, last-name Cite author
+
+---
+Task ID: round-13
+Agent: main (Z.ai Code orchestrator)
+Task: 代码审查（round 10-12 改动 + V2 流水线核心）+ TMC1/TMC2 结构生物学主题 2500 词真实全文生成测试
+
+Work Log:
+- 代码审查范围：export/route.ts（2526 行全文）、endnote-fields.ts（433 行全文）、generate-full-v2/route.ts（1444 行全文）、citation-binding.ts、evidence-pipeline.ts、citation-audit refIdentity、article-viewer-tabs/export-menu/api-client 的 round-11 diff、compose 路由 C1 修复确认
+- 审查结论：round-12 EndNote 修复工程质量高（双 fldData 载荷、库级共享 db-id、姓氏 Author、CRLF、无 dirty，与真实 X7.8 逐字节一致）；V2 流水线防御完善（崩溃快照回滚、原子事务、限流优雅降级、验证门控、矛盾守卫）
+- 发现并修复 ①：段落级导出 include:{references:true} 缺 orderBy citationOrder —— deep-audit 重排后 Prisma 返回顺序 ≠ 编号顺序，[n] 标记会映射到错误的 EndNote 记录 → 补 orderBy（export/route.ts）
+- 发现并修复 ②：删除死代码 refLabel（7 个分支全返回 "References"，从未使用）→ lint warning 159→158
+- 历史问题修复状态确认：C1（compose 同步 citationOrder + gap-fill）✓、DB1（RCSB rcsb_pubmed_* 字段）✓、A2（中文 topicality CJK bigram）✓
+- 质量门：tsc 0 错误；eslint 0 error / 158 warning（< 160 基线）
+- E2E 测试（TMC1/TMC2 结构生物学，targetWords=2500，UI 默认参数，double-fork 守护 SSE）：项目 cmtb9r4mi02neqv4ti2ddhkaz → 文章 cmtba7nq303drqv4tor6573v2
+  - 期间事故处置：首次启动 nohup 守护实际存活导致双流水线并发（v2-run.log 出现双 __client_start、gather 互相清空）→ kill 双进程 + 删项目重建 + 单次干净重跑
+  - 流水线：127 来源 → curate 20 篇 → plan 9 节 → 57 条证据声明 → 逐节生成+对抗验证 → compose 全局重编号，全程 12.8 分钟
+  - 产出：正文 2388 词（目标 2500，-4.5%，±10% 内）、20 篇参考文献、编号连续 1..20、全部被引用、零孤儿、零未引用条目
+  - 精度遥测：droppedKeys=0、strippedNumeric=0、gateRetries=0、auditBlockingErrors=0、auditOrphans=0；73 处引用对抗验证（5 处移除、4 处 PARTIAL 标记）
+  - 文献真实性：PubMed esummary 批量核对 20/20 标题匹配、20/20 年份匹配（Jia 2020 Neuron、Kawashima 2011 JCI、Liang 2021 Neuron、Giese 2017 Nat Commun 等全为 TMC 领域真实论文）
+  - 引用健康 API：blockingErrors=0、mismatch=0、numberingIntegrityOk=true；24 条 topicality 警告抽查全部为关键词启发式误报（PubMed 引用无存储摘要，仅标题参与比对；语义上均有据）
+  - Word 导出验证（curl 解包）：67 个 EN.CITE 复合字段 + 134 个 fldData（2×67 双载荷）+ 1 个 EN.REFLIST、单一库级 db-id、begin/end 135/135 平衡、0 dirty、0 遗留占位、146 条记录全部含 year/title；文件名 "Structural-biology-of-TMC1-and-TMC2..._20260827-085336.docx"
+  - 渲染验证（LibreOffice→PDF 9 页 + VLM）：首页标题居中加粗衬线体/编号节/两端对齐+首行缩进/上标引用/页码 ✓；参考文献页 [1]-[20] 自动编号/悬挂缩进/URL 不越界 ✓；无 markdown 残留、无附录、无 INVALID 文本 ✓
+  - 浏览器 E2E（agent-browser）：项目卡片打开、Article 弹窗（round-11 UI：5 tab + Search/Export/More/Delete 四钮）、导出菜单 6 格式齐全、UI 触发 Word 导出 0 console error / 0 page error；段落级 docx 导出回归（orderBy 修复后）字段平衡 19/19、fldData 18 ✓
+
+Stage Summary:
+- 代码审查：round 10-12 全部改动 + V2 核心流水线审查通过，修复 1 个潜在编号错位 bug（段落导出 orderBy）+ 清理 1 处死代码，历史高危项（C1/DB1/A2）确认已修
+- E2E 测试：TMC1/TMC2 主题 2500 词生成全指标绿灯 —— 20/20 文献真实（PubMed 标题+年份全匹配）、编号零错误、0 幻觉键、Word 导出 EndNote 字段在新数据上验证通过（双载荷/单 db-id/平衡字段）、UI 全链路无错
+- 已知非阻断项：topicality 启发式对无摘要 PubMed 引用的误报（ Layer-2 建议性警告，非阻断）
+- 测试资产：项目 cmtb9r4mi02neqv4ti2ddhkaz（TMC1/TMC2 Structural Biology Test）保留在 DB；/home/z/tmc-test/ 含 SSE 日志、导出样本、渲染截图
+- 提交信息：chore(round-13): code review + TMC1/TMC2 2500w E2E — paragraph export orderBy fix, dead code removal
