@@ -78,12 +78,29 @@ export function createSSEStream(): SSEStream {
  *     // Update UI with progress
  *     console.log(event, data.message);
  *   });
+ *
+ * Hardened parser (was fragile):
+ *  - events are framed by "\n\n" per the SSE spec (was split on "\n", which
+ *    breaks if a server ever emits multi-line data)
+ *  - accepts both "data: x" and "data:x" forms
+ *  - drains the final buffered event when the server closes mid-frame
+ *  - cancels the reader on abnormal exit so the connection doesn't linger
+ *
+ * Options:
+ *  - emitComplete: also forward the "complete" event to onEvent (default only
+ *    captures it as the return value)
+ *  - rejectOnError: throw on an in-stream "error" event (default forwards it
+ *    to onEvent like any other event)
  */
 export async function consumeSSEStream(
   url: string,
   body: any,
-  onEvent: (event: string, data: any) => void
+  onEvent: (event: string, data: any) => void,
+  opts?: { emitComplete?: boolean; rejectOnError?: boolean }
 ): Promise<any> {
+  const emitComplete = opts?.emitComplete ?? false;
+  const rejectOnError = opts?.rejectOnError ?? false;
+
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -101,28 +118,56 @@ export async function consumeSSEStream(
   const decoder = new TextDecoder();
   let buffer = "";
   let finalResult: any = null;
+  let streamError: string | null = null;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  const processLine = (line: string): void => {
+    if (!line.startsWith("data:")) return;
+    const payload = line.startsWith("data: ")
+      ? line.slice(6)
+      : line.slice(5);
+    let parsed: any;
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      return; // malformed line — skip
+    }
+    if (parsed.event === "complete") {
+      finalResult = parsed;
+      if (emitComplete) onEvent(parsed.event, parsed);
+      return;
+    }
+    if (parsed.event === "error" && rejectOnError) {
+      streamError = parsed.error ?? "Stream error";
+      return;
+    }
+    onEvent(parsed.event, parsed);
+  };
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      try {
-        const parsed = JSON.parse(line.slice(6));
-        if (parsed.event === "complete") {
-          finalResult = parsed;
-        } else {
-          onEvent(parsed.event, parsed);
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+
+      for (const evt of events) {
+        for (const line of evt.split("\n")) {
+          processLine(line);
+          if (streamError) throw new Error(streamError);
         }
-      } catch {
-        // Ignore malformed lines
       }
     }
+    // Drain any final buffered partial event (server closed mid-frame).
+    for (const line of buffer.split("\n")) {
+      processLine(line);
+      if (streamError) throw new Error(streamError);
+    }
+  } finally {
+    // Cancel is a no-op once the stream is fully read; on early throw it
+    // releases the connection instead of leaving it open.
+    reader.cancel().catch(() => {});
   }
 
   return finalResult;

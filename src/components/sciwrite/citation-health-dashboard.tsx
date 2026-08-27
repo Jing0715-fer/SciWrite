@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { api } from "@/lib/api-client";
 import {
   ShieldCheck,
   ShieldAlert,
@@ -177,9 +178,10 @@ export function CitationHealthDashboard({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/projects/${projectId}/citation-health`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as HealthReport;
+      // api.getCitationHealth routes through jfetch (timeouts + consistent
+      // error surface) — the dashboard previously bypassed the api client
+      // with a raw fetch that hung forever on a stuck request.
+      const data = (await api.getCitationHealth(projectId)) as HealthReport;
       setReport(data);
       // Auto-expand when there are blocking errors so the user sees them.
       if (data.aggregate.totalBlocking > 0) setOpen(true);
@@ -195,24 +197,17 @@ export function CitationHealthDashboard({
   const fixParagraph = React.useCallback(
     async (paragraphId: string): Promise<{ fixed: number; before: number }> => {
       // Fetch the paragraph's current blocking count (before fix).
-      const healthRes = await fetch(
-        `/api/paragraphs/${paragraphId}/validate-citations`
-      );
-      const beforeData = healthRes.ok ? await healthRes.json() : null;
+      const beforeData = await api
+        .validateCitations(paragraphId)
+        .catch(() => null);
       const before = beforeData?.missingCount ?? 0;
 
-      const fixRes = await fetch(
-        `/api/paragraphs/${paragraphId}/auto-fix-citations`,
-        { method: "POST" }
-      );
-      if (!fixRes.ok) throw new Error(`auto-fix HTTP ${fixRes.status}`);
-      const fixData = await fixRes.json();
+      await api.autoFixCitations(paragraphId);
 
       // Re-validate to get the after count.
-      const afterRes = await fetch(
-        `/api/paragraphs/${paragraphId}/validate-citations`
-      );
-      const afterData = afterRes.ok ? await afterRes.json() : null;
+      const afterData = await api
+        .validateCitations(paragraphId)
+        .catch(() => null);
       const after = afterData?.missingCount ?? before;
       return { fixed: Math.max(0, before - after), before };
     },
@@ -298,10 +293,7 @@ export function CitationHealthDashboard({
     async (paragraphId: string) => {
       setRegeneratingParagraphId(paragraphId);
       try {
-        const res = await fetch(`/api/paragraphs/${paragraphId}/regenerate`, {
-          method: "POST",
-        });
-        if (!res.ok) throw new Error(`regenerate HTTP ${res.status}`);
+        await api.regenerateParagraph(paragraphId);
         await fetchHealth();
       } catch (err: any) {
         setError(err?.message || t("citationHealth.regenFailed"));
@@ -351,10 +343,7 @@ export function CitationHealthDashboard({
         });
         setRegeneratingParagraphId(p.paragraphId);
         try {
-          const res = await fetch(`/api/paragraphs/${p.paragraphId}/regenerate`, {
-            method: "POST",
-          });
-          if (!res.ok) throw new Error(`regenerate HTTP ${res.status}`);
+          await api.regenerateParagraph(p.paragraphId);
           processed++;
         } catch (err) {
           console.error(`regenerate failed for ${p.paragraphId}:`, err);
@@ -436,7 +425,9 @@ export function CitationHealthDashboard({
                 "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-help transition-all hover:shadow-md hover:scale-[1.02] surface-card",
                 GRADE_COLORS[agg.grade],
                 agg.grade === "A" && "ring-academic",
-                hasBlocking && "animate-pulse"
+                // Blocking findings: static warning ring instead of a constant
+                // animate-pulse (was a distracting infinite pulse).
+                hasBlocking && "ring-2 ring-amber-500/60"
               )}
             >
               <Icon className="h-3.5 w-3.5" />

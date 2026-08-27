@@ -19,7 +19,7 @@ import { consumeSSEStream } from "./sse";
 const DEFAULT_TIMEOUT_MS = 90_000;
 const LLM_TIMEOUT_MS = 5 * 60_000;
 const LLM_ROUTE_RE =
-  /^\/api\/(ai\/|insights|databases|data-sources\/[^/]+\/deep-read|articles\/[^/]+\/(summarize|verify-citations|generate-diagram|suggest-citations|optimize-structure|generate-captions|analyze-style|submission-check)|paragraphs\/[^/]+\/(validate-citations|auto-fix-citations|revise)|projects\/[^/]+\/validate-citations)/;
+  /^\/api\/(ai\/|insights|databases|data-sources\/[^/]+\/deep-read|articles\/[^/]+\/(summarize|verify-citations|generate-diagram|suggest-citations|optimize-structure|generate-captions|analyze-style|submission-check)|paragraphs\/[^/]+\/(validate-citations|auto-fix-citations|revise|regenerate)|projects\/[^/]+\/validate-citations|projects\/[^/]+\/citation-health)/;
 
 async function jfetch<T>(url: string, init?: RequestInit): Promise<T> {
   const timeoutMs = LLM_ROUTE_RE.test(url) ? LLM_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
@@ -422,6 +422,17 @@ export const api = {
   autoFixCitations: (id: string) =>
     jfetch<any>(`/api/paragraphs/${id}/auto-fix-citations`, { method: "POST" }),
 
+  /* Citation health report (project-level aggregate audit) */
+  getCitationHealth: (projectId: string) =>
+    jfetch<any>(`/api/projects/${projectId}/citation-health`),
+
+  /* Regenerate a paragraph via LLM (rewrites body with fresh citations) */
+  regenerateParagraph: (id: string) =>
+    jfetch<{ paragraph: any; content: string }>(
+      `/api/paragraphs/${id}/regenerate`,
+      { method: "POST" }
+    ),
+
   /* Batch citation validation (project-level) */
   validateProjectCitations: (projectId: string) =>
     jfetch<any>(`/api/projects/${projectId}/validate-citations`),
@@ -504,57 +515,11 @@ export const api = {
       promptInstruction?: string;
     },
     onEvent: (event: string, data: any) => void
-  ): Promise<any> => {
-    return new Promise(async (resolve, reject) => {
-      try {
-        const res = await fetch(`/api/ai/generate-full`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(input),
-        });
-
-        if (!res.ok) {
-          const t = await res.text();
-          throw new Error(t || `Generation failed (${res.status})`);
-        }
-
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error("No response body");
-
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let finalResult: any = null;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-              const data = JSON.parse(line.slice(6));
-              onEvent(data.event, data);
-              if (data.event === "complete") {
-                finalResult = data;
-              }
-              if (data.event === "error") {
-                reject(new Error(data.error));
-                return;
-              }
-            } catch {}
-          }
-        }
-
-        resolve(finalResult);
-      } catch (e) {
-        reject(e);
-      }
-    });
-  },
+  ): Promise<any> =>
+    consumeSSEStream(`/api/ai/generate-full`, input, onEvent, {
+      emitComplete: true,
+      rejectOnError: true,
+    }),
 
   /**
    * v2 evidence-grounded generation pipeline (analyze → allocate → keyed-
@@ -573,57 +538,11 @@ export const api = {
       promptInstruction?: string;
     },
     onEvent: (event: string, data: any) => void
-  ): Promise<any> => {
-    return new Promise(async (resolve, reject) => {
-      try {
-        const res = await fetch(`/api/ai/generate-full-v2`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(input),
-        });
-
-        if (!res.ok) {
-          const t = await res.text();
-          throw new Error(t || `Generation failed (${res.status})`);
-        }
-
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error("No response body");
-
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let finalResult: any = null;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-              const data = JSON.parse(line.slice(6));
-              onEvent(data.event, data);
-              if (data.event === "complete") {
-                finalResult = data;
-              }
-              if (data.event === "error") {
-                reject(new Error(data.error));
-                return;
-              }
-            } catch {}
-          }
-        }
-
-        resolve(finalResult);
-      } catch (e) {
-        reject(e);
-      }
-    });
-  },
+  ): Promise<any> =>
+    consumeSSEStream(`/api/ai/generate-full-v2`, input, onEvent, {
+      emitComplete: true,
+      rejectOnError: true,
+    }),
 
   /**
    * Adversarial citation review — hostile-critic verification of every

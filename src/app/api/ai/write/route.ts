@@ -200,7 +200,10 @@ export async function POST(req: NextRequest) {
       if (replaced > 0) {
         send("step", {
           status: "progress",
-          message: `Replaced ${replaced} out-of-range citation(s) with [$REF] placeholder(s).`,
+          // Accurate wording: fully out-of-range groups become [$REF]
+          // placeholders; numbers dropped from MIXED groups (e.g. [2,11] with
+          // 3 refs → [2]) are silently removed — both are counted here.
+          message: `Sanitized ${replaced} out-of-range citation number(s) (replaced with [$REF] or dropped from mixed groups).`,
         });
       }
       content = sanitizedContent;
