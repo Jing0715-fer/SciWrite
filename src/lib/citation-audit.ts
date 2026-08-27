@@ -140,7 +140,16 @@ export function refIdentity(r: AuditRef): string {
   const id = (r.externalId || "").toLowerCase().trim();
   if (id) return `${t}:${id}`;
   if (r.doi) return `doi:${r.doi.toLowerCase().trim()}`;
-  return `title:${(r.title || "").toLowerCase().trim().slice(0, 80)}`;
+  // Normalize trailing punctuation: entries parsed from a reference list
+  // keep the sentence-final period of the line they came from, while DB
+  // titles usually don't — without stripping, the same paper yields two
+  // different identities ("title:foo." vs "title:foo") and every
+  // identity-based comparison (dedup, numbering-integrity) misfires.
+  return `title:${(r.title || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[.。,;:\s]+$/, "")
+    .slice(0, 80)}`;
 }
 
 /**
@@ -281,18 +290,50 @@ export function parseReferenceList(text: string): Map<number, AuditRef> {
     const body = m[2].trim();
     const urlMatch = body.match(/https?:\/\/[^\s]+/);
     const url = urlMatch?.[0]?.replace(/[—–-]\s*$/, "").trim();
-    const doiMatch = body.match(/doi:(10\.\S+)/i);
-    const doi = doiMatch?.[1]?.replace(/[.,;]\s*$/, "");
     const yearMatch = body.match(/\((\d{4}[a-z]?)\)/);
     const year = yearMatch?.[1];
     const pmidMatch = body.match(/(?:pubmed|PMID)[:\s]+(\d+)/i);
     const pmid = pmidMatch?.[1];
+    // URL-embedded identifiers: the v2 compose format appends
+    // " — https://…" to every entry, so the external id lives ONLY inside
+    // the URL. Without extracting it here the parsed ref falls back to a
+    // title-based identity that can never equal the DB reference's
+    // externalId-based identity — every citation in the composed article
+    // then reports as a numbering mismatch (observed live: 74/74 false
+    // blocking errors on a real 2500-word v2 run with perfect numbering).
+    const pubmedUrl =
+      body.match(/pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)/) ||
+      body.match(/ncbi\.nlm\.nih\.gov\/pubmed\/(\d+)/i);
+    const pmcUrl = body.match(/pmc\.ncbi\.nlm\.nih\.gov\/articles\/(PMC\d+)/i);
+    const rcsbUrl = body.match(/rcsb\.org\/(?:structure|3dview)\/([A-Za-z0-9]{4})/i);
+    const uniprotUrl = body.match(/uniprot\.org\/uniprotkb\/([A-Za-z0-9_-]+)/i);
+    const doiUrl = url
+      ?.match(/doi\.org\/(10\.\S+)/i)?.[1]
+      ?.replace(/[.,;)\]\/]+$/, "");
+    const doiMatch = body.match(/doi:(10\.\S+)/i);
+    const doi = doiMatch?.[1]?.replace(/[.,;]\s*$/, "") || doiUrl;
     const sourceMatch =
       body.match(/\[([A-Z]{2,12}):\s?([^\]]+)\]/) ||
       body.match(/\b([A-Z]{2,12}):\s?([A-Za-z0-9_\-\.]+)/);
     const rawType = sourceMatch?.[1]?.toLowerCase();
-    const type = normalizeType(rawType);
-    const externalId = sourceMatch?.[2]?.trim() || pmid;
+    // Prefer an explicit "TYPE: id" tag; fall back to the URL's database.
+    const urlType = pubmedUrl
+      ? "pubmed"
+      : pmcUrl
+        ? "pmc"
+        : rcsbUrl
+          ? "rcsb"
+          : uniprotUrl
+            ? "uniprot"
+            : null;
+    const type = normalizeType(rawType) || urlType;
+    const externalId =
+      sourceMatch?.[2]?.trim() ||
+      pmid ||
+      pubmedUrl?.[1] ||
+      pmcUrl?.[1] ||
+      (rcsbUrl ? rcsbUrl[1].toUpperCase() : undefined) ||
+      uniprotUrl?.[1];
     let title = body;
     let authors: string | undefined;
     let journal: string | undefined;

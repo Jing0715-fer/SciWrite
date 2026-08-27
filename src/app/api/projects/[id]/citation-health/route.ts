@@ -4,6 +4,7 @@ import {
   buildAuditReport,
   validateCitationsInline,
   refIdentity,
+  type AuditRef,
 } from "@/lib/citation-audit";
 import { countWords } from "@/lib/writing";
 
@@ -103,11 +104,47 @@ export async function GET(
   const articles = await db.article.findMany({
     where: { projectId: id, deletedAt: null },
     orderBy: { createdAt: "desc" },
-    select: { id: true, title: true, content: true, createdAt: true },
+    select: {
+      id: true,
+      title: true,
+      content: true,
+      createdAt: true,
+      // ★ FIX: include the composed paragraph references so the
+      // numbering-integrity check (body [n] ↔ DB reference [n]) can
+      // actually run. Previously dbRefs was omitted, which silently
+      // skipped the mismatch check — the same class of bug that was
+      // fixed in generate-full-v2's compose audit (a real 2500-word run
+      // showed 74 false mismatches there while CHD reported 0 blocking
+      // because this side never looked).
+      articleParagraph: {
+        orderBy: { order: "asc" },
+        select: {
+          paragraph: {
+            select: { references: { orderBy: { citationOrder: "asc" } } },
+          },
+        },
+      },
+    },
   });
 
   const articleReports = articles.map((a) => {
-    const report = buildAuditReport(a.content);
+    // Rebuild the global reference list in first-appearance order across
+    // ordered paragraphs. The compose step stores each paragraph's
+    // references as a prefix slice of the global list with
+    // citationOrder = globalNum - 1, so the deduplicated union in
+    // citationOrder sequence reproduces the article's [n] numbering.
+    const seen = new Set<string>();
+    const dbRefs: AuditRef[] = [];
+    for (const ap of a.articleParagraph) {
+      for (const ref of ap.paragraph.references) {
+        const key = refIdentity(ref as AuditRef);
+        if (!seen.has(key)) {
+          seen.add(key);
+          dbRefs.push(ref as AuditRef);
+        }
+      }
+    }
+    const report = buildAuditReport(a.content, dbRefs);
     return {
       articleId: a.id,
       title: a.title,

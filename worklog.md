@@ -1436,3 +1436,26 @@ Stage Summary:
 - round-7 鉴权代码全保留（auth.ts/NextAuth 路由/LoginCard/i18n auth.* 15 键），由 NEXT_PUBLIC_AUTH_ENABLED 控制，默认 false；.env.example 已文档化重新启用步骤（设 true + 重启）
 - 单一事实源 src/lib/auth-mode.ts 被 proxy/SessionGate/page 三方消费；purge-expired 的 401 是独立 CRON_SECRET 检查，未动
 - 提交信息：feat(round-8): default-off auth toggle — revert login gate blocking project creation
+
+---
+Task ID: round-9
+Agent: main (Z.ai Code orchestrator)
+Task: 2500 词真实端到端测试（generate-full-v2）+ 结果全面检查 + 修复发现的问题
+
+Work Log:
+- 测试设计：新建项目 "Real 2500w V2 Test"（AlphaFold 蛋白质结构预测主题）；用 double-fork 守护脚本（复刻 dev-daemon 理由：沙箱回收子进程会断 SSE 触发路由 cancel()）以 UI 完全相同的参数（language=English, targetWords=2500, maxDbQueries=25, maxWebSearchQueries=8, maxTokens=16384）POST /api/ai/generate-full-v2，SSE 全程落盘监控
+- 运行结果（8.2 分钟，dev.log 0 error / 57 条结构化日志全 info）：gather 21 个数据库查询（PubMed/UniProt/RCSB/NCBI）+ 6 次 web 搜索 → curate → plan 9 节 → 逐节 generate+verify（对抗性验证 61 条引用，3 条真不支持被移除，逐条给出理由）→ compose 全局重编号 → 文章落库 3101 词 / 16 条参考文献（全部真实 PubMed 文献，Jumper 2021、Abramson 2024 AF3、Varadi AFDB 等编号连续无孤儿无重复）
+- 发现问题 1（已修复）：complete 事件报 auditBlockingErrors=74 —— 全部为 mismatch 误报。根因链：① v2 compose 的参考文献行格式 "[n] Authors (Year), Journal. Title. — https://pubmed…" 的外部 ID 只存在于 URL 中，parseReferenceList 无法提取 → externalId 空 → refIdentity 退化为 title 分支（还带着句号）；② DB 侧引用走 externalId 分支（pubmed:PMID）→ 两侧身份键永远不等 → 74/74 全误报（编号实际完美：orphan/missing/outOfRange 均 0）
+- 修复 1（src/lib/citation-audit.ts）：parseReferenceList 新增 URL 内嵌标识符提取 —— PubMed/PMC/RCSB/UniProt URL → externalId+type，doi.org URL → doi；无显式 "TYPE: id" 标签时回退 URL 数据库推断类型；refIdentity 的 title 分支增加尾部标点归一化（".。" 等剥离），保证同一篇论文两侧身份一致
+- 发现问题 2（已修复）：citation-health 路由调 buildAuditReport(a.content) 不传 dbRefs → CHD 的文章审计静默跳过编号完整性检查（与 generate-full-v2 注释中已修过的同类 bug 一致；这解释了 V2 侧 74 误报而 CHD 侧 0 blocking 的矛盾）
+- 修复 2（src/app/api/projects/[id]/citation-health/route.ts）：articles 查询 include articleParagraph→paragraph→references（citationOrder 排序），按跨段落先现顺序去重建 dbRefs（compose 存储语义为全局前缀切片+citationOrder=globalNum-1，可精确还原 [n] 编号），传入 buildAuditReport
+- 修复验证：离线复现脚本（真实文章+真实引用数据）mismatch 74→0、blockingErrors 74→0；实时 /citation-health API 文章审计 mismatch=0/blocking=0（编号完整性检查真正在跑）；tsc 0 错误 / eslint 0 error（160 warning 与基线持平）
+- 浏览器验证：项目加载 9 段落全部渲染（Evolution of AlphaFold / Deep Learning Architecture 等标题齐全）→ 引用健康面板 "0 blocking / Review 44 warnings / 3/9 clean" → 文章查看器 dialog 打开标题正确 → 0 page error / 0 console error
+- 次要观察（非 bug，未改）：① 实际 3101 词 vs 目标 2500（+24%，LLM 逐节轻微超写，plan 2500→各节目标之和本就含余量）；② 44 条 topicality 警告为 Jaccard 词面重叠启发式提示层（suspect<5%/unsupported<2%），真正的准确性门禁是对抗性 LLM 验证（已移除 3 条），设计内行为；③ CHD 的 totalReferences=95 统计的是段落引用行数（每段落存全局前缀切片），非去重全局引用数（16），显示语义问题留待后续
+- 测试项目保留（"Real 2500w V2 Test"）供用户在 Preview 面板直接查看生成结果
+
+Stage Summary:
+- 端到端 2500 词真实测试通过：8.2 分钟产出 3101 词 / 9 节 / 16 真实文献 / 74 条正文引用，编号零错误，全程零服务端错误
+- 修复两处引用审计缺陷：URL 内嵌 ID 提取（消除全量误报）+ CHD 文章审计补传 dbRefs（恢复静默跳过的编号完整性检查）
+- 引用准确性门禁全链路验证有效：{{Rn}} 键控引用 → 对抗性验证（61 查 3 移除）→ 全局重编号 → 机械审计（0 blocking）
+- 提交信息：fix(round-9): citation audit false mismatches — URL-embedded id extraction + CHD numbering-integrity
