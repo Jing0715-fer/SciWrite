@@ -1296,3 +1296,24 @@ Stage Summary:
 - 验证：tsc 0 / eslint 0 error；中文模式实测 — 引用健康面板渲染「引用健康度/重新运行」等 zh 键、项目删除弹出「删除此项目？」AlertDialog（取消关闭正常）、全页 0 个 i18n 键名泄漏；dev.log 无新增 error
 - 提交 74ee1ae 已推送 GitHub main
 - 遗留（已评估降级）：后端完整鉴权（单机自托管工具，属产品决策）；CHD 绕过 api-client/TanStack（仅做 i18n，行为层重构另行安排）；巨型组件拆分（page.tsx/paragraph-card/CHD）属重构级；quota-status 无鉴权（仅暴露计数）；/tmp provider 文件权限（单用户部署低危）
+
+---
+Task ID: fix-round-4
+Agent: main (Z.ai Code orchestrator)
+Task: 文献准确性 Top-10 收尾（W1/W3）+ 前端审查 #12/#20/#27/#48 + 仓库卫生
+
+Work Log:
+- 仓库同步检查：发现本地领先 1 个误提交（eb421f5 = 工具自动提交的 tool-results 5000+行）；core.fileMode=false 归一化权限位抖动；git rm --cached tool-results + .gitignore（tool-results/、.zscripts/dev.pid）；删除被复活的死文件 use-toast.ts/toaster.tsx；推送 f0ab34b
+- 遗留问题状态核查（文献准确性 Top-10）：#1 compose citationOrder ✓已修 #2 deep-audit ✓ #3 auto-fix topicality≥0.03 门槛 ✓ #4 RCSB/PubMed 元数据 ✓ #5 dedup refIdentity+title ✓ #7 orderBy ✓ #8 CJK bigram ✓ #9 temperature/maxTokens 透传 ✓ —— 仅 W1、W3 未修
+- W1 修复（high）：/api/ai/write 引用绑定 findFirst({externalId}) — externalId=null（manual 引用常态）匹配同段任意空 ID 行（≥2条只落库1条），undefined 时过滤条件整体被忽略；改为 identity 感知查询：有 externalId → type+externalId 匹配，否则 title+type 匹配（镜像 refIdentity 规则）
+- W3 修复（medium）：write 路由 renumberByAppearance 保留"### Citations"尾巴且编号为 LLM 原始编号（正文已重排）→ 前端悬停提示优先解析该块、validate/auto-fix 用它建 aiCitationMap，陈旧编号双重毒化；renumber 后剥离尾巴（与 regenerate 路由 sanitizeSectionContent 同策略），DB Reference 行为唯一事实源
+- 前端 #12：CHD fixResult/regenResult 徽章注释承诺 8s 消失但从未实现（永久驻留遮蔽新结果）→ setTimeout 自动消失 + timer ref 防旧 timeout 清新徽章
+- 前端 #20：database-query-panel 全局 isPending 使所有 ResultCard 同时转圈 → mutation.variables === item 精确到行
+- 前端 #27：paragraph-card revise 快照 setState 从 mutationFn 移至 onMutate（同步、无重渲染竞态）
+- 前端 #48：providers staleTime 15s→60s（单用户应用，减少无谓重取）
+- 纯函数链路验证：sanitize→renumber→strip — [2,11]→[2]（混合越界丢弃计数1）、3/3 有效引用保留、尾巴剥离生效
+
+Stage Summary:
+- tsc 0 / eslint 0 error / 浏览器冒烟干净；提交 9f33ada 推送 GitHub main
+- 文献准确性 Top-10 至此全部修复完毕
+- 下一阶段候选：CHD 对齐 api-client/TanStack（#11）、SSE 解析器加固（#15）、api-client Promise executor 反模式（#13）、巨型组件拆分（重构级）
