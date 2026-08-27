@@ -589,6 +589,24 @@ export const api = {
           (blob as any).__exportWarnings = decodeURIComponent(warningHeader);
         } catch {}
       }
+      // Server-provided download filename (article title + timestamp).
+      // Prefer the RFC 5987 `filename*` parameter (unicode titles), falling
+      // back to the plain-ASCII `filename` parameter.
+      const cd = res.headers.get("Content-Disposition") || "";
+      let filename = "";
+      const star = cd.match(/filename\*=UTF-8''([^;\s]+)/i);
+      if (star) {
+        try {
+          filename = decodeURIComponent(star[1]);
+        } catch {}
+      }
+      if (!filename) {
+        const plain = cd.match(/filename="?([^";]+)"?/i);
+        if (plain) filename = plain[1].trim();
+      }
+      if (filename) {
+        (blob as any).__filename = filename;
+      }
       return blob;
     }),
 

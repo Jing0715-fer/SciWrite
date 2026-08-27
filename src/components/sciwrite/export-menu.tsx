@@ -102,11 +102,15 @@ export function ExportMenu({
         language,
       });
       setExportProgress("Downloading...");
+      // v116: use the server-provided filename (article title + timestamp)
+      // instead of a fixed "sciwrite-export" name. Falls back to the old
+      // fixed name if the header was missing for any reason.
+      const serverName = (blob as any).__filename as string | undefined;
       const langSuffix = LANG_META[language].suffix;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `sciwrite-export${langSuffix}.${meta.ext}`;
+      a.download = serverName || `sciwrite-export${langSuffix}.${meta.ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

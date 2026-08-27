@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   AlertTriangle,
   ExternalLink,
-  Languages,
   Columns2,
   RotateCw,
   BookOpen,
@@ -48,6 +47,7 @@ import {
   Upload,
   RefreshCw,
   ScanSearch,
+  MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -76,6 +76,13 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ExportMenu } from "./export-menu";
 import { ReviewDialog } from "./review-dialog";
 import { MarkdownCitations, parseCitationsBlock } from "./markdown-citations";
@@ -570,14 +577,14 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
   return (
     <Dialog open={true} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-6xl h-[90vh] max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
-        <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 shrink-0 bg-gradient-to-r from-primary/5 via-muted/10 to-transparent">
+        <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 shrink-0 bg-gradient-to-r from-primary/5 via-muted/10 to-transparent overflow-hidden">
           <div className="flex items-start gap-3">
             <div className="flex-1 min-w-0">
-              <DialogTitle className="text-base font-serif-text">
+              <DialogTitle className="text-lg sm:text-xl font-semibold font-serif-text leading-snug line-clamp-2 break-words">
                 {article.title}
               </DialogTitle>
               {article.abstract && (
-                <DialogDescription className="text-xs italic mt-1">
+                <DialogDescription className="text-xs italic mt-1 line-clamp-2">
                   {article.abstract}
                 </DialogDescription>
               )}
@@ -653,8 +660,8 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
         </DialogHeader>
 
         <Tabs defaultValue="composed" className="flex-1 min-h-0 flex flex-col">
-          <div className="px-6 py-2 border-b border-border/60 shrink-0 flex items-center justify-between bg-gradient-to-r from-muted/20 to-transparent">
-            <TabsList className="h-9 gap-0.5">
+          <div className="px-6 py-2 border-b border-border/60 shrink-0 flex items-center gap-2 flex-wrap bg-gradient-to-r from-muted/20 to-transparent">
+            <TabsList className="h-9 gap-0.5 min-w-0 max-w-full overflow-x-auto">
               <TabsTrigger value="sections" className="text-xs gap-1 px-3 rounded-md transition-all">
                 <FileText className="h-3.5 w-3.5" />
                 {t("articleViewer.sections")}
@@ -676,12 +683,16 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                 {t("articleViewer.insights") || "Analysis"}
               </TabsTrigger>
             </TabsList>
-            <div className="flex items-center gap-2">
-              {hasZh && (
-                <Badge variant="outline" className="text-[9px] gap-1 border-fuchsia-300/60 text-fuchsia-700 dark:text-fuchsia-400 hidden sm:flex">
-                  <Languages className="h-3 w-3" />
-                  {viewLang === "en" ? "Viewing EN" : viewLang === "zh" ? "查看中文" : "EN ↔ 中文"}
-                </Badge>
+            {/* v116 compact action cluster — secondary tools live in the
+                "More" dropdown so the toolbar never overflows the dialog. */}
+            <div className="flex items-center gap-1.5 ml-auto flex-wrap justify-end">
+              {/* Batch translate progress indicator */}
+              {batchProgress && (
+                <div className="flex items-center gap-2 text-[10px] text-fuchsia-700 dark:text-fuchsia-400 px-2 py-1 rounded-md border border-fuchsia-200/60 bg-fuchsia-50/50 dark:bg-fuchsia-950/20">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span className="font-mono">{batchProgress.done}/{batchProgress.total}</span>
+                  <span className="hidden md:inline truncate max-w-[140px]">{batchProgress.current}</span>
+                </div>
               )}
               {/* Search toggle button */}
               <Button
@@ -697,172 +708,112 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                   {formatShortcut({ key: "k", mod: "cmd" })}
                 </kbd>
               </Button>
-              {/* Keyboard shortcuts help button */}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 text-xs"
-                onClick={() => setShortcutsHelpOpen(true)}
-                title={`${t("articleViewer.shortcutsTitle") || "Keyboard shortcuts"} (?)`}
-              >
-                <Keyboard className="h-3.5 w-3.5" />
-              </Button>
-              {/* Batch translate-all-missing button — only in parallel mode when there are untranslated sections */}
-              {viewLang === "parallel" && hasZh && articleStats.translatedSections < articleStats.sectionCount && !batchProgress && (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5 text-xs border-amber-300/60 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30"
-                    onClick={() => {
-                      const found = jumpToNextUntranslated();
-                      if (!found) {
-                        toast.info(t("articleViewer.allTranslated") || "All sections already have Chinese translations.");
-                      }
-                    }}
-                    title={`${t("articleViewer.jumpNextUntranslated") || "Jump to next untranslated section"} (J)`}
-                  >
-                    <SkipForward className="h-3.5 w-3.5" />
-                    {t("articleViewer.nextUntranslated") || "Next untranslated"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5 text-xs border-fuchsia-300/60 text-fuchsia-700 dark:text-fuchsia-400 hover:bg-fuchsia-50 dark:hover:bg-fuchsia-950/30"
-                    onClick={batchRetranslate}
-                    disabled={retranslateMut.isPending || !!batchProgress}
-                    title={t("articleViewer.batchTranslateTitle") || "Translate all sections that are missing Chinese versions"}
-                  >
-                    <Wand2 className="h-3.5 w-3.5" />
-                    {t("articleViewer.batchTranslate") || "Translate all missing"}
-                  </Button>
-                </>
-              )}
-              {/* Batch translate progress indicator */}
-              {batchProgress && (
-                <div className="flex items-center gap-2 text-[10px] text-fuchsia-700 dark:text-fuchsia-400 px-2 py-1 rounded-md border border-fuchsia-200/60 bg-fuchsia-50/50 dark:bg-fuchsia-950/20">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  <span className="font-mono">{batchProgress.done}/{batchProgress.total}</span>
-                  <span className="hidden md:inline truncate max-w-[140px]">{batchProgress.current}</span>
-                </div>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => setReviewOpen(true)}
-              >
-                <Gavel className="h-3.5 w-3.5" />
-                {t("articleViewer.aiReview")}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => setVersionHistoryOpen(true)}
-                title={t("version.title") || "Version History"}
-              >
-                <History className="h-3.5 w-3.5" />
-                {t("version.historyBtn") || "History"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => setCitationVerifyOpen(true)}
-                title={t("citationVerify.title") || "Verify Citations"}
-              >
-                <ShieldCheck className="h-3.5 w-3.5" />
-                {t("citationVerify.btn") || "Verify"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => setSummaryOpen(true)}
-                title={t("summary.title") || "AI Summary"}
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-                {t("summary.btn") || "Summary"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => setDiagramOpen(true)}
-                title={t("diagram.title") || "AI-Generated Diagrams"}
-              >
-                <GitBranch className="h-3.5 w-3.5" />
-                {t("diagram.btn") || "Diagram"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => setStructureOpen(true)}
-                title="AI Structure Analysis & Captions"
-              >
-                <LayoutGrid className="h-3.5 w-3.5" />
-                Structure
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => setStyleOpen(true)}
-                title="AI Writing Style Analysis"
-              >
-                <PenLine className="h-3.5 w-3.5" />
-                Style
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => setEnrichOpen(true)}
-                title="Enrich references via CrossRef"
-              >
-                <Database className="h-3.5 w-3.5" />
-                Enrich
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => setImportOpen(true)}
-                title="Import references from .bib/.ris"
-              >
-                <Upload className="h-3.5 w-3.5" />
-                Import
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => setSubmissionOpen(true)}
-                title="Submission readiness check"
-              >
-                <ClipboardCheck className="h-3.5 w-3.5" />
-                Check
-              </Button>
               <ExportMenu
                 type="article"
                 id={article.id}
                 variant="outline"
                 hasZh={hasZh}
               />
+              {/* More tools — AI review, verification, analysis and reference
+                  utilities consolidated into a single dropdown. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 text-xs"
+                    title={t("articleViewer.moreTools") || "More tools"}
+                  >
+                    <MoreHorizontal className="h-3.5 w-3.5" />
+                    {t("articleViewer.moreTools") || "More"}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-60 max-h-[60vh] overflow-y-auto">
+                  <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setReviewOpen(true)}>
+                    <Gavel className="h-3.5 w-3.5 text-primary" />
+                    {t("articleViewer.aiReview")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setVersionHistoryOpen(true)}>
+                    <History className="h-3.5 w-3.5 text-muted-foreground" />
+                    {t("version.historyBtn") || "History"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setCitationVerifyOpen(true)}>
+                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                    {t("citationVerify.btn") || "Verify"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setSummaryOpen(true)}>
+                    <Sparkles className="h-3.5 w-3.5 text-amber-600" />
+                    {t("summary.btn") || "Summary"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setDiagramOpen(true)}>
+                    <GitBranch className="h-3.5 w-3.5 text-sky-600" />
+                    {t("diagram.btn") || "Diagram"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setStructureOpen(true)}>
+                    <LayoutGrid className="h-3.5 w-3.5 text-violet-600" />
+                    Structure
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setStyleOpen(true)}>
+                    <PenLine className="h-3.5 w-3.5 text-rose-600" />
+                    Style
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setEnrichOpen(true)}>
+                    <Database className="h-3.5 w-3.5 text-teal-600" />
+                    Enrich
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setImportOpen(true)}>
+                    <Upload className="h-3.5 w-3.5 text-muted-foreground" />
+                    Import
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setSubmissionOpen(true)}>
+                    <ClipboardCheck className="h-3.5 w-3.5 text-indigo-600" />
+                    Check
+                  </DropdownMenuItem>
+                  {/* Translation helpers — only relevant in parallel mode with
+                      untranslated sections remaining. */}
+                  {viewLang === "parallel" && hasZh && articleStats.translatedSections < articleStats.sectionCount && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        className="gap-2 text-xs py-1.5"
+                        onClick={() => {
+                          const found = jumpToNextUntranslated();
+                          if (!found) {
+                            toast.info(t("articleViewer.allTranslated") || "All sections already have Chinese translations.");
+                          }
+                        }}
+                      >
+                        <SkipForward className="h-3.5 w-3.5 text-amber-600" />
+                        {t("articleViewer.nextUntranslated") || "Next untranslated"}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="gap-2 text-xs py-1.5"
+                        onClick={batchRetranslate}
+                        disabled={retranslateMut.isPending || !!batchProgress}
+                      >
+                        <Wand2 className="h-3.5 w-3.5 text-fuchsia-600" />
+                        {t("articleViewer.batchTranslate") || "Translate all missing"}
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setShortcutsHelpOpen(true)}>
+                    <Keyboard className="h-3.5 w-3.5 text-muted-foreground" />
+                    {t("articleViewer.shortcutsTitle") || "Keyboard shortcuts"}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               {/* Delete article button — opens a confirmation dialog before
                   permanently removing the article. Placed at the end of the
                   toolbar so it's visually separated from the other actions. */}
               <Button
                 variant="outline"
                 size="sm"
-                className="gap-1.5 text-xs border-red-300/60 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
+                className="h-8 w-8 p-0 border-red-300/60 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
                 onClick={() => setDeleteConfirmOpen(true)}
                 title={t("articleViewer.deleteTitle") || "Delete this article"}
               >
                 <Trash2 className="h-3.5 w-3.5" />
-                {t("articleViewer.delete") || "Delete"}
               </Button>
             </div>
           </div>

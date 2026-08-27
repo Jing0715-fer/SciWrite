@@ -1483,3 +1483,28 @@ Stage Summary:
 - 内容边界清晰：docx/pdf = 正文+参考文献；markdown/epub = 完整诊断导出（含数据源清单/引用验证附录）
 - 引用编号一致性：导出引用列表现以文章正文 References 段为唯一事实源，杜绝对抗性移除后的编号错位
 - 提交信息：feat(round-10): paper-grade Word/PDF exports — formal typography, body+refs only
+
+---
+Task ID: round-11
+Agent: main (Z.ai Code orchestrator)
+Task: EndNote 可管理的 Word 导出 + 动态导出文件名 + Article 弹窗 UI 重做（用户四项反馈）
+
+Work Log:
+- 需求拆解：① Word 导出的文献可直接用 EndNote 管理（新增删除自动重排序号）② 导出文件名改为文章标题+时间（原来前端固定覆写为 sciwrite-export.docx）③ Article tab 标题字号太小 ④ 左下 article 卡片点击弹窗内部 UI 重做、精简、防溢出
+- 调研：定位 EndNote CWYW 字段格式（web search → wmyung/endnote-fieldcode-converter 开源实现），确认现代 EndNote 复合字段结构 = 外层 ADDIN EN.CITE + 嵌套 ADDIN EN.CITE.DATA（fldChar begin 内嵌 base64 EndNote XML 的 w:fldData）+ separate + 缓存结果 + end；参考文献列表用 ADDIN EN.REFLIST 包裹
+- 新建 src/lib/endnote-fields.ts：EndNoteRecord 结构、buildEndnoteXml（Cite/record XML：rec-number/foreign-keys(db-id=sha1前32位)/ref-type 17/contributors/titles/periodical/dates/electronic-resource-num(doi)/accession-num(PMID)/urls）、encodeFldData（base64 76 列换行）、compound 字段 XML 构造、parseRefLineForRecord（compose 行格式专用解析器——容忍期刊名含逗号，修复 audit 解析器把 "Journal of the Royal Society, Interface" 切坏导致 title 以逗号开头的问题）、parseCitationNumbers（[1,2]/[3-5] 展开）、injectEndnoteFields（document.xml 字符串手术：token run 定位→替换为字段 XML；begin/end 平衡校验；EN.CITE.DATA 无 separate 属正常）
+- export/route.ts：新增 enRecords 构建（优先正文 "## References" 段解析=编号唯一事实源；正文无引用段时回退 DB Reference 数组；按 PMID 关联 DB 行补 DOI/URL）；buildDocx 重构——parseInlineMarkdown 加 citeSink 参数（[n] 标记→唯一占位 token 保留上标格式）、References 改 Word 自动编号列表（numbering.xml [%1] 格式+悬挂缩进，删行即时重排）、Packer 后 JSZip 解包注入字段再重打包（失败降级纯 docx 不阻断导出）；删除 round-10 遗留死代码 parseInlineCitations
+- 文件名：buildFilename 重写为返回完整 Content-Disposition——Unicode 感知 slug（NFKD 去组合符、保留 CJK/字母数字）+ 时间戳 YYYYMMDD-HHmmss + RFC 5987 filename*（中文标题可存活）+ ASCII filename 回退，6 个格式调用点全部切换；api-client.exportDoc 解析 header 挂 blob.__filename；export-menu 用服务器文件名（缺失才回退旧固定名）
+- Article 弹窗 UI 重做（article-viewer-tabs.tsx）：标题 text-base→text-lg sm:text-xl font-semibold + line-clamp-2；摘要 line-clamp-2；12 按钮工具栏收敛为 Search + Export + More(⋯) + Delete(图标钮)——AI Review/History/Verify/Summary/Diagram/Structure/Style/Enrich/Import/Check/快捷键/并行翻译工具全部进 More 下拉（带彩色图标、平行模式条件组）；行容器 flex-wrap + TabsList overflow-x-auto 防溢出；删除冗余 "Viewing EN" 徽章与未用 Languages import；i18n 新增 articleViewer.moreTools（More/更多）
+- 关键 bug 修复过程：① 首版校验要求 begin==separate——但嵌套 EN.CITE.DATA 设计上无 separate → 放宽为只校验 begin==end；② LibreOffice 渲染最后一行参考文献编号重置为 [1]——实验定位：含字段 end 的编号段落会触发 LO 列表重启 → 字段控制 run 移入列表前后独立的 1pt 微型锚段落（隔离实验证实修复，[1]-[16] 连续）
+- 验证（curl+解包）：docx 74 个 EN.CITE 复合字段 + 1 个 EN.REFLIST、0 遗留占位 token、begin/end 149/149 平衡；74 个 fldData base64 解码全部为良构 XML、16 篇去重文献 title/journal/year/PMID 全部正确（含逗号期刊名）；段落级导出（DB 回退路径）7 字段+DOI 正确；双语导出正常；PDF/markdown/latex/epub/graph-report 全部 200 回归通过
+- 验证（渲染）：LibreOffice 转 PDF 8 页——首页标题居中/编号节/上标引用/两端对齐/首行缩进（VLM 确认）、References 页 [1]-[16] 连续编号+悬挂缩进+URL 不越界（VLM 确认）、无字段代码泄漏
+- 验证（浏览器）：打开左下 article 卡片弹窗——标题醒目、工具栏仅 4 个动作钮+5 个 tab、More 下拉 11 项齐全、AI Review 可从下拉打开、480px 移动端优雅换行无裁切、0 page error / 0 console error
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 159 warning（≤ 基线 160）
+
+Stage Summary:
+- Word 导出达到 EndNote CWYW 兼容：74 处正文引用全部为 EN.CITE 复合字段（含 base64 traveling library 记录），参考文献列表为 EN.REFLIST 字段包裹的 Word 自动编号列表——EndNote 用户可直接增删引用并自动重排序号（Update Citations and Bibliography）；无 EndNote 时文档仍完美渲染（缓存文本），删参考文献行时列表自动重编号
+- 导出文件名全格式改为「文章标题+时间戳」（RFC 5987 支持中文标题），前端不再覆写固定名
+- Article 弹窗：标题放大为 text-lg/xl、摘要截断、12 钮工具栏收敛为 4 钮 + More 下拉，桌面/移动端均无溢出
+- 新文件 src/lib/endnote-fields.ts（约 300 行，含格式规范注释）；round-10 死代码 parseInlineCitations 清除
+- 提交信息：feat(round-11): EndNote-manageable Word citations, dynamic export filenames, article dialog UI refresh

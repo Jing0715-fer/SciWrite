@@ -8,6 +8,7 @@ import {
   Footer,
   PageNumber,
   AlignmentType,
+  LevelFormat,
 } from "docx";
 import { PDFDocument, StandardFonts, rgb, PDFName, PDFString, PDFNumber, PDFDict } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
@@ -16,6 +17,13 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import JSZip from "jszip";
 import { safeErrorMessage } from "@/lib/api-helpers";
+import {
+  injectEndnoteFields,
+  parseCitationNumbers,
+  parseRefLineForRecord,
+  idsFromUrl,
+  type EndNoteRecord,
+} from "@/lib/endnote-fields";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -354,6 +362,75 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ── EndNote CWYW records (Word export) ─────────────────────────────────
+    // Structured records keyed by citation number, used to embed a traveling
+    // library into the .docx so EndNote can manage the citations directly
+    // (add/delete with automatic renumbering). Source priority:
+    //   1. the article body's "## References" section (authoritative after
+    //      adversarial removal — same source of truth as refLines)
+    //   2. the DB Reference rows (paragraph exports without a body refs
+    //      section), enriched with DOI/URL from the same rows
+    const enRecords = new Map<number, EndNoteRecord>();
+    {
+      const refStart = content.indexOf("## References");
+      if (refStart >= 0) {
+        // Parse the body's compose-format lines with the dedicated parser
+        // (comma-tolerant journal matching — see parseRefLineForRecord).
+        const refSection = content.substring(refStart);
+        const lineRe = /^\s*\[(\d{1,3})\]\s*(.+)$/gm;
+        let lm: RegExpExecArray | null;
+        while ((lm = lineRe.exec(refSection))) {
+          const n = parseInt(lm[1], 10);
+          const parsed = parseRefLineForRecord(lm[0]);
+          if (!parsed) continue;
+          const { pmid, doi } = idsFromUrl(parsed.url);
+          enRecords.set(n, {
+            n,
+            authors: parsed.authors
+              .split(/\s*[,;]\s*/)
+              .map((s) => s.trim())
+              .filter(Boolean),
+            title: parsed.title,
+            journal: parsed.journal || undefined,
+            year: parsed.year || undefined,
+            doi: doi || undefined,
+            pmid,
+            url: parsed.url || undefined,
+          });
+        }
+      }
+      if (enRecords.size === 0) {
+        references.forEach((r, i) => {
+          enRecords.set(i + 1, {
+            n: i + 1,
+            authors: (r.authors || "")
+              .split(/\s*[,;]\s*/)
+              .map((s) => s.trim())
+              .filter(Boolean),
+            title: r.title || "",
+            journal: r.journal || undefined,
+            year: r.year || undefined,
+            doi: r.doi || undefined,
+            pmid: r.type === "pubmed" ? (r.externalId || undefined) : undefined,
+            url: r.url || undefined,
+          });
+        });
+      }
+      // DOI enrichment: body-derived refs carry the id only inside the PubMed
+      // URL — join with the DB rows (matched by PMID) to recover the DOI.
+      const dbByPmid = new Map<string, Reference>();
+      for (const r of references) {
+        if (r.type === "pubmed" && r.externalId) dbByPmid.set(r.externalId, r);
+      }
+      for (const rec of enRecords.values()) {
+        if (!rec.doi && rec.pmid) {
+          const row = dbByPmid.get(rec.pmid);
+          if (row?.doi) rec.doi = row.doi;
+          if (!rec.url && row?.url) rec.url = row.url;
+        }
+      }
+    }
+
     // ============ Data Source Inventory & Citation Validation ============
     // Fetch every gathered DataSource for the project so we can show:
     //   1. A "Data Source Inventory" appendix listing all gathered sources
@@ -676,7 +753,7 @@ export async function POST(req: NextRequest) {
       return new NextResponse(md, {
         headers: {
           "Content-Type": "text/markdown; charset=utf-8",
-          "Content-Disposition": `attachment; filename="${buildFilename(filenameTitle, "md", langSuffix)}"`,
+          "Content-Disposition": buildFilename(filenameTitle, "md", langSuffix),
           ...(warningHeader ? { "X-Export-Warnings": warningHeader } : {}),
         },
       });
@@ -687,18 +764,22 @@ export async function POST(req: NextRequest) {
       // (data-source inventory / citation validation / user data) and
       // annotations are intentionally excluded from the Word/PDF paper
       // formats — they remain available in the markdown/epub exports.
+      // v116: citations/bibliography are wrapped in EndNote CWYW fields so
+      // the references can be managed directly with EndNote (add/delete with
+      // automatic renumbering) — see lib/endnote-fields.ts.
       const buffer = await buildDocx(
         exportTitle,
         abstract,
         cleanContent,
         refLines,
         journalTemplate,
+        enRecords,
       );
       return new NextResponse(buffer, {
         headers: {
           "Content-Type":
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          "Content-Disposition": `attachment; filename="${buildFilename(filenameTitle, "docx", langSuffix)}"`,
+          "Content-Disposition": buildFilename(filenameTitle, "docx", langSuffix),
           ...(warningHeader ? { "X-Export-Warnings": warningHeader } : {}),
         },
       });
@@ -714,7 +795,7 @@ export async function POST(req: NextRequest) {
       return new NextResponse(buffer, {
         headers: {
           "Content-Type": "application/pdf",
-          "Content-Disposition": `attachment; filename="${buildFilename(filenameTitle, "pdf", langSuffix)}"`,
+          "Content-Disposition": buildFilename(filenameTitle, "pdf", langSuffix),
           ...(warningHeader ? { "X-Export-Warnings": warningHeader } : {}),
         },
       });
@@ -731,7 +812,7 @@ export async function POST(req: NextRequest) {
       return new NextResponse(latex, {
         headers: {
           "Content-Type": "application/x-tex; charset=utf-8",
-          "Content-Disposition": `attachment; filename="${buildFilename(filenameTitle, "tex", langSuffix)}"`,
+          "Content-Disposition": buildFilename(filenameTitle, "tex", langSuffix),
         },
       });
     }
@@ -750,7 +831,7 @@ export async function POST(req: NextRequest) {
       return new NextResponse(new Uint8Array(buffer), {
         headers: {
           "Content-Type": "application/epub+zip",
-          "Content-Disposition": `attachment; filename="${buildFilename(filenameTitle, "epub", langSuffix)}"`,
+          "Content-Disposition": buildFilename(filenameTitle, "epub", langSuffix),
         },
       });
     }
@@ -767,7 +848,7 @@ export async function POST(req: NextRequest) {
       return new NextResponse(html, {
         headers: {
           "Content-Type": "text/html; charset=utf-8",
-          "Content-Disposition": `attachment; filename="${buildFilename(filenameTitle, "html", "-graph")}"`,
+          "Content-Disposition": buildFilename(filenameTitle, "html", "-graph"),
         },
       });
     }
@@ -845,22 +926,34 @@ function stripRefsSingle(content: string): string {
   return content.slice(0, cleanEnd).trim();
 }
 
-function slug(s: string): string {
-  return (
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 60) || "document"
-  );
-}
-
-/** Build filename: title-slug + timestamp + (optional lang suffix) + extension */
+/**
+ * Build the Content-Disposition header value with a dynamic filename:
+ * sanitized article title + timestamp (YYYYMMDD-HHmmss) + optional language
+ * suffix + extension. The unicode-aware name is emitted via RFC 5987
+ * `filename*` (so CJK titles survive), with a plain-ASCII `filename`
+ * fallback for legacy clients.
+ */
 function buildFilename(title: string, ext: string, langSuffix = ""): string {
-  const titleSlug = slug(title).slice(0, 40);
+  const uniSlug = title
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  const asciiSlug =
+    uniSlug
+      .replace(/[^a-zA-Z0-9-]/g, "")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 48) || "sciwrite";
   const now = new Date();
-  const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
-  return `${titleSlug}_${ts}${langSuffix}.${ext}`;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const ts =
+    `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+    `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  const unicodeName = `${uniSlug || "document"}_${ts}${langSuffix}.${ext}`;
+  const asciiName = `${asciiSlug}_${ts}${langSuffix}.${ext}`;
+  return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(unicodeName)}`;
 }
 
 function buildMarkdown(
@@ -1131,8 +1224,18 @@ function stripInlineMarkdown(text: string): string {
  * Parse inline markdown into Word runs: **bold** → bold, *italic* → italic,
  * `code` → plain, [n] / [n,m] / [n-m] → superscript citation. Everything
  * else becomes a plain run. All runs share the manuscript font/size.
+ *
+ * When `citeSink` is provided (EndNote-enabled exports), each citation marker
+ * is emitted as a unique placeholder token instead of its literal text; the
+ * post-processing pass later swaps the placeholder run for a compound
+ * ADDIN EN.CITE field whose cached result is the original superscript text.
  */
-function parseInlineMarkdown(text: string, font: string, size: number): TextRun[] {
+function parseInlineMarkdown(
+  text: string,
+  font: string,
+  size: number,
+  citeSink?: (marker: string) => string,
+): TextRun[] {
   const runs: TextRun[] = [];
   const re = /(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(`[^`\n]+`)|(\[\d{1,3}(?:[,\-–\s]\d{1,3})*\])/g;
   let last = 0;
@@ -1147,7 +1250,8 @@ function parseInlineMarkdown(text: string, font: string, size: number): TextRun[
     } else if (tok.startsWith("`")) {
       runs.push(new TextRun({ text: tok.slice(1, -1), font, size }));
     } else if (tok.startsWith("[")) {
-      runs.push(new TextRun({ text: tok, superScript: true, font, size }));
+      const visible = citeSink ? citeSink(tok) : tok;
+      runs.push(new TextRun({ text: visible, superScript: true, font, size }));
     } else {
       runs.push(new TextRun({ text: tok.slice(1, -1), italics: true, font, size }));
     }
@@ -1173,6 +1277,7 @@ async function buildDocx(
   content: string,
   refLines: string[],
   journalTemplate?: string,
+  enRecords?: Map<number, EndNoteRecord>,
 ): Promise<ArrayBuffer> {
   const children: Paragraph[] = [];
 
@@ -1184,6 +1289,21 @@ async function buildDocx(
   const bodySize = 22;  // 11 pt
   const smallSize = 20; // 10 pt
   const refSize = 18;   // 9 pt
+
+  // EndNote citation anchors: every [n] marker in the body becomes a unique
+  // placeholder token here; after packing, the token run is replaced by a
+  // compound ADDIN EN.CITE field (cached superscript text + base64 record).
+  const useEndnote = !!enRecords && enRecords.size > 0;
+  const citeAnchors: { token: string; marker: string }[] = [];
+  const citeSink = (marker: string): string => {
+    const token = `\u00A7ENC${citeAnchors.length}\u00A7`;
+    citeAnchors.push({ token, marker });
+    return token;
+  };
+  const sink = useEndnote ? citeSink : undefined;
+  // Bibliography field anchors (first / last reference paragraph).
+  const reflistOpenToken = "\u00A7ENRO\u00A7";
+  const reflistCloseToken = "\u00A7ENRC\u00A7";
 
   // ---- Title ----
   children.push(
@@ -1205,7 +1325,7 @@ async function buildDocx(
     );
     children.push(
       new Paragraph({
-        children: parseInlineMarkdown(abstract, font, smallSize),
+        children: parseInlineMarkdown(abstract, font, smallSize, sink),
         alignment: AlignmentType.JUSTIFIED,
         indent: { left: 567, right: 567 },
         spacing: { after: 240, line: 300 },
@@ -1267,7 +1387,7 @@ async function buildDocx(
       const para = b.split("\n").map((l) => l.replace(/^\s*[-*•]\s+/, "")).join(" ");
       children.push(
         new Paragraph({
-          children: parseInlineMarkdown(para, font, bodySize),
+          children: parseInlineMarkdown(para, font, bodySize, sink),
           alignment: AlignmentType.JUSTIFIED,
           spacing: { after: 140, line: 340 },
           indent: { firstLine: 360 },
@@ -1277,6 +1397,18 @@ async function buildDocx(
   }
 
   // ---- References (fresh page, hanging indent) ----
+  // v116: the list is a Word AUTO-NUMBERED list ("[1]", "[2]", … rendered by
+  // numbering.xml), and the whole block is wrapped in an ADDIN EN.REFLIST
+  // field. Consequences:
+  //   - without EndNote: deleting a row renumbers the remaining rows live
+  //     (native Word list numbering)
+  //   - with EndNote: "Update Citations and Bibliography" regenerates the
+  //     field result from the linked citations — add/delete renumbers both
+  //     the in-text markers and the list automatically
+  // The field control runs live in their own TINY (1pt, unnumbered) anchor
+  // paragraphs before/after the list — anchoring them inside the first/last
+  // numbered paragraphs makes LibreOffice restart the list numbering at the
+  // paragraph holding the field end (verified experimentally).
   if (refLines.length) {
     children.push(
       new Paragraph({
@@ -1285,19 +1417,52 @@ async function buildDocx(
         spacing: { after: 160 },
       })
     );
-    for (const line of refLines) {
+    if (useEndnote) {
       children.push(
         new Paragraph({
-          children: [new TextRun({ text: allowWordWrap(line), size: refSize, font, color: "000000" })],
+          children: [new TextRun({ text: reflistOpenToken, size: 2, font })],
+          spacing: { before: 0, after: 0 },
+        })
+      );
+    }
+    refLines.forEach((line) => {
+      // The "[n] " prefix is rendered by the list numbering, not the text.
+      const text = allowWordWrap(line.replace(/^\s*\[\d+\]\s*/, ""));
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text, size: refSize, font, color: "000000" })],
+          numbering: { reference: "endnote-reflist", level: 0 },
           alignment: AlignmentType.JUSTIFIED,
           spacing: { after: 80, line: 260 },
-          indent: { left: 360, hanging: 360 },
+        })
+      );
+    });
+    if (useEndnote) {
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text: reflistCloseToken, size: 2, font })],
+          spacing: { before: 0, after: 0 },
         })
       );
     }
   }
 
   const doc = new Document({
+    numbering: {
+      config: [{
+        reference: "endnote-reflist",
+        levels: [{
+          level: 0,
+          format: LevelFormat.DECIMAL,
+          text: "[%1]",
+          alignment: AlignmentType.START,
+          style: {
+            run: { font, size: refSize, color: "000000" },
+            paragraph: { indent: { left: 480, hanging: 480 } },
+          },
+        }],
+      }],
+    },
     sections: [{
       properties: {
         page: { margin: { top: 1440, bottom: 1440, left: 1440, right: 1440 } },
@@ -1323,36 +1488,39 @@ async function buildDocx(
     },
   });
 
+  // ── EndNote CWYW field injection ────────────────────────────────────────
+  // The `docx` library cannot express compound fields, so we pack, unzip,
+  // patch document.xml with the real field XML, and re-zip.
+  if (useEndnote) {
+    const packed = await Packer.toBuffer(doc);
+    const occurrences = citeAnchors.map(({ token, marker }) => {
+      const nums = parseCitationNumbers(marker);
+      const records = nums
+        .map((n) => enRecords!.get(n))
+        .filter((r): r is EndNoteRecord => !!r);
+      return { token, marker, records };
+    });
+    try {
+      const zip = await JSZip.loadAsync(packed);
+      const docFile = zip.file("word/document.xml");
+      if (docFile) {
+        let xml = await docFile.async("string");
+        xml = injectEndnoteFields(xml, occurrences, reflistOpenToken, reflistCloseToken);
+        zip.file("word/document.xml", xml);
+        const out = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+        return new Uint8Array(out).buffer;
+      }
+    } catch (err: any) {
+      // Field injection is an enhancement — never let it break the export.
+      console.warn("[export] EndNote field injection failed, falling back to plain docx:", err?.message || err);
+    }
+  }
+
   // Packer.toBuffer resolves a Node Buffer (ArrayBufferLike-backed), but this
   // function is declared to resolve an ArrayBuffer — copy into a fresh
   // Uint8Array<ArrayBuffer> and hand back its .buffer.
   return new Uint8Array(await Packer.toBuffer(doc)).buffer;
 }
-function parseInlineCitations(text: string): TextRun[] {
-  const runs: TextRun[] = [];
-  const re = /\[(\d{1,3}(?:[,\-–\s]\d{1,3})*|[A-Z]{2,12}:\s?[^\]]{1,60})\]/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text))) {
-    if (m.index > last) {
-      runs.push(new TextRun({ text: text.slice(last, m.index) }));
-    }
-    runs.push(
-      new TextRun({
-        text: m[0],
-        superScript: true,
-        color: "0F766E",
-        bold: true,
-      })
-    );
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) {
-    runs.push(new TextRun({ text: text.slice(last) }));
-  }
-  return runs.length ? runs : [new TextRun({ text })];
-}
-
 /**
  * Sanitize text for WinAnsi/PDF: replace Unicode characters that Helvetica
  * cannot encode (superscripts, special dashes, arrows, etc.)
