@@ -1628,3 +1628,32 @@ Stage Summary:
 - 已知设计内行为：正文 1911 词低于 2500 目标（-24%，三轮去重与科学纠偏的累积代价，质量优先）；Jeong 2022 的 gather 召回不稳定（两次运行均未召回，靠覆盖断言兜底——但断言只查候选池，若 gather 未召回则池中无此文献可补，§2 诚实声明规则为此场景的最终防线）
 - 测试资产：项目 cmtbgxiyk0000qvhug1dyeyma（Final Regression）与文章 cmtbh85wg00ppqvhutwdbbou2 保留；/home/z/tmc-final/ 含修复前后文章、SSE 日志、docx/PDF 导出、浏览器截图；离线测试 scripts/test-dedupe-round16.ts；修正脚本 scripts/fix-tmc-article-round16.ts（--apply 落库 / 默认 dry-run）；DB 快照版本 "pre-round16" 可回滚
 - 提交信息：fix(round-16): final E2E verification — mechanical cross-section dedup at compose, structure-claim honesty rule, TMC article round-16 repairs
+
+---
+Task ID: round-17
+Agent: main (Z.ai Code orchestrator)
+Task: 继续真实测试（round-16 防线首次 E2E 验证）+ 残留问题闭环（截断 bug、上限漏网、未引用重述、尾部无引用论断、词量补偿）
+
+Work Log:
+- 环境恢复：worklog 显示 round-16 已完成（提交 073b32e）但其两道新防线（compose 机械跨节去重 removeCrossSectionDuplicates + STRUCTURE-CLAIM HONESTY 提示词规则）从未经过真实 E2E；本轮发起第三次全新生成做验证
+- 测试基建：nohup 直接启动被沙箱进程清理杀死（SSE 客户端断连 → 流水线随请求中止回滚，DB 0 段落）——新建 .zscripts/v2-run-daemon.py（复刻 dev-daemon.py 双 fork 守护模式）保证跨工具调用存活；删除中止项目后重跑
+- E2E 运行（项目 cmtbk7sjb00erjmucpfif977r → 文章 cmtbkit4s00wijmuc2huw7o0l，targetWords=2500，8.57 分钟）：8 节 / 18 篇文献 / 2119 词；遥测全防线生效——preprintDuplicatesDropped=7、coverageBackfills=2（structure:Clark TMC-2 替换综述 + therapy:Nakanishi Tmc2-rescue 追加）、zeroCitationRetries=0、adjacentCitationsMerged=0、crossSectionDuplicatesRemoved=15、74 处引用对抗验证移除 8 处、auditBlockingErrors=0
+- 6 类问题对照结论：✅ 零引用章节（各节 3-8 处引用）；✅ 预印本重复（0 重复，仅已知孤立 Lee bioRxiv）；✅ 相邻括号格式（0 处）；✅ 笔误（括号平衡/连字符/基因 token 全过）；⚠️ 结构覆盖部分改善（Clark 2024 自动补入 ✓；Jeong 2022 再次未被 gather 召回——已知限制；诚实规则生效：脊椎动物结构缺失被正确 hedge）；❌ 跨节重复大幅减少但残留（15 处机械移除后仍有：§6 截断悬空片段、§6 上限漏网 2 处真重复、§5 未引用电生理重述块、§5/§6 Tmc2-restore 近重复对 0.68/0.91）；新发现：词量 2119（-15%，超出 ±10% 带宽，去重+验证损耗所致）、§8 尾部 ~100 词治疗论断零引用
+- 截断 bug 根因（round-16 防线引入）：removeCrossSectionDuplicates 的句子切分 split(/(?<=[.!?])\s+/) 把 "*C. elegans*" 缩写句点当句子边界——"The structural determination of the *C. elegans* TMC-2 complex … [5]" 被切成两段，后半段匹配 §2 词池被删，前半段 "The structural determination of the *C." 悬空残留在成文中（article.content 与 paragraph.content 均携带）
+- 管线加固 ①（generate-full-helpers.ts）：新增 splitIntoSentences——切分后把小写字母开头的片段（或已知缩写/单大写结尾后的数字开头片段）并回前句（"elegans* TMC-2…"、"al. reported"、"approx. 50 pS" 全部正确合并）；池构建与段落处理统一使用
+- 管线加固 ②：移除上限 3→5 且新增词量下限守卫（单节移除词数 ≤40%）——E2E 中 §6 恰好触顶旧上限导致第 4 个真重复漏网
+- 管线加固 ③：未引用重述句纳入去重（无引用句 ≥12 内容词、containment≥0.80 且 LCS≥6 才移除，防止主题句误伤）——修复 LLM 丢弃引用重述前文论断（§5 电生理块）逃逸的路径
+- 管线加固 ④（route.ts）：plan 后词量预留 ×1.12（上限 1.18×target）补偿去重/验证的事后损耗（本轮 15 句≈360 词+8 引用移除 → -15%）
+- 管线加固 ⑤（route.ts + helpers）：验证门控新增尾部未引用论断块检测 trailingUncitedClaimWords（末尾 ≥60 词无 {{Rn}} 且含 ≥2 证据动词 → 触发 corrective 重写；遥测新增 trailingUncitedRetries）——针对 §8"展望段落实质论断零引用"模式
+- 离线验证（scripts/test-dedupe-round17.ts，27 项全过）：切分合并单测、截断修复、上限提升、未引用重述移除、词量下限/主题句/末位引用守卫、trailing 探针（§8 样式检出 83 词 / 已引用尾 / 短过渡均为 null）、真实语料回放（对 r17 成文跑新去重：§5 未引用块×3、§6 真重复×2 全部捕获且无悬空片段）；round-16 校准回归（pre-round16 快照语料）：5 must-catch 全捕 + 4 must-keep 全留 + 8 移除与基线一致
+- 本文修正（scripts/fix-tmc-article-round17.ts，12 处编辑）：修复 §6 悬空截断片段；删 §6 上限漏网 2 处真重复 + 0.91 近重复句（§5 为 canonical）；删 §5 未引用重述 4 句（prime-contender/电生理块/共表达/MET 电流）；删 §1 未引用 Tmc2-rescue 预告与 §3 未引用 scramblase 离题句；§8 尾部三论断改写为挂 [16]/[17,18] 的有据表述（改写措辞避开与 §5/§7 的词面重叠，机械探针复验 0）；断言全过（18 篇引用完整、去重探针 0、trailing 探针 0、括号平衡、无小写开头片段）；落库含 ArticleVersion 快照 "pre-round17" + 8 段落同步 + Reference 前缀切片行重建
+- 修正后验证：审查脚本全绿（句级近重复探针归零、§8 引用 5 处含 [16]/[17,18]）；citation-health blockingErrors=0/mismatch=0/orphan=0（8 suspect+1 unsupported 为无摘要 PubMed 引用的已知启发式建议层）；Word 导出（curl 解包）：45 EN.CITE × 双载荷 90/90 成对一致、单一库级 db-id、begin/end 91/91 平衡、0 dirty、0 INVALID、traveling library 18/18 标题正确；LibreOffice 渲染 7 页 PDF：References [1]-[18] 连续、修正内容全部渲染、无截断无 INVALID；浏览器 E2E（agent-browser）：项目工作区 8 段渲染、Article 弹窗修正内容可见（悬空片段 false、新治疗文本 true）、UI 触发 Word 导出 POST /api/export 200、0 console error / 0 page error
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 166 warning（较基线 +5，全部来自 scripts 工具文件，src 无新增）；dev.log 无未处理错误（1 次 safeParseJSON 容错回退，设计内）
+
+Stage Summary:
+- 第三次 E2E 验证结论：round-14/15/16 全部六类防线（零引用门控、预印本去重、覆盖断言、类型匹配验证、括号归一化、结构诚实规则）在真实运行中确认生效；round-16 的机械去重本身引入 1 个新缺陷（缩写句点截断）且存在 2 个漏网路径（固定上限、未引用盲区）——本轮全部修复并以 27 项离线测试 + 真实语料回放闭环
+- 管线新增 5 处加固：缩写安全切分、上限 5+词量下限 40%、未引用重述去重（0.80+run6 严阈值）、plan 词量预留 ×1.12、尾部未引用论断块门控
+- 修正后文章：18 篇全真实文献、零跨节重复（双重机械探针 0）、零悬空片段、§8 尾部论断全部有据、编号 1..18 完整；正文 1723 词（-31%，三轮去重的累积代价，词量预留修复面向未来运行）
+- 已知设计内行为：Lee 2025 bioRxiv 孤立预印本保留（无正式版配对）；Jeong 2022 gather 召回不稳定（覆盖断言只查候选池，§2/§8 诚实声明规则为兜底）；§6 节 93 词偏薄（去重代价，无重复内容可留）
+- 测试资产：项目 cmtbk7sjb00erjmucpfif977r（Round-17 Verification）与文章 cmtbkit4s00wijmuc2huw7o0l 保留；.zscripts/v2-run-daemon.py（双 fork SSE 守护）；scripts/audit-tmc-r17.ts（六类审查+句级近重复探针）、fix-tmc-article-round17.ts（--apply 落库）、test-dedupe-round17.ts（离线验证）；tool-results/ 含 r17-run2.log（SSE 全程）、r17-raw-article.md（修正前）、r17-fixed-article.md（修正后）、r17-article-viewer.png、pre-round16-article.md（回归语料）；DB 快照 "pre-round17" 可回滚
+- 提交信息：fix(round-17): third E2E verification — truncation-safe sentence split, cap+word-floor dedup, uncited-restatement removal, word reserve, trailing-claim gate

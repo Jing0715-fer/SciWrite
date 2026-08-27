@@ -602,7 +602,7 @@ export function scoreRelevance(keywords: string[], refText: string): number {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-section near-duplicate claim removal (round-16 hardening)
+// Cross-section near-duplicate claim removal (round-16 hardening, round-17 fixes)
 //
 // E2E regression finding (TMC1/TMC2, two consecutive fresh runs): despite the
 // round-15 claim-level digest + NO-REPETITION prompt rule, the LLM still
@@ -625,15 +625,104 @@ export function scoreRelevance(keywords: string[], refText: string): number {
 //   overlap with §1 was inflated by generic words) and the closest true
 //   duplicate caught by containment alone (0.667); true duplicates below
 //   0.66 are still caught by the run branch (e.g. 0.650 + run 5).
-// Guards: sentence must carry ≥ 8 content words; ≤ 3 removals per section;
-// a section always keeps ≥ 1 citation; empty paragraphs are collapsed.
+// Guards: sentence must carry ≥ 8 content words; a section always keeps
+// ≥ 1 citation; empty paragraphs are collapsed.
+//
+// round-17 fixes (verified on the third fresh E2E run):
+//   A. TRUNCATION BUG: naive `split(/(?<=[.!?])\s+/)` broke sentences at
+//      abbreviation periods — "The structural determination of the *C.
+//      elegans* TMC-2 complex has provided insights … [5]" was split into
+//      "…of the *C." + "elegans* TMC-2 complex …", the second fragment
+//      matched as a duplicate and was removed, leaving a dangling fragment
+//      "The structural determination of the *C." in the composed article.
+//      Fix: splitIntoSentences() merges any fragment that starts with a
+//      lowercase letter (or digit, after a known abbreviation) back into
+//      its predecessor.
+//   B. REMOVAL CAP: the fixed ≤3-removals-per-section cap was hit exactly
+//      on §6 of the E2E run (3 true duplicates removed, a 4th left standing).
+//      Replaced by: ≤5 removals per section AND ≤40% of a section's words.
+//   C. UNCITED RESTATEMENTS: sentences WITHOUT a citation marker were never
+//      compared, so the LLM's citation-less restatements of earlier claims
+//      (e.g. a whole electrophysiology paragraph restated in §5 with the
+//      citations dropped) survived. Now also checked, with a stricter
+//      threshold (containment ≥ 0.80 AND run ≥ 6, ≥ 12 content words).
 // ---------------------------------------------------------------------------
 
 export type CrossSectionDedupRemoval = {
   section: number; // 1-based, the section that lost the sentence
   matchedSection: number; // 1-based, where the claim was first established
   snippet: string; // ≤ 90 chars of the removed sentence
+  uncited?: boolean; // round-17: removed as an uncited restatement
 };
+
+const MAX_DEDUP_REMOVALS_PER_SECTION = 5;
+const MAX_DEDUP_WORD_LOSS = 0.4; // never strip more than 40% of a section's words
+
+// Known abbreviations whose trailing period is NOT a sentence boundary.
+const ABBREV_TAIL_RE =
+  /(?:\bet al\.|\be\.g\.|\bi\.e\.|\bvs\.|\bcf\.|\betc\.|\bca\.|\bapprox\.|\bFig\.|\bRef\.|\bRefs\.|\bNo\.|\bVol\.|\bProf\.|\bDr\.)$/i;
+// A single capital letter ending a fragment (initials / "*C." of "*C. elegans*").
+const SINGLE_CAP_TAIL_RE = /(?:^|[^A-Za-z])([A-Z])\.$/;
+
+/**
+ * Sentence splitter that tolerates abbreviation periods. A fragment is
+ * merged back into its predecessor when it cannot grammatically start a
+ * sentence: it begins with a lowercase letter ("elegans* TMC-2 complex …")
+ * or with a digit directly after a known abbreviation/initial ("50 pS …"
+ * after "approx.").
+ */
+export function splitIntoSentences(text: string): string[] {
+  const raw = text.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
+  const merged: string[] = [];
+  for (const frag of raw) {
+    const stripped = frag.replace(/^[*_`#>\s"“'\\(]+/, "");
+    const startsLower = /^[a-z]/.test(stripped);
+    const startsLowerOrDigit = /^[a-z0-9]/.test(stripped);
+    const prev = merged.length ? merged[merged.length - 1] : null;
+    const prevTrim = prev ? prev.trim() : "";
+    const prevEndsAbbrev =
+      ABBREV_TAIL_RE.test(prevTrim) || SINGLE_CAP_TAIL_RE.test(prevTrim);
+    if (prev && (startsLower || (prevEndsAbbrev && startsLowerOrDigit))) {
+      merged[merged.length - 1] = `${prev} ${frag}`;
+    } else {
+      merged.push(frag);
+    }
+  }
+  return merged;
+}
+
+/**
+ * Round-17 validation-gate probe: measure the trailing run of UNCITED
+ * substantive claim words at the end of a section ({{Rn}} keys are the
+ * citation form at gate time). Returns the word count of the trailing
+ * uncited block when it is long enough AND claim-bearing (≥2 evidence
+ * verbs); returns null when the tail is properly cited or clearly
+ * transitional.
+ *
+ * E2E motivation: the outlook section of the third run opened with three
+ * cited sentences and then made ~100 words of therapeutic claims
+ * ("gene therapy approaches offer promising avenues", "functional redundancy
+ * suggests …", "the discovery that …") with zero citations.
+ */
+const EVIDENCE_VERB_RE =
+  /\b(?:demonstrat\w*|reveal\w*|show(?:n|s|ing)?|suggest\w*|indicat\w*|studies|findings|evidence|discover\w*|establish\w*|proves?|supports?|recent advances|has been shown|report\w*)\b/i;
+
+export function trailingUncitedClaimWords(content: string): number | null {
+  const sentences = splitIntoSentences(content);
+  if (sentences.length === 0) return null;
+  // Walk backwards while sentences carry no citation key.
+  let words = 0;
+  let evidenceHits = 0;
+  for (let k = sentences.length - 1; k >= 0; k--) {
+    const s = sentences[k];
+    if (/\{\{R\d+\}\}/.test(s)) break;
+    const w = (s.match(/\S+/g) || []).length;
+    if (EVIDENCE_VERB_RE.test(s)) evidenceHits++;
+    words += w;
+  }
+  if (words >= 60 && evidenceHits >= 2) return words;
+  return null;
+}
 
 function dedupContentWords(sentence: string): string[] {
   return sentence
@@ -666,10 +755,9 @@ export function removeCrossSectionDuplicates(contents: string[]): {
   if (contents.length < 2) return { contents, removals };
 
   // Pre-parse: per section, paragraphs → sentences; claim sentences + word pool.
-  const sectionClaims: string[][] = contents.map((c) => {
-    const sentences = c.split(/(?<=[.!?])\s+/).filter((s) => /\[\d/.test(s));
-    return sentences;
-  });
+  const sectionClaims: string[][] = contents.map((c) =>
+    splitIntoSentences(c).filter((s) => /\[\d/.test(s)),
+  );
   const sectionPools: Set<string>[] = sectionClaims.map((sents) => {
     const pool = new Set<string>();
     for (const s of sents) for (const w of dedupContentWords(s)) pool.add(w);
@@ -684,55 +772,89 @@ export function removeCrossSectionDuplicates(contents: string[]): {
   const removedInSection = new Array(contents.length).fill(0);
 
   for (let i = 1; i < contents.length; i++) {
-    if (removedInSection[i] >= 3) continue;
+    if (removedInSection[i] >= MAX_DEDUP_REMOVALS_PER_SECTION) continue;
     // Guard basis: total citations in this section minus what removals have
     // already taken — a section must always keep ≥ 1 citation.
     const sectionCitations = (contents[i].match(/\[\d/g) || []).length;
+    const sectionWordCount = (contents[i].match(/\S+/g) || []).length;
     let citationsRemoved = 0;
+    let wordsRemoved = 0;
     const paragraphs = contents[i].split(/\n\n+/);
     const rebuiltParagraphs: string[] = [];
 
     for (const para of paragraphs) {
-      const sentences = para.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
+      const sentences = splitIntoSentences(para);
       const kept: string[] = [];
 
       for (const sentence of sentences) {
         const isClaim = /\[\d/.test(sentence);
         const words = dedupContentWords(sentence);
         let duplicateOf = -1;
+        let uncitedRestatement = false;
+        const sentenceWordCount = (sentence.match(/\S+/g) || []).length;
 
-        if (isClaim && words.length >= 8 && removedInSection[i] < 3) {
-          const wordSet = new Set(words);
-          for (let j = 0; j < i; j++) {
-            // containment against section j's claim pool
-            let inter = 0;
-            for (const w of wordSet) if (sectionPools[j].has(w)) inter++;
-            const containment = wordSet.size ? inter / wordSet.size : 0;
-            // longest common run against section j's claim sentences
-            let maxRun = 0;
-            for (let k = 0; k < sectionClaims[j].length; k++) {
-              const run = longestCommonRun(words, claimWordArrays[j][k]);
-              if (run > maxRun) maxRun = run;
+        if (
+          removedInSection[i] < MAX_DEDUP_REMOVALS_PER_SECTION &&
+          wordsRemoved + sentenceWordCount <= MAX_DEDUP_WORD_LOSS * sectionWordCount
+        ) {
+          if (isClaim && words.length >= 8) {
+            const wordSet = new Set(words);
+            for (let j = 0; j < i; j++) {
+              // containment against section j's claim pool
+              let inter = 0;
+              for (const w of wordSet) if (sectionPools[j].has(w)) inter++;
+              const containment = wordSet.size ? inter / wordSet.size : 0;
+              // longest common run against section j's claim sentences
+              let maxRun = 0;
+              for (let k = 0; k < sectionClaims[j].length; k++) {
+                const run = longestCommonRun(words, claimWordArrays[j][k]);
+                if (run > maxRun) maxRun = run;
+              }
+              if (containment >= 0.66 || (maxRun >= 5 && containment >= 0.45)) {
+                duplicateOf = j;
+                break;
+              }
             }
-            if (containment >= 0.66 || (maxRun >= 5 && containment >= 0.45)) {
-              duplicateOf = j;
-              break;
+          } else if (!isClaim && words.length >= 12) {
+            // round-17: uncited restatement of an earlier section's claim —
+            // stricter thresholds to protect legitimate topic sentences.
+            const wordSet = new Set(words);
+            for (let j = 0; j < i; j++) {
+              let inter = 0;
+              for (const w of wordSet) if (sectionPools[j].has(w)) inter++;
+              const containment = wordSet.size ? inter / wordSet.size : 0;
+              if (containment < 0.8) continue;
+              let maxRun = 0;
+              for (let k = 0; k < sectionClaims[j].length; k++) {
+                const run = longestCommonRun(words, claimWordArrays[j][k]);
+                if (run > maxRun) maxRun = run;
+              }
+              if (maxRun >= 6) {
+                duplicateOf = j;
+                uncitedRestatement = true;
+                break;
+              }
             }
           }
         }
 
         if (duplicateOf >= 0) {
           const sentenceCitations = (sentence.match(/\[\d/g) || []).length;
-          if (sectionCitations - citationsRemoved - sentenceCitations <= 0) {
+          if (
+            isClaim &&
+            sectionCitations - citationsRemoved - sentenceCitations <= 0
+          ) {
             kept.push(sentence); // never strip the LAST citation of a section
             continue;
           }
           removedInSection[i]++;
           citationsRemoved += sentenceCitations;
+          wordsRemoved += sentenceWordCount;
           removals.push({
             section: i + 1,
             matchedSection: duplicateOf + 1,
             snippet: sentence.replace(/\s+/g, " ").trim().slice(0, 90),
+            uncited: uncitedRestatement || undefined,
           });
           continue; // drop the sentence
         }
