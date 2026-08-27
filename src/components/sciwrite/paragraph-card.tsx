@@ -3,29 +3,21 @@
 import * as React from "react";
 import { toast } from "sonner";
 import {
-  FileText,
   MessageSquare,
   Pencil,
   Trash2,
-  CheckCircle2,
   Loader2,
-  Wand2,
   MoreHorizontal,
-  ChevronDown,
-  ChevronUp,
   PenLine,
   Copy,
-  X,
   Undo2,
   GitCompare,
   RotateCw,
   ShieldCheck,
-  Box,
   Quote,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,30 +25,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { api } from "@/lib/api-client";
 import {
   PARAGRAPH_FORMATS,
   PARAGRAPH_SCENARIOS,
   STATUS_STYLES,
-  ANNOTATION_TYPES,
-  SEVERITY_STYLES,
 } from "@/lib/constants";
 import type { Annotation, Paragraph } from "@/lib/types";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -66,6 +39,11 @@ import { DiffView } from "./diff-view";
 import { CitationValidationDialog } from "./citation-validation-dialog";
 import { Icon } from "./icon";
 import { useI18n } from "@/lib/i18n";
+import { FormatSelect } from "./paragraph/format-select";
+import { SelectionToolbar } from "./paragraph/selection-toolbar";
+import { RevisePopover } from "./paragraph/revise-popover";
+import { InsertStructureAnalysisButton } from "./paragraph/insert-structure-analysis-button";
+import { AnnotationsSection } from "./paragraph/annotations-section";
 
 interface Props {
   paragraph: Paragraph & { annotations: Annotation[]; references: any[] };
@@ -311,15 +289,6 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
   const status = STATUS_STYLES[paragraph.status] || STATUS_STYLES.draft;
   const formatMeta = PARAGRAPH_FORMATS.find((f) => f.id === paragraph.format);
 
-  const ANN_CARD_CLASS: Record<string, string> = {
-    emerald: "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/50 dark:bg-emerald-950/20",
-    teal: "border-teal-200 bg-teal-50/50 dark:border-teal-900/50 dark:bg-teal-950/20",
-    amber: "border-amber-200 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20",
-    rose: "border-rose-200 bg-rose-50/50 dark:border-rose-900/50 dark:bg-rose-950/20",
-    violet: "border-violet-200 bg-violet-50/50 dark:border-violet-900/50 dark:bg-violet-950/20",
-    sky: "border-sky-200 bg-sky-50/50 dark:border-sky-900/50 dark:bg-sky-950/20",
-  };
-
   return (
     <div
       className={`surface-card rounded-xl overflow-hidden transition-all hover:shadow-md hover:border-primary/30 acad-fade-in${
@@ -542,84 +511,13 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
 
       {/* Footer: annotations + revise */}
       {paragraph.annotations.length > 0 && (
-        <Collapsible open={annOpen} onOpenChange={setAnnOpen} className="border-t hairline">
-          <div className="glass-subtle px-4 py-2 flex items-center justify-between">
-            <CollapsibleTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5">
-                <MessageSquare className="h-3.5 w-3.5" />
-                {t("para.annotationsCount", { n: paragraph.annotations.length })}
-                {annOpen ? (
-                  <ChevronUp className="h-3 w-3" />
-                ) : (
-                  <ChevronDown className="h-3 w-3" />
-                )}
-              </Button>
-            </CollapsibleTrigger>
-          </div>
-          <CollapsibleContent>
-            <div className="px-4 py-3 space-y-2 bg-muted/20">
-              {paragraph.annotations.map((a) => {
-                const meta = ANNOTATION_TYPES.find((t) => t.id === a.type) || ANNOTATION_TYPES[0];
-                const sev = SEVERITY_STYLES[a.severity as keyof typeof SEVERITY_STYLES] || SEVERITY_STYLES.info;
-                return (
-                  <div
-                    key={a.id}
-                    className={`surface-card rounded-md border p-2.5 text-xs shadow-xs ${
-                      a.resolved ? "opacity-60" : ""
-                    } ${ANN_CARD_CLASS[meta.color] || "border-border bg-muted/30"}`}
-                  >
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <Icon name={meta.icon} className="h-3 w-3" />
-                      <span className="font-semibold text-[10px] uppercase tracking-wide">
-                        {meta.label}
-                      </span>
-                      <span className={`badge-${sev.color} px-1 py-0.5 rounded text-[8px] uppercase`}>
-                        {sev.label}
-                      </span>
-                      {a.resolved && (
-                        <span className="text-[9px] text-emerald-600 flex items-center gap-0.5">
-                          <CheckCircle2 className="h-2.5 w-2.5" /> {t("para.resolved")}
-                        </span>
-                      )}
-                      <div className="ml-auto flex items-center gap-0.5">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-5 w-5"
-                          onClick={() =>
-                            resolveAnnMut.mutate({ id: a.id, resolved: !a.resolved })
-                          }
-                          title={a.resolved ? t("para.reopen") : t("para.resolve")}
-                        >
-                          <CheckCircle2 className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-5 w-5 text-destructive"
-                          onClick={() => deleteAnnMut.mutate(a.id)}
-                        >
-                          <X className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </div>
-                    {a.selectedText && (
-                      <p className="text-[10px] italic text-muted-foreground mb-1 line-clamp-1">
-                        “{a.selectedText}”
-                      </p>
-                    )}
-                    <p className="text-foreground/90">{a.comment}</p>
-                    {a.aiResponse && (
-                      <p className="mt-1.5 text-[10px] text-primary italic border-l-2 border-primary/40 pl-2">
-                        {t("para.aiPrefix")} {a.aiResponse}
-                      </p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
+        <AnnotationsSection
+          annotations={paragraph.annotations}
+          annOpen={annOpen}
+          setAnnOpen={setAnnOpen}
+          resolveAnnMut={resolveAnnMut}
+          deleteAnnMut={deleteAnnMut}
+        />
       )}
 
       {/* Action bar */}
@@ -694,373 +592,5 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
         paragraphTitle={paragraph.title}
       />
     </div>
-  );
-}
-
-function FormatSelect({
-  value,
-  onChange,
-  options,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <div className="px-2 py-1">
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="h-7 text-[11px]">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((o) => (
-            <SelectItem key={o.value} value={o.value} className="text-xs">
-              {o.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
-
-function SelectionToolbar({
-  text,
-  onSubmit,
-  onClose,
-  pending,
-}: {
-  text: string;
-  onSubmit: (comment: string, type: string, severity: string) => void;
-  onClose: () => void;
-  pending: boolean;
-}) {
-  const { t } = useI18n();
-  const [comment, setComment] = React.useState("");
-  const [type, setType] = React.useState("revise-request");
-  const [severity, setSeverity] = React.useState("warning");
-
-  return (
-    <Popover open={true} onOpenChange={(o) => !o && onClose()}>
-      <PopoverTrigger asChild>
-        <span
-          className="absolute"
-          style={{
-            left: 0,
-            top: 0,
-            width: 1,
-            height: 1,
-          }}
-        />
-      </PopoverTrigger>
-      <PopoverContent
-        className="w-72 p-3 shadow-lg"
-        side="top"
-        align="center"
-        sideOffset={8}
-      >
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-wider text-primary font-semibold flex items-center gap-1">
-              <MessageSquare className="h-3 w-3" /> {t("para.annotateSelection")}
-            </span>
-            <div className="flex items-center gap-0.5">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-5 w-5"
-                onClick={() => {
-                  navigator.clipboard.writeText(text).then(() => toast.success(t("toast.copiedToClipboard")));
-                  onClose();
-                }}
-                title={t("para.copySelectedText")}
-              >
-                <Copy className="h-3 w-3" />
-              </Button>
-              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onClose}>
-                <X className="h-3 w-3" />
-              </Button>
-            </div>
-          </div>
-          <p className="text-[10px] italic text-muted-foreground line-clamp-2 border-l-2 border-primary/40 pl-2">
-            “{text.slice(0, 100)}{text.length > 100 ? "…" : ""}”
-          </p>
-          <Textarea
-            autoFocus
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            placeholder={t("para.revisePlaceholder")}
-            className="text-xs min-h-[56px]"
-          />
-          <div className="grid grid-cols-2 gap-1.5">
-            <Select value={type} onValueChange={setType}>
-              <SelectTrigger className="h-7 text-[10px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ANNOTATION_TYPES.map((t) => (
-                  <SelectItem key={t.id} value={t.id} className="text-[10px]">
-                    {t.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={severity} onValueChange={setSeverity}>
-              <SelectTrigger className="h-7 text-[10px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="info" className="text-[10px]">{t("para.info")}</SelectItem>
-                <SelectItem value="warning" className="text-[10px]">{t("para.warning")}</SelectItem>
-                <SelectItem value="critical" className="text-[10px]">{t("para.critical")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <Button
-            size="sm"
-            className="w-full h-7 text-[11px]"
-            disabled={!comment.trim() || pending}
-            onClick={() => onSubmit(comment.trim(), type, severity)}
-          >
-            {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-            {t("para.addAnnotation2")}
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-function RevisePopover({
-  unresolvedCount,
-  isRevising,
-  onRevise,
-}: {
-  unresolvedCount: number;
-  isRevising: boolean;
-  onRevise: (mode: string, instructions?: string) => void;
-}) {
-  const { t } = useI18n();
-  const [open, setOpen] = React.useState(false);
-  const [mode, setMode] = React.useState<"annotations" | "instructions" | "polish">("annotations");
-  const [instructions, setInstructions] = React.useState("");
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1.5 btn-gradient-primary text-primary-foreground border-primary/40">
-          {isRevising ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <Wand2 className="h-3 w-3" />
-          )}
-          {t("para.aiRevise")}
-          {unresolvedCount > 0 && (
-            <span className="ml-0.5 inline-flex items-center justify-center h-3.5 min-w-3.5 px-1 rounded-full bg-amber-500 text-white text-[8px] font-bold">
-              {unresolvedCount}
-            </span>
-          )}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-80 p-3" align="start">
-        <div className="space-y-2.5">
-          <span className="text-[10px] uppercase tracking-wider text-primary font-semibold flex items-center gap-1">
-            <Wand2 className="h-3 w-3" /> {t("para.revisionMode")}
-          </span>
-          <div className="grid grid-cols-3 gap-1">
-            {(
-              [
-                ["annotations", t("para.modeAnnotations"), unresolvedCount > 0],
-                ["instructions", t("para.modeInstructions"), true],
-                ["polish", t("para.modePolish"), true],
-              ] as const
-            ).map(([id, label, enabled]) => (
-              <button
-                key={id}
-                disabled={!enabled}
-                onClick={() => setMode(id)}
-                className={`text-[10px] px-2 py-1.5 rounded-md border transition-colors ${
-                  mode === id
-                    ? "border-primary bg-primary/10 text-primary font-medium"
-                    : "border-border hover:bg-muted"
-                } ${!enabled ? "opacity-40 cursor-not-allowed" : ""}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {mode === "annotations" && (
-            <p className="text-[10px] text-muted-foreground">
-              {t("para.willAddressAnnotations", { n: unresolvedCount })}
-            </p>
-          )}
-          {mode === "instructions" && (
-            <Textarea
-              value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
-              placeholder={t("para.reviseInstructionsPlaceholder")}
-              className="text-xs min-h-[64px]"
-            />
-          )}
-          {mode === "polish" && (
-            <p className="text-[10px] text-muted-foreground">
-              {t("para.polishDesc")}
-            </p>
-          )}
-          <Button
-            size="sm"
-            className="w-full h-7 text-[11px] gap-1.5"
-            disabled={
-              isRevising ||
-              (mode === "annotations" && unresolvedCount === 0) ||
-              (mode === "instructions" && !instructions.trim())
-            }
-            onClick={() => {
-              onRevise(mode, mode === "instructions" ? instructions.trim() : undefined);
-              setOpen(false);
-              setInstructions("");
-            }}
-          >
-            {isRevising ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
-            {t("para.runRevision")}
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-/**
- * InsertStructureAnalysisButton — a popover that lists all analyzed RCSB
- * structures in the current project and inserts a compact markdown summary of
- * the selected structure's key metrics into the paragraph draft. This is the
- * "quick insert" counterpart to the full ProteinStructureAnalysisDialog —
- * instead of viewing all 12 tabs, the user picks a structure and gets a
- * one-paragraph summary they can edit into their prose.
- */
-function InsertStructureAnalysisButton({
-  projectId,
-  onInsert,
-}: {
-  projectId: string;
-  onInsert: (markdown: string) => void;
-}) {
-  const { t } = useI18n();
-  const [open, setOpen] = React.useState(false);
-  const [loading, setLoading] = React.useState(false);
-  const [analyses, setAnalyses] = React.useState<any[]>([]);
-
-  React.useEffect(() => {
-    if (!open) return;
-    setLoading(true);
-    api
-      .listProjectStructures(projectId)
-      .then((res) => setAnalyses(res.analyses || []))
-      .catch(() => setAnalyses([]))
-      .finally(() => setLoading(false));
-  }, [open, projectId]);
-
-  function buildInsertMarkdown(a: any): string {
-    // Parse the contextMarkdown to extract key metrics, or build a compact
-    // summary from the fields we have.
-    const lines: string[] = [];
-    lines.push(`> **Structure PDB:${a.pdbId}** — ${a.title || "untitled"}`);
-    lines.push(`> - ${a.chainCount} chain(s) · ${a.residueCount} residues · ${a.atomCount} atoms${a.ligandCount > 0 ? ` · ${a.ligandCount} ligand(s)` : ""}`);
-    // Try to extract a few key lines from the full context markdown.
-    const md = a.contextMarkdown || "";
-    const extract = (re: RegExp) => {
-      const m = md.match(re);
-      return m ? m[1] : null;
-    };
-    const method = extract(/Method: ([^|]+)/);
-    const resolution = extract(/Resolution: ([^|Å]+Å)/);
-    const ramaFav = extract(/Favoured \(core\+allowed\): (\S+)%/);
-    const ramaOut = extract(/Outliers: (\S+)%/);
-    const bfMean = extract(/Mean: ([\d.]+)/);
-    const sasaExp = extract(/Exposed: (\S+)%/);
-    const sasaBur = extract(/Buried: (\S+)%/);
-    const hbonds = extract(/Hydrogen bonds[^:]*: (\d+)/);
-    const netCharge = extract(/Net charge at pH 7: ([\d.\-+]+)/);
-    const pI = extract(/Isoelectric point \(pI\): ([\d.]+)/);
-    const meta: string[] = [];
-    if (method) meta.push(`Method: ${method.trim()}`);
-    if (resolution) meta.push(`Resolution: ${resolution.trim()}`);
-    if (ramaFav) meta.push(`Ramachandran: ${ramaFav}% favoured / ${ramaOut}% outliers`);
-    if (bfMean) meta.push(`B̄=${bfMean}`);
-    if (sasaExp) meta.push(`SASA: ${sasaExp}% exposed / ${sasaBur}% buried`);
-    if (hbonds) meta.push(`${hbonds} H-bonds`);
-    if (netCharge) meta.push(`net charge ${netCharge} (pH 7)`);
-    if (pI) meta.push(`pI=${pI}`);
-    if (meta.length) lines.push(`> - ${meta.join(" · ")}`);
-    // Ligands
-    const ligMatch = md.match(/Ligands & Cofators \((\d+) detected\):([\s\S]*?)(?=\n\*\*|$)/);
-    if (ligMatch && ligMatch[1] !== "0") {
-      const ligLines = ligMatch[2].split("\n").filter((l) => l.trim().startsWith("-")).slice(0, 6);
-      if (ligLines.length) lines.push(`> - Ligands: ${ligLines.map((l) => l.replace(/^\s*-\s*/, "").replace(/—.*$/, "").trim()).join(", ")}`);
-    }
-    lines.push(`> _All metrics computed from the actual PDB file via Molcraft structure analysis._`);
-    return lines.join("\n");
-  }
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 gap-1 text-[10px] border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/30"
-          title={t("structure.insertAnalysisTitle")}
-        >
-          <Box className="h-3 w-3" />
-          {t("structure.insertAnalysis")}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className="w-80 p-2 max-h-80 overflow-y-auto"
-      >
-        {loading ? (
-          <div className="flex items-center justify-center py-4">
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          </div>
-        ) : analyses.length === 0 ? (
-          <div className="text-center py-4 text-[11px] text-muted-foreground">
-            <Box className="h-6 w-6 mx-auto mb-1 opacity-30" />
-            {t("structure.noAnalyzedSources")}
-          </div>
-        ) : (
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-1 pb-1">
-              {t("structure.chooseStructure")}
-            </div>
-            {analyses.map((a) => (
-              <button
-                key={a.pdbId}
-                onClick={() => {
-                  onInsert(buildInsertMarkdown(a));
-                  setOpen(false);
-                }}
-                className="w-full text-left rounded-md border border-border/60 hover:border-amber-300 hover:bg-amber-50/50 dark:hover:bg-amber-950/20 p-2 transition-colors"
-              >
-                <div className="flex items-center gap-1.5">
-                  <Badge
-                    variant="secondary"
-                    className="text-[9px] font-mono bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200"
-                  >
-                    {a.pdbId}
-                  </Badge>
-                  <span className="text-[10px] text-muted-foreground">
-                    {a.chainCount}ch · {a.residueCount}res{a.ligandCount > 0 ? ` · ${a.ligandCount}lig` : ""}
-                  </span>
-                </div>
-                <div className="text-[11px] font-medium mt-0.5 line-clamp-1">
-                  {a.title || "untitled"}
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </PopoverContent>
-    </Popover>
   );
 }

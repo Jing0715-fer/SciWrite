@@ -1336,3 +1336,61 @@ Stage Summary:
 - 提交 55bd246 推送 GitHub main
 - 综合审查清单至此：CRITICAL 8/8 ✓ HIGH 26/26 ✓ MEDIUM 34/36 ✓（余 2：巨型组件拆分=重构级、后端鉴权=产品决策）LOW 15/18
 - 剩余可选方向：page.tsx/paragraph-card/CHD 组件拆分、NextAuth 鉴权、quota-status 保护、/tmp provider 文件权限
+
+---
+Task ID: 6-b
+Agent: general-purpose (refactor-paragraph-split)
+Task: 拆分 paragraph-card.tsx 巨型组件（1066 行 → 主文件 ≤600 行）
+
+Work Log:
+- 预检：通读 paragraph-card.tsx 全文 + worklog fix-round-4/5 约定；确认 4 个子组件（FormatSelect/SelectionToolbar/RevisePopover/InsertStructureAnalysisButton）均已是纯 props 驱动、无 ParagraphCard 闭包引用，可逐字搬移；备份原文件到 /tmp/paragraph-card.orig.tsx 用于逐字校验
+- 新建 src/components/sciwrite/paragraph/ 目录；4 个子组件逐字搬出（仅加 export 前缀 + 各自补齐 import）：format-select.tsx、selection-toolbar.tsx、revise-popover.tsx、insert-structure-analysis-button.tsx
+- 逐字校验：diff 原文件对应行区间 vs 新文件函数体 → 4 个组件全部 IDENTICAL（唯一差异 = export 关键字）；InsertStructureAnalysisButton 连同其 JSDoc 注释整体搬移
+- 行数核算：4 组件仅 368 行，搬出+import 清理后主文件仍 681 行 > 600 硬指标。为满足 ≤600 且不抽 hooks，追加搬移第 5 块纯展示 JSX：ParagraphCard 内 annotations 折叠列表（原 L544-623，render-only、无自有 state）→ paragraph/annotations-section.tsx；ANN_CARD_CLASS 常量随之移至该文件模块级（纯字面量，无依赖，零行为差异）；闭包引用 props 化（命名与原变量一致）：annotations、annOpen、setAnnOpen、resolveAnnMut、deleteAnnMut（后两者用窄类型 { mutate: ... } 接口保持 JSX 逐字不变）；t() 由子组件内 useI18n() 自取（与本文件 SelectionToolbar/RevisePopover 既有模式一致）
+- 校验 annotations-section：diff（4 空格反缩进 + paragraph.annotations→annotations 两处机械改名之外）IDENTICAL
+- 主文件收缩：删尾部 4 组件；import 区清理（移除 FileText 预存死导入及 Wand2/Box/Badge/Select*/Popover*/Collapsible*/ChevronDown/ChevronUp/CheckCircle2/X/ANNOTATION_TYPES/SEVERITY_STYLES 等已随搬移失效的导入）；ParagraphCard 主体（9 useState + 9 useMutation + 全部 useCallback/useMemo/useEffect）逐字未动——diff 确认 reviseMut round-4 onMutate 快照修复、mutations 块、Props/state/globalArticleRefs 块均 byte-identical
+- 验证：npx tsc --noEmit 全仓 0 错误（含并行子代理 in-flight 的 page.tsx/home/ 改动，均无错）；bun run lint 0 error、160 warning（较基线 165 还少 5，因清掉 FileText 等死导入）；本任务文件 lint 仅 1 条预存 warning（activeAnnotation 未使用，重构前即存在）
+- 未动禁改文件：i18n.tsx / api-client.ts / page.tsx（page.tsx 的改动来自并行子代理 6-a）/ prisma schema；未写测试；未 git commit
+
+Stage Summary:
+- 行数：paragraph-card.tsx 1066 → 596（≤600 ✓）；新增 paragraph/ 5 文件共 550 行：format-select 36、selection-toolbar 128、revise-popover 111、insert-structure-analysis-button 148、annotations-section 127
+- props 接口化：4 个指定子组件原本即纯 props（无需新增）；AnnotationsSection 新增 5 个 props（annotations/annOpen/setAnnOpen/resolveAnnMut/deleteAnnMut，命名与原闭包变量一致）
+- 偏差说明：任务书"只做 import 调整"与"主文件 ≤600"不可同时满足（ParagraphCard 自身即 620 行 + 68 行 import = 698 > 600），选择追加搬移 1 块无状态展示 JSX（零 hooks 抽取、逐字搬移、props 化 5 个闭包引用）以满足硬指标；shared.ts 未创建——5 个子组件间无共享类型/常量（各自 props 均独立，ANN_CARD_CLASS 仅 annotations-section 使用）
+- tsc 0 错误 / eslint 0 error（160 warning ≤ 基线 165）；待主协调者统一验证后提交
+
+---
+Task ID: 6-a
+Agent: general-purpose (refactor-page-split)
+Task: 拆分 page.tsx 巨型组件（1275 行 → 主文件 ≤450 行）
+
+Work Log:
+- 预检：通读 page.tsx 全文 1275 行 + worklog fix-round-4/5 约定（tsc+lint 双零、i18n.tsx/api-client.ts 禁改）；备份原文件到 /tmp/refactor6a/page.tsx.orig 用于逐字校验；eslint 基线复核（0 error / 165 warning，page.tsx 自身 16 条预存 warning）
+- 7 个指定搬移项逐字搬出（仅加 export 前缀 + 各自补齐 import）：safeParseArr→src/lib/parse-utils.ts；Header→home/header.tsx；WritingWorkspace→home/writing-workspace.tsx（ParagraphTrashDialog 的 React.lazy 声明随其唯一使用方一起搬入，保持动态导入不动）；EmbeddedReviewWorkspace→home/review-workspace.tsx；RelationshipWorkspace→home/relationship-workspace.tsx；EmptyWorkspace→home/empty-workspace.tsx；Footer→home/footer.tsx（粘性底栏 className 原样保留）
+- 逐字校验：diff 原文件对应行区间 vs 新文件函数体 → 8 项全部 IDENTICAL（含 ParagraphTrashDialog lazy const 与其导入注释）；6 个组件文件均带 "use client"，仅 writing-workspace.tsx 需 import * as React（React.useState/useCallback/Suspense），其余 5 个纯 JSX+hooks 文件不引入 React（避免新增 unused-import warning）
+- 行数核算：仅搬 7 项后 page.tsx 仍约 510 行 > 450 硬指标。为满足 ≤450 且零行为变更，追加搬移 Home 内两块纯逻辑：① progressStats useMemo 的计算体 → home/shared.ts 的纯函数 computeProgressStats(paragraphs)（memo 保留、deps [paragraphs] 不变，仅调用点改为 () => computeProgressStats(paragraphs)）；② 键盘快捷键 useEffect → home/use-keyboard-shortcuts.ts 的 useHomeKeyboardShortcuts hook（handler 与 useEffect 逐字搬移、deps 数组逐字保留 [activeProjectId, paragraphs.length, resolvedTheme, setTheme]；resolvedTheme/setTheme 改由 hook 内部 useTheme() 自取，与 Home 同一 context 值；Home 调用处传入 activeProjectId/paragraphs/setPaletteOpen/setInsightsOpen/setUnifiedWriteTab/setUnifiedWriteOpen，命名与原变量一致）
+- 主文件收缩：删尾部 736 行搬移代码；import 区修剪（lucide 仅留 Home 仍用的 10 图标；删 Button/Badge/ScrollArea/ThemeToggle/LanguageToggle/ThemeSwitcher/ParagraphCard/SortableParagraphs/cleanArticleContent/ExportMenu/MarkdownCitations/ProgressTracker/CitationHealthDashboard/WritingTipsPanel/toast/useMutation；type 导入删去未用的 Project）——顺带清掉 4 条预存 unused-import warning（Sun/Zap/ParagraphCard/Project）；4 个 React.lazy 动态导入（ArticleViewerWithTabs/InsightsDialog/UserDataDialog/UnifiedWritingDialog）原样未动
+- 验证：npx tsc --noEmit 全仓 0 错误；bun run lint 0 error / 160 warning（基线 165，本任务净 -4：新文件 12 条 warning 全部为原文件预存 unused-args 逐字搬移的平移，无新增）；dev server 重启冒烟：GET / 200，页面水合后 projects/project detail/citation-health/llm-cache-stats API 全 200，dev.log 无 error
+- 未动禁改文件：i18n.tsx / api-client.ts / prisma schema / sciwrite 其他现有文件（git status 中 paragraph-card.tsx 与 paragraph/ 目录的改动来自并行子代理 6-b）；未写测试；未 git commit
+
+Stage Summary:
+- 行数：page.tsx 1275 → 436（≤450 ✓）；新增 8 文件共 829 行：parse-utils 4、header 129、writing-workspace 331、review-workspace 108、relationship-workspace 166、empty-workspace 41、footer 39、shared 36、use-keyboard-shortcuts 75（后两项为满足 ≤450 硬指标追加的纯逻辑搬移）
+- props 接口化：7 个指定搬移组件原本即纯 props 驱动（无 Home 闭包引用，调用处零改动）；useHomeKeyboardShortcuts 新增 6 参数接口（activeProjectId/paragraphs/setPaletteOpen/setInsightsOpen/setUnifiedWriteTab/setUnifiedWriteOpen，命名与原变量一致）
+- 偏差说明：任务书"只搬 7 项"与"主文件 ≤450"不可同时满足（7 项搬完仍约 510 行），选择追加搬移 2 块零行为变更的纯逻辑（纯函数 + hook，函数体逐字、deps 逐字）而非压缩 import 格式或改写 JSX；shared.ts 按任务书预留，实际放入 computeProgressStats（仅 Home 使用，但属 home/ 模块派生数据工具）
+- tsc 0 错误 / eslint 0 error（160 warning ≤ 基线 165）；dev server 已重启并更新 .zscripts/dev.pid（原实例已死，pid 963 失效）；待主协调者统一验证后提交
+
+---
+Task ID: round-6 (含子任务 6-a / 6-b / 6-c / 6-d)
+Agent: main (Z.ai Code orchestrator + general-purpose 子代理 ×2)
+Task: 巨型组件拆分（审查清单倒数第 2 个 MEDIUM 项）— page.tsx / paragraph-card.tsx / citation-health-dashboard.tsx 纯机械搬移重构，零行为回归
+
+Work Log:
+- [6-a 子代理] page.tsx 1275→436 行：Header/WritingWorkspace/EmbeddedReviewWorkspace/RelationshipWorkspace/EmptyWorkspace/Footer 搬至 home/ 目录（7 文件）+ safeParseArr→lib/parse-utils.ts + computeProgressStats→home/shared.ts + 键盘快捷键 effect→home/use-keyboard-shortcuts.ts；搬移体 diff 逐字节校验一致；顺带消除 4 条预存死导入 warning
+- [6-b 子代理] paragraph-card.tsx 1066→596 行：FormatSelect/SelectionToolbar/RevisePopover/InsertStructureAnalysisButton 4 个文件内子组件搬至 paragraph/ 目录 + annotations 折叠列表（AnnotationsSection，5 个闭包引用 props 化）；round-4 的 revise onMutate 快照修复与 round-3 的 i18n t() 调用逐字保留；主组件 9 useState + 9 mutation 编排不动
+- [6-c 主协调者] citation-health-dashboard.tsx 1028→618 行：4 个接口→citation-health/types.ts、GRADE_COLORS/GRADE_LABEL_KEYS→grade-utils.ts、统计磁贴→stat-tiles.tsx、问题段落列表→worst-offenders-list.tsx（prop 命名与原闭包变量一致保 JSX 逐字）、文章审计列表→article-audit-list.tsx、重写确认对话框→regen-confirm-dialog.tsx（offenderCount 由父级计算传入）；状态/hooks/批量逻辑全部保留主文件
+- [6-d 验证] tsc 0 错误 / eslint 0 error（160 warning ≤ 基线 165）；浏览器冒烟 — 首页 200 无错误、CHD 全部子组件渲染（等级徽章 D 46、44 warnings 按钮、WORST-OFFENDING PARAGRAPHS 列表、ARTICLE AUDITS 列表、Auto-fix/Regenerate all 按钮）、段落卡 Edit 模式完整（FormatSelect select 元素 + Save/Cancel + textarea）、中文模式「5 个问题段落/查看 44 条警告/文章审计」0 键名泄漏、Footer 粘性底栏 bottomGap=0
+
+Stage Summary:
+- 三大巨型组件全部达标：page.tsx 1275→436（-66%）、paragraph-card.tsx 1066→596（-44%）、citation-health-dashboard.tsx 1028→618（-40%）
+- 新建 19 个模块文件（home/ 9 + paragraph/ 5 + citation-health/ 6 - parse-utils 1 = 21 处），全部为纯搬移，git diff 可审计
+- 综合审查清单：MEDIUM 35/36（仅余后端鉴权）
+- 提交信息：refactor(round-6): split giant components (page/paragraph-card/citation-health-dashboard)
