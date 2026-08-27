@@ -20,6 +20,132 @@ export function countBySource(items: any[], source: string): number {
   return items.filter((i) => i.source === source).length;
 }
 
+// ---------------------------------------------------------------------------
+// Preprint/published dedupe (round-14 hardening)
+//
+// E2E finding (TMC1/TMC2 article): the SAME work entered the reference pool
+// twice — once as its bioRxiv/Research Square preprint and once as the
+// peer-reviewed version (Giese eLife 2025 + bioRxiv 2024; Wang Nat Commun
+// 2024 + Research Square 2024). Both survived curation and were cited
+// side-by-side, which a reviewer flagged as a citation-management defect.
+//
+// This mechanical pass runs BEFORE curation so the LLM never sees both
+// versions of the same work.
+// ---------------------------------------------------------------------------
+
+const PREPRINT_RE =
+  /(bio|med|chem)rxiv|research ?square|arxiv|preprint|ssrn|peerj preprints|authorea/i;
+
+function isPreprintRef(r: any): boolean {
+  const journal = String(r?.journal || "");
+  const url = String(r?.url || "");
+  const doi = String(r?.doi || "");
+  return (
+    PREPRINT_RE.test(journal) ||
+    /biorxiv|medrxiv|researchsquare|arxiv/i.test(url) ||
+    // 10.1101/* is the bioRxiv/medRxiv DOI prefix
+    /^10\.1101\//.test(doi)
+  );
+}
+
+function normalizeTitle(t: any): string {
+  return String(t || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function titleTokens(t: any): Set<string> {
+  return new Set(normalizeTitle(t).split(" ").filter((w) => w.length > 2));
+}
+
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0;
+  let inter = 0;
+  for (const w of a) if (b.has(w)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+
+function firstAuthorSurname(r: any): string {
+  const first = String(r?.authors || "").split(",")[0] || "";
+  return first.trim().split(/\s+/)[0].toLowerCase();
+}
+
+function refYear(r: any): number {
+  return parseInt(String(r?.year || ""), 10) || 0;
+}
+
+/**
+ * True when two reference entries describe the SAME work (a preprint and its
+ * published version, or a straight duplicate entry).
+ *
+ * Rule 1 — identical normalized titles (covers the Giese pair: preprint and
+ * eLife version share the exact title).
+ * Rule 2 — at least one entry is a preprint AND first-author surnames match
+ * AND years differ by ≤1 AND title-token Jaccard ≥ 0.75 (covers the Wang
+ * pair, whose preprint title was reworded for publication). When neither is a
+ * preprint we deliberately do NOT fuzzy-merge: two distinct published papers
+ * can legitimately share title tokens.
+ */
+function isSameWork(a: any, b: any): boolean {
+  const na = normalizeTitle(a?.title);
+  const nb = normalizeTitle(b?.title);
+  if (na && na === nb) return true;
+  const aPre = isPreprintRef(a);
+  const bPre = isPreprintRef(b);
+  if (!aPre && !bPre) return false;
+  if (firstAuthorSurname(a) !== firstAuthorSurname(b)) return false;
+  const ya = refYear(a);
+  const yb = refYear(b);
+  if (ya && yb && Math.abs(ya - yb) > 1) return false;
+  return jaccard(titleTokens(a?.title), titleTokens(b?.title)) >= 0.75;
+}
+
+/** True → keep `a` over `b`: published beats preprint, then newer beats older. */
+function preferredOver(a: any, b: any): boolean {
+  const aPre = isPreprintRef(a);
+  const bPre = isPreprintRef(b);
+  if (aPre !== bPre) return !aPre;
+  return refYear(a) >= refYear(b);
+}
+
+export interface PreprintDedupeResult {
+  refs: any[];
+  dropped: { keptTitle: string; droppedTitle: string; droppedJournal: string }[];
+}
+
+/**
+ * Remove preprint duplicates from a reference list, keeping the published
+ * version of each work. Pure function; O(n²) is fine for n ≤ a few hundred.
+ */
+export function dedupePreprintVersions(references: any[]): PreprintDedupeResult {
+  const kept: any[] = [];
+  const dropped: PreprintDedupeResult["dropped"] = [];
+  outer: for (const r of references) {
+    for (let i = 0; i < kept.length; i++) {
+      if (isSameWork(r, kept[i])) {
+        if (preferredOver(r, kept[i])) {
+          dropped.push({
+            keptTitle: String(r.title || ""),
+            droppedTitle: String(kept[i].title || ""),
+            droppedJournal: String(kept[i].journal || ""),
+          });
+          kept[i] = r;
+        } else {
+          dropped.push({
+            keptTitle: String(kept[i].title || ""),
+            droppedTitle: String(r.title || ""),
+            droppedJournal: String(r.journal || ""),
+          });
+        }
+        continue outer;
+      }
+    }
+    kept.push(r);
+  }
+  return { refs: kept, dropped };
+}
+
 /**
  * Generate web search queries to supplement database queries.
  * Capped at maxQueries to avoid JSON truncation by the LLM's output token limit.
@@ -120,6 +246,12 @@ Select the most relevant, recent, and authoritative references. Prioritize:
 2. Seminal/foundational papers
 3. Review articles covering the topic
 4. Primary research with key findings
+5. The ORIGINAL papers behind key advances (e.g., the primary structure
+   determination, functional demonstration, or therapy papers) — a review
+   about a structure/mechanism/therapy topic MUST cite the primary papers,
+   not only reviews describing them
+6. When a preprint AND its peer-reviewed version are both listed, select the
+   peer-reviewed version — never select both
 
 Respond as STRICT JSON: { "indices": [1, 3, 5, 7, ...] }
 Use 1-based indices. Select exactly ${maxCount} references.`;

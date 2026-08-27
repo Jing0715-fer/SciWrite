@@ -1563,3 +1563,23 @@ Stage Summary:
 - 已知非阻断项：topicality 启发式对无摘要 PubMed 引用的误报（ Layer-2 建议性警告，非阻断）
 - 测试资产：项目 cmtb9r4mi02neqv4ti2ddhkaz（TMC1/TMC2 Structural Biology Test）保留在 DB；/home/z/tmc-test/ 含 SSE 日志、导出样本、渲染截图
 - 提交信息：chore(round-13): code review + TMC1/TMC2 2500w E2E — paragraph export orderBy fix, dead code removal
+
+---
+Task ID: round-14
+Agent: main (Z.ai Code orchestrator)
+Task: 修复用户审查反馈的 TMC1/TMC2 文章 4 项引用问题（第 9 节零引用 / 预印本重复引用 / 缺结构原始论文 / lipid 错配）+ V2 管线引用管理加固
+
+Work Log:
+- 问题定位（DB dump）：文章 cmtba7nq303drqv4tor6573v2 共 9 节 20 篇引用——第 9 节 Therapeutic Perspectives 170 词 0 引用；[11]（Research Square）与 [14]（Nat Commun）为同一 LOXHD1 工作；[18]（bioRxiv）与 [7]（eLife）为同一 Giese 工作；第 2 节末段 lipid 结构论述错挂功能研究 [10]（Chen 2025 PNAS）
+- 文献核实（PubMed eutils esearch/esummary/efetch 全文摘要级核对）：TMC 通道冷冻电镜结构原始论文实际为线虫同源物——Jeong 2022 Nature（C. elegans TMC-1 复合物 2×TMC-1+2×CALM-1+2×TMIE，PMID 36224384）与 Clark 2024 PNAS（TMC-2 复合物 + 脂质介导亚基接触，PMID 38354260）；脊椎动物 TMC1/TMC2 原子结构迄今未发表（Peineau 2025 摘要佐证："predicted mammalian TMC structures"）；补 Ballesteros 2018 eLife（TMC1-TMEM16 同源建模，脂界面空腔含 Beethoven 突变）、Pan 2018 Neuron（cysteine mutagenesis 定位孔道——正是正文"cysteine mutagenesis"论断的真实出处，原错挂综述 [5]）、Peineau 2025（TMC 依赖的磷脂 scramblase 活性）；治疗文献：Askew 2015（AAV-Tmc1 基因治疗）、Nist-Lund 2019（改进型 Tmc1/Tmc2 基因治疗，PMID 30670701）、Gao 2018 Nature（Cas9 体内编辑治 Beethoven 显性聋）、Zheng 2022（CasRx RNA 编辑）、Wu 2021（AAV9-PHP.B 递送）
+- 修复方案（scripts/fix-tmc-article-round14.ts，复刻流水线 {{R:key}} 键控机制）：删 [11][18] 预印本（引用改指正式版 [14]/[7]）；第 9 节 4 处论断插入 5 篇治疗文献；第 2 节结构论述全部改写为准确归因（线虫结构已解析 vs 脊椎动物为同源模型——修正原"cryo-EM 已阐明 TMC1/TMC2 结构"的过度声称）；lipid 段改引 Clark 2024 + Ballesteros 2018，[10] 仅保留于 Fyn 脂化标签功能论断；"[2][5]""[16][17]"相邻括号归一为逗号格式；"LHFPL5-16"笔误修正为"LHFPL5"（PubMed 摘要确认四亚基为 TMC1/2+TMIE+CIB2+LHFPL5）；轻度去重（删引言"at least a dozen components"重复句、脂质节 CIB2-two-sites 重复句、门控节 TMEM16 重复从句）；全局按首次出现重编号 1..28；先 VACUUM INTO 备份 + ArticleVersion 快照（"pre-round14"）再落库；compose 存储语义复刻（每段引用行 = 全局前缀切片，citationOrder=全局号-1，共 177 行）
+- 修复验证：citation-health 审计 blockingErrors=0 / mismatch=0 / orphan=0 / missing=0 / outOfRange=0 / duplicate=0、numberingIntegrityOk=true、totalReferences=28（suspect 14+unsupported 6 为无摘要 PubMed 引用的已知启发式建议性警告）；Word 导出（curl 解包）：71 个 EN.CITE 复合字段 + 142 fldData（双载荷）+ EN.REFLIST、begin/end 143/143 平衡、单一库级 db-id、traveling library 28/28 标题 + 28/28 PMID 全部正确（含分组引用 [3,4,5]/[24,25] 内多 record）、预印本期刊零出现；LibreOffice 渲染 9 页 PDF 参考文献 [1]-[28] 连续无重启、无 INVALID；正文 2484 词（目标 2500 -1.4%）
+- 管线加固（防复发，4 处）：① generate-full-helpers.ts 新增 dedupePreprintVersions（归一化标题相等 或 [预印本标志(含 10.1101 DOI 前缀)+同第一作者+年份差≤1+标题 Jaccard≥0.75] 判为同一工作，发表版优先、同状态取新）在 curate 前机械去重——真实 E2E 数据离线测试：Giese 对/Wang 对正确去重、Kurima vs Jia、Askew vs Nist-Lund 等相近题目对照组零误伤、孤立预印本无正式版时保留；② 验证门控扩展零引用检测：{{Rn}} 键计数=0 即触发一次 corrective 重写（原门控只查裸数字标记与越界键——第 9 节裸奔正是此盲区）；③ 生成提示词新增两条硬规则（零引用=失败输出、展望类章节必须逐论断挂具体文献；引用类型匹配——结构论断引结构论文、功能论断引功能研究、有原始论文时不引综述）；④ 对抗性验证提示词新增 citation-type mismatch → PARTIAL 规则（标记不删除，保守）；curate 提示词新增优先级 5/6（补原始结构/功能/治疗论文、预印本与正式版并存时只选正式版）；complete 事件遥测新增 zeroCitationRetries + preprintDuplicatesDropped
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 158 warning（≤ 基线）；浏览器 E2E（agent-browser）：项目打开→Article 视图第 9 节上标引用 24,25/26/27/28 渲染、Jeong/Clark/Ballesteros/Pan/Askew/Nist-Lund/Gao 等新文献全部可见、LHFPL5 笔误已修、UI 触发 Word 导出 0 console error / 0 page error（数据源清单面板仍显示 Research square/bioRxiv 为 gather 阶段 provenance 记录，非文章参考文献，设计内行为）
+
+Stage Summary:
+- 用户反馈的 4 项引用问题全部修复且通过全链路验证：第 9 节 5 处治疗文献支撑、预印本重复引用归零（20→28 篇全部真实 PubMed 文献）、结构原始论文补齐（Jeong 2022 Nature + Clark 2024 PNAS + Ballesteros 2018 + Pan 2018）且结构论断改写为科学准确表述（线虫 TMC 结构已解析、脊椎动物为同源模型）、lipid 错配改引真正的结构/膜分析文献
+- 重要事实澄清：TMC1/TMC2（脊椎动物）全长原子结构迄今未发表——已发表的是 C. elegans TMC-1/TMC-2 复合物冷冻电镜结构（Jeong 2022、Clark 2024，Gouaux 实验室）；文章原稿"cryo-EM structures of TMC1/TMC2"的声称已相应修正为准确归因
+- 管线四处加固：预印本/正式版机械去重（curate 前）、零引用章节门控重写、生成与验证提示词的引用密度+类型匹配规则、遥测扩展——本轮 4 类问题在新生成中均有对应防线
+- 测试资产：修复脚本 scripts/fix-tmc-article-round14.ts（--apply 落库 / 默认 dry-run）、去重离线测试 scripts/test-dedupe-round14.ts、docx 验证 scripts/verify-docx-round14.ts；DB 快照版本"pre-round14"可随时回滚；/home/z/tmc-fix/ 含修复前后文章、导出样本、渲染 PDF
+- 提交信息：fix(round-14): repair TMC article citations + harden pipeline (preprint dedupe, zero-citation gate)

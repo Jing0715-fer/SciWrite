@@ -25,6 +25,7 @@ import {
 import {
   countBySource,
   curateReferences,
+  dedupePreprintVersions,
   generateWebSearchQueries,
   inferFormat,
   safeParseJSON,
@@ -132,6 +133,9 @@ export async function POST(req: NextRequest) {
         citationsChecked: 0,
         citationsRemoved: 0,
         citationsFlagged: 0,
+        // round-14: citation-management hardening telemetry
+        zeroCitationRetries: 0,
+        preprintDuplicatesDropped: 0,
       };
 
       // Hoisted for the catch block's failure-recovery logic (try-block
@@ -466,15 +470,29 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
 
         // ============ STEP 2: Curate ============
         send("step", { step: "curate", status: "started", message: `Curating references...` });
-        const maxCitableRefs = maxCitableRefsFor(targetWords, savedReferences.length);
+        // ★ round-14: mechanically drop preprint duplicates of published works
+        // BEFORE curation, so the same work can never enter the article twice
+        // (E2E finding: bioRxiv/Research Square preprints cited side-by-side
+        // with their eLife/Nat Commun published versions).
+        const deduped = dedupePreprintVersions(savedReferences);
+        if (deduped.dropped.length > 0) {
+          stats.preprintDuplicatesDropped = deduped.dropped.length;
+          log(
+            `curate: dropped ${deduped.dropped.length} preprint/duplicate versions — ` +
+              deduped.dropped
+                .map((d) => `[${String(d.droppedJournal).slice(0, 24)}] ${d.droppedTitle.slice(0, 60)}`)
+                .join(" | ")
+          );
+        }
+        const maxCitableRefs = maxCitableRefsFor(targetWords, deduped.refs.length);
         const curatedRefs = await curateReferences(
-          projectId, savedReferences, project.topic, project.field || "life sciences", maxCitableRefs, maxTokens
+          projectId, deduped.refs, project.topic, project.field || "life sciences", maxCitableRefs, maxTokens
         );
         send("step", {
           step: "curate",
           status: "done",
           curatedCount: curatedRefs.length,
-          message: `Curated ${curatedRefs.length} references from ${savedReferences.length}.`,
+          message: `Curated ${curatedRefs.length} references from ${deduped.refs.length}${deduped.dropped.length ? ` (${deduped.dropped.length} preprint duplicates dropped)` : ""}.`,
         });
         log(`curate: ${curatedRefs.length} refs`);
 
@@ -675,6 +693,17 @@ CITATION SYSTEM (STRUCTURAL — the most important rule):
 - NEVER cite a source for a claim its title/abstract does not support. If no
   listed source supports a claim, DROP the claim — do not pad with unrelated
   citations. An uncited claim is better than a miscited one.
+- A section with ZERO {{Rn}} citations is a FAILED output — this includes
+  perspectives/outlook/future-directions sections: ground each therapeutic
+  strategy, technical approach, or projected development in the specific
+  listed study that demonstrated it, and phrase unsupported aspirations as
+  explicitly hypothetical rather than asserting them as established.
+- Match the citation to the claim TYPE: cite the paper that determined a
+  structure for structural/architecture claims, the functional study for
+  functional claims, and the primary research paper (not a review) when both
+  are listed. Never cite a purely functional study as evidence for a
+  structural finding, or a review as the source of a primary finding the
+  review merely summarizes.
 
 EVIDENCE FIDELITY:
 - Write FROM the VERIFIED EVIDENCE claims listed above — those claims were
@@ -778,35 +807,50 @@ You cite ONLY with {{Rn}} keys — never numeric [n] citations.`;
           chunkContent = sanitizeSectionContent(chunkContent);
 
           // ---- ★ VALIDATION GATE (deepseek-harness-style step validation) ----
-          // If the output contains raw numeric [n] markers or malformed keys,
-          // retry ONCE with a corrective instruction before accepting it.
+          // If the output contains raw numeric [n] markers, malformed keys, or
+          // ZERO citations (round-14: a "Therapeutic Perspectives" section
+          // shipped with 0 citations while asserting concrete gene-therapy and
+          // CRISPR claims), retry ONCE with a corrective instruction.
           const gate = keyedCitationsAreValid(chunkContent, sectionRefs.length);
-          if (!gate.ok && (gate.rawNumericMarkers > 0 || gate.outOfRangeKeys > 0)) {
+          const keyedCount = (chunkContent.match(/\{\{R\d+\}\}/g) || []).length;
+          const zeroCite = keyedCount === 0;
+          if (zeroCite || (!gate.ok && (gate.rawNumericMarkers > 0 || gate.outOfRangeKeys > 0))) {
             stats.gateRetries++;
-            log(`generate: section ${sectionNum} FAILED validation gate (raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
+            if (zeroCite) stats.zeroCitationRetries++;
+            log(`generate: section ${sectionNum} FAILED validation gate (zeroCite=${zeroCite}, raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
             send("step", {
               step: "generate",
               status: "progress",
               section: sectionNum,
               total: sections.length,
-              message: `Section ${sectionNum}: validation gate triggered (raw numeric markers: ${gate.rawNumericMarkers}) — retrying with corrective instruction...`,
+              message: zeroCite
+                ? `Section ${sectionNum}: validation gate triggered (ZERO citations) — retrying with grounding instruction...`
+                : `Section ${sectionNum}: validation gate triggered (raw numeric markers: ${gate.rawNumericMarkers}) — retrying with corrective instruction...`,
             });
             try {
-              const retryPrompt = prompt + `
+              const retryPrompt = prompt + (zeroCite
+                ? `
 
-CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] or [2], or invalid keys. Rewrite the SAME section content using ONLY {{Rn}} citation keys from the list. Every citation must be a {{Rn}} key. Output the corrected section only.`;
+CORRECTION: your previous output contained ZERO {{Rn}} citations, but this section has ${sectionRefs.length} citable references allocated to it. A review section must ground its claims in the listed references. Rewrite the SAME section so that every factual claim — including each therapeutic strategy, experimental approach, or projected development — cites the specific listed reference that supports it, using {{Rn}} keys. If a claim cannot be supported by any listed reference, rephrase it as an explicitly open question or replace it with content drawn from the references. Output the corrected section only.`
+                : `
+
+CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] or [2], or invalid keys. Rewrite the SAME section content using ONLY {{Rn}} citation keys from the list. Every citation must be a {{Rn}} key. Output the corrected section only.`);
               const retryContent = await chatWithSession(projectId, retryPrompt, {
                 system,
                 temperature: 0.5,
                 taskType: "generate",
                 maxTokens,
-                metadata: { step: "generate", section: sectionNum, retry: true },
+                metadata: { step: "generate", section: sectionNum, retry: true, zeroCite },
               });
               const sanitizedRetry = sanitizeSectionContent(retryContent);
               const retryGate = keyedCitationsAreValid(sanitizedRetry, sectionRefs.length);
-              if (retryGate.rawNumericMarkers < gate.rawNumericMarkers) {
+              const retryKeyed = (sanitizedRetry.match(/\{\{R\d+\}\}/g) || []).length;
+              const improved = zeroCite
+                ? retryKeyed > 0 && retryGate.rawNumericMarkers === 0
+                : retryGate.rawNumericMarkers < gate.rawNumericMarkers;
+              if (improved) {
                 chunkContent = sanitizedRetry;
-                log(`generate: section ${sectionNum} retry improved (raw ${gate.rawNumericMarkers}→${retryGate.rawNumericMarkers})`);
+                log(`generate: section ${sectionNum} retry improved (keyed ${keyedCount}→${retryKeyed}, raw ${gate.rawNumericMarkers}→${retryGate.rawNumericMarkers})`);
               }
             } catch (retryErr: any) {
               log(`generate: section ${sectionNum} retry failed: ${retryErr?.message?.slice(0, 80)}`);
@@ -1192,6 +1236,8 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             droppedKeys: stats.droppedKeys,
             strippedNumeric: stats.strippedNumeric,
             gateRetries: stats.gateRetries,
+            zeroCitationRetries: stats.zeroCitationRetries,
+            preprintDuplicatesDropped: stats.preprintDuplicatesDropped,
             citationsChecked: stats.citationsChecked,
             citationsRemoved: stats.citationsRemoved,
             citationsFlagged: stats.citationsFlagged,
@@ -1355,6 +1401,11 @@ Be rigorous BUT FAIR:
   hyperbole ("unprecedented", "significant progress").
 - PARTIAL when the reference covers the topic but the sentence asserts a very specific
   statistic or mechanism detail you cannot find in the reference.
+- CITATION-TYPE MISMATCH is PARTIAL, not UNSUPPORTED: when the claim describes a
+  STRUCTURE/architecture determination ("cryo-EM revealed", "the structure shows") but
+  the cited reference is a purely functional or review study, or vice versa, the
+  subject overlaps but the wrong primary source is credited — flag verdict PARTIAL
+  with reason "citation-type mismatch" so the generator can re-attribute it.
 - Do NOT verdict UNSUPPORTED while your own reason says the reference "explicitly
   describes/defines/states" the claim — that is a contradiction. If the reference covers
   the claim, it is SUPPORTED. Be consistent between your verdict and your reason.
