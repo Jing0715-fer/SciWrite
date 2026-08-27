@@ -1394,3 +1394,21 @@ Stage Summary:
 - 新建 19 个模块文件（home/ 9 + paragraph/ 5 + citation-health/ 6 - parse-utils 1 = 21 处），全部为纯搬移，git diff 可审计
 - 综合审查清单：MEDIUM 35/36（仅余后端鉴权）
 - 提交信息：refactor(round-6): split giant components (page/paragraph-card/citation-health-dashboard)
+
+---
+Task ID: round-7 (含子任务 7-a / 7-b / 7-c)
+Agent: main (Z.ai Code orchestrator)
+Task: 后端完整鉴权（审查清单最后一个 MEDIUM 项）— NextAuth v4 Credentials + JWT，零 Prisma schema 变更，零新依赖
+
+Work Log:
+- [7-a 基础设施] .env 追加 NEXTAUTH_SECRET(openssl 随机)/AUTH_USERNAME/AUTH_PASSWORD_SHA256；新建 lib/auth.ts（CredentialsProvider + JWT session 30 天 + node:crypto sha256 timingSafeEqual 比对 + 5 次失败锁 5 分钟内存限流 + 未配置环境变量时 fail-closed）；新建 api/auth/[...nextauth]/route.ts；新建 src/proxy.ts（Next 16 proxy 约定替代弃用的 middleware.ts，matcher /api/:path*，白名单 /api/auth/* 与 /api/shared/*，未登录返回 401 JSON 而非重定向；edge-safe 只用 next-auth/jwt，不 import auth.ts 的 node:crypto）
+- [7-b 前端] 新建 session-gate.tsx（SessionGate：fetch /api/auth/session 判定三态 checking/signed-out/signed-in，未登录渲染 LoginCard（i18n 全覆盖+密码可见切换+错误提示），登录成功后才挂载应用使首批 query 携带 cookie；window focus 时复检）；page.tsx 以 Page→SessionGate→Home 包裹；命令面板新增 Sign out 动作（signOut callbackUrl "/" 全页重载）；i18n 新增 auth.* 15 键 × en/zh
+- [7-c E2E] curl 链路：未登录 /api/projects 401 → CSRF 获取 → 错误密码拒绝 → 正确凭据 200 + session cookie → /api/session 返回 {user:"researcher", expires:+30d} → 已登录 /api/projects 200、quota-status 200（原 LOW 无鉴权项顺带修复）→ /api/shared/fake-token 404 非 401（分享公开性保持）；浏览器链路：匿名打开 / 显示登录卡（应用 UI 零挂载）→ 错误密码显示红色错误提示 → 正确登录后完整应用+真实数据（projects/citations/worst-offenders）→ Ctrl+K 命令面板 Sign out → 回到登录卡 → 登出后 fetch /api/projects 401、session {}；全程 0 console error / 0 page error
+- [安全卫生] 发现 .env 被追踪且已含密钥 → git rm --cached + 确认 .gitignore .env* 规则生效（round-4 意图补完）+ 新建 .env.example 模板（含密钥生成命令注释）
+- [运维] dev server 改用项目自带 .zscripts/dev-daemon.py（double-fork daemon）重启——普通 nohup/setsid 会被沙箱进程回收杀死（EPIPE→server 消失），daemon 是唯一可靠方式
+
+Stage Summary:
+- 82 route 文件 / 109 handler 全部受 proxy.ts 保护；分享链接与 NextAuth 自身端点保持公开
+- 登录凭据：researcher / 5f75e45f8069231a（存于本地 .env，不入库；用户可改）
+- 综合审查清单：MEDIUM 36/36 全部完成；LOW 项 quota-status 顺带修复
+- 提交信息：feat(round-7): NextAuth credentials auth, API gatekeeper proxy, SessionGate login UI

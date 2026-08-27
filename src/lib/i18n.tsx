@@ -847,6 +847,22 @@ export const translations = {
     "projects.topicPlaceholder": "Describe the scientific question or theme in 1–3 sentences…",
     "projects.notesPlaceholder": "Any extra context…",
 
+    // Auth (round-7 SessionGate)
+    "auth.signInTitle": "Sign in to continue",
+    "auth.signInDesc": "SciWrite is a private, self-hosted research workspace. Sign in with your account credentials to access your projects.",
+    "auth.username": "Username",
+    "auth.password": "Password",
+    "auth.usernamePlaceholder": "Your username",
+    "auth.passwordPlaceholder": "Your password",
+    "auth.signIn": "Sign in",
+    "auth.signingIn": "Signing in…",
+    "auth.invalidCredentials": "Invalid username or password. (5 failed attempts lock sign-in for 5 minutes.)",
+    "auth.signedOut": "You have been signed out.",
+    "auth.signOut": "Sign out",
+    "auth.showPassword": "Show password",
+    "auth.hidePassword": "Hide password",
+    "auth.checkingSession": "Checking session…",
+
     // Project import/export
     "backup.label": "Backup",
     "backup.title": "Project backup",
@@ -2114,6 +2130,22 @@ export const translations = {
     "projects.titlePlaceholder": "例如：CRISPR-Cas9 特异性综述",
     "projects.topicPlaceholder": "用 1–3 句话描述科学问题或主题…",
     "projects.notesPlaceholder": "任何额外上下文…",
+
+    // Auth (round-7 SessionGate)
+    "auth.signInTitle": "登录以继续",
+    "auth.signInDesc": "SciWrite 是私有的自托管科研工作区。请使用账户凭据登录以访问你的研究项目。",
+    "auth.username": "用户名",
+    "auth.password": "密码",
+    "auth.usernamePlaceholder": "输入用户名",
+    "auth.passwordPlaceholder": "输入密码",
+    "auth.signIn": "登录",
+    "auth.signingIn": "正在登录…",
+    "auth.invalidCredentials": "用户名或密码错误。（连续失败 5 次将锁定登录 5 分钟。）",
+    "auth.signedOut": "已退出登录。",
+    "auth.signOut": "退出登录",
+    "auth.showPassword": "显示密码",
+    "auth.hidePassword": "隐藏密码",
+    "auth.checkingSession": "正在检查会话…",
 
     // Project import/export
     "backup.label": "备份",

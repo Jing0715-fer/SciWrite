@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useTheme } from "next-themes";
+import { signOut } from "next-auth/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Sparkles,
@@ -14,6 +15,7 @@ import {
   ListTree,
   FolderOpen,
   Database,
+  LogOut,
 } from "lucide-react";
 import {
   ResizablePanelGroup,
@@ -50,8 +52,20 @@ const UnifiedWritingDialog = React.lazy(() =>
 );
 import { useI18n } from "@/lib/i18n";
 import type { Article } from "@/lib/types";
+import { SessionGate } from "@/components/sciwrite/session-gate";
 
-export default function Home() {
+// Auth gate (round-7): while anonymous, the SessionGate renders the login
+// card and the app below never mounts (so no query fires without a session
+// cookie). Enforcement itself lives in src/proxy.ts (all /api/* → 401).
+export default function Page() {
+  return (
+    <SessionGate>
+      <Home />
+    </SessionGate>
+  );
+}
+
+function Home() {
   const { t } = useI18n();
   const { resolvedTheme, setTheme } = useTheme();
   const qc = useQueryClient();
@@ -426,6 +440,18 @@ export default function Home() {
             onSelect: () => {
               // Route through next-themes (see the "d" keyboard shortcut above).
               setTheme(resolvedTheme === "dark" ? "light" : "dark");
+            },
+            group: t("cmd.groupProject"),
+          },
+          {
+            id: "signout",
+            label: t("auth.signOut"),
+            icon: <LogOut className="h-3.5 w-3.5" />,
+            onSelect: () => {
+              // signOut clears the session cookie then reloads "/" — the
+              // SessionGate re-checks /api/auth/session and shows the login
+              // card again.
+              signOut({ callbackUrl: "/" });
             },
             group: t("cmd.groupProject"),
           },
