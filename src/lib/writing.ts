@@ -357,10 +357,47 @@ export function cleanArticleContent(content: string): string {
 }
 
 /**
+ * Strip inline chain-of-thought reasoning blocks that reasoning models emit
+ * INSIDE the message content: MiniMax-M3/M2, DeepSeek-R1 (distills), QwQ,
+ * GLM-thinking variants etc. all wrap their reasoning in <think>...</think>
+ * tags. Without this, the raw reasoning is written into the article body
+ * (observed live: a full minimax-M3 run polluted 15 sections).
+ *
+ * Handles three shapes:
+ *  1. Complete pairs — `<think>...</think>` anywhere, multiline, case-insensitive.
+ *  2. Unterminated opener — output truncated by max_tokens mid-reasoning; a
+ *     remaining `<think>` (all matched pairs are already gone) means everything
+ *     after it is reasoning → truncate from the tag.
+ *  3. Stray closers — a lone `</think>` without an opener.
+ *
+ * Returns the text with reasoning removed (unchanged when no tags present).
+ */
+export function stripReasoning(text: string): string {
+  if (!text) return text;
+  // Case-insensitive fast path (the regexes below use the `i` flag — the
+  // guard must too, or <THINK> slips through untouched).
+  const lower = text.toLowerCase();
+  if (!lower.includes("<think") && !lower.includes("</think")) return text;
+  let out = text.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  // After pair removal, any surviving opener is unterminated (its closer was
+  // consumed as part of an earlier pair) → the tail is pure reasoning.
+  const openIdx = out.search(/<think>/i);
+  if (openIdx >= 0) out = out.slice(0, openIdx);
+  out = out.replace(/<\/think>/gi, "");
+  return out;
+}
+
+/**
  * Sanitize LLM-generated section content by removing non-article text that
  * the LLM sometimes includes despite instructions not to.
  *
  * Removes:
+ * 0. <think>...</think> reasoning blocks (reasoning models — MiniMax-M3,
+ *    DeepSeek-R1, QwQ — emit chain-of-thought inline in content; it must
+ *    never reach the article). Runs FIRST so downstream outline/summary
+ *    detection operates on real content, not on the model's planning notes
+ *    (planning lines like "P1 — ..." inside <think> previously triggered
+ *    false-positive "[Content generation issue]" placeholders).
  * 1. Preambles — text before the first actual paragraph, such as:
  *    - "Now I'll compose Section 1..."
  *    - "Let me write this section..."
@@ -382,6 +419,17 @@ export function cleanArticleContent(content: string): string {
  */
 export function sanitizeSectionContent(content: string): string {
   if (!content) return content;
+
+  // Step 0 (reasoning pollution): strip <think> blocks BEFORE any detection
+  // or cleanup. The whole article pipeline (write, generate-full, compose,
+  // translate, audit) must never persist chain-of-thought text.
+  const reasoningStripped = stripReasoning(content);
+  if (!reasoningStripped.trim()) {
+    // The model returned ONLY reasoning (e.g. truncated at max_tokens while
+    // still thinking) — no recoverable article text at all.
+    return "[Content generation issue — the model returned only reasoning (<think>) content without article text. Please use the regenerate button to regenerate this section.]";
+  }
+  content = reasoningStripped;
 
   let cleaned = content.trim();
 

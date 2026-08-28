@@ -39,6 +39,7 @@ import {
   resolveDefaultModel,
   isApiProviderAvailable,
 } from "@/lib/api-provider-config";
+import { stripReasoning } from "@/lib/writing";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -1267,7 +1268,10 @@ async function callAnyLlm(
           via === "wsl"
             ? await runCliInWsl(adapter, probe.bin, prompt, cfg.model, adapterSessionId)
             : await runCli(adapter, probe.bin, prompt, cfg.model, adapterSessionId);
-        const text = result.text;
+        // Reasoning models behind CLI adapters may print <think> blocks in
+        // stdout — strip before the text reaches any consumer.
+        const text = stripReasoning(result.text).trim();
+        if (!text) throw new Error("returned only reasoning (<think>) content with no final answer");
         return {
           ok: true,
           content: text,
@@ -1295,7 +1299,10 @@ async function callAnyLlm(
       }
       try {
         const t0 = Date.now();
-        const text = await callAnthropic(prompt, cfg.system, cfg.model, { temperature: cfg.temperature, maxTokens: cfg.maxTokens });
+        const text = stripReasoning(
+          await callAnthropic(prompt, cfg.system, cfg.model, { temperature: cfg.temperature, maxTokens: cfg.maxTokens }),
+        ).trim();
+        if (!text) throw new Error("returned only reasoning (<think>) content with no final answer");
         return {
           ok: true,
           content: text,
@@ -1331,10 +1338,13 @@ async function callAnyLlm(
       try {
         const t0 = Date.now();
         const model = cfg.model || resolveDefaultModel(profile.id) || profile.defaultModel;
-        const text = await callOpenAiCompat(profile, prompt, cfg.system, model, {
-          temperature: cfg.temperature,
-          maxTokens: cfg.maxTokens,
-        });
+        const text = stripReasoning(
+          await callOpenAiCompat(profile, prompt, cfg.system, model, {
+            temperature: cfg.temperature,
+            maxTokens: cfg.maxTokens,
+          }),
+        ).trim();
+        if (!text) throw new Error("returned only reasoning (<think>) content with no final answer");
         return {
           ok: true,
           content: text,
@@ -1357,7 +1367,10 @@ async function callAnyLlm(
       }
       try {
         const t0 = Date.now();
-        const text = await callOpenai(prompt, cfg.system, cfg.model, { temperature: cfg.temperature, maxTokens: cfg.maxTokens });
+        const text = stripReasoning(
+          await callOpenai(prompt, cfg.system, cfg.model, { temperature: cfg.temperature, maxTokens: cfg.maxTokens }),
+        ).trim();
+        if (!text) throw new Error("returned only reasoning (<think>) content with no final answer");
         return {
           ok: true,
           content: text,
@@ -1376,7 +1389,10 @@ async function callAnyLlm(
     if (id === "zai-sdk") {
       try {
         const t0 = Date.now();
-        const text = await callZai(prompt, cfg.system, cfg.model, { temperature: cfg.temperature, maxTokens: cfg.maxTokens });
+        const text = stripReasoning(
+          await callZai(prompt, cfg.system, cfg.model, { temperature: cfg.temperature, maxTokens: cfg.maxTokens }),
+        ).trim();
+        if (!text) throw new Error("returned only reasoning (<think>) content with no final answer");
         return {
           ok: true,
           content: text,
@@ -1676,8 +1692,8 @@ async function callAnthropic(prompt: string, system?: string, model?: string, op
     system: system || "You are a helpful assistant.",
     messages: [{ role: "user", content: prompt }],
   });
-  const block = resp.content?.[0];
-  return (block && block.type === "text" ? block.text : "") || "";
+  const block = resp.content?.find((b: any) => b?.type === "text");
+  return (block?.text as string) || "";
 }
 
 async function callOpenai(prompt: string, system?: string, model?: string, opts?: { temperature?: number; maxTokens?: number }): Promise<string> {
@@ -1819,12 +1835,25 @@ export async function callOpenAiCompat(
   }
 
   const choice = json?.choices?.[0];
-  const content = choice?.message?.content;
-  if (typeof content === "string" && content.length > 0) return content;
-  // Reasoning models (DeepSeek R1 etc.) may only fill reasoning_content when
-  // the final answer is empty — surface it rather than an opaque "no content".
+  const rawContent = choice?.message?.content;
+  // Reasoning models (MiniMax-M3, DeepSeek-R1 distills, QwQ ...) emit their
+  // chain-of-thought INLINE in content wrapped in <think>...</think> tags —
+  // strip it here so even direct callers (provider test route) get clean text.
+  const content = typeof rawContent === "string" ? stripReasoning(rawContent) : "";
+  if (content.trim().length > 0) return content;
+  // Reasoning models may fill ONLY reasoning_content (the thinking channel)
+  // when the final answer is empty — usually a truncation (max_tokens hit
+  // mid-think). That text is chain-of-thought, NEVER article content: return
+  // an error so the provider fallback chain can move on honestly instead of
+  // writing thinking into the article (the exact bug observed with minimax-M3).
   const reasoning = choice?.message?.reasoning_content;
-  if (typeof reasoning === "string" && reasoning.length > 0) return reasoning;
+  if (typeof reasoning === "string" && reasoning.trim().length > 0) {
+    throw new Error(
+      "returned only reasoning content with no final answer (finish_reason=" +
+        (choice?.finish_reason ?? "unknown") +
+        ") — the model was likely truncated mid-thought; raise max tokens or disable thinking",
+    );
+  }
   throw new Error(
     `${profile.displayName} API returned no content (finish_reason=${choice?.finish_reason ?? "unknown"})`,
   );

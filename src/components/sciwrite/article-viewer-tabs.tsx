@@ -144,6 +144,25 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
   const composedContentRef = React.useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
 
+  // v121: regenerated article title (overrides the prop until remount).
+  // Existing articles composed before the fix stored `project.topic` (the
+  // project-creation brief) as their title — one click here rewrites it from
+  // the article's actual content, so exports name the file after the article.
+  const [titleOverride, setTitleOverride] = React.useState<string | null>(null);
+  const displayTitle = titleOverride ?? article.title;
+  const regenerateTitleMut = useMutation({
+    mutationFn: () => api.regenerateArticleTitle(article.id),
+    onSuccess: (res: any) => {
+      const newTitle: string | undefined = res?.article?.title;
+      if (newTitle) setTitleOverride(newTitle);
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+      toast.success(t("articleViewer.titleRegenerated") || "New title applied");
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Failed to regenerate title");
+    },
+  });
+
   // Delete the current article. Uses the DELETE /api/articles/[id] endpoint.
   // On success: invalidate the project query so the Articles list re-renders
   // without the deleted item, show a toast, and close the viewer dialog.
@@ -581,8 +600,25 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
           <div className="flex items-start gap-3">
             <div className="flex-1 min-w-0">
               <DialogTitle className="text-lg sm:text-xl font-semibold font-serif-text leading-snug line-clamp-2 break-words">
-                {article.title}
+                {displayTitle}
               </DialogTitle>
+              <button
+                type="button"
+                onClick={() => regenerateTitleMut.mutate()}
+                disabled={regenerateTitleMut.isPending}
+                title={t("articleViewer.regenerateTitle") || "Regenerate title from article content"}
+                aria-label={t("articleViewer.regenerateTitle") || "Regenerate title from article content"}
+                className="inline-flex items-center gap-1 mt-1 text-[10px] text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+              >
+                {regenerateTitleMut.isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3 w-3" />
+                )}
+                {regenerateTitleMut.isPending
+                  ? t("articleViewer.regeneratingTitle") || "Generating title..."
+                  : t("articleViewer.regenerateTitle") || "Regenerate title"}
+              </button>
               {article.abstract && (
                 <DialogDescription className="text-xs italic mt-1 line-clamp-2">
                   {article.abstract}

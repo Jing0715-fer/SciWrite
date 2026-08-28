@@ -4,6 +4,7 @@ import {
   QuotaExhaustedError,
   RateLimitAbortedError,
 } from "@/lib/rate-limiter";
+import { stripReasoning } from "@/lib/writing";
 
 let _zai: Awaited<ReturnType<typeof ZAI.create>> | null = null;
 
@@ -179,7 +180,10 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
       { label: "chat" },
     );
 
-    return response.choices?.[0]?.message?.content ?? "";
+    // Reasoning models (GLM thinking variants, R1-style distills served via
+    // the z-ai gateway) can inline <think>...</think> in content — never let
+    // chain-of-thought reach the article pipeline.
+    return stripReasoning(response.choices?.[0]?.message?.content ?? "");
   }
 
   // Non-default provider → dispatch through the unified dispatcher.
@@ -397,7 +401,10 @@ export async function chatStream(
     try { reader.releaseLock(); } catch {}
   }
 
-  return accumulated;
+  // Reasoning models can stream <think>...</think> deltas inside content —
+  // strip chain-of-thought from the assembled text before returning it.
+  // (onChunk consumers saw raw chunks; the final value is what gets persisted.)
+  return stripReasoning(accumulated);
 }
 
 export interface WebSearchItem {

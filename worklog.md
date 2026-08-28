@@ -1736,3 +1736,32 @@ Stage Summary:
 - 远端 main 现包含：round-18（agent 检测 WSL 发行版/探测路径/重测 + codebuddy 调用修复 + DSH 模式 API 供应商目录 17 家）、round-19（emoji→lucide 图标替换 + 6 个弹窗原生 overflow-y-auto 滚动修复）、worklog 文档、dev.pid 解除跟踪
 - 历史保持线性，无合并提交；重复的 round-17 提交被跳过未污染远端历史
 - 推送范围 20 文件 +2266/-219，无敏感文件（.env/token/secret 均未命中）
+
+---
+Task ID: round-21
+Agent: main (Z.ai Code orchestrator)
+Task: 修复用户实测 minimax-M3 暴露的两个问题：① LLM 的 <think> 推理内容写入文章正文；② 导出文件名使用建项目时手写的话题而非生成文章的标题（证据：用户上传的 PDF《按照总分总的方式进行生成-每个家族成员至少有一段单独的段落_20260828-171359.pdf》——15 个 <think> 块直接出现在正文、8 个小节降级为 "[Content generation issue]" 占位且转储含 think 的原始输出、文件名是项目话题原文）
+
+Work Log:
+- PDF 取证（pdftotext）：15 处 <think> 块写入正文；8 处 "[Content generation issue — bullet-point outline]" 占位（根因：think 计划文本中的 "P1 — ..." 行触发了 sanitizeSectionContent 的 outline 误判，且错误信息转储了含 think 的原始输出）
+- 根因链路定位：minimax-M3 经 DSH 模式 API 供应商路径（ai.chat → generateText → callAnyLlm → callOpenAiCompat）返回的 content 内联 <think> 标签，全链路无任何剥离逻辑
+- 修复①（四层防御）：
+  1. writing.ts 新增 stripReasoning()：完整对（多行、大小写不敏感）+ 未闭合开标签（截断场景，其后全部是推理）+ 孤立闭标签；sanitizeSectionContent 最前置剥离（Step 0），纯 think 输出返回明确占位而非空串
+  2. llm.ts callAnyLlm 五个适配器分支（CLI×2 合并、anthropic、api:、openai、zai-sdk）统一 stripReasoning + 空结果抛错（走 provider 回退链）；callOpenAiCompat 内部剥离 content 中的 think、reasoning_content-only 场景从"当作正文返回"改为明确报错（思考内容绝不能进文章）；callAnthropic 改为 find 第一个 text block（跳过 thinking block）
+  3. ai.ts zai-sdk 路径（chat + chatStream 组装结果）剥离
+  4. write 路由防御性二次剥离（未来新增路径兜底）
+- 修复②（标题）：
+  - 新增 src/lib/article-title.ts generateArticleTitle()：LLM 综合工作简报 + 章节大纲 + 正文开头合成期刊级标题（8–20 词），支持中文标题（双语模式），60s 超时 + 全失败回退 project.topic（绝不阻断生成）
+  - generate-full：compose 段生成标题，替换 5 处 article.create/version 的 title: project.topic（pre-audit create、pre-audit version、post-audit update、update 失败重建 create、else 分支 create、post-audit version、partial save 用 articleTitle || topic 兜底）；双语时写入 titleZh；article.update 同步刷新 title/titleZh
+  - generate-full-v2：同样接入（create + version 快照）
+  - 存量文章修复：新增 POST /api/articles/[id]/generate-title（基于内容+大纲重新生成并更新 title/titleZh）；article-viewer-tabs 标题下新增"根据文章内容重新生成标题"小按钮（RefreshCw 图标、加载态、toast、titleOverride 本地覆盖 + project query 失效刷新）；i18n 3×2 键
+- 冒烟测试（bun 脚本，13 用例全过）：无标签/前后成对/中间成对/未闭合截断/孤立闭合/多对/纯 think/大小写（发现并修复了早退守卫大小写敏感 bug——<THINK> 会漏过）/真实 minimax 形状（取自用户 PDF）/outline 误判消除/纯 think 占位
+- E2E（agent-browser）：主页加载零错误零 console 报错；打开项目 → Article 页签 → 文章查看器 → 点击"Regenerate title"→ LLM 真实调用成功，标题从"Structural biology of TMC1 and TMC2 mechanotransduction channels"（=项目话题）变为"Structural and Functional Analysis of TMC Mechanotransduction Channels in Health and Disease"；导出 PDF 的 Content-Disposition 文件名 = Structural-and-Functional-Analysis-of-TMC-Mechan_20260828-093611.pdf（用新标题，机制 v116 已有、此次打通数据源）；移动端 390×844 按钮正常；DB 确认 title 已更新
+- 卫生：.gitignore 增加 /upload/（用户上传的 PDF 不进仓库）；测试期间 dev server 又被沙箱杀死，dev-daemon.py 守护重启恢复
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 162 warning（=基线，无新增）
+
+Stage Summary:
+- think 污染根治：四层防御（适配器层中心剥离 + callOpenAiCompat 语义修正 + zai 路径 + write 路由兜底），含 outline 误判消除（think 内 "P1 —" 规划行不再触发占位符）；reasoning_content-only 从静默污染改为诚实报错走回退链
+- 导出文件名正确：新生成文章自动带 LLM 合成标题（EN+ZH），存量文章一键"重新生成标题"修复；导出文件名 = Article.title slugified + 时间戳
+- 新文件：src/lib/article-title.ts、src/app/api/articles/[id]/generate-title/route.ts；修改：writing.ts、llm.ts、ai.ts、write/route.ts、generate-full/route.ts、generate-full-v2/route.ts、article-viewer-tabs.tsx、api-client.ts、i18n.tsx、.gitignore
+- 提交信息：fix(round-21): strip <think> reasoning pollution (4-layer defense) + LLM-generated article titles (new + regenerate for existing)

@@ -170,6 +170,13 @@ export const api = {
       sections: { title: string; summary: string }[];
     }>(`/api/articles/${articleId}/summarize`, { method: "POST" }),
 
+  /* Regenerate article title from actual content (v121) */
+  regenerateArticleTitle: (articleId: string) =>
+    jfetch<{ ok: boolean; article: any }>(
+      `/api/articles/${articleId}/generate-title`,
+      { method: "POST" },
+    ),
+
   /* AI Diagram generation */
   generateDiagram: (articleId: string) =>
     jfetch<{
