@@ -18,7 +18,6 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { api } from "@/lib/api-client";
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/lib/i18n";
@@ -61,7 +60,7 @@ export function BatchValidationDialog({ open, onOpenChange, projectId }: Props) 
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 min-h-0 scroll-academic">
+        <div className="flex-1 min-h-0 overflow-y-auto scroll-academic">
           <div className="px-6 py-4">
             {isLoading && (
               <div className="flex items-center justify-center py-12">
@@ -206,7 +205,7 @@ export function BatchValidationDialog({ open, onOpenChange, projectId }: Props) 
               </div>
             )}
           </div>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );

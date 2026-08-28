@@ -21,12 +21,28 @@ import {
   AlertCircle,
   ChevronDown,
   Pencil,
+  Snowflake,
+  Fish,
+  Brain,
+  Bot,
+  Gem,
+  Cloud,
+  Moon,
+  Sparkles,
+  Sparkle,
+  BarChart3,
+  Wind,
+  Rocket,
+  Network,
+  Hexagon,
+  Users,
+  Server,
+  type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -82,6 +98,36 @@ const CLI_PROVIDER_MAP: Record<string, string> = {
   "anthropic-sdk": "anthropic",
   "openai-sdk": "openai",
 };
+
+/**
+ * lucide icon name → component. Provider catalog `icon` fields carry these
+ * names over the API JSON (they used to be emoji — replaced per design rule:
+ * no emoji icons in the UI). Fallback for unknown names: Globe.
+ */
+const PROVIDER_ICONS: Record<string, LucideIcon> = {
+  snowflake: Snowflake,
+  fish: Fish,
+  brain: Brain,
+  bot: Bot,
+  gem: Gem,
+  cloud: Cloud,
+  moon: Moon,
+  sparkles: Sparkles,
+  sparkle: Sparkle,
+  "bar-chart-3": BarChart3,
+  zap: Zap,
+  wind: Wind,
+  rocket: Rocket,
+  network: Network,
+  hexagon: Hexagon,
+  users: Users,
+  server: Server,
+};
+
+function ProviderIcon({ name, className }: { name: string; className?: string }) {
+  const Icon = PROVIDER_ICONS[name] ?? Globe;
+  return <Icon className={cn("shrink-0", className)} aria-hidden="true" />;
+}
 
 export function LLMConfigDialog({ open, onOpenChange }: Props) {
   const { t } = useI18n();
@@ -250,7 +296,15 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 min-h-0 scroll-academic">
+        {/* Native scrollable body — NOT Radix ScrollArea: inside a
+            `height:auto + max-h-[85vh]` flex-column dialog, the Radix viewport's
+            `height:100%` resolves against a content-derived (indefinite) flex
+            item height, silently falling back to full content height. The
+            overflow then gets clipped by the dialog's overflow-hidden with no
+            scrollbar — "bottom cut off". A native overflow-y-auto div needs no
+            percentage resolution: its own flexed height clips the content and
+            the (visible, styled) scrollbar just works. */}
+        <div className="flex-1 min-h-0 overflow-y-auto scroll-academic">
           <div className="px-6 py-4 space-y-5">
             {/* Currently selected default provider + model override */}
             <div className="rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-3 space-y-2">
@@ -499,7 +553,7 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
               )}
             </div>
           </div>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -668,7 +722,10 @@ function ApiProviderForm({
           <SelectContent className="max-h-64">
             {unconfigured.map((p) => (
               <SelectItem key={p.id} value={p.id} className="text-xs">
-                {p.icon} {p.displayName}
+                <span className="inline-flex items-center gap-1.5">
+                  <ProviderIcon name={p.icon} className="h-3 w-3 text-primary" />
+                  {p.displayName}
+                </span>
               </SelectItem>
             ))}
           </SelectContent>
@@ -941,7 +998,7 @@ function ConfiguredApiProviderRow({
         onClick={() => onSetDefault(provider.id)}
         className="w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-muted/30 transition-colors"
       >
-        <span className="text-sm leading-none">{provider.icon}</span>
+        <ProviderIcon name={provider.icon} className="h-3.5 w-3.5 text-primary" />
         <span className="text-xs font-semibold">{provider.displayName}</span>
         {isDefault && (
           <Badge className="text-[8px] h-3.5 uppercase bg-primary text-primary-foreground">

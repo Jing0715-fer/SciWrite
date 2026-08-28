@@ -16,7 +16,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
   DialogContent,
@@ -122,7 +121,7 @@ export function UserDataDialog({ open, onOpenChange, projectId }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 min-h-0 scroll-academic">
+        <div className="flex-1 min-h-0 overflow-y-auto scroll-academic">
           <div className="px-6 py-4 space-y-4">
             {/* Add form */}
             <div className="rounded-lg border border-border/60 p-3 space-y-3">
@@ -274,7 +273,7 @@ export function UserDataDialog({ open, onOpenChange, projectId }: Props) {
               })}
             </div>
           </div>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );

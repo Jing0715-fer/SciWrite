@@ -138,7 +138,7 @@ const CLI_ADAPTERS: CliAdapter[] = [
     id: "hermes",
     label: "Hermes CLI",
     bin: "hermes",
-    icon: "🪶",
+    icon: "feather",
     wslBin: "hermes",
     probeArgs: ["--version"],
     // FIX (detection): hermes frequently lives outside the dev server's PATH
@@ -197,7 +197,7 @@ const CLI_ADAPTERS: CliAdapter[] = [
     id: "claude",
     label: "Claude Code CLI",
     bin: "claude",
-    icon: "🟠",
+    icon: "sparkle",
     wslBin: "claude",
     probeArgs: ["--version"],
     // Claude Code's native installer puts the binary in ~/.claude/local —
@@ -281,7 +281,7 @@ const CLI_ADAPTERS: CliAdapter[] = [
     id: "codex",
     label: "Codex CLI",
     bin: "codex",
-    icon: "🟢",
+    icon: "terminal",
     wslBin: "codex",
     probeArgs: ["--version"],
     extraProbePaths: (() => {
@@ -354,7 +354,7 @@ const CLI_ADAPTERS: CliAdapter[] = [
     id: "openclaw",
     label: "OpenClaw CLI",
     bin: "openclaw",
-    icon: "🦅",
+    icon: "bird",
     wslBin: "openclaw",
     probeArgs: ["--version"],
     callArgs: (q) => ["llm", "chat", "--no-stream", q],
@@ -366,7 +366,7 @@ const CLI_ADAPTERS: CliAdapter[] = [
     id: "gemini",
     label: "Gemini CLI",
     bin: "gemini",
-    icon: "♊",
+    icon: "gem",
     wslBin: "gemini",
     probeArgs: ["--version"],
     callArgs: (q) => [q],
@@ -377,7 +377,7 @@ const CLI_ADAPTERS: CliAdapter[] = [
   {
     id: "codebuddy",
     label: "Codebuddy / WorkBuddy CLI",
-    icon: "🐼",
+    icon: "paw-print",
     bin: "codebuddy",
     needsNode: true,
     extraProbePaths: [
@@ -480,7 +480,7 @@ const CLI_ADAPTERS: CliAdapter[] = [
     id: "aider",
     label: "Aider CLI",
     bin: "aider",
-    icon: "🛠️",
+    icon: "wrench",
     wslBin: "aider",
     probeArgs: ["--version"],
     callArgs: (q) => ["--message", q, "--no-git", "--yes", "--no-auto-commits"],
@@ -1116,7 +1116,7 @@ export async function inspectProviders(
   available.push({
     provider: "anthropic",
     bin: null,
-    icon: "🤖",
+    icon: "bot",
     label: "Anthropic SDK",
     reason: anthropicAvailable ? "ANTHROPIC_API_KEY is set" : "ANTHROPIC_API_KEY not set",
     available: anthropicAvailable,
@@ -1127,7 +1127,7 @@ export async function inspectProviders(
   available.push({
     provider: "openai",
     bin: null,
-    icon: "🧠",
+    icon: "brain",
     label: "OpenAI SDK",
     reason: openaiAvailable ? "OPENAI_API_KEY is set" : "OPENAI_API_KEY not set",
     available: openaiAvailable,
@@ -1141,7 +1141,7 @@ export async function inspectProviders(
   available.push({
     provider: "zai-sdk",
     bin: null,
-    icon: "🧊",
+    icon: "snowflake",
     label: "z-ai-web-dev-sdk",
     reason: zaiSdkAvailable
       ? "z-ai-web-dev-sdk installed (SciWrite default)"

@@ -17,7 +17,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
   DialogContent,
@@ -117,7 +116,7 @@ export function OutlineDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 min-h-0 scroll-academic">
+        <div className="flex-1 min-h-0 overflow-y-auto scroll-academic">
           <div className="px-6 py-4 min-h-[300px]">
             <div className="rounded-lg bg-primary/[0.04] border border-primary/20 p-3 mb-4">
               <p className="text-[11px] text-muted-foreground mb-0.5">{t("outline.researchTopic")}</p>
@@ -280,7 +279,7 @@ export function OutlineDialog({
               </div>
             )}
           </div>
-        </ScrollArea>
+        </div>
 
         <div className="px-6 py-3 border-t border-border/60 flex items-center justify-between gap-2">
           <div className="text-[10px] text-muted-foreground">
