@@ -130,13 +130,15 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
   // Provider routing: respect the user's selection persisted via
   // /api/llm-config/select. Default ("zai-sdk" or unset) keeps the original
   // z-ai-web-dev-sdk path so behavior is unchanged for users who never open
-  // the dialog. Any other selected provider (cli:hermes, cli:codex, ...)
-  // routes through `generateText()` in `@/lib/llm`, which performs its own
+  // the dialog. Any other selected provider (cli:hermes, cli:codex, api:deepseek,
+  // ...) routes through `generateText()` in `@/lib/llm`, which performs its own
   // probe + fallback chain.
   let selected = "zai-sdk";
+  let selectedModel = "";
   try {
-    const { getSelectedProvider } = await import("@/lib/llm-selection");
+    const { getSelectedProvider, getSelectedModel } = await import("@/lib/llm-selection");
     selected = getSelectedProvider();
+    selectedModel = getSelectedModel();
   } catch {
     selected = "zai-sdk";
   }
@@ -159,6 +161,8 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
           stream: false,
           thinking: { type: opts.thinking ? "enabled" : "disabled" },
           temperature: opts.temperature ?? 0.6,
+          // Honor a stored model override for zai-sdk too (e.g. glm-4.5).
+          ...(selectedModel ? { model: selectedModel } : {}),
           // Explicit max_tokens — without this, the SDK may apply a low default
           // (e.g. 4096) that truncates long outputs like gather's JSON query
           // plan (which can legitimately need 8K+ tokens). Default 16384 is a
@@ -187,9 +191,13 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
   // NOTE: pass compressedPrompt, not the raw prompt — CLI providers spawn with
   // the prompt on the argv, and long prompts can exceed the OS argv limit
   // (128KB Linux / 32KB Windows) → ENAMETOOLONG → "returned no output".
+  // The stored model override (e.g. codebuddy --model) travels through
+  // cfg.model — without it codebuddy would fall back to CODEBUDDY_MODEL /
+  // deepseek-v4-pro and fail on accounts that don't have that model.
   const r = await generateText(opts.system ?? "", compressedPrompt, {
     llm: {
       provider: selected,
+      model: selectedModel || undefined,
       temperature: opts.temperature,
     },
     maxChars: 32000,
@@ -218,9 +226,11 @@ export async function chatWithSessionId(
 ): Promise<{ text: string; cliSessionId: string | null }> {
   const compressedPrompt = compressPrompt(prompt, opts.system);
   let selected = "zai-sdk";
+  let selectedModel = "";
   try {
-    const { getSelectedProvider } = await import("@/lib/llm-selection");
+    const { getSelectedProvider, getSelectedModel } = await import("@/lib/llm-selection");
     selected = getSelectedProvider();
+    selectedModel = getSelectedModel();
   } catch {
     selected = "zai-sdk";
   }
@@ -231,7 +241,7 @@ export async function chatWithSessionId(
   const { generateText } = await import("@/lib/llm");
   // compressedPrompt — see note in chat() about the CLI argv limit.
   const r = await generateText(opts.system ?? "", compressedPrompt, {
-    llm: { provider: selected, temperature: opts.temperature },
+    llm: { provider: selected, model: selectedModel || undefined, temperature: opts.temperature },
     maxChars: 32000,
     sessionId,
   });

@@ -1,13 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exec } from "child_process";
-import { promisify } from "util";
 import { inspectProviders } from "@/lib/llm";
 import { safeErrorMessage } from "@/lib/api-helpers";
+import { listApiProvidersWithStatus } from "@/lib/api-provider-config";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
-
-const execAsync = promisify(exec);
+export const maxDuration = 60;
 
 // Thin adapter: forward to the unified provider detection in @/lib/llm
 // (ported from pdb-tracker-web-v4). The legacy `/api/llm-config` shape is
@@ -19,15 +16,23 @@ const execAsync = promisify(exec);
 //     defaultProvider, sdkAvailable
 //   }
 //
-// Anything that needs the richer `available[]` (with `bin`, `reason`, `via`)
-// should call /api/llm/providers directly.
-export async function GET() {
+// Round-18 additions:
+//   • `?fresh=1` — force a LIVE re-probe of every CLI adapter (bypasses both
+//     the in-process and disk probe caches). The dialog's 重新检测 button uses
+//     this; previously it could serve a stale cached snapshot, which is why
+//     re-detection "did nothing" on machines where hermes/codex were installed
+//     after the first probe.
+//   • Configured OpenAI-compatible API providers (DSH-mode catalog) are
+//     appended to `detected` with name `api:<id>` so the unified
+//     click-to-select list shows them alongside the CLI agents.
+export async function GET(req: NextRequest) {
   try {
+    const fresh = req.nextUrl.searchParams.get("fresh") === "1";
     // showUnavailable: true so the dialog can render a row for every known
     // CLI provider — even adapters that weren't probed (cache miss) or that
     // failed the last probe. Without this, installing codebuddy and hitting
     // 重新检测 still wouldn't surface it as an option to choose.
-    const { available } = await inspectProviders({ showUnavailable: true });
+    const { available } = await inspectProviders({ showUnavailable: true, force: fresh });
 
     const detected = available
       .filter((p) => p.available)
@@ -35,13 +40,15 @@ export async function GET() {
         // CLI providers → derive a stable "name" the legacy dialog/test block
         // already understands (claude, codex, hermes, gemini, codebuddy, ...).
         // SDK providers → "z-ai-sdk" / "anthropic-sdk" / "openai-sdk".
+        // API catalog providers → "api:<catalogId>" (DSH mode).
         const baseId = p.provider.replace(/^cli:/, "");
         let name = baseId;
         if (p.provider === "zai-sdk") name = "z-ai";
         if (p.provider === "anthropic") name = "anthropic-sdk";
         if (p.provider === "openai") name = "openai-sdk";
-        // Only keep the supported-by-dialog subset to avoid breaking the
-        // legacy test-CLI dropdown that maps a small name → command map.
+        if (p.provider.startsWith("api:")) name = p.provider;
+        // Only keep the supported-by-dialog subset — CLI agents, the SDK
+        // fallbacks, and every configured api: catalog provider.
         const supported = new Set([
           "claude",
           "codex",
@@ -54,7 +61,16 @@ export async function GET() {
           "anthropic-sdk",
           "openai-sdk",
         ]);
-        if (!supported.has(name)) return null;
+        if (!supported.has(name) && !name.startsWith("api:")) return null;
+        // Models known for configured api providers (catalog + override).
+        let models: string[] = [];
+        if (p.provider.startsWith("api:")) {
+          const status = listApiProvidersWithStatus().find((s) => `api:${s.id}` === p.provider);
+          if (status) {
+            const ids = status.models.map((m) => m.id);
+            models = ids.includes(status.effectiveModel) ? ids : [...ids, status.effectiveModel];
+          }
+        }
         return {
           name,
           label: p.label,
@@ -62,7 +78,7 @@ export async function GET() {
           // pseudo-path so the existing UI doesn't show "undefined".
           path: p.bin ?? `${p.via}:${p.provider}`,
           version: "",
-          models: [],
+          models,
           available: true,
           via: p.via,
         };
@@ -93,11 +109,13 @@ export async function GET() {
 
 // Test a CLI command — kept for the legacy "test CLI" panel in the dialog.
 // The dialog sends `{ cli, prompt }`; we dispatch through @/lib/llm so any
-// detected adapter can be tested through one path.
+// detected adapter can be tested through one path. Round-18: also accepts
+// `api:<id>` names so configured OpenAI-compatible providers are testable
+// from the same panel.
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { cli, prompt } = body;
+    const { cli, prompt, model } = body;
 
     if (!cli || !prompt) {
       return NextResponse.json(
@@ -122,7 +140,8 @@ export async function POST(req: NextRequest) {
       "anthropic-sdk": "anthropic",
       "openai-sdk": "openai",
     };
-    const provider = providerMap[cli];
+    // api:<id> names pass straight through; everything else must be known.
+    const provider = cli.startsWith("api:") ? cli : providerMap[cli];
     if (!provider) {
       return NextResponse.json(
         { error: `Unknown CLI: ${cli}` },
@@ -131,7 +150,7 @@ export async function POST(req: NextRequest) {
     }
 
     const r = await generateText("", prompt, {
-      llm: { provider, maxTokens: 1024 },
+      llm: { provider, maxTokens: 1024, model: model || undefined },
       maxChars: 4000,
     });
     if (!r.ok) {
@@ -140,7 +159,7 @@ export async function POST(req: NextRequest) {
         { status: 500 },
       );
     }
-    return NextResponse.json({ output: r.text });
+    return NextResponse.json({ output: r.text, provider: r.provider, model: r.model });
   } catch (err: any) {
     console.error("[/api/llm-config] POST error:", err);
     return NextResponse.json(

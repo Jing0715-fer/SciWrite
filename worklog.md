@@ -1657,3 +1657,38 @@ Stage Summary:
 - 已知设计内行为：Lee 2025 bioRxiv 孤立预印本保留（无正式版配对）；Jeong 2022 gather 召回不稳定（覆盖断言只查候选池，§2/§8 诚实声明规则为兜底）；§6 节 93 词偏薄（去重代价，无重复内容可留）
 - 测试资产：项目 cmtbk7sjb00erjmucpfif977r（Round-17 Verification）与文章 cmtbkit4s00wijmuc2huw7o0l 保留；.zscripts/v2-run-daemon.py（双 fork SSE 守护）；scripts/audit-tmc-r17.ts（六类审查+句级近重复探针）、fix-tmc-article-round17.ts（--apply 落库）、test-dedupe-round17.ts（离线验证）；tool-results/ 含 r17-run2.log（SSE 全程）、r17-raw-article.md（修正前）、r17-fixed-article.md（修正后）、r17-article-viewer.png、pre-round16-article.md（回归语料）；DB 快照 "pre-round17" 可回滚
 - 提交信息：fix(round-17): third E2E verification — truncation-safe sentence split, cap+word-floor dedup, uncited-restatement removal, word reserve, trailing-claim gate
+
+---
+Task ID: round-18
+Agent: main (Z.ai Code orchestrator)
+Task: 修复 agent 检测（只检测到 codebuddy，hermes/codex 检测不到，重新检测无效）+ codebuddy 调用报错 + 参考 pdb-tracker-web-v5 DSH 模式新增 OpenAI 兼容 API 供应商配置（provider 下拉 + 预填 baseURL + 模型选择/自定义 + API Key）
+
+Work Log:
+- 调研：克隆 pdb-tracker-web-v5 研读 DSH 模式实现（providers/catalog.ts 17 家供应商目录、credentials.ts 凭据存储、openai-compat-adapter.ts 通用 OpenAI 兼容适配器、ProvidersPanel.tsx UI 模式、providers API 路由三件套）；抓取 CodeBuddy 官方文档（env-vars / headless 页面）确认 -p 非交互模式规范
+- 检测修复 ①（根因，WSL 硬编码）：wslTargetDistro() 原来永远返回 "Debian"——用户默认发行版是 Ubuntu 时 wslAvailable() 失败 → 所有 WSL 内安装的 CLI（hermes/codex）静默不可检测，且重新检测重复探测同一个不存在的发行版（正是"重新检测也没有用"）；改为优先用注册表 defaultDistro，保留 WSL_DISTRO env 覆盖
+- 检测修复 ②（hermes 探测路径）：hermes 常装在 Python venv / pip --user 位置（不在 dev server PATH 上）——新增 extraProbePaths（Windows: ~/.hermes/bin、~/venvs/hermes/Scripts、AppData Python Scripts ×4 版本；POSIX: ~/.hermes/bin、~/.local/bin、~/venvs/hermes/bin、~/.bun/bin 等）；claude 同理补 ~/.claude/local 与 ~/.bun/bin
+- 检测修复 ③（重检测失效）：/api/llm-config 新增 ?fresh=1 强制绕过进程内（5 分钟）+ 磁盘（原 6 天→降为 48 小时）双级探测缓存实时重探；对话框"重新检测"按钮改用该参数（原流程可能命中陈旧缓存导致重检测无效果）；inspectProviders 增加 force 选项
+- 检测修复 ④（.cmd + needsNode 冲突）：codebuddy（needsNode）若解析到 npm .cmd 垫片，spawn("node", [xxx.cmd]) 必然失败——probeCli 与 runCli 均改为 .cmd 垫片直接 shell 启动、跳过 node 包装
+- codebuddy 调用修复 ⑤（官方文档对齐）：① -p 模式必须带 -y（"必须添加此参数才能执行需要授权的操作，否则这些操作会被阻止"）；② --output-format json 输出的是单个 JSON result envelope（非数组）——原 extractContent 只处理数组、整个 JSON 信封被当答案返回；重写为 单对象 .result → 数组 → NDJSON 三级解析；③ session id 是 snake_case session_id——原只匹配 camelCase sessionId 导致 resume 从未生效，双格式兼容；移除 claude 的不存在参数 --no-stream 并同步修复其同款信封/会话解析
+- codebuddy 提示 ⑥：官方文档确认 -p 模式始终用 CODEBUDDY_API_KEY 认证模型调用——对话框选中 codebuddy 时显示琥珀色提示（需设该 env 或改用 API 供应商）
+- 修复 ⑦（zai-sdk 回退分支从未工作过）：callZai 的 eval("import") 在 webpack 编译的路由里抛 "Cannot use import statement outside a module"——改普通动态 import；此前任何 CLI 失败后的 zai-sdk 兜底实际全部静默失败（也是用户 codebuddy 调用只见报错的原因之一）
+- DSH 模式新增（参考 pdb-tracker-web-v5）：src/lib/provider-catalog.ts（17 家供应商：zai/deepseek/openai/anthropic/google/qwen/moonshot/zhipu/minimax/xai/mistral/groq/openrouter/siliconflow/together/fireworks/ollama，含 baseURL/apiKeyEnv/authHeader/extraHeaders/defaultModel/models/docsUrl/apiKeyOptional）；src/lib/api-provider-config.ts（凭据存 ~/.sciwrite/api-providers.json 0600 权限——主目录持久化且不触发 webpack watcher；密钥解析 config→env，baseURL 解析 用户覆盖→目录默认，本地运行时 ollama 免密钥）
+- llm.ts 集成：callOpenAiCompat（直连 fetch ${baseURL}/chat/completions，Anthropic 走 x-api-key+anthropic-version，HTML 错误页/超时/reasoning_content 全处理）；callAnyLlm 新增 api:* 分支；decideProviderOrder 将 api 供应商排在 zai-sdk 之后（自动模式永不静默烧费——仅显式选择时生效）；inspectProviders 输出 api 供应商可用性
+- API 路由三件套：/api/llm-config/providers（GET 目录+状态 / POST 保存+setDefault / DELETE 删除并自动回退 zai-sdk）；/api/llm-config/providers/models（GET 实时拉取 ${baseURL}/models，目录列表兜底+警告）；/api/llm-config/providers/test（POST 最小 chat 请求验证 key+URL+model，支持未保存值测试）；select 路由接受 api:*（校验目录+密钥）与 model 字段；主 llm-config 路由 detected 列表并入 api 供应商、POST 测试面板支持 api:*
+- 模型覆盖链路（codebuddy 调用错误的核心解法之一）：llm-selection.ts 存储 {provider, model}；ai.ts chat/chatWithSessionId 将 model 传给 generateText（codebuddy --model、api 供应商、zai-sdk 均生效）——用户可在 UI 直接换模型而非依赖 CODEBUDDY_MODEL env；切供应商自动清空旧模型（deepseek 模型名带到 zai-sdk 会致命），同供应商保留
+- UI（llm-config-dialog.tsx 重构）：① 顶部横幅加模型覆盖输入+保存钮+codebuddy 提示条；② 原"已检测的代理 CLI"区块原样保留（api 供应商以 api:xxx 并入显示、可点选默认）；③ 新增"API 供应商（OpenAI 兼容）"区块——添加表单（供应商下拉→baseURL 预填可改（自定义网关黄字提示）→模型下拉（目录列表+自定义输入切换+获取在线模型按钮）→API Key 密码框→测试/保存钮+获取 Key 链接）+已配置列表（图标+默认徽章+模型、点击设默认、展开编辑/测试/删除）；④ 测试 CLI 下拉含 api 供应商
+- i18n：en/zh 各新增 33 个 llmConfig.* 键（apiSelectedDesc/modelOverride/codebuddyHint/apiProviders 系列等）；修正 llmConfig.default 前缀（原含"Z.AI SDK"字样导致横幅显示"默认：Z.AI SDK（内置）DeepSeek"错乱）
+- 验证（API 层）：providers GET 返回 17 家全量状态；POST 保存 deepseek（假 key）→ available=true、文件落盘 ~/.sciwrite/api-providers.json；连接测试返回 DeepSeek 官方 API 真实 401（"Authentication Fails... ****-key is invalid"，掩码脱敏）；models 端点目录兜底+401 警告；select api:deepseek 成功、未知供应商 400 校验；fresh=1 detected 含 api:deepseek/api:ollama；z-ai 测试经 llm.ts 分发器返回 "OK"（callZai 修复生效）
+- 验证（模拟二进制端到端）：伪造 ~/.hermes/bin/hermes → extraProbePaths 检测成功（不在 PATH 也能发现）→ 调用成功（session_id banner 剥离 + id 提取）；伪造 codebuddy JS 脚本输出官方信封格式 → 调用成功（-y 传入、--model 传入、单对象 .result 提取、snake_case session_id 提取全对）——两个 CLI 适配器的检测与调用管线在真实 spawn 路径上验证通过
+- 验证（模型覆盖逻辑）：bun 单测——切供应商清空 model、同供应商保留、显式指定生效；ui 删除默认供应商后选择自动回退 zai-sdk
+- 验证（浏览器 agent-browser）：对话框 4 区块全部渲染（检测 CLI/API 供应商/环境变量/测试）；供应商下拉 17 项、选 DeepSeek 后 baseURL 预填 https://api.deepseek.com/v1、模型预填 deepseek-chat、自定义模型切换输入、API Key 输入、测试返回真实 401 错误条、保存后进已配置列表、点击设默认（横幅+DEFAULT 徽章更新）、展开编辑（baseURL/model/key+Delete）、删除后回退 zai-sdk；测试面板选 deepseek (API) 调用→api:deepseek 401→优雅回退 zai-sdk 答对 "The answer is **4**."（回退链全程无感）；重检测按钮 fresh=1 生效；0 console error / 0 page error
+- 事故处置：HMR 期间 dev server 进程消失（沙箱已知问题）——.zscripts/dev-daemon.py 双 fork 守护重启恢复
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 163 warning（新文件 0 警告，还顺手修复 2 个既有警告）；Select 受控切换警告修复；dev.log 无未处理错误
+
+Stage Summary:
+- 检测三大根因修复：WSL 发行版注册表默认值（Ubuntu 机器上 WSL 内 CLI 全部静默不可检测的根因）、hermes/claude 常装位置探测路径、?fresh=1 强制实时重探（绕过 5 分钟进程内 + 磁盘两级缓存）——"重新检测也没有用"的复发路径全部关闭
+- codebuddy 调用四合一修复：-p 模式必带的 -y 权限旗标、单对象 JSON result 信封解析（原整个 JSON 被当答案）、snake_case session_id 解析（原 resume 从未生效）、zai-sdk 兜底分支 eval-import 崩溃（原 CLI 失败后兜底全部静默死掉）；外加 UI 可视化模型覆盖（不再依赖 CODEBUDDY_MODEL env）与 CODEBUDDY_API_KEY 提示
+- DSH 模式供应商体系落地：17 家 OpenAI 兼容供应商（含国内 DeepSeek/Qwen/Moonshot/Zhipu/MiniMax/SiliconFlow 与本地 Ollama），provider 下拉→baseURL 预填可改（支持自建网关）→模型列表选择+自定义+在线拉取→API Key 本地存储（~/.sciwrite 0600）→测试并保存→点击设默认，全链路与既有 CLI agent 检测共存于同一对话框
+- 安全设计：付费 api 供应商在自动回退链中排在免费 zai-sdk 之后——永不静默烧用户的 API 额度，仅显式选择时生效
+- 新文件：src/lib/provider-catalog.ts、src/lib/api-provider-config.ts、src/app/api/llm-config/providers/{route,models/route,test/route}.ts；修改：llm.ts（WSL/探测/codebuddy/claude/api 分发/callZai）、llm-selection.ts（model 存储+切换清空）、ai.ts（model 透传）、llm-config-dialog.tsx（API 供应商区块+模型覆盖）、i18n.tsx（33×2 键）、llm-config 与 select 路由
+- 提交信息：fix(round-18): agent detection (WSL distro, probe paths, fresh re-detect) + codebuddy call fixes + DSH-mode API provider catalog

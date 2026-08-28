@@ -1,27 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
-import { setSelectedProvider, getSelectedProvider } from "@/lib/llm-selection";
+import { setSelectedProvider, getSelectedProvider, getSelectedModel } from "@/lib/llm-selection";
 import { inspectProviders } from "@/lib/llm";
+import { getProviderProfile } from "@/lib/provider-catalog";
+import { isApiProviderAvailable } from "@/lib/api-provider-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/llm-config/select
- *   Returns the currently selected provider id.
- *   { provider: "cli:hermes" | "zai-sdk" | ... }
+ *   Returns the currently selected provider id + model override.
+ *   { provider: "cli:hermes" | "api:deepseek" | "zai-sdk" | ..., model: "" }
  */
 export async function GET() {
-  return NextResponse.json({ provider: getSelectedProvider() });
+  return NextResponse.json({ provider: getSelectedProvider(), model: getSelectedModel() });
 }
 
 /**
  * POST /api/llm-config/select
- *   Body: { provider: string }
+ *   Body: { provider: string, model?: string }
  *   Persists the user's choice so subsequent LLM calls in `src/lib/ai.ts`
  *   dispatch through the matching adapter in `@/lib/llm`.
  *
- *   Validates the provider id against `inspectProviders()` so a stale UI
- *   choice (e.g. uninstalled CLI) falls back to "zai-sdk" automatically.
+ * Validates the provider id against `inspectProviders()` so a stale UI
+ * choice (e.g. uninstalled CLI) falls back to "zai-sdk" automatically.
+ * Round-18: `api:<catalogId>` ids (DSH-mode OpenAI-compatible providers)
+ * are validated against the catalog + stored key instead of the CLI probe.
  */
 export async function POST(req: NextRequest) {
   let body: any;
@@ -34,6 +38,7 @@ export async function POST(req: NextRequest) {
   if (!provider) {
     return NextResponse.json({ error: "Missing 'provider'." }, { status: 400 });
   }
+  const model = typeof body?.model === "string" ? body.model.trim() : undefined;
 
   // Allow a small set of well-known ids without re-probing the world.
   const KNOWN = new Set([
@@ -48,6 +53,27 @@ export async function POST(req: NextRequest) {
     "anthropic",
     "openai",
   ]);
+
+  // DSH-mode api providers: valid when they exist in the catalog AND have a
+  // usable key (stored config or env var). Keyless local runtimes (Ollama)
+  // count as available.
+  if (provider.startsWith("api:")) {
+    const profile = getProviderProfile(provider.slice("api:".length));
+    if (!profile) {
+      return NextResponse.json({ error: `Unknown provider: ${provider}` }, { status: 400 });
+    }
+    if (!isApiProviderAvailable(profile.id)) {
+      return NextResponse.json(
+        {
+          error: `${profile.displayName} has no API key configured — save one in the API Providers section first.`,
+        },
+        { status: 409 },
+      );
+    }
+    setSelectedProvider(provider, model);
+    return NextResponse.json({ ok: true, provider: getSelectedProvider(), model: getSelectedModel() });
+  }
+
   if (!KNOWN.has(provider)) {
     return NextResponse.json(
       { error: `Unknown provider: ${provider}` },
@@ -78,6 +104,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  setSelectedProvider(provider);
-  return NextResponse.json({ ok: true, provider: getSelectedProvider() });
+  setSelectedProvider(provider, model);
+  return NextResponse.json({ ok: true, provider: getSelectedProvider(), model: getSelectedModel() });
 }
