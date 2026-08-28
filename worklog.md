@@ -1692,3 +1692,28 @@ Stage Summary:
 - 安全设计：付费 api 供应商在自动回退链中排在免费 zai-sdk 之后——永不静默烧用户的 API 额度，仅显式选择时生效
 - 新文件：src/lib/provider-catalog.ts、src/lib/api-provider-config.ts、src/app/api/llm-config/providers/{route,models/route,test/route}.ts；修改：llm.ts（WSL/探测/codebuddy/claude/api 分发/callZai）、llm-selection.ts（model 存储+切换清空）、ai.ts（model 透传）、llm-config-dialog.tsx（API 供应商区块+模型覆盖）、i18n.tsx（33×2 键）、llm-config 与 select 路由
 - 提交信息：fix(round-18): agent detection (WSL distro, probe paths, fresh re-detect) + codebuddy call fixes + DSH-mode API provider catalog
+
+---
+Task ID: round-19
+Agent: main (Z.ai Code orchestrator)
+Task: 修复 UI 反馈两项：① 全 UI 避免 emoji 图标；② LLM 设置弹窗无滚动条、底部内容被裁剪
+
+Work Log:
+- 复现与根因定位（agent-browser 实测）：LLM 配置弹窗 viewport 实际高 813px 超出弹窗 653px（85vh），Radix ScrollArea Viewport 的 `height:100%` 在 `height:auto + max-h-[85vh]` 弹性列容器内无法解析（flex item 高度系内容推导非确定值）→ 回退为内容高度 → 被 DialogContent overflow:hidden 静默裁剪且 viewport 自身 scrollHeight==clientHeight 不出滚动条——正是"没有滚动条、下面显示不全"
+- 验证性实验：强制 viewport height=569.797px 后 scrollHeight 813 / clientHeight 570 立即恢复可滚；改 abspos 则 Root 高度塌缩为 0（证明该容器内 Radix 方案无解，需原生滚动或确定高度）
+- 滚动修复：llm-config-dialog + 同模式的另外 5 个弹窗（topic-composer/batch-validation/user-data/outline/article-composer×2）统一把 `<ScrollArea className="flex-1 min-h-0 scroll-academic">` 换成原生 `<div className="flex-1 min-h-0 overflow-y-auto scroll-academic">`——原生滚动只依赖自身 flexed 高度，无需百分比解析，且 webkit 样式滚动条始终可见；短内容弹窗仍按内容自适应高度（实测 user-data 弹窗 527px 未被撑满）
+- emoji 图标替换（设计规则：UI 禁用 emoji 图标）：provider-catalog.ts 17 家供应商 🧊🐋🧠🤖♊🇶🌙✨📊⚡🌬️🚀🛣️💠🤝🎆🦙 → lucide 图标名字符串（snowflake/fish/brain/bot/gem/cloud/moon/sparkles/bar-chart-3/zap/wind/rocket/network/hexagon/users/sparkle/server），字段仍为 string 走 API JSON 不变
+- llm-config-dialog.tsx 新增 PROVIDER_ICONS 映射 + ProviderIcon 组件（未知名回退 Globe）；下拉项（inline-flex 对齐）与已配置行两处渲染点全部换 Lucide 线性图标（text-primary 自适应明暗）
+- llm.ts 10 个 CLI/SDK 适配器 icon 字段同步换 lucide 名（🪶→feather、🟠→sparkle、🟢→terminal、🦅→bird、♊→gem、🐼→paw-print、🛠️→wrench、🤖→bot、🧠→brain、🧊→snowflake）
+- knowledge-panel.tsx SOURCE_TYPE_ICONS 📄🧬🧪🧩🔬🌐📝 → FileText/Dna/FlaskConical/Puzzle/Microscope/Globe/PenLine（React.createElement 渲染，回退 Package）；"All" 页签 🗂️ → FileStack
+- 其他彩色 emoji 清理：protein-structure-analysis-dialog 大号 ⚠️ → TriangleAlert 图标、ℹ️→ℹ、⚠️→⚠；topic-composer toast ✅→✓、⚠️→⚠（✓/⚠/→ 等单色文本符号保留）
+- 验证（agent-browser）：弹窗滚轮滚动到底"Test CLI"区完整可见无裁剪；供应商下拉 16 项全部带对应 lucide 图标（snowflake/fish/brain/bot/gem/cloud…）；选中 Moonshot 后触发器显示 moon 图标 + baseURL https://api.moonshot.cn/v1 + 模型 moonshot-v1-128k 预填全对；已配置 DeepSeek 行显示 lucide-fish；弹窗文本零 emoji；移动端 390×844 弹窗水平/垂直均适配且可滚；深色模式 20 个图标高对比渲染；user-data 弹窗短内容自适应不撑满；0 page error / 0 新增 console 警告
+- 事故处置：HMR 期间 dev server 再次被沙箱杀死——.zscripts/dev-daemon.py 守护重启恢复
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 162 warning（= round-18 基线，无新增）
+
+Stage Summary:
+- 滚动条根因（Radix ScrollArea 在 max-height 弹性弹窗内的 height:100% 失效）已根治：6 个弹窗 7 处换原生 overflow-y-auto + scroll-academic 可见样式滚动条，短内容仍自适应
+- UI emoji 图标全部清除：供应商目录/已配置行/下拉、CLI 适配器元数据、知识面板源类型页签、蛋白结构弹窗警告图标、toast 前缀，统一 lucide 线性图标（text-primary 明暗自适应，未知回退 Globe/Package）
+- API 契约不变：icon 字段仍为 string（emoji→lucide 图标名），前端渲染层做名称→组件映射
+- 修改文件：provider-catalog.ts、llm-config-dialog.tsx、llm.ts、knowledge-panel.tsx、protein-structure-analysis-dialog.tsx、topic-composer.tsx、batch-validation-dialog.tsx、user-data-dialog.tsx、outline-dialog.tsx、article-composer.tsx
+- 提交信息：fix(round-19): replace emoji icons with lucide + fix modal scroll clipping (native overflow-y-auto instead of Radix ScrollArea in max-h dialogs)
