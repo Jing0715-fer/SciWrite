@@ -1717,3 +1717,22 @@ Stage Summary:
 - API 契约不变：icon 字段仍为 string（emoji→lucide 图标名），前端渲染层做名称→组件映射
 - 修改文件：provider-catalog.ts、llm-config-dialog.tsx、llm.ts、knowledge-panel.tsx、protein-structure-analysis-dialog.tsx、topic-composer.tsx、batch-validation-dialog.tsx、user-data-dialog.tsx、outline-dialog.tsx、article-composer.tsx
 - 提交信息：fix(round-19): replace emoji icons with lucide + fix modal scroll clipping (native overflow-y-auto instead of Radix ScrollArea in max-h dialogs)
+
+---
+Task ID: round-20
+Agent: main (Z.ai Code orchestrator)
+Task: 将本地未推送提交 PUSH 到 GitHub（origin: Jing0715-fer/SciWrite）
+
+Work Log:
+- git status 确认工作树干净，但 local main 领先 origin/main 4 个提交（round-18/round-19/worklog/UUID 提交）
+- 推送被拒（non-fast-forward）：fetch 发现远端已有 2355e25（round-17，2026-08-27 推送），与本地 a790788 为同一 round-17 工作的重复提交（父提交同为 073b32e，树仅差 .zscripts/dev.pid 的 PID 值）
+- 修正无意义 UUID 提交信息 → docs(worklog) 提交
+- git rebase --onto origin/main a790788 main：跳过本地重复的 round-17 提交，把 round-18/round-19/worklog 三个提交变基到远端头上；唯一冲突在 .zscripts/dev.pid（运行时产物，按当前 PID 1102 解决）
+- 卫生修复：.gitignore 第 60 行本就有 .zscripts/dev.pid，但文件在规则生效前已被跟踪——git rm --cached 解除跟踪，杜绝 PID 噪音继续混入提交（文件保留在磁盘，守护进程不受影响）
+- 推送成功：2355e25..b127fd7 main -> main；fetch 后确认本地/远端同步于 b127fd7
+- 验证 dev server：next-server v16.1.3 正常运行，dev.log 全部 200 响应，无错误
+
+Stage Summary:
+- 远端 main 现包含：round-18（agent 检测 WSL 发行版/探测路径/重测 + codebuddy 调用修复 + DSH 模式 API 供应商目录 17 家）、round-19（emoji→lucide 图标替换 + 6 个弹窗原生 overflow-y-auto 滚动修复）、worklog 文档、dev.pid 解除跟踪
+- 历史保持线性，无合并提交；重复的 round-17 提交被跳过未污染远端历史
+- 推送范围 20 文件 +2266/-219，无敏感文件（.env/token/secret 均未命中）
