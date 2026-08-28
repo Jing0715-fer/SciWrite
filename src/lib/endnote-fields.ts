@@ -24,6 +24,30 @@
  *   3. The <Cite> Author carries the LAST NAME only ("Maginn"), which is what
  *      EndNote writes and what its author/year fallback matching expects.
  *
+ * Round 22 — "一部分信息显示无效" (some fields display as invalid when the
+ * traveling library is opened in EndNote) root-caused to EndNote's author
+ * parsing rule: a name WITHOUT a comma is interpreted as "First Last" (the
+ * LAST word becomes the last name). Our records carried PubMed-style
+ * "Giese APJ", which EndNote read as first name "Giese" + last name "APJ" —
+ * every citation rendered as "(APJ et al., 2025)" and every bibliography row
+ * as "APJ, G.". Fixes:
+ *
+ *   1. Authors are converted to EndNote-canonical "Last, I.N.I.T." form via
+ *      formatAuthorForEndnote() before they are written into the record XML
+ *      (comma present → last name before the comma; initials dotted).
+ *      Corporate/unknown authors get a trailing comma ("Anonymous,") — the
+ *      EndNote convention that suppresses "First Last" re-parsing.
+ *   2. Records now carry <database> + <source-app> like a real traveling
+ *      library, plus volume/number/pages when known (EndNote renders empty
+ *      Vol/Issue/Pages fields as missing information in the library view).
+ *   3. Web sources (no journal, no PMID/DOI) are typed "Web Page" (12)
+ *      instead of "Journal Article" so EndNote does not show an article
+ *      record with an empty journal as if it were broken.
+ *   4. A companion export format — the EndNote tagged import file (.enw),
+ *      buildEnwExport() — lets the user import every reference directly
+ *      into their EndNote library (double-click the .enw, or
+ *      File → Import → "EndNote Import").
+ *
  * Field layout (identical to real EndNote — no w:dirty attribute):
  *
  *   <w:r><w:fldChar w:fldCharType="begin">
@@ -65,6 +89,69 @@ export interface EndNoteRecord {
   /** PubMed ID — emitted as an EndNote accession-num. */
   pmid?: string;
   url?: string;
+  /** Journal volume ("12") — from PubMed esummary enrichment. */
+  volume?: string;
+  /** Journal issue/number ("3") — from PubMed esummary enrichment. */
+  issue?: string;
+  /** Page range ("583-589" or e-loc "e94303") — from PubMed esummary. */
+  pages?: string;
+  /** Reference type override; default Journal Article. */
+  refType?: "Journal Article" | "Web Page";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Author name conversion — round 22: the "invalid information" root cause.
+// EndNote parses a comma-less name as "First Last" (last word = last name),
+// so PubMed-style "Giese APJ" imported as first "Giese" + last "APJ".
+// Canonical storage is "Last, First" — with a comma, the text before the
+// comma is taken as the last name verbatim.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Convert one author string to EndNote-canonical form:
+ *
+ *  - "Giese APJ"        → "Giese, A.P.J."   (trailing ALL-CAPS token = initials)
+ *  - "Aponte Rivera R"  → "Aponte Rivera, R."
+ *  - "Géléoc GS"        → "Géléoc, G.S."
+ *  - "Dupont J-P"      → "Dupont, J.-P."
+ *  - "Giese, A.P.J."    → unchanged          (already comma form)
+ *  - "Anonymous" / "Hair Cell Research Group" → "Anonymous," — trailing
+ *    comma is EndNote's corporate-author convention (a lone name without
+ *    a comma would be re-parsed as "First Last" and garbled).
+ *
+ * PubMed renders surnames in mixed case ("Li", "Yan", "Géléoc"), so a
+ * trailing ALL-CAPS token (≤5 letters, hyphens allowed) is a packed
+ * initials block, never a surname. "… et al." tails are dropped.
+ */
+export function formatAuthorForEndnote(name: string): string {
+  const raw = (name || "").trim().replace(/\s+/g, " ");
+  if (!raw) return "";
+  // Strip "et al." tails FIRST ("Wang Y et al.", "Wang Y, et al.") — the
+  // comma in the latter is an et-al separator, not a "Last, First" comma.
+  const noEtAl = raw
+    .replace(/,\s*et\.?\s*al\.?\s*$/i, "")
+    .replace(/\s+et\.?\s*al\.?\s*$/i, "")
+    .trim();
+  if (!noEtAl) return "";
+  // Already comma form ("Last, First") — keep as-is.
+  if (noEtAl.includes(",")) return noEtAl;
+  const tokens = noEtAl.split(" ");
+  if (tokens.length >= 2) {
+    const last = tokens[tokens.length - 1];
+    if (/^[A-Z]+(?:-[A-Z]+)*$/.test(last) && last.length <= 5) {
+      const surname = tokens.slice(0, -1).join(" ").trim();
+      if (surname) {
+        // "APJ" → "A.P.J."  |  "J-P" → "J.-P."  |  "R" → "R."
+        const initials = last
+          .split("-")
+          .map((p) => p.split("").join(".") + ".")
+          .join("-");
+        return `${surname}, ${initials}`;
+      }
+    }
+  }
+  // Single token or no initials pattern → corporate / literal author.
+  return `${noEtAl},`;
 }
 
 /**
@@ -218,33 +305,54 @@ function libraryFor(occurrences: CitationOccurrence[]): EndNoteLibrary {
 }
 
 /**
- * Last name of an author string in "Last Initials" form ("Jumper J" →
- * "Jumper"). Real EndNote writes only the last name in <Cite><Author> — its
+ * Last name of an EndNote-canonical author string. Accepts both forms:
+ *  - "Giese, A.P.J." (comma form — round 22 canonical) → "Giese"
+ *  - "Giese APJ"     (legacy PubMed form)               → "Giese"
+ * Real EndNote writes only the last name in <Cite><Author> — its
  * author/year fallback matching expects that form.
  */
 function lastNameOf(author?: string): string | undefined {
   if (!author) return undefined;
-  const first = author.trim().split(/\s+/)[0];
+  const trimmed = author.trim();
+  // Comma form: everything before the first comma is the last name.
+  const commaIdx = trimmed.indexOf(",");
+  if (commaIdx > 0) return trimmed.slice(0, commaIdx).trim() || undefined;
+  // Corporate form "Group," (trailing comma) — no initials follow.
+  if (trimmed.endsWith(",")) return trimmed.slice(0, -1).trim() || undefined;
+  const first = trimmed.split(/\s+/)[0];
   return first || undefined;
 }
 
 function recordXml(rec: EndNoteRecord, lib: EndNoteLibrary): string {
   const parts: string[] = [];
+  // A real traveling-library record identifies its source library and the
+  // application that wrote it; round 22 adds both (EndNote builds that read
+  // them treat the record as a first-class library member, not an anonymous
+  // fragment).
+  parts.push(`<database name="SciWrite References.enl">SciWrite References.enl</database>`);
+  parts.push(`<source-app name="EndNote" version="20.6">EndNote</source-app>`);
   parts.push(`<rec-number>${rec.n}</rec-number>`);
   parts.push(
     `<foreign-keys><key app="EN" db-id="${lib.dbId}" timestamp="${lib.timestamp}">${rec.n}</key></foreign-keys>`,
   );
-  // ref-type 17 = Journal Article (all SciWrite refs are journal articles)
-  parts.push(`<ref-type name="Journal Article">17</ref-type>`);
-  if (rec.authors.length > 0) {
+  const refTypeName = rec.refType || "Journal Article";
+  const refTypeNum = refTypeName === "Web Page" ? 12 : 17;
+  parts.push(`<ref-type name="${refTypeName}">${refTypeNum}</ref-type>`);
+  const canonicalAuthors = rec.authors
+    .map((a) => formatAuthorForEndnote(a))
+    .filter(Boolean);
+  if (canonicalAuthors.length > 0) {
     parts.push(
-      `<contributors><authors>${rec.authors.map((a) => el("author", a)).join("")}</authors></contributors>`,
+      `<contributors><authors>${canonicalAuthors.map((a) => el("author", a)).join("")}</authors></contributors>`,
     );
   }
   parts.push(
     `<titles>${el("title", rec.title || `Reference ${rec.n}`)}${el("secondary-title", rec.journal)}</titles>`,
   );
   if (rec.journal) parts.push(`<periodical>${el("full-title", rec.journal)}</periodical>`);
+  if (rec.pages) parts.push(el("pages", rec.pages));
+  if (rec.volume) parts.push(el("volume", rec.volume));
+  if (rec.issue) parts.push(el("number", rec.issue));
   if (rec.year) parts.push(`<dates>${el("year", rec.year)}</dates>`);
   if (rec.doi) parts.push(el("electronic-resource-num", rec.doi));
   if (rec.pmid) parts.push(el("accession-num", `PMID:${rec.pmid}`));
@@ -281,6 +389,54 @@ export function encodeFldData(xml: string): string {
   const lines: string[] = [];
   for (let i = 0; i < b64.length; i += 76) lines.push(b64.slice(i, i + 76));
   return lines.join("\r\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EndNote tagged import file (.enw) — the "EndNote library" export (round 22)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the EndNote tagged import file (.enw) for a set of records.
+ *
+ * A real EndNote library (.enl) is a proprietary database that only EndNote
+ * can create; the interchange format it natively imports is the tagged text
+ * file ("EndNote Import" format). Double-clicking the exported .enw opens
+ * EndNote's import dialog (or File → Import → File, Import Option "EndNote
+ * Import") and adds every reference to the chosen library — with authors
+ * already in canonical "Last, I.N.I.T." form, DOI (%R), PMID (%M),
+ * volume/issue/pages (%V/%N/%P) when known.
+ *
+ * Tag map (EndNote Import format):
+ *   %0 reference type · %A author · %D year · %T title · %J journal ·
+ *   %V volume · %N issue · %P pages · %R DOI (electronic resource number) ·
+ *   %M accession number (PMID) · %U URL
+ */
+export function buildEnwExport(records: EndNoteRecord[]): string {
+  const chunks = records
+    .slice()
+    .sort((a, b) => a.n - b.n)
+    .map((rec) => {
+      const lines: string[] = [];
+      lines.push(`%0 ${rec.refType || "Journal Article"}`);
+      for (const a of rec.authors) {
+        const canon = formatAuthorForEndnote(a);
+        if (canon) lines.push(`%A ${canon}`);
+      }
+      if (rec.year) lines.push(`%D ${rec.year}`);
+      if (rec.title) lines.push(`%T ${rec.title}`);
+      if (rec.journal) lines.push(`%J ${rec.journal}`);
+      if (rec.volume) lines.push(`%V ${rec.volume}`);
+      if (rec.issue) lines.push(`%N ${rec.issue}`);
+      if (rec.pages) lines.push(`%P ${rec.pages}`);
+      if (rec.doi) lines.push(`%R ${rec.doi}`);
+      if (rec.pmid) lines.push(`%M ${rec.pmid}`);
+      if (rec.url) lines.push(`%U ${rec.url}`);
+      return lines.join("\r\n");
+    })
+    .filter(Boolean);
+  // Records are separated by blank lines; CRLF throughout (the format's
+  // native Windows heritage — EndNote's own exports use CRLF).
+  return chunks.length ? chunks.join("\r\n\r\n") + "\r\n" : "";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

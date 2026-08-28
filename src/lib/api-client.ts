@@ -573,7 +573,14 @@ export const api = {
   exportDoc: (input: {
     type: "paragraph" | "article";
     id: string;
-    format: "docx" | "pdf" | "markdown" | "latex" | "epub" | "graph-report";
+    format:
+      | "docx"
+      | "pdf"
+      | "markdown"
+      | "latex"
+      | "epub"
+      | "graph-report"
+      | "endnote";
     includeAnnotations?: boolean;
     journalTemplate?: string;
     /** Language variant: "en" (default), "zh", or "both" */

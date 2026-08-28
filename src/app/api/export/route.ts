@@ -22,8 +22,10 @@ import {
   parseCitationNumbers,
   parseRefLineForRecord,
   idsFromUrl,
+  buildEnwExport,
   type EndNoteRecord,
 } from "@/lib/endnote-fields";
+import { enrichRecordsFromPubmed, applyWebPageRefTypes } from "@/lib/endnote-enrich";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -79,7 +81,14 @@ async function loadCJKFont(): Promise<Uint8Array | null> {
 interface ExportBody {
   type: "paragraph" | "article" | "project-merge";
   id: string;
-  format: "docx" | "pdf" | "markdown" | "latex" | "epub" | "graph-report";
+  format:
+    | "docx"
+    | "pdf"
+    | "markdown"
+    | "latex"
+    | "epub"
+    | "graph-report"
+    | "endnote";
   includeAnnotations?: boolean;
   journalTemplate?: string;
   mergeExport?: boolean;
@@ -391,7 +400,9 @@ export async function POST(req: NextRequest) {
             authors: parsed.authors
               .split(/\s*[,;]\s*/)
               .map((s) => s.trim())
-              .filter(Boolean),
+              // Drop "et al." pseudo-authors — EndNote would import it as a
+              // person named "al".
+              .filter((s) => s && !/^et\.?\s*al\.?$/i.test(s)),
             title: parsed.title,
             journal: parsed.journal || undefined,
             year: parsed.year || undefined,
@@ -408,7 +419,7 @@ export async function POST(req: NextRequest) {
             authors: (r.authors || "")
               .split(/\s*[,;]\s*/)
               .map((s) => s.trim())
-              .filter(Boolean),
+              .filter((s) => s && !/^et\.?\s*al\.?$/i.test(s)),
             title: r.title || "",
             journal: r.journal || undefined,
             year: r.year || undefined,
@@ -430,6 +441,25 @@ export async function POST(req: NextRequest) {
           if (row?.doi) rec.doi = row.doi;
           if (!rec.url && row?.url) rec.url = row.url;
         }
+      }
+
+      // Round 22 — PubMed esummary enrichment for the EndNote-consuming
+      // formats (.docx traveling library + .enw library export): fill DOI /
+      // volume / issue / pages from the authoritative source (neither the
+      // body ref lines nor the DB rows carry them). Best-effort — a network
+      // failure just leaves the records as they were. Web sources without
+      // any journal/PMID/DOI become "Web Page" records so EndNote does not
+      // render a Journal Article with an empty journal as broken.
+      if (body.format === "docx" || body.format === "endnote") {
+        try {
+          const touched = await enrichRecordsFromPubmed(enRecords);
+          if (touched > 0) {
+            console.log(`[export] PubMed enrichment filled ${touched} EndNote record(s)`);
+          }
+        } catch (err: any) {
+          console.warn("[export] PubMed enrichment skipped:", err?.message || err);
+        }
+        applyWebPageRefTypes(enRecords);
       }
     }
 
@@ -834,6 +864,30 @@ export async function POST(req: NextRequest) {
         headers: {
           "Content-Type": "application/epub+zip",
           "Content-Disposition": buildFilename(filenameTitle, "epub", langSuffix),
+        },
+      });
+    }
+
+    if (body.format === "endnote") {
+      // Round 22 — EndNote library export: the tagged import file (.enw)
+      // with every record in the article's reference list, authors in canonical
+      // "Last, I.N.I.T." form, DOI/volume/issue/pages from PubMed. Import
+      // with File → Import → File (Import Option: "EndNote Import") or
+      // simply double-click the .enw — EndNote adds every reference to the
+      // selected library, ready for CWYW.
+      const records = [...enRecords.values()].sort((a, b) => a.n - b.n);
+      if (records.length === 0) {
+        return NextResponse.json(
+          { error: "No references found to export." },
+          { status: 400 }
+        );
+      }
+      const enw = buildEnwExport(records);
+      return new NextResponse(enw, {
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": buildFilename(filenameTitle, "enw", langSuffix),
+          ...(warningHeader ? { "X-Export-Warnings": warningHeader } : {}),
         },
       });
     }

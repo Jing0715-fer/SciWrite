@@ -1765,3 +1765,29 @@ Stage Summary:
 - 导出文件名正确：新生成文章自动带 LLM 合成标题（EN+ZH），存量文章一键"重新生成标题"修复；导出文件名 = Article.title slugified + 时间戳
 - 新文件：src/lib/article-title.ts、src/app/api/articles/[id]/generate-title/route.ts；修改：writing.ts、llm.ts、ai.ts、write/route.ts、generate-full/route.ts、generate-full-v2/route.ts、article-viewer-tabs.tsx、api-client.ts、i18n.tsx、.gitignore
 - 提交信息：fix(round-21): strip <think> reasoning pollution (4-layer defense) + LLM-generated article titles (new + regenerate for existing)
+
+---
+Task ID: round-22
+Agent: main (Z.ai Code orchestrator)
+Task: 修复用户反馈的 EndNote 集成两项问题：① 导出 Word 后用 EndNote 插件打开文献列表仍有一部分信息显示无效；② 增加 EndNote library 文件导出
+
+Work Log:
+- 取证（真实导出）：curl POST /api/export (docx) → 解压 document.xml → base64 解码 90 个 fldData 载荷，对照真实 EndNote 移动文献库记录，锁定根因
+- 根因①（作者名解析）：记录内 <author>Giese APJ</author>（PubMed 格式）——EndNote 对无逗号名字按 "First Last" 解析（末词=姓），于是所有作者被读成 姓="APJ" 名="Giese"，引文渲染为 "(APJ et al., 2025)"、文献列表行 "APJ, G." —— 正是"信息显示无效"
+- 根因②（字段缺失）：记录无 DOI/volume/issue/pages（正文引用行与 DB Reference 行均不含这些字段），且缺 <database>/<source-app> 元素（真实 EndNote 移动库记录均携带）
+- 修复①（endnote-fields.ts）：新增 formatAuthorForEndnote() —— PubMed "Last AB" → EndNote 规范 "Last, A.B."（尾随全大写 token=首字母缩写，≤5 字符可含连字符；"Aponte Rivera R"→"Aponte Rivera, R."、"Dupont J-P"→"Dupont, J.-P."）；已带逗号保持；机构作者/Anonymous 加尾逗号（EndNote 机构作者约定，阻止 First Last 再解析）；"et al." 伪作者剥离（先剥再判逗号——修掉 "Wang Y, et al." 误入逗号分支的 bug）；lastNameOf 同步支持双格式（<Cite><Author> 仍只写姓）
+- 修复②（记录补全）：recordXml 新增 <database name="SciWrite References.enl"> + <source-app>（真实移动库形状）、<volume>/<number>/<pages>；ref-type 按记录可变——无 journal 且无 PMID/DOI 的纯网页源标为 Web Page(12)（空期刊的 Journal Article 在 EndNote 里渲染如损坏）；export 路由两个分支（正文解析/DB 兜底）authors 数组统一过滤 "et al."
+- 新增③（PubMed 批量富集）：新文件 src/lib/endnote-enrich.ts —— esummary.fcgi 按 PMID 批量（50/批）拉取权威元数据，仅填充记录缺失字段（doi←elocationid/articleids、volume、issue、pages、year、journal、authors），8s 超时、逐块吞错（网络失败记录原样保留）；applyWebPageRefTypes() 标记网页型引用；仅 docx/endnote 两种格式触发（其他格式不增加延迟）
+- 新增④（.enw 导出）：buildEnwExport() 生成 EndNote tagged import 文件（%0 类型/%A 作者/%D 年/%T 题/%J 期刊/%V 卷/%N 期/%P 页/%R DOI/%M PMID/%U URL，CRLF 分隔，空行分记录）；export 路由新增 format="endnote" 分支（无引用时 400，文件名沿用文章标题 slugify + 时间戳）；.enl 是专有二进制无法生成，.enw 即 EndNote 官方导入交换格式（双击即弹导入对话框）
+- UI：export-menu.tsx FORMAT_META 新增 endnote 条目（Library 图标 lucide、teal 色、langs=["en"] 引用数据语言无关、desc "EndNote library import"）；api-client format 联合类型加 "endnote"；i18n 5 语言（en/zh/ja/ko/fr）各加 export.endnote 键（"EndNote Library (.enw)" / "EndNote 文献库 (.enw)"…）
+- 单元测试（bun 脚本 16 用例全过）：Giese APJ/Aponte Rivera R/Géléoc GS/Müller U/Dupont J-P（发现并修复单字母不加点的 bug）/van der Berg A/Li Y/Yan Z/Smith, J.A.（已逗号保持）/Anonymous/机构名/Wang Y, et al.（发现并修复逗号分支早退 bug）/Wang Y et al./空串×2 + .enw 排序/CRLF/字段齐全
+- E2E 验证（curl）：docx 重导出 → 90 fldData 唯一 19 记录，140 个作者 0 个非规范格式、<volume>12</volume>、<electronic-resource-num>10.7554/eLife.89719</electronic-resource-num>（esummary 实网拉取成功）、fldChar begin/end 91/91 平衡；.enw 导出 → 18 条记录 18/18 有 DOI、17/18 有卷号（1 条 PubMed 本身无卷）、记录 8 全字段样例（%V 79 %N 3 %P 504-15 %R 10.1016/j.neuron.2013.06.019 %M 23871232）；Content-Disposition 文件名正确（…TMC-Mechan_时间戳.enw）
+- E2E 验证（agent-browser）：文章页 Export 菜单 7 项含 "EndNote Library (.enw) EndNote library import"；点击 → POST /api/export 200 → toast "Exported as ENDNOTE."；移动端 390×844 菜单正常渲染；0 page error / 0 新增 console 错误
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 162 warning（=基线）；dev.log 干净（"[export] PubMed enrichment filled 18 EndNote record(s)"，导出耗时 ~700-1500ms）
+
+Stage Summary:
+- "信息显示无效"根治：作者名按 EndNote 解析规则转为 "Last, I.N.I.T." 逗号形式（无逗号=First Last 解析是 EndNote 的硬规则）；机构作者尾逗号约定；记录补 <database>/<source-app>/volume/number/pages；纯网页源改标 Web Page 类型
+- .enw 导出落地：导出菜单新增 "EndNote Library (.enw)"，一份文件含全部参考文献（作者规范格式+DOI+PMID+卷期页+URL），EndNote 中双击或 File→Import→"EndNote Import" 即入库
+- PubMed esummary 批量富集：docx 移动库与 .enw 两种格式的记录字段完整化（DB 行没有的 DOI/卷/期/页从 NCBI 权威源补齐），best-effort 不阻断导出
+- 新文件：src/lib/endnote-enrich.ts；修改：src/lib/endnote-fields.ts（formatAuthorForEndnote/buildEnwExport/记录 XML 完整化）、src/app/api/export/route.ts（enrich 接入 + endnote 格式分支 + et al 过滤）、src/components/sciwrite/export-menu.tsx、src/lib/api-client.ts、src/lib/i18n.tsx（5 语言）
+- 提交信息：fix(round-22): EndNote record validity (canonical author names, PubMed-enriched fields, web-page types) + .enw library export
