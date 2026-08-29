@@ -1657,3 +1657,188 @@ Stage Summary:
 - 已知设计内行为：Lee 2025 bioRxiv 孤立预印本保留（无正式版配对）；Jeong 2022 gather 召回不稳定（覆盖断言只查候选池，§2/§8 诚实声明规则为兜底）；§6 节 93 词偏薄（去重代价，无重复内容可留）
 - 测试资产：项目 cmtbk7sjb00erjmucpfif977r（Round-17 Verification）与文章 cmtbkit4s00wijmuc2huw7o0l 保留；.zscripts/v2-run-daemon.py（双 fork SSE 守护）；scripts/audit-tmc-r17.ts（六类审查+句级近重复探针）、fix-tmc-article-round17.ts（--apply 落库）、test-dedupe-round17.ts（离线验证）；tool-results/ 含 r17-run2.log（SSE 全程）、r17-raw-article.md（修正前）、r17-fixed-article.md（修正后）、r17-article-viewer.png、pre-round16-article.md（回归语料）；DB 快照 "pre-round17" 可回滚
 - 提交信息：fix(round-17): third E2E verification — truncation-safe sentence split, cap+word-floor dedup, uncited-restatement removal, word reserve, trailing-claim gate
+
+---
+Task ID: round-18
+Agent: main (Z.ai Code orchestrator)
+Task: 修复 agent 检测（只检测到 codebuddy，hermes/codex 检测不到，重新检测无效）+ codebuddy 调用报错 + 参考 pdb-tracker-web-v5 DSH 模式新增 OpenAI 兼容 API 供应商配置（provider 下拉 + 预填 baseURL + 模型选择/自定义 + API Key）
+
+Work Log:
+- 调研：克隆 pdb-tracker-web-v5 研读 DSH 模式实现（providers/catalog.ts 17 家供应商目录、credentials.ts 凭据存储、openai-compat-adapter.ts 通用 OpenAI 兼容适配器、ProvidersPanel.tsx UI 模式、providers API 路由三件套）；抓取 CodeBuddy 官方文档（env-vars / headless 页面）确认 -p 非交互模式规范
+- 检测修复 ①（根因，WSL 硬编码）：wslTargetDistro() 原来永远返回 "Debian"——用户默认发行版是 Ubuntu 时 wslAvailable() 失败 → 所有 WSL 内安装的 CLI（hermes/codex）静默不可检测，且重新检测重复探测同一个不存在的发行版（正是"重新检测也没有用"）；改为优先用注册表 defaultDistro，保留 WSL_DISTRO env 覆盖
+- 检测修复 ②（hermes 探测路径）：hermes 常装在 Python venv / pip --user 位置（不在 dev server PATH 上）——新增 extraProbePaths（Windows: ~/.hermes/bin、~/venvs/hermes/Scripts、AppData Python Scripts ×4 版本；POSIX: ~/.hermes/bin、~/.local/bin、~/venvs/hermes/bin、~/.bun/bin 等）；claude 同理补 ~/.claude/local 与 ~/.bun/bin
+- 检测修复 ③（重检测失效）：/api/llm-config 新增 ?fresh=1 强制绕过进程内（5 分钟）+ 磁盘（原 6 天→降为 48 小时）双级探测缓存实时重探；对话框"重新检测"按钮改用该参数（原流程可能命中陈旧缓存导致重检测无效果）；inspectProviders 增加 force 选项
+- 检测修复 ④（.cmd + needsNode 冲突）：codebuddy（needsNode）若解析到 npm .cmd 垫片，spawn("node", [xxx.cmd]) 必然失败——probeCli 与 runCli 均改为 .cmd 垫片直接 shell 启动、跳过 node 包装
+- codebuddy 调用修复 ⑤（官方文档对齐）：① -p 模式必须带 -y（"必须添加此参数才能执行需要授权的操作，否则这些操作会被阻止"）；② --output-format json 输出的是单个 JSON result envelope（非数组）——原 extractContent 只处理数组、整个 JSON 信封被当答案返回；重写为 单对象 .result → 数组 → NDJSON 三级解析；③ session id 是 snake_case session_id——原只匹配 camelCase sessionId 导致 resume 从未生效，双格式兼容；移除 claude 的不存在参数 --no-stream 并同步修复其同款信封/会话解析
+- codebuddy 提示 ⑥：官方文档确认 -p 模式始终用 CODEBUDDY_API_KEY 认证模型调用——对话框选中 codebuddy 时显示琥珀色提示（需设该 env 或改用 API 供应商）
+- 修复 ⑦（zai-sdk 回退分支从未工作过）：callZai 的 eval("import") 在 webpack 编译的路由里抛 "Cannot use import statement outside a module"——改普通动态 import；此前任何 CLI 失败后的 zai-sdk 兜底实际全部静默失败（也是用户 codebuddy 调用只见报错的原因之一）
+- DSH 模式新增（参考 pdb-tracker-web-v5）：src/lib/provider-catalog.ts（17 家供应商：zai/deepseek/openai/anthropic/google/qwen/moonshot/zhipu/minimax/xai/mistral/groq/openrouter/siliconflow/together/fireworks/ollama，含 baseURL/apiKeyEnv/authHeader/extraHeaders/defaultModel/models/docsUrl/apiKeyOptional）；src/lib/api-provider-config.ts（凭据存 ~/.sciwrite/api-providers.json 0600 权限——主目录持久化且不触发 webpack watcher；密钥解析 config→env，baseURL 解析 用户覆盖→目录默认，本地运行时 ollama 免密钥）
+- llm.ts 集成：callOpenAiCompat（直连 fetch ${baseURL}/chat/completions，Anthropic 走 x-api-key+anthropic-version，HTML 错误页/超时/reasoning_content 全处理）；callAnyLlm 新增 api:* 分支；decideProviderOrder 将 api 供应商排在 zai-sdk 之后（自动模式永不静默烧费——仅显式选择时生效）；inspectProviders 输出 api 供应商可用性
+- API 路由三件套：/api/llm-config/providers（GET 目录+状态 / POST 保存+setDefault / DELETE 删除并自动回退 zai-sdk）；/api/llm-config/providers/models（GET 实时拉取 ${baseURL}/models，目录列表兜底+警告）；/api/llm-config/providers/test（POST 最小 chat 请求验证 key+URL+model，支持未保存值测试）；select 路由接受 api:*（校验目录+密钥）与 model 字段；主 llm-config 路由 detected 列表并入 api 供应商、POST 测试面板支持 api:*
+- 模型覆盖链路（codebuddy 调用错误的核心解法之一）：llm-selection.ts 存储 {provider, model}；ai.ts chat/chatWithSessionId 将 model 传给 generateText（codebuddy --model、api 供应商、zai-sdk 均生效）——用户可在 UI 直接换模型而非依赖 CODEBUDDY_MODEL env；切供应商自动清空旧模型（deepseek 模型名带到 zai-sdk 会致命），同供应商保留
+- UI（llm-config-dialog.tsx 重构）：① 顶部横幅加模型覆盖输入+保存钮+codebuddy 提示条；② 原"已检测的代理 CLI"区块原样保留（api 供应商以 api:xxx 并入显示、可点选默认）；③ 新增"API 供应商（OpenAI 兼容）"区块——添加表单（供应商下拉→baseURL 预填可改（自定义网关黄字提示）→模型下拉（目录列表+自定义输入切换+获取在线模型按钮）→API Key 密码框→测试/保存钮+获取 Key 链接）+已配置列表（图标+默认徽章+模型、点击设默认、展开编辑/测试/删除）；④ 测试 CLI 下拉含 api 供应商
+- i18n：en/zh 各新增 33 个 llmConfig.* 键（apiSelectedDesc/modelOverride/codebuddyHint/apiProviders 系列等）；修正 llmConfig.default 前缀（原含"Z.AI SDK"字样导致横幅显示"默认：Z.AI SDK（内置）DeepSeek"错乱）
+- 验证（API 层）：providers GET 返回 17 家全量状态；POST 保存 deepseek（假 key）→ available=true、文件落盘 ~/.sciwrite/api-providers.json；连接测试返回 DeepSeek 官方 API 真实 401（"Authentication Fails... ****-key is invalid"，掩码脱敏）；models 端点目录兜底+401 警告；select api:deepseek 成功、未知供应商 400 校验；fresh=1 detected 含 api:deepseek/api:ollama；z-ai 测试经 llm.ts 分发器返回 "OK"（callZai 修复生效）
+- 验证（模拟二进制端到端）：伪造 ~/.hermes/bin/hermes → extraProbePaths 检测成功（不在 PATH 也能发现）→ 调用成功（session_id banner 剥离 + id 提取）；伪造 codebuddy JS 脚本输出官方信封格式 → 调用成功（-y 传入、--model 传入、单对象 .result 提取、snake_case session_id 提取全对）——两个 CLI 适配器的检测与调用管线在真实 spawn 路径上验证通过
+- 验证（模型覆盖逻辑）：bun 单测——切供应商清空 model、同供应商保留、显式指定生效；ui 删除默认供应商后选择自动回退 zai-sdk
+- 验证（浏览器 agent-browser）：对话框 4 区块全部渲染（检测 CLI/API 供应商/环境变量/测试）；供应商下拉 17 项、选 DeepSeek 后 baseURL 预填 https://api.deepseek.com/v1、模型预填 deepseek-chat、自定义模型切换输入、API Key 输入、测试返回真实 401 错误条、保存后进已配置列表、点击设默认（横幅+DEFAULT 徽章更新）、展开编辑（baseURL/model/key+Delete）、删除后回退 zai-sdk；测试面板选 deepseek (API) 调用→api:deepseek 401→优雅回退 zai-sdk 答对 "The answer is **4**."（回退链全程无感）；重检测按钮 fresh=1 生效；0 console error / 0 page error
+- 事故处置：HMR 期间 dev server 进程消失（沙箱已知问题）——.zscripts/dev-daemon.py 双 fork 守护重启恢复
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 163 warning（新文件 0 警告，还顺手修复 2 个既有警告）；Select 受控切换警告修复；dev.log 无未处理错误
+
+Stage Summary:
+- 检测三大根因修复：WSL 发行版注册表默认值（Ubuntu 机器上 WSL 内 CLI 全部静默不可检测的根因）、hermes/claude 常装位置探测路径、?fresh=1 强制实时重探（绕过 5 分钟进程内 + 磁盘两级缓存）——"重新检测也没有用"的复发路径全部关闭
+- codebuddy 调用四合一修复：-p 模式必带的 -y 权限旗标、单对象 JSON result 信封解析（原整个 JSON 被当答案）、snake_case session_id 解析（原 resume 从未生效）、zai-sdk 兜底分支 eval-import 崩溃（原 CLI 失败后兜底全部静默死掉）；外加 UI 可视化模型覆盖（不再依赖 CODEBUDDY_MODEL env）与 CODEBUDDY_API_KEY 提示
+- DSH 模式供应商体系落地：17 家 OpenAI 兼容供应商（含国内 DeepSeek/Qwen/Moonshot/Zhipu/MiniMax/SiliconFlow 与本地 Ollama），provider 下拉→baseURL 预填可改（支持自建网关）→模型列表选择+自定义+在线拉取→API Key 本地存储（~/.sciwrite 0600）→测试并保存→点击设默认，全链路与既有 CLI agent 检测共存于同一对话框
+- 安全设计：付费 api 供应商在自动回退链中排在免费 zai-sdk 之后——永不静默烧用户的 API 额度，仅显式选择时生效
+- 新文件：src/lib/provider-catalog.ts、src/lib/api-provider-config.ts、src/app/api/llm-config/providers/{route,models/route,test/route}.ts；修改：llm.ts（WSL/探测/codebuddy/claude/api 分发/callZai）、llm-selection.ts（model 存储+切换清空）、ai.ts（model 透传）、llm-config-dialog.tsx（API 供应商区块+模型覆盖）、i18n.tsx（33×2 键）、llm-config 与 select 路由
+- 提交信息：fix(round-18): agent detection (WSL distro, probe paths, fresh re-detect) + codebuddy call fixes + DSH-mode API provider catalog
+
+---
+Task ID: round-19
+Agent: main (Z.ai Code orchestrator)
+Task: 修复 UI 反馈两项：① 全 UI 避免 emoji 图标；② LLM 设置弹窗无滚动条、底部内容被裁剪
+
+Work Log:
+- 复现与根因定位（agent-browser 实测）：LLM 配置弹窗 viewport 实际高 813px 超出弹窗 653px（85vh），Radix ScrollArea Viewport 的 `height:100%` 在 `height:auto + max-h-[85vh]` 弹性列容器内无法解析（flex item 高度系内容推导非确定值）→ 回退为内容高度 → 被 DialogContent overflow:hidden 静默裁剪且 viewport 自身 scrollHeight==clientHeight 不出滚动条——正是"没有滚动条、下面显示不全"
+- 验证性实验：强制 viewport height=569.797px 后 scrollHeight 813 / clientHeight 570 立即恢复可滚；改 abspos 则 Root 高度塌缩为 0（证明该容器内 Radix 方案无解，需原生滚动或确定高度）
+- 滚动修复：llm-config-dialog + 同模式的另外 5 个弹窗（topic-composer/batch-validation/user-data/outline/article-composer×2）统一把 `<ScrollArea className="flex-1 min-h-0 scroll-academic">` 换成原生 `<div className="flex-1 min-h-0 overflow-y-auto scroll-academic">`——原生滚动只依赖自身 flexed 高度，无需百分比解析，且 webkit 样式滚动条始终可见；短内容弹窗仍按内容自适应高度（实测 user-data 弹窗 527px 未被撑满）
+- emoji 图标替换（设计规则：UI 禁用 emoji 图标）：provider-catalog.ts 17 家供应商 🧊🐋🧠🤖♊🇶🌙✨📊⚡🌬️🚀🛣️💠🤝🎆🦙 → lucide 图标名字符串（snowflake/fish/brain/bot/gem/cloud/moon/sparkles/bar-chart-3/zap/wind/rocket/network/hexagon/users/sparkle/server），字段仍为 string 走 API JSON 不变
+- llm-config-dialog.tsx 新增 PROVIDER_ICONS 映射 + ProviderIcon 组件（未知名回退 Globe）；下拉项（inline-flex 对齐）与已配置行两处渲染点全部换 Lucide 线性图标（text-primary 自适应明暗）
+- llm.ts 10 个 CLI/SDK 适配器 icon 字段同步换 lucide 名（🪶→feather、🟠→sparkle、🟢→terminal、🦅→bird、♊→gem、🐼→paw-print、🛠️→wrench、🤖→bot、🧠→brain、🧊→snowflake）
+- knowledge-panel.tsx SOURCE_TYPE_ICONS 📄🧬🧪🧩🔬🌐📝 → FileText/Dna/FlaskConical/Puzzle/Microscope/Globe/PenLine（React.createElement 渲染，回退 Package）；"All" 页签 🗂️ → FileStack
+- 其他彩色 emoji 清理：protein-structure-analysis-dialog 大号 ⚠️ → TriangleAlert 图标、ℹ️→ℹ、⚠️→⚠；topic-composer toast ✅→✓、⚠️→⚠（✓/⚠/→ 等单色文本符号保留）
+- 验证（agent-browser）：弹窗滚轮滚动到底"Test CLI"区完整可见无裁剪；供应商下拉 16 项全部带对应 lucide 图标（snowflake/fish/brain/bot/gem/cloud…）；选中 Moonshot 后触发器显示 moon 图标 + baseURL https://api.moonshot.cn/v1 + 模型 moonshot-v1-128k 预填全对；已配置 DeepSeek 行显示 lucide-fish；弹窗文本零 emoji；移动端 390×844 弹窗水平/垂直均适配且可滚；深色模式 20 个图标高对比渲染；user-data 弹窗短内容自适应不撑满；0 page error / 0 新增 console 警告
+- 事故处置：HMR 期间 dev server 再次被沙箱杀死——.zscripts/dev-daemon.py 守护重启恢复
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 162 warning（= round-18 基线，无新增）
+
+Stage Summary:
+- 滚动条根因（Radix ScrollArea 在 max-height 弹性弹窗内的 height:100% 失效）已根治：6 个弹窗 7 处换原生 overflow-y-auto + scroll-academic 可见样式滚动条，短内容仍自适应
+- UI emoji 图标全部清除：供应商目录/已配置行/下拉、CLI 适配器元数据、知识面板源类型页签、蛋白结构弹窗警告图标、toast 前缀，统一 lucide 线性图标（text-primary 明暗自适应，未知回退 Globe/Package）
+- API 契约不变：icon 字段仍为 string（emoji→lucide 图标名），前端渲染层做名称→组件映射
+- 修改文件：provider-catalog.ts、llm-config-dialog.tsx、llm.ts、knowledge-panel.tsx、protein-structure-analysis-dialog.tsx、topic-composer.tsx、batch-validation-dialog.tsx、user-data-dialog.tsx、outline-dialog.tsx、article-composer.tsx
+- 提交信息：fix(round-19): replace emoji icons with lucide + fix modal scroll clipping (native overflow-y-auto instead of Radix ScrollArea in max-h dialogs)
+
+---
+Task ID: round-20
+Agent: main (Z.ai Code orchestrator)
+Task: 将本地未推送提交 PUSH 到 GitHub（origin: Jing0715-fer/SciWrite）
+
+Work Log:
+- git status 确认工作树干净，但 local main 领先 origin/main 4 个提交（round-18/round-19/worklog/UUID 提交）
+- 推送被拒（non-fast-forward）：fetch 发现远端已有 2355e25（round-17，2026-08-27 推送），与本地 a790788 为同一 round-17 工作的重复提交（父提交同为 073b32e，树仅差 .zscripts/dev.pid 的 PID 值）
+- 修正无意义 UUID 提交信息 → docs(worklog) 提交
+- git rebase --onto origin/main a790788 main：跳过本地重复的 round-17 提交，把 round-18/round-19/worklog 三个提交变基到远端头上；唯一冲突在 .zscripts/dev.pid（运行时产物，按当前 PID 1102 解决）
+- 卫生修复：.gitignore 第 60 行本就有 .zscripts/dev.pid，但文件在规则生效前已被跟踪——git rm --cached 解除跟踪，杜绝 PID 噪音继续混入提交（文件保留在磁盘，守护进程不受影响）
+- 推送成功：2355e25..b127fd7 main -> main；fetch 后确认本地/远端同步于 b127fd7
+- 验证 dev server：next-server v16.1.3 正常运行，dev.log 全部 200 响应，无错误
+
+Stage Summary:
+- 远端 main 现包含：round-18（agent 检测 WSL 发行版/探测路径/重测 + codebuddy 调用修复 + DSH 模式 API 供应商目录 17 家）、round-19（emoji→lucide 图标替换 + 6 个弹窗原生 overflow-y-auto 滚动修复）、worklog 文档、dev.pid 解除跟踪
+- 历史保持线性，无合并提交；重复的 round-17 提交被跳过未污染远端历史
+- 推送范围 20 文件 +2266/-219，无敏感文件（.env/token/secret 均未命中）
+
+---
+Task ID: round-21
+Agent: main (Z.ai Code orchestrator)
+Task: 修复用户实测 minimax-M3 暴露的两个问题：① LLM 的 <think> 推理内容写入文章正文；② 导出文件名使用建项目时手写的话题而非生成文章的标题（证据：用户上传的 PDF《按照总分总的方式进行生成-每个家族成员至少有一段单独的段落_20260828-171359.pdf》——15 个 <think> 块直接出现在正文、8 个小节降级为 "[Content generation issue]" 占位且转储含 think 的原始输出、文件名是项目话题原文）
+
+Work Log:
+- PDF 取证（pdftotext）：15 处 <think> 块写入正文；8 处 "[Content generation issue — bullet-point outline]" 占位（根因：think 计划文本中的 "P1 — ..." 行触发了 sanitizeSectionContent 的 outline 误判，且错误信息转储了含 think 的原始输出）
+- 根因链路定位：minimax-M3 经 DSH 模式 API 供应商路径（ai.chat → generateText → callAnyLlm → callOpenAiCompat）返回的 content 内联 <think> 标签，全链路无任何剥离逻辑
+- 修复①（四层防御）：
+  1. writing.ts 新增 stripReasoning()：完整对（多行、大小写不敏感）+ 未闭合开标签（截断场景，其后全部是推理）+ 孤立闭标签；sanitizeSectionContent 最前置剥离（Step 0），纯 think 输出返回明确占位而非空串
+  2. llm.ts callAnyLlm 五个适配器分支（CLI×2 合并、anthropic、api:、openai、zai-sdk）统一 stripReasoning + 空结果抛错（走 provider 回退链）；callOpenAiCompat 内部剥离 content 中的 think、reasoning_content-only 场景从"当作正文返回"改为明确报错（思考内容绝不能进文章）；callAnthropic 改为 find 第一个 text block（跳过 thinking block）
+  3. ai.ts zai-sdk 路径（chat + chatStream 组装结果）剥离
+  4. write 路由防御性二次剥离（未来新增路径兜底）
+- 修复②（标题）：
+  - 新增 src/lib/article-title.ts generateArticleTitle()：LLM 综合工作简报 + 章节大纲 + 正文开头合成期刊级标题（8–20 词），支持中文标题（双语模式），60s 超时 + 全失败回退 project.topic（绝不阻断生成）
+  - generate-full：compose 段生成标题，替换 5 处 article.create/version 的 title: project.topic（pre-audit create、pre-audit version、post-audit update、update 失败重建 create、else 分支 create、post-audit version、partial save 用 articleTitle || topic 兜底）；双语时写入 titleZh；article.update 同步刷新 title/titleZh
+  - generate-full-v2：同样接入（create + version 快照）
+  - 存量文章修复：新增 POST /api/articles/[id]/generate-title（基于内容+大纲重新生成并更新 title/titleZh）；article-viewer-tabs 标题下新增"根据文章内容重新生成标题"小按钮（RefreshCw 图标、加载态、toast、titleOverride 本地覆盖 + project query 失效刷新）；i18n 3×2 键
+- 冒烟测试（bun 脚本，13 用例全过）：无标签/前后成对/中间成对/未闭合截断/孤立闭合/多对/纯 think/大小写（发现并修复了早退守卫大小写敏感 bug——<THINK> 会漏过）/真实 minimax 形状（取自用户 PDF）/outline 误判消除/纯 think 占位
+- E2E（agent-browser）：主页加载零错误零 console 报错；打开项目 → Article 页签 → 文章查看器 → 点击"Regenerate title"→ LLM 真实调用成功，标题从"Structural biology of TMC1 and TMC2 mechanotransduction channels"（=项目话题）变为"Structural and Functional Analysis of TMC Mechanotransduction Channels in Health and Disease"；导出 PDF 的 Content-Disposition 文件名 = Structural-and-Functional-Analysis-of-TMC-Mechan_20260828-093611.pdf（用新标题，机制 v116 已有、此次打通数据源）；移动端 390×844 按钮正常；DB 确认 title 已更新
+- 卫生：.gitignore 增加 /upload/（用户上传的 PDF 不进仓库）；测试期间 dev server 又被沙箱杀死，dev-daemon.py 守护重启恢复
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 162 warning（=基线，无新增）
+
+Stage Summary:
+- think 污染根治：四层防御（适配器层中心剥离 + callOpenAiCompat 语义修正 + zai 路径 + write 路由兜底），含 outline 误判消除（think 内 "P1 —" 规划行不再触发占位符）；reasoning_content-only 从静默污染改为诚实报错走回退链
+- 导出文件名正确：新生成文章自动带 LLM 合成标题（EN+ZH），存量文章一键"重新生成标题"修复；导出文件名 = Article.title slugified + 时间戳
+- 新文件：src/lib/article-title.ts、src/app/api/articles/[id]/generate-title/route.ts；修改：writing.ts、llm.ts、ai.ts、write/route.ts、generate-full/route.ts、generate-full-v2/route.ts、article-viewer-tabs.tsx、api-client.ts、i18n.tsx、.gitignore
+- 提交信息：fix(round-21): strip <think> reasoning pollution (4-layer defense) + LLM-generated article titles (new + regenerate for existing)
+
+---
+Task ID: round-22
+Agent: main (Z.ai Code orchestrator)
+Task: 修复用户反馈的 EndNote 集成两项问题：① 导出 Word 后用 EndNote 插件打开文献列表仍有一部分信息显示无效；② 增加 EndNote library 文件导出
+
+Work Log:
+- 取证（真实导出）：curl POST /api/export (docx) → 解压 document.xml → base64 解码 90 个 fldData 载荷，对照真实 EndNote 移动文献库记录，锁定根因
+- 根因①（作者名解析）：记录内 <author>Giese APJ</author>（PubMed 格式）——EndNote 对无逗号名字按 "First Last" 解析（末词=姓），于是所有作者被读成 姓="APJ" 名="Giese"，引文渲染为 "(APJ et al., 2025)"、文献列表行 "APJ, G." —— 正是"信息显示无效"
+- 根因②（字段缺失）：记录无 DOI/volume/issue/pages（正文引用行与 DB Reference 行均不含这些字段），且缺 <database>/<source-app> 元素（真实 EndNote 移动库记录均携带）
+- 修复①（endnote-fields.ts）：新增 formatAuthorForEndnote() —— PubMed "Last AB" → EndNote 规范 "Last, A.B."（尾随全大写 token=首字母缩写，≤5 字符可含连字符；"Aponte Rivera R"→"Aponte Rivera, R."、"Dupont J-P"→"Dupont, J.-P."）；已带逗号保持；机构作者/Anonymous 加尾逗号（EndNote 机构作者约定，阻止 First Last 再解析）；"et al." 伪作者剥离（先剥再判逗号——修掉 "Wang Y, et al." 误入逗号分支的 bug）；lastNameOf 同步支持双格式（<Cite><Author> 仍只写姓）
+- 修复②（记录补全）：recordXml 新增 <database name="SciWrite References.enl"> + <source-app>（真实移动库形状）、<volume>/<number>/<pages>；ref-type 按记录可变——无 journal 且无 PMID/DOI 的纯网页源标为 Web Page(12)（空期刊的 Journal Article 在 EndNote 里渲染如损坏）；export 路由两个分支（正文解析/DB 兜底）authors 数组统一过滤 "et al."
+- 新增③（PubMed 批量富集）：新文件 src/lib/endnote-enrich.ts —— esummary.fcgi 按 PMID 批量（50/批）拉取权威元数据，仅填充记录缺失字段（doi←elocationid/articleids、volume、issue、pages、year、journal、authors），8s 超时、逐块吞错（网络失败记录原样保留）；applyWebPageRefTypes() 标记网页型引用；仅 docx/endnote 两种格式触发（其他格式不增加延迟）
+- 新增④（.enw 导出）：buildEnwExport() 生成 EndNote tagged import 文件（%0 类型/%A 作者/%D 年/%T 题/%J 期刊/%V 卷/%N 期/%P 页/%R DOI/%M PMID/%U URL，CRLF 分隔，空行分记录）；export 路由新增 format="endnote" 分支（无引用时 400，文件名沿用文章标题 slugify + 时间戳）；.enl 是专有二进制无法生成，.enw 即 EndNote 官方导入交换格式（双击即弹导入对话框）
+- UI：export-menu.tsx FORMAT_META 新增 endnote 条目（Library 图标 lucide、teal 色、langs=["en"] 引用数据语言无关、desc "EndNote library import"）；api-client format 联合类型加 "endnote"；i18n 5 语言（en/zh/ja/ko/fr）各加 export.endnote 键（"EndNote Library (.enw)" / "EndNote 文献库 (.enw)"…）
+- 单元测试（bun 脚本 16 用例全过）：Giese APJ/Aponte Rivera R/Géléoc GS/Müller U/Dupont J-P（发现并修复单字母不加点的 bug）/van der Berg A/Li Y/Yan Z/Smith, J.A.（已逗号保持）/Anonymous/机构名/Wang Y, et al.（发现并修复逗号分支早退 bug）/Wang Y et al./空串×2 + .enw 排序/CRLF/字段齐全
+- E2E 验证（curl）：docx 重导出 → 90 fldData 唯一 19 记录，140 个作者 0 个非规范格式、<volume>12</volume>、<electronic-resource-num>10.7554/eLife.89719</electronic-resource-num>（esummary 实网拉取成功）、fldChar begin/end 91/91 平衡；.enw 导出 → 18 条记录 18/18 有 DOI、17/18 有卷号（1 条 PubMed 本身无卷）、记录 8 全字段样例（%V 79 %N 3 %P 504-15 %R 10.1016/j.neuron.2013.06.019 %M 23871232）；Content-Disposition 文件名正确（…TMC-Mechan_时间戳.enw）
+- E2E 验证（agent-browser）：文章页 Export 菜单 7 项含 "EndNote Library (.enw) EndNote library import"；点击 → POST /api/export 200 → toast "Exported as ENDNOTE."；移动端 390×844 菜单正常渲染；0 page error / 0 新增 console 错误
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 162 warning（=基线）；dev.log 干净（"[export] PubMed enrichment filled 18 EndNote record(s)"，导出耗时 ~700-1500ms）
+
+Stage Summary:
+- "信息显示无效"根治：作者名按 EndNote 解析规则转为 "Last, I.N.I.T." 逗号形式（无逗号=First Last 解析是 EndNote 的硬规则）；机构作者尾逗号约定；记录补 <database>/<source-app>/volume/number/pages；纯网页源改标 Web Page 类型
+- .enw 导出落地：导出菜单新增 "EndNote Library (.enw)"，一份文件含全部参考文献（作者规范格式+DOI+PMID+卷期页+URL），EndNote 中双击或 File→Import→"EndNote Import" 即入库
+- PubMed esummary 批量富集：docx 移动库与 .enw 两种格式的记录字段完整化（DB 行没有的 DOI/卷/期/页从 NCBI 权威源补齐），best-effort 不阻断导出
+- 新文件：src/lib/endnote-enrich.ts；修改：src/lib/endnote-fields.ts（formatAuthorForEndnote/buildEnwExport/记录 XML 完整化）、src/app/api/export/route.ts（enrich 接入 + endnote 格式分支 + et al 过滤）、src/components/sciwrite/export-menu.tsx、src/lib/api-client.ts、src/lib/i18n.tsx（5 语言）
+- 提交信息：fix(round-22): EndNote record validity (canonical author names, PubMed-enriched fields, web-page types) + .enw library export
+
+---
+Task ID: round-23
+Agent: main (Z.ai Code orchestrator)
+Task: 修复 EndNote 集成残留问题：导出 Word 后仍有少量文献在 EndNote 中显示 "!!! INVALID CITATION !!!"（比 round-22 修复前少了）
+
+Work Log:
+- 取证：重导出 TMC 文章 docx（45 EN.CITE 字段）解码 19 个唯一载荷——结构层全部完好（CiteAuthor/CiteYear/title/authors/ref-type 齐备、双载荷一致、begin/end 平衡），排除结构损坏
+- 格式考古：下载真实 EndNote X7.8 CWYW 文档（pandoc issue #8433 附件，含 3-Cite 分组引用）+ EndNote 15 库 XML 导出样本（gist）逐元素路径 diff——锁定 4 处偏差：① 我们在 record 里加的 <database>/<source-app>（真实 CWYW 记录不带，但库 XML 格式合法，保留）② 元素顺序 electronic-resource-num/accession-num 在 urls 之前（真实 CWYW：urls 在前；真实库 XML：accession-num 在 urls 前）③ 全部外键共用同一 timestamp（真实 EndNote 逐记录不同）④ 字段运行序列缺两个空 run（真实 X7.8 在 EN.CITE.DATA 指令与 end 之间、end 与 separate 之间各有一个空 run）；Bookends→EndNote 转换器（Zotero 开发者维护）证明元素顺序对 EndNote 解析器宽松——顺序非根因但按权威顺序对齐
+- 根因锁定（用户症状 "[1,2]" + "Year: !!! INVALID CITATION !!!"）：**空洞记录**——generate-full / generate-full-v2 / compose 三个管线在 Reference 行无 year 时引用行完全不写 "(YYYY)" 段（`const yr = r.year ? \` (${r.year})\` : ""`），导出端 parseRefLineForRecord 的 "(YYYY)" 锚点失败 → authors=""、year=undefined、作者串被误读为期刊名 → <Cite> 头缺失 Author/Year 两个匹配键 → EndNote 无法绑定 → INVALID；round-22 的 PubMed 富集只救回带 PMID 的子集（解释"比之前少了"），无 PMID 的残留（=「还是存在少量文献」）；库内实测 475/2853（16.7%）引用行无年份，全部为 web 源（authors 字段竟存主机名 "pmc.ncbi.nlm.nih.gov"）；用户旧文章 21 条引用行跑解析器复测：20 条完好（1 条为 PDF 换行伪影）
+- 修复①（解析器回退，endnote-fields.ts）：parseRefLineForRecord 新增裸年份回退——"Authors. 2024. Journal. Title" / "Authors. 2024;15:e123." 形态恢复 Author+Year 对（年份须夹在分隔符之间，DOI 尾缀 "…-16.2016" 不会误判）；行首年份 "(2020), Nature…" 也恢复年份；所有回退路径标记 malformed 让导出端知悉 journal/title 切分不可靠
+- 修复②（DB 行修复通道，endnote-enrich.ts 新增 repairRecordsFromDbRows）：对空洞/malformed 记录按 PMID → DOI → 归一化标题包含匹配找到 DB Reference 行（引用行的同一数据源），回填缺失的 year/authors；malformed 记录的 journal/title 一并从 DB 行取（清掉误读的垃圾期刊，恢复 Web Page 类型判定）；主机名形 authors（gather 步骤的 web 源伪影）按 compose 同规则替换为 "Anonymous"
+- 修复③（n.d. 兜底，export 路由）：修复+富集后仍无年份的记录（web 源 DB 行本就无年份）采用学术惯例 "n.d."（no date）——自洽的 <Cite><Year> 保持引用可匹配，EndNote 渲染为 "(n.d.)"；无法修复的记录（无 DB 行匹配且无年份无作者）console.warn 诊断日志暴露而非静默
+- 修复④（字节级对齐，endnote-fields.ts）：recordXml 元素顺序改为权威顺序（…dates → accession-num → urls → electronic-resource-num，两份真实样本共同满足）；外键 timestamp 逐记录差异化（foreignKeyTimestamp，确定性哈希派生，同一记录跨字段稳定）；citationFieldXml 补两个空 run（emptyRun）使运行序列与真实 X7.8 完全一致
+- 离线验证（scripts/test-endnote-round23.ts，46 项全过）：解析器 7 形态（标准/裸年份/分号年份/无年份/行首年份/DOI 干扰/裸年份在前）、DB 修复 11 项（标题匹配/PMID/DOI/垃圾期刊清除/主机名→Anonymous/et al. 过滤/干净记录不触碰/无匹配诚实保留）、XML 顺序 3 断言、timestamp 差异化+确定性、分组 DisplayText 唯一、注入运行序列含空 run、enw 回归、parseCitationNumbers 回归
+- E2E（真实路由级复刻用户症状）：构造测试文章——分组引用 "[1,2]" 内含无年份 web 引用行 + 主机名作者 web 引用行 → 导出解码验证：记录 2 从「无 Author 无 Year 期刊串成作者名」修复为 Author=Wang/Year=n.d./作者/期刊/标题全部从 DB 行复原；记录 3 主机名作者 → Anonymous + Web Page(12) 类型正确；逐记录 timestamp 差异化生效；dev.log 完整记录修复链（"DB-row repair filled 2" + "PubMed enrichment filled 1" + "2 undated defaulted to n.d."）；TMC 文章重导出回归：19 载荷 Cite 头全部完整、18 记录 18 个差异化 timestamp、90 空运行（45 字段×2 精确）、91/91 平衡、.enw 不回归
+- E2E（agent-browser）：主页/项目/Article 页签渲染正常，Export 菜单 7 项（含 EndNote Library (.enw)），UI 触发 Word 导出 POST /api/export 200，0 page error / 0 新增 console 错误；测试夹具已清理
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 162 warning（=基线）；dev.log 无未处理错误
+
+Stage Summary:
+- 残留 INVALID 根因：无年份引用行 → 空洞记录（Cite 头缺 Author/Year 匹配键），非分组引用结构问题（分组载荷与真实 X7.8 逐元素一致已复核）
+- 修复链四层：解析器裸年份回退 → DB 行修复（PMID→DOI→标题三级匹配）→ PubMed 富集（既有）→ n.d. 学术惯例兜底；主机名作者 → Anonymous；垃圾期刊清除恢复 Web Page 类型判定
+- 字节级对齐：record 元素顺序权威化（accession-num 在 urls 前、electronic-resource-num 在 urls 后）、外键 timestamp 逐记录差异化、字段序列补两个空 run——与真实 X7.8 输出的全部已知偏差清零
+- 诊断可见性：repair/n.d./不可修复三级 console 日志，未来问题可在 dev.log 直接定位
+- 修改文件：src/lib/endnote-fields.ts（解析回退+顺序+timestamp+空 run）、src/lib/endnote-enrich.ts（repairRecordsFromDbRows+主机名规则）、src/app/api/export/route.ts（malformed 标记+修复调用+n.d. 兜底+DB 兜底分支主机名规则）；新增 scripts/test-endnote-round23.ts（46 项）
+- 用户侧预期：重新导出 Word 后用 EndNote 打开，此前无效的少量文献应恢复为可匹配记录（无年份 web 源显示 Anonymous (n.d.) / Web Page 类型）；若仍有残留，dev.log 的 "still have no year and no authors" 警告即下一步线索
+- 提交信息：fix(round-23): hollow-record repair for EndNote invalid citations (bare-year parse fallback, DB-row repair, n.d. convention, byte-parity with real X7.8)
+
+---
+Task ID: round-24
+Agent: main (Z.ai Code orchestrator)
+Task: 彻底解决 EndNote "!!! INVALID CITATION !!!" 残留——用户反馈 round-23 修复后导出的 Word 仍有一些 invalid 条目且"好像比刚才多了"，并上传导出的 docx 供取证分析
+
+Work Log:
+- 取证（用户上传的 The-Transmembrane-Channel-Like-Protein-Family-St_20260829-180756.docx）：解压 document.xml，线性重建 209 个 fldChar 字段，解码全部 104 个 EN.CITE.DATA 载荷（23 组分组引用 + 81 单引用）→ 载荷结构层与真实 X7.8 完全一致（双 fldData、两个空 run、Cite 头齐备、RecNum↔rec-number 绑定、25 条记录内容完整、begin/end 91/91 平衡）
+- 时间线还原：文件名时间戳 18:07:56（UTC+8）与上传时刻 10:19 UTC 相差 11 分钟 → 该文件是用户在自己机器上运行的 SciWrite 实例（GitHub round-23 代码）导出的，其本地库有独立项目（沙箱 DB 无此文章）；代码行为一致，取证结论有效
+- 根因锁定①（未来时间戳）：逐记录检查 foreign-key timestamp 发现记录 1/5/19 的 timestamp 在 2026-11 ~ 2027-01（未来！）；round-23 的 foreignKeyTimestamp 哈希映射区间 [1700000000, 1800000000) 约有 12% 概率落入"现在（2026-08-29）之后"；真实 EndNote 的外键 timestamp 是记录入库时间，绝不可能是未来值，EndNote 视其为不可匹配记录 → INVALID；复算 round-22 的共享时间戳 = 1700452072（2023-11-20，过去值）→ round-22 导出只暴露姓氏错配等"少量"问题；round-23 的随机化恰好把 3 条记录打入未来 → "比刚才多了"（且能解释此前用户抱怨的 [1,2]——记录 1 正是未来时间戳）
+- 根因锁定②（多词姓氏）：记录 5/18（de Jong SJ 论文）的 <Cite><Author> 为 "de"——lastNameOf 对 PubMed 无逗号形式只取第一个 token；EndNote 临时引用 {Author, Year #RecNum} 按姓氏匹配记录，"de" 无法匹配 "de Jong, S.J." → INVALID；对照权威转换器 endnote_docx.py（Zotero 开发者维护）的 surname_from_author：剥离尾部缩写 token 后拼接剩余（"de Jong SJ" → "de Jong"）
+- 根因锁定③（多余元素）：CWYW 记录内的 <database>/<source-app>（round-22 从 EndNote 库 XML 格式借鉴）——真实 X7.8 CWYW 旅行库记录两者皆无，权威转换器也不写 → 移除，实现与真实输出的字节形状对齐
+- 修复（src/lib/endnote-fields.ts）：①foreignKeyTimestamp 钳制到固定过去窗口 [1700000000=2023-11-14, 1770000000=2026-02-02)（常量上界永远在过去，不读时钟；保持确定性/跨字段一致性）②lastNameOf 新增 isInitialsToken（1-4 个大写字母或连字符连接，如 APJ/LY/J-P），PubMed 形式剥离尾部缩写 token 后拼接（"de Jong SJ"→"de Jong"、"van der Berg A"→"van der Berg"、"Aponte Rivera R"→"Aponte Rivera"；单词形式不动防误伤 WHO）③recordXml 移除 database/source-app，记录从 <rec-number> 起（与真实 X7.8 完全一致）④buildEndnoteXml 的 Cite 头姓氏改从规范形（formatAuthorForEndnote 输出）推导，保证 <Cite><Author> 与 <author> 永不矛盾
+- 验证（scripts/test-endnote-round24.ts，38 项全过）：姓氏 12 例（de Jong/van der Berg/Aponte Rivera/Dupont J-P/Anonymous/WHO 单词保护/重音符/逗号形/头部与记录姓氏一致性断言）；时间戳（30 条记录全部落在固定窗口、无未来值、跨记录基本互异、确定性、跨字段一致）；记录形状（无 database/source-app、元素顺序与真实 X7.8 一致、记录始于 rec-number、DOI 在 urls 后、与 X7.8 模板字节一致[modulo timestamp]）；分组引用（DisplayText 仅首个 Cite、de Jong 头部正确、时间戳互异）；round-23 空运行序列回归；.enw 与解析器回归
+- E2E（真实路由）：提取用户 docx 的 25 条真实文献行构造测试文章（含 [2,4]/[5,17]/[18,17] 分组引用）→ POST /api/export (docx) 200（PubMed enrichment filled 25）→ 解码 24 载荷全量断言：0 未来时间戳（实际范围 2024-01-02 ~ 2026-01-21，24/24 互异）、0 姓氏错配（记录 5/18 头部 "de Jong" = 记录姓氏）、0 database/source-app、元素顺序全部正确、begin/end 49/49 平衡、分组 DisplayText 唯一、空 run 序列对齐；测试夹具已清理
+- E2E（agent-browser）：主页零 page error；打开项目 → Article 页签 → Export 菜单 7 项 → 点击 Word (.docx) → POST /api/export 200（18 条 PubMed 富集），0 console error
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 162 warning（=基线）；round-23 测试脚本回归 46/46 全过；dev.log 无未处理错误
+
+Stage Summary:
+- "比刚才多了"的根因：round-23 引入的哈希随机时间戳有 ~12% 概率落入未来，本次导出 3/25 条（含用户抱怨的 [1,2] 中的记录 1）中招；加上既有的 de Jong 姓氏错配（2 条），无效条目从 round-22 的少量增至 4-5 条
+- 修复三件套：时间戳钳制固定过去窗口（确定性保持）、多词姓氏正确提取（对齐权威转换器）、CWYW 记录移除 database/source-app——与真实 X7.8 输出的全部已知偏差清零（初始间隔 "E.J." vs "E. J." 为纯排版差异，round-22 已实测可导入，保留）
+- 修改文件：src/lib/endnote-fields.ts；新增 scripts/test-endnote-round24.ts（38 项）
+- 用户侧操作：在自己实例上 git pull 后重新导出 Word 即可验证；预期所有 INVALID CITATION 消失（含 [1,2]）
+- 提交信息：fix(round-24): EndNote invalid citations — clamp foreign-key timestamps to a fixed past window, multi-word surnames in Cite headers, drop database/source-app from CWYW records

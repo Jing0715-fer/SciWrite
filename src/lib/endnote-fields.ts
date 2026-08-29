@@ -24,6 +24,85 @@
  *   3. The <Cite> Author carries the LAST NAME only ("Maginn"), which is what
  *      EndNote writes and what its author/year fallback matching expects.
  *
+ * Round 22 — "一部分信息显示无效" (some fields display as invalid when the
+ * traveling library is opened in EndNote) root-caused to EndNote's author
+ * parsing rule: a name WITHOUT a comma is interpreted as "First Last" (the
+ * LAST word becomes the last name). Our records carried PubMed-style
+ * "Giese APJ", which EndNote read as first name "Giese" + last name "APJ" —
+ * every citation rendered as "(APJ et al., 2025)" and every bibliography row
+ * as "APJ, G.". Fixes:
+ *
+ *   1. Authors are converted to EndNote-canonical "Last, I.N.I.T." form via
+ *      formatAuthorForEndnote() before they are written into the record XML
+ *      (comma present → last name before the comma; initials dotted).
+ *      Corporate/unknown authors get a trailing comma ("Anonymous,") — the
+ *      EndNote convention that suppresses "First Last" re-parsing.
+ *   2. Records now carry <database> + <source-app> like a real traveling
+ *      library, plus volume/number/pages when known (EndNote renders empty
+ *      Vol/Issue/Pages fields as missing information in the library view).
+ *   3. Web sources (no journal, no PMID/DOI) are typed "Web Page" (12)
+ *      instead of "Journal Article" so EndNote does not show an article
+ *      record with an empty journal as if it were broken.
+ *   4. A companion export format — the EndNote tagged import file (.enw),
+ *      buildEnwExport() — lets the user import every reference directly
+ *      into their EndNote library (double-click the .enw, or
+ *      File → Import → "EndNote Import").
+ *
+ * Round 24 — "还是存在一些invalid的条目，好像比刚才多了" (still some invalid
+ * entries, seemingly MORE than before). Forensic diff of the user's exported
+ * docx against the real X7.8 sample isolated three residual deviations:
+ *
+ *   1. FUTURE foreign-key timestamps. Round 23's per-record hash-derived
+ *      timestamps landed 3 of 25 records in Nov 2026 – Jan 2027 (the hash
+ *      range ran to 1800000000). A real foreign-key timestamp is the record's
+ *      "added to library" epoch-seconds and can NEVER be in the future —
+ *      EndNote rejects such records as unmatchable. This also explains the
+ *      erratic count: round-22's single shared timestamp happened to be in
+ *      the past (2023-11-20), so its export showed only the "few" surname/
+ *      hollow-record failures; round-23's random per-record values regressed
+ *      records [1], [5] and [19] into the future → MORE invalid entries.
+ *      Fixed by clamping the deterministic hash into a fixed, forever-past
+ *      window (2023-11 .. 2026-02).
+ *   2. Multi-word surnames in <Cite><Author>. "de Jong SJ" (PubMed form)
+ *      reduced to "de" — the EndNote temp-citation fallback matches on
+ *      surname, and "de" matches nothing, so records 5/18 (both de Jong)
+ *      rendered INVALID. The surname is now derived by stripping the
+ *      trailing initials tokens, exactly like the hardened endnote_docx
+ *      converter (Zotero developers): "de Jong SJ" → "de Jong".
+ *   3. <database>/<source-app> elements inside every CWYW record. Real X7.8
+ *      traveling-library records carry NEITHER (they belong to the EndNote
+ *      library-XML export format, not the CWYW field payload), and the
+ *      authoritative converter omits them too. Removed for byte-shape parity
+ *      with real EndNote output.
+ *
+ * Round 23 — "还是存在少量文献出现这种情况，比之前少了" (a few references
+ * still show "!!! INVALID CITATION !!!" in EndNote) root-caused to HOLLOW
+ * records: when a Reference row has no year, the compose pipelines write the
+ * bibliography line WITHOUT the "(YYYY)" segment —
+ *
+ *     [5] Wang Y, Li Z, Nature Communications. Title… — https://…
+ *
+ * parseRefLineForRecord's "(YYYY)" anchor then fails, so the record ends up
+ * with NO authors and NO year — and <Cite><Author>/<Cite><Year> are the two
+ * keys EndNote uses to bind a citation to its record. A Cite without both is
+ * unmatchable → "!!! INVALID CITATION !!!" (the round-22 PubMed enrichment
+ * repaired the subset that carried PMIDs, which is why the count dropped but
+ * did not reach zero — the PMID-less leftovers stayed hollow). Fixes:
+ *
+ *   1. parseRefLineForRecord gains a bare-year fallback ("Authors. 2024.
+ *      Journal. Title") so minor line-format deviations still yield a
+ *      matchable Author+Year pair.
+ *   2. The export route repairs hollow/partial records from the DB Reference
+ *      rows (matched by PMID → DOI → normalized title) — the same source the
+ *      compose line was built from, so the fields are authoritative.
+ *   3. Record XML element order aligned with the canonical EndNote order
+ *      (accession-num before urls, electronic-resource-num after urls — both
+ *      real EndNote samples agree), and the foreign-key timestamp is now
+ *      per-record (real traveling libraries never share one timestamp).
+ *   4. The field run sequence gains the two empty runs real EndNote X7.8
+ *      writes between the nested EN.CITE.DATA instruction and its end, and
+ *      between that end and the separate marker.
+ *
  * Field layout (identical to real EndNote — no w:dirty attribute):
  *
  *   <w:r><w:fldChar w:fldCharType="begin">
@@ -65,6 +144,77 @@ export interface EndNoteRecord {
   /** PubMed ID — emitted as an EndNote accession-num. */
   pmid?: string;
   url?: string;
+  /** Journal volume ("12") — from PubMed esummary enrichment. */
+  volume?: string;
+  /** Journal issue/number ("3") — from PubMed esummary enrichment. */
+  issue?: string;
+  /** Page range ("583-589" or e-loc "e94303") — from PubMed esummary. */
+  pages?: string;
+  /** Reference type override; default Journal Article. */
+  refType?: "Journal Article" | "Web Page";
+  /**
+   * True when the source bibliography line could not be parsed in the
+   * canonical compose format (no "(YYYY)" segment — the compose pipelines
+   * omit it entirely for Reference rows without a year). Signals the export
+   * route that the journal/title split is unreliable and should be repaired
+   * from the DB row. Never serialized into the EndNote XML.
+   */
+  lineMalformed?: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Author name conversion — round 22: the "invalid information" root cause.
+// EndNote parses a comma-less name as "First Last" (last word = last name),
+// so PubMed-style "Giese APJ" imported as first "Giese" + last "APJ".
+// Canonical storage is "Last, First" — with a comma, the text before the
+// comma is taken as the last name verbatim.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Convert one author string to EndNote-canonical form:
+ *
+ *  - "Giese APJ"        → "Giese, A.P.J."   (trailing ALL-CAPS token = initials)
+ *  - "Aponte Rivera R"  → "Aponte Rivera, R."
+ *  - "Géléoc GS"        → "Géléoc, G.S."
+ *  - "Dupont J-P"      → "Dupont, J.-P."
+ *  - "Giese, A.P.J."    → unchanged          (already comma form)
+ *  - "Anonymous" / "Hair Cell Research Group" → "Anonymous," — trailing
+ *    comma is EndNote's corporate-author convention (a lone name without
+ *    a comma would be re-parsed as "First Last" and garbled).
+ *
+ * PubMed renders surnames in mixed case ("Li", "Yan", "Géléoc"), so a
+ * trailing ALL-CAPS token (≤5 letters, hyphens allowed) is a packed
+ * initials block, never a surname. "… et al." tails are dropped.
+ */
+export function formatAuthorForEndnote(name: string): string {
+  const raw = (name || "").trim().replace(/\s+/g, " ");
+  if (!raw) return "";
+  // Strip "et al." tails FIRST ("Wang Y et al.", "Wang Y, et al.") — the
+  // comma in the latter is an et-al separator, not a "Last, First" comma.
+  const noEtAl = raw
+    .replace(/,\s*et\.?\s*al\.?\s*$/i, "")
+    .replace(/\s+et\.?\s*al\.?\s*$/i, "")
+    .trim();
+  if (!noEtAl) return "";
+  // Already comma form ("Last, First") — keep as-is.
+  if (noEtAl.includes(",")) return noEtAl;
+  const tokens = noEtAl.split(" ");
+  if (tokens.length >= 2) {
+    const last = tokens[tokens.length - 1];
+    if (/^[A-Z]+(?:-[A-Z]+)*$/.test(last) && last.length <= 5) {
+      const surname = tokens.slice(0, -1).join(" ").trim();
+      if (surname) {
+        // "APJ" → "A.P.J."  |  "J-P" → "J.-P."  |  "R" → "R."
+        const initials = last
+          .split("-")
+          .map((p) => p.split("").join(".") + ".")
+          .join("-");
+        return `${surname}, ${initials}`;
+      }
+    }
+  }
+  // Single token or no initials pattern → corporate / literal author.
+  return `${noEtAl},`;
 }
 
 /**
@@ -94,6 +244,9 @@ export interface ParsedRefLine {
   journal?: string;
   title: string;
   url?: string;
+  /** True when the canonical "Authors (Year), …" anchor did not match and a
+   *  fallback had to be used — callers treat journal/title as unreliable. */
+  malformed?: boolean;
 }
 
 /**
@@ -104,6 +257,15 @@ export interface ParsedRefLine {
  * the Royal Society, Interface") and strips the trailing URL after the
  * em-dash separator. Anything it cannot recognize degrades gracefully: the
  * whole body becomes the title.
+ *
+ * Round 23: the compose pipelines omit the "(YYYY)" segment entirely when a
+ * Reference row has no year, and LLM-era line deviations put the year
+ * outside parentheses ("Smith J. 2024. Journal. Title"). The canonical
+ * anchor fails on both, leaving the record with NO author and NO year — the
+ * two keys EndNote needs to bind a citation (the "!!! INVALID CITATION !!!"
+ * root cause). A bare-year fallback now recovers the Author+Year pair from
+ * such lines and flags them `malformed` so the export route can repair the
+ * journal/title split from the DB rows.
  */
 export function parseRefLineForRecord(line: string): ParsedRefLine | null {
   const m = line.match(/^\s*\[\d+\]\s*(.+)$/);
@@ -130,11 +292,35 @@ export function parseRefLineForRecord(line: string): ParsedRefLine | null {
   let authors = "";
   let year: string | undefined;
   let rest = main;
+  let malformed = false;
   const ym = main.match(/^(.*?)\s*\((\d{4}[a-z]?)\)\s*,?\s*(.*)$/);
   if (ym && ym[1].trim()) {
     authors = ym[1].trim();
     year = ym[2];
     rest = ym[3].trim();
+  } else if (ym) {
+    // Year-first line ("(2020), Nature. Title") — no author segment before
+    // the year, but the year itself is still recoverable (round 23).
+    year = ym[2];
+    rest = ym[3].trim();
+    malformed = true;
+  } else {
+    // Round 23 bare-year fallback — "Authors. 2024. Journal. Title" or
+    // "Authors. 2024;15:e123. Journal. Title". The year must sit between
+    // separator characters (or line boundaries) so DOI suffixes
+    // ("…-16.2016") and page numbers don't masquerade as years.
+    const bm = main.match(/^(.*?)\s*[.,;]?\s*((?:19|20)\d{2}[a-z]?)\s*[.,;:]\s*(.*)$/);
+    if (bm && bm[1].trim()) {
+      authors = bm[1].trim();
+      year = bm[2];
+      rest = bm[3].trim();
+      malformed = true;
+    } else {
+      // No year anywhere — still flag the line so the export route can
+      // repair year/authors from the DB row (compose writes no "(YYYY)"
+      // at all when the Reference row has no year).
+      malformed = true;
+    }
   }
 
   // "Journal. Title." — the journal is the segment before the first ". "
@@ -148,7 +334,7 @@ export function parseRefLineForRecord(line: string): ParsedRefLine | null {
   }
   title = title.replace(/\.$/, "").trim();
 
-  return { authors, year, journal, title: title || main, url };
+  return { authors, year, journal, title: title || main, url, malformed };
 }
 
 /** Extract a PubMed PMID / DOI from a reference URL, if present. */
@@ -218,37 +404,108 @@ function libraryFor(occurrences: CitationOccurrence[]): EndNoteLibrary {
 }
 
 /**
- * Last name of an author string in "Last Initials" form ("Jumper J" →
- * "Jumper"). Real EndNote writes only the last name in <Cite><Author> — its
- * author/year fallback matching expects that form.
+ * Per-record "record added" epoch-seconds (round 23 shape, round 24 range).
+ * Real traveling libraries never share one timestamp across records — every
+ * foreign key carries the time THAT record was added to its library. The value
+ * is deterministic per (library, record) pair so repeated exports stay stable,
+ * and it is clamped into a FIXED past window (2023-11-14 .. 2026-02-02): a
+ * real "record added" time can never be in the future, and EndNote treats a
+ * future-dated foreign key as an unmatchable record (round 24 root cause of
+ * the invalid-citation count INCREASING between exports). The upper bound is a
+ * constant, so it stays in the past forever — no clock reads are taken.
+ */
+const FK_TS_MIN = 1700000000; // 2023-11-14
+const FK_TS_MAX = 1770000000; // 2026-02-02 — fixed constant, always past
+function foreignKeyTimestamp(lib: EndNoteLibrary, rec: EndNoteRecord): string {
+  const digest = createHash("sha1")
+    .update(`${lib.dbId}|${rec.n}|${rec.title}|${rec.doi || ""}`)
+    .digest("hex");
+  return String(FK_TS_MIN + (parseInt(digest.slice(0, 8), 16) % (FK_TS_MAX - FK_TS_MIN)));
+}
+
+/**
+ * Is this token a trailing initials group ("APJ", "L.Y.", "J-P", "K X")?
+ * Mirrors the hardened endnote_docx converter's surname logic: 1–4 uppercase
+ * letters, dots/hyphens/spaces allowed between them. A genuine surname made
+ * of capitals only ("WHO") is protected by the caller's multi-token check.
+ */
+function isInitialsToken(token: string): boolean {
+  const compact = token.replace(/[.\s]/g, "");
+  if (!compact) return false;
+  return /^[A-ZÀ-ÖØ-Þ]{1,4}$/.test(compact) || /^[A-ZÀ-ÖØ-Þ](?:-[A-ZÀ-ÖØ-Þ])+$/.test(compact);
+}
+
+/**
+ * Last name of an EndNote-canonical author string. Accepts both forms:
+ *  - "Giese, A.P.J."  (comma form — round 22 canonical)  → "Giese"
+ *  - "Giese APJ"      (legacy PubMed form)               → "Giese"
+ *  - "de Jong SJ"     (multi-word surname, PubMed form)   → "de Jong"
+ * Round 24: the PubMed form previously collapsed to the FIRST token ("de"),
+ * so <Cite><Author> no longer matched the record's own surname and EndNote
+ * rendered the citation INVALID. Trailing initials tokens are now stripped
+ * and the remaining tokens joined ("van der Berg A" → "van der Berg"),
+ * matching the authoritative endnote_docx converter's surname_from_author.
+ * Real EndNote writes only the surname in <Cite><Author> — its author/year
+ * fallback matching expects that form.
  */
 function lastNameOf(author?: string): string | undefined {
   if (!author) return undefined;
-  const first = author.trim().split(/\s+/)[0];
-  return first || undefined;
+  const trimmed = author.trim();
+  // Comma form: everything before the first comma is the last name.
+  const commaIdx = trimmed.indexOf(",");
+  if (commaIdx > 0) return trimmed.slice(0, commaIdx).trim() || undefined;
+  // Corporate form "Group," (trailing comma) — no initials follow.
+  if (trimmed.endsWith(",")) return trimmed.slice(0, -1).trim() || undefined;
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return undefined;
+  if (parts.length === 1) return parts[0];
+  // PubMed form "Surname I.N.I.T." — strip trailing initials tokens, join the
+  // rest (lowercase particles like "de"/"van" survive: they are not initials).
+  let keep = parts.length;
+  while (keep > 1 && isInitialsToken(parts[keep - 1])) keep--;
+  return parts.slice(0, keep).join(" ") || undefined;
 }
 
 function recordXml(rec: EndNoteRecord, lib: EndNoteLibrary): string {
   const parts: string[] = [];
+  // Round 24: <database>/<source-app> removed — real X7.8 CWYW
+  // traveling-library records carry neither element (they exist only in the
+  // EndNote library-XML export format), and the authoritative endnote_docx
+  // converter omits them too. The record starts at <rec-number> exactly like
+  // real EndNote output.
   parts.push(`<rec-number>${rec.n}</rec-number>`);
+  // Round 23: per-record timestamp — real traveling libraries carry the
+  // record's own "added" time, never one shared value. Round 24: the value is
+  // clamped into a forever-past window (see foreignKeyTimestamp).
   parts.push(
-    `<foreign-keys><key app="EN" db-id="${lib.dbId}" timestamp="${lib.timestamp}">${rec.n}</key></foreign-keys>`,
+    `<foreign-keys><key app="EN" db-id="${lib.dbId}" timestamp="${foreignKeyTimestamp(lib, rec)}">${rec.n}</key></foreign-keys>`,
   );
-  // ref-type 17 = Journal Article (all SciWrite refs are journal articles)
-  parts.push(`<ref-type name="Journal Article">17</ref-type>`);
-  if (rec.authors.length > 0) {
+  const refTypeName = rec.refType || "Journal Article";
+  const refTypeNum = refTypeName === "Web Page" ? 12 : 17;
+  parts.push(`<ref-type name="${refTypeName}">${refTypeNum}</ref-type>`);
+  const canonicalAuthors = rec.authors
+    .map((a) => formatAuthorForEndnote(a))
+    .filter(Boolean);
+  if (canonicalAuthors.length > 0) {
     parts.push(
-      `<contributors><authors>${rec.authors.map((a) => el("author", a)).join("")}</authors></contributors>`,
+      `<contributors><authors>${canonicalAuthors.map((a) => el("author", a)).join("")}</authors></contributors>`,
     );
   }
   parts.push(
     `<titles>${el("title", rec.title || `Reference ${rec.n}`)}${el("secondary-title", rec.journal)}</titles>`,
   );
   if (rec.journal) parts.push(`<periodical>${el("full-title", rec.journal)}</periodical>`);
+  if (rec.pages) parts.push(el("pages", rec.pages));
+  if (rec.volume) parts.push(el("volume", rec.volume));
+  if (rec.issue) parts.push(el("number", rec.issue));
   if (rec.year) parts.push(`<dates>${el("year", rec.year)}</dates>`);
-  if (rec.doi) parts.push(el("electronic-resource-num", rec.doi));
+  // Round 23 element order — canonical EndNote order, agreed on by both real
+  // samples (EndNote 15 library export: …isbn → accession-num → notes →
+  // urls; X7.8 CWYW traveling record: …isbn → urls → electronic-resource-num):
+  // accession-num BEFORE urls, electronic-resource-num AFTER urls.
   if (rec.pmid) parts.push(el("accession-num", `PMID:${rec.pmid}`));
   if (rec.url) parts.push(`<urls><related-urls>${el("url", rec.url)}</related-urls></urls>`);
+  if (rec.doi) parts.push(el("electronic-resource-num", rec.doi));
   return `<record>${parts.join("")}</record>`;
 }
 
@@ -261,8 +518,12 @@ function recordXml(rec: EndNoteRecord, lib: EndNoteLibrary): string {
 export function buildEndnoteXml(display: string, records: EndNoteRecord[], lib: EndNoteLibrary): string {
   const cites = records
     .map((r, i) => {
+      // Round 24: derive the header surname from the SAME canonical string the
+      // record serializes ("de Jong, S.J."), so <Cite><Author> can never
+      // disagree with <author> — a disagreeing pair is unmatchable in EndNote.
+      const canonicalFirst = formatAuthorForEndnote(r.authors[0]);
       const head = [
-        el("Author", lastNameOf(r.authors[0])),
+        el("Author", lastNameOf(canonicalFirst) || lastNameOf(r.authors[0])),
         el("Year", r.year),
         `<RecNum>${r.n}</RecNum>`,
         i === 0 ? el("DisplayText", display) : "",
@@ -281,6 +542,54 @@ export function encodeFldData(xml: string): string {
   const lines: string[] = [];
   for (let i = 0; i < b64.length; i += 76) lines.push(b64.slice(i, i + 76));
   return lines.join("\r\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EndNote tagged import file (.enw) — the "EndNote library" export (round 22)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the EndNote tagged import file (.enw) for a set of records.
+ *
+ * A real EndNote library (.enl) is a proprietary database that only EndNote
+ * can create; the interchange format it natively imports is the tagged text
+ * file ("EndNote Import" format). Double-clicking the exported .enw opens
+ * EndNote's import dialog (or File → Import → File, Import Option "EndNote
+ * Import") and adds every reference to the chosen library — with authors
+ * already in canonical "Last, I.N.I.T." form, DOI (%R), PMID (%M),
+ * volume/issue/pages (%V/%N/%P) when known.
+ *
+ * Tag map (EndNote Import format):
+ *   %0 reference type · %A author · %D year · %T title · %J journal ·
+ *   %V volume · %N issue · %P pages · %R DOI (electronic resource number) ·
+ *   %M accession number (PMID) · %U URL
+ */
+export function buildEnwExport(records: EndNoteRecord[]): string {
+  const chunks = records
+    .slice()
+    .sort((a, b) => a.n - b.n)
+    .map((rec) => {
+      const lines: string[] = [];
+      lines.push(`%0 ${rec.refType || "Journal Article"}`);
+      for (const a of rec.authors) {
+        const canon = formatAuthorForEndnote(a);
+        if (canon) lines.push(`%A ${canon}`);
+      }
+      if (rec.year) lines.push(`%D ${rec.year}`);
+      if (rec.title) lines.push(`%T ${rec.title}`);
+      if (rec.journal) lines.push(`%J ${rec.journal}`);
+      if (rec.volume) lines.push(`%V ${rec.volume}`);
+      if (rec.issue) lines.push(`%N ${rec.issue}`);
+      if (rec.pages) lines.push(`%P ${rec.pages}`);
+      if (rec.doi) lines.push(`%R ${rec.doi}`);
+      if (rec.pmid) lines.push(`%M ${rec.pmid}`);
+      if (rec.url) lines.push(`%U ${rec.url}`);
+      return lines.join("\r\n");
+    })
+    .filter(Boolean);
+  // Records are separated by blank lines; CRLF throughout (the format's
+  // native Windows heritage — EndNote's own exports use CRLF).
+  return chunks.length ? chunks.join("\r\n\r\n") + "\r\n" : "";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -315,6 +624,17 @@ function textRun(rpr: string, text: string): string {
 }
 
 /**
+ * A content-free run carrying only the source rPr. Real EndNote X7.8 writes
+ * two of these inside every citation field — one between the nested
+ * EN.CITE.DATA instruction and its end fldChar, one between that end and the
+ * separate marker (leftovers of Word's field-editing bookkeeping). Round 23
+ * reproduces them for byte-level parity with real EndNote output.
+ */
+function emptyRun(rpr: string): string {
+  return `<w:r>${rpr}</w:r>`;
+}
+
+/**
  * Compound ADDIN EN.CITE field wrapping the visible citation run. The nested
  * EN.CITE.DATA field (with the base64 record payload) lives entirely inside
  * the outer field's instruction section, exactly as EndNote writes it. The
@@ -330,12 +650,16 @@ function citationFieldXml(
   lib: EndNoteLibrary,
 ): string {
   const data = encodeFldData(buildEndnoteXml(display, records, lib));
+  // Run sequence byte-identical to real EndNote X7.8, including the two
+  // content-free runs (see emptyRun).
   return [
     fldCharRun(rpr, "begin", data),
     instrRun(rpr, " ADDIN EN.CITE "),
     fldCharRun(rpr, "begin", data),
     instrRun(rpr, " ADDIN EN.CITE.DATA "),
+    emptyRun(rpr),
     fldCharRun(rpr, "end"),
+    emptyRun(rpr),
     fldCharRun(rpr, "separate"),
     visibleRunXml,
     fldCharRun(rpr, "end"),

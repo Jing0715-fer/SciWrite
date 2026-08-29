@@ -33,7 +33,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
 import { api } from "@/lib/api-client";
 import {
@@ -160,9 +159,9 @@ export function TopicComposer({
             // v73-3: Show final citation-health status to user
             if (event === "step" && data.errorFree !== undefined) {
               if (data.errorFree) {
-                toast.success(`✅ Article ready: 0 blocking errors, ${data.finalWarnings || 0} warnings`);
+                toast.success(`✓ Article ready: 0 blocking errors, ${data.finalWarnings || 0} warnings`);
               } else {
-                toast.warning(`⚠️ ${data.finalBlocking || 0} blocking errors remain. Run auto-fix from Citation Health tab.`);
+                toast.warning(`⚠ ${data.finalBlocking || 0} blocking errors remain. Run auto-fix from Citation Health tab.`);
               }
             }
           }
@@ -236,7 +235,7 @@ export function TopicComposer({
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 min-h-0 scroll-academic">
+        <div className="flex-1 min-h-0 overflow-y-auto scroll-academic">
           <div className="px-6 py-4 space-y-4">
             {/* Generation mode selector — v86-1: Enhanced with gradient + icons */}
             <div className="flex gap-1 p-1 rounded-lg bg-muted/50 border border-border/30">
@@ -532,7 +531,7 @@ export function TopicComposer({
               </div>
             )}
           </div>
-        </ScrollArea>
+        </div>
 
         <DialogFooter className="px-6 py-3 border-t border-border/60 gap-2">
           {!generated || generated === "__STREAMING__" ? (

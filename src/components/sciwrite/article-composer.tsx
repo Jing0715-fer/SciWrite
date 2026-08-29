@@ -17,7 +17,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
   DialogContent,
@@ -118,7 +117,7 @@ export function ArticleComposer({
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 min-h-0 scroll-academic">
+        <div className="flex-1 min-h-0 overflow-y-auto scroll-academic">
           <div className="px-6 py-4 space-y-4">
             <div className="space-y-1.5">
               <Label className="text-xs">{t("compose.articleTitle")}</Label>
@@ -207,7 +206,7 @@ export function ArticleComposer({
               </div>
             </div>
           </div>
-        </ScrollArea>
+        </div>
 
         <DialogFooter className="px-6 py-3 border-t border-border/60">
           <Button
@@ -251,11 +250,11 @@ export function ArticleViewer({
             </DialogDescription>
           )}
         </DialogHeader>
-        <ScrollArea className="flex-1 min-h-0 scroll-academic">
+        <div className="flex-1 min-h-0 overflow-y-auto scroll-academic">
           <div className="px-8 py-5">
             <MarkdownCitations content={article.content} className="text-[13.5px]" />
           </div>
-        </ScrollArea>
+        </div>
         <div className="px-6 py-3 border-t border-border/60 flex items-center justify-end gap-2">
           <Button
             variant="outline"

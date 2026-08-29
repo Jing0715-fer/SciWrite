@@ -28,6 +28,18 @@ import { spawn, execSync } from "node:child_process";
 import { existsSync, writeFileSync, readFileSync, unlinkSync, statSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  PROVIDER_CATALOG,
+  getProviderProfile,
+  type ProviderProfile,
+} from "@/lib/provider-catalog";
+import {
+  resolveApiKey,
+  resolveBaseURL,
+  resolveDefaultModel,
+  isApiProviderAvailable,
+} from "@/lib/api-provider-config";
+import { stripReasoning } from "@/lib/writing";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -127,9 +139,41 @@ const CLI_ADAPTERS: CliAdapter[] = [
     id: "hermes",
     label: "Hermes CLI",
     bin: "hermes",
-    icon: "🪶",
+    icon: "feather",
     wslBin: "hermes",
     probeArgs: ["--version"],
+    // FIX (detection): hermes frequently lives outside the dev server's PATH
+    // (Python venv install / pip --user). Probe the well-known locations
+    // before falling back to PATH lookup so detection works even when the
+    // Next.js server process was started with a minimal environment.
+    extraProbePaths: (() => {
+      const home = process.env.HOME || process.env.USERPROFILE || "";
+      const paths: string[] = [];
+      if (process.platform === "win32") {
+        if (home) {
+          paths.push(
+            `${home}\\.hermes\\bin\\hermes.exe`,
+            `${home}\\hermes\\Scripts\\hermes.exe`,
+            `${home}\\venvs\\hermes\\Scripts\\hermes.exe`,
+            `${home}\\AppData\\Roaming\\Python\\Scripts\\hermes.exe`,
+          );
+          for (const py of ["Python313", "Python312", "Python311", "Python310"]) {
+            paths.push(`${home}\\AppData\\Local\\Programs\\Python\\${py}\\Scripts\\hermes.exe`);
+          }
+        }
+      } else {
+        if (home) {
+          paths.push(
+            `${home}/.hermes/bin/hermes`,
+            `${home}/.local/bin/hermes`,
+            `${home}/venvs/hermes/bin/hermes`,
+            `${home}/.bun/bin/hermes`,
+          );
+        }
+        paths.push("/usr/local/bin/hermes", "/opt/homebrew/bin/hermes");
+      }
+      return paths;
+    })(),
     callArgs: (q) => ["chat", "-q", q, "-Q"],
     outputStream: "both",
     stripBanner: (raw) => raw.replace(HERMES_BANNER_RE, "").trim(),
@@ -154,48 +198,91 @@ const CLI_ADAPTERS: CliAdapter[] = [
     id: "claude",
     label: "Claude Code CLI",
     bin: "claude",
-    icon: "🟠",
+    icon: "sparkle",
     wslBin: "claude",
     probeArgs: ["--version"],
-    // --output-format json emits a JSON envelope per turn; --resume <sid>
-    // reuses an existing session. Same wire shape as codebuddy because the
-    // two CLIs share a common ancestor — extractContent + parseSessionId
-    // can reuse the same regex/strategy.
-    callArgs: (q) => ["-p", q, "--no-stream", "--output-format", "json"],
+    // Claude Code's native installer puts the binary in ~/.claude/local —
+    // usually NOT on the dev server's PATH.
+    extraProbePaths: (() => {
+      const home = process.env.HOME || process.env.USERPROFILE || "";
+      const paths: string[] = [];
+      if (home) {
+        if (process.platform === "win32") {
+          paths.push(`${home}\\.claude\\local\\claude.exe`, `${home}\\.bun\\bin\\claude.exe`);
+        } else {
+          paths.push(`${home}/.claude/local/claude`, `${home}/.bun/bin/claude`, `${home}/.local/bin/claude`);
+        }
+      }
+      return paths;
+    })(),
+    // --output-format json emits a SINGLE JSON result envelope per turn
+    // (Claude-Code wire shape: {type:"result", result:"...", session_id});
+    // --resume <sid> reuses an existing session. Same wire shape as codebuddy
+    // because the two CLIs share a common ancestor.
+    callArgs: (q) => ["-p", q, "--output-format", "json"],
     outputStream: "stdout",
     probeTimeoutMs: 15_000,
     callTimeoutMs: 240_000,
+    // Claude Code's result envelope carries the session id as `session_id`
+    // (snake_case). Older builds / forks use camelCase `sessionId` — match both.
     parseSessionId: (raw) => {
-      const m = raw.match(/"sessionId"\s*:\s*"([a-f0-9-]{8,})"/i);
+      const m =
+        raw.match(/"session_id"\s*:\s*"([a-zA-Z0-9_-]{8,})"/i) ||
+        raw.match(/"sessionId"\s*:\s*"([a-f0-9-]{8,})"/i);
       return m ? m[1] : null;
     },
     resumeArg: (sessionId) => ["--resume", sessionId],
+    // FIX: the envelope is a single JSON OBJECT (not an array) — the previous
+    // array-only parser fell through to `raw.trim()` and returned the whole
+    // JSON envelope as the "answer". Now: single object `.result` → array of
+    // envelopes → NDJSON lines → raw fallback.
     extractContent: (raw) => {
+      const trimmed = raw.trim();
       try {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) {
-          for (let i = arr.length - 1; i >= 0; i--) {
-            const ev = arr[i];
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          for (let i = parsed.length - 1; i >= 0; i--) {
+            const ev = parsed[i];
             if (ev?.type === "result" && typeof ev.result === "string") return ev.result;
           }
-          for (let i = arr.length - 1; i >= 0; i--) {
-            const ev = arr[i];
+          for (let i = parsed.length - 1; i >= 0; i--) {
+            const ev = parsed[i];
             if (ev?.type === "assistant" && Array.isArray(ev.message?.content)) {
               const blocks = ev.message.content.filter((b: any) => b?.type === "text");
               const lastText = blocks[blocks.length - 1]?.text;
-              if (typeof lastText === "string") return lastText;
+              if (typeof lastText === "string" && lastText) return lastText;
             }
           }
+          return trimmed;
+        }
+        if (parsed && typeof parsed === "object") {
+          if (typeof parsed.result === "string" && parsed.result) return parsed.result;
+          const content = parsed?.message?.content ?? parsed?.content;
+          if (Array.isArray(content)) {
+            const blocks = content.filter((b: any) => b?.type === "text");
+            const lastText = blocks[blocks.length - 1]?.text;
+            if (typeof lastText === "string" && lastText) return lastText;
+          }
+          if (typeof content === "string" && content) return content;
         }
       } catch {}
-      return raw.trim();
+      const lines = trimmed.split(/\r?\n/);
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (!line.startsWith("{")) continue;
+        try {
+          const ev = JSON.parse(line);
+          if (ev?.type === "result" && typeof ev.result === "string") return ev.result;
+        } catch {}
+      }
+      return trimmed;
     },
   },
   {
     id: "codex",
     label: "Codex CLI",
     bin: "codex",
-    icon: "🟢",
+    icon: "terminal",
     wslBin: "codex",
     probeArgs: ["--version"],
     extraProbePaths: (() => {
@@ -268,7 +355,7 @@ const CLI_ADAPTERS: CliAdapter[] = [
     id: "openclaw",
     label: "OpenClaw CLI",
     bin: "openclaw",
-    icon: "🦅",
+    icon: "bird",
     wslBin: "openclaw",
     probeArgs: ["--version"],
     callArgs: (q) => ["llm", "chat", "--no-stream", q],
@@ -280,7 +367,7 @@ const CLI_ADAPTERS: CliAdapter[] = [
     id: "gemini",
     label: "Gemini CLI",
     bin: "gemini",
-    icon: "♊",
+    icon: "gem",
     wslBin: "gemini",
     probeArgs: ["--version"],
     callArgs: (q) => [q],
@@ -291,7 +378,7 @@ const CLI_ADAPTERS: CliAdapter[] = [
   {
     id: "codebuddy",
     label: "Codebuddy / WorkBuddy CLI",
-    icon: "🐼",
+    icon: "paw-print",
     bin: "codebuddy",
     needsNode: true,
     extraProbePaths: [
@@ -303,46 +390,88 @@ const CLI_ADAPTERS: CliAdapter[] = [
     ],
     callArgs: (q, model) => {
       const m = model || process.env.CODEBUDDY_MODEL || "deepseek-v4-pro";
-      // --output-format json prints the full message envelope to stdout so we can
-      // pull the sessionId. --resume <id> reuses the existing session on the
-      // next call. Both are added at the call site (callAnyLlm) when the
-      // adapter's resumeArg/parseSessionId hooks are present.
-      return ["--print", "--output-format", "json", "--model", m, q];
+      // FIX (call errors, per official CodeBuddy CLI docs):
+      //  ① `-y` is REQUIRED for `-p/--print` non-interactive mode — without
+      //    it every operation that needs authorization (file read/write,
+      //    command exec, network) is BLOCKED and the turn errors out
+      //    ("重要提示：-y（或 --dangerously-skip-permissions）是非交互模式的
+      //    必需参数").
+      //  ② `--output-format json` emits a single JSON result envelope
+      //    (Claude-Code style `{type:"result", result:"...", session_id}`),
+      //    handled by extractContent below.
+      // Note: in -p mode codebuddy ALWAYS authenticates model API calls with
+      // the CODEBUDDY_API_KEY env var (interactive login tokens are not used)
+      // — surfaced as a hint in the LLM config dialog.
+      return ["-p", "-y", "--output-format", "json", "--model", m, q];
     },
     outputStream: "stdout",
-    // codebuddy prints `{"type":"message", ... "sessionId":"<uuid>", ...}` for
-    // every message. We pull the first match so the same remote session is
-    // resumed on the next call. Falls back to null on malformed JSON.
+    // codebuddy's `--output-format json` result envelope carries the session
+    // id as `session_id` (snake_case, Claude-Code wire format). Older builds
+    // used camelCase `sessionId` — match both so resume keeps working across
+    // versions.
     parseSessionId: (raw) => {
-      const m = raw.match(/"sessionId"\s*:\s*"([a-f0-9-]{8,})"/i);
+      const m =
+        raw.match(/"session_id"\s*:\s*"([a-zA-Z0-9_-]{8,})"/i) ||
+        raw.match(/"sessionId"\s*:\s*"([a-f0-9-]{8,})"/i);
       return m ? m[1] : null;
     },
     resumeArg: (sessionId) => ["--resume", sessionId],
-    // --output-format json emits a JSON array of envelopes. The actual LLM
-    // answer lives in the LAST `assistant` message's last text block (after
-    // any `thinking` blocks). Walk backwards so trailing text wins. Falls
-    // back to the trimmed raw output if no assistant text is found, so a
-    // future codebuddy format change won't silently break us.
+    // `--output-format json` emits a SINGLE JSON result envelope (not an
+    // array — that was the pre-2.0 stream shape). Handle, in order:
+    //  1. single object → `.result` string (final answer) → fallback to
+    //     assistant message content blocks
+    //  2. array of envelopes (older versions / stream-json) → last
+    //     `result` event → last assistant message's last text block
+    //  3. NDJSON lines (stream-json printed line-wise) → last parsable
+    //     result/assistant line
+    //  4. raw trimmed output (never silently break on format changes)
     extractContent: (raw) => {
+      const trimmed = raw.trim();
       try {
-        const arr = JSON.parse(raw);
-        if (!Array.isArray(arr)) return raw.trim();
-        // Last "result" event carries the final answer in .result.
-        for (let i = arr.length - 1; i >= 0; i--) {
-          const ev = arr[i];
-          if (ev?.type === "result" && typeof ev.result === "string") return ev.result;
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          for (let i = parsed.length - 1; i >= 0; i--) {
+            const ev = parsed[i];
+            if (ev?.type === "result" && typeof ev.result === "string") return ev.result;
+          }
+          for (let i = parsed.length - 1; i >= 0; i--) {
+            const ev = parsed[i];
+            if (ev?.type === "assistant" && Array.isArray(ev.message?.content)) {
+              const blocks = ev.message.content.filter((b: any) => b?.type === "text");
+              const lastText = blocks[blocks.length - 1]?.text;
+              if (typeof lastText === "string" && lastText) return lastText;
+            }
+          }
+          return trimmed;
         }
-        // Last assistant message's last text block.
-        for (let i = arr.length - 1; i >= 0; i--) {
-          const ev = arr[i];
+        if (parsed && typeof parsed === "object") {
+          if (typeof parsed.result === "string" && parsed.result) return parsed.result;
+          if (typeof parsed.text === "string" && parsed.text) return parsed.text;
+          const content = parsed?.message?.content ?? parsed?.content;
+          if (Array.isArray(content)) {
+            const blocks = content.filter((b: any) => b?.type === "text");
+            const lastText = blocks[blocks.length - 1]?.text;
+            if (typeof lastText === "string" && lastText) return lastText;
+          }
+          if (typeof content === "string" && content) return content;
+        }
+      } catch {}
+      // NDJSON fallback: last line that parses to a result/assistant event.
+      const lines = trimmed.split(/\r?\n/);
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (!line.startsWith("{")) continue;
+        try {
+          const ev = JSON.parse(line);
+          if (ev?.type === "result" && typeof ev.result === "string") return ev.result;
           if (ev?.type === "assistant" && Array.isArray(ev.message?.content)) {
             const blocks = ev.message.content.filter((b: any) => b?.type === "text");
             const lastText = blocks[blocks.length - 1]?.text;
-            if (typeof lastText === "string") return lastText;
+            if (typeof lastText === "string" && lastText) return lastText;
           }
-        }
-      } catch {}
-      return raw.trim();
+        } catch {}
+      }
+      return trimmed;
     },
     probeTimeoutMs: 15_000,
     callTimeoutMs: 240_000,
@@ -352,7 +481,7 @@ const CLI_ADAPTERS: CliAdapter[] = [
     id: "aider",
     label: "Aider CLI",
     bin: "aider",
-    icon: "🛠️",
+    icon: "wrench",
     wslBin: "aider",
     probeArgs: ["--version"],
     callArgs: (q) => ["--message", q, "--no-git", "--yes", "--no-auto-commits"],
@@ -422,9 +551,23 @@ function wslRegistryInfo(): { defaultDistro: string; distros: string[] } | null 
   }
 }
 
-/** Resolve the WSL distro name to invoke. Priority: WSL_DISTRO env > registry default > "Debian". */
+/** Resolve the WSL distro name to invoke.
+ *
+ * FIX (hardcoded "Debian" bug): WSL probing previously always targeted
+ * "Debian" — on machines whose default distro is Ubuntu (or anything else)
+ * `wsl.exe -d Debian -- true` failed, so `wslAvailable()` returned false and
+ * EVERY CLI installed inside WSL silently became undetectable ("重新检测也没
+ * 有用" — the re-detect re-probed the same nonexistent distro). Now the
+ * registry's *default* distro is used, with the WSL_DISTRO env override kept
+ * for explicit targeting.
+ */
 function wslTargetDistro(): string {
-  return process.env.WSL_DISTRO || "Debian";
+  if (process.env.WSL_DISTRO) return process.env.WSL_DISTRO;
+  try {
+    const info = wslRegistryInfo();
+    if (info?.defaultDistro) return info.defaultDistro;
+  } catch {}
+  return "Debian";
 }
 
 /** Lightweight readiness check — runs `true` in the default distro. */
@@ -461,7 +604,7 @@ function runInWsl(
   timeoutMs = 300_000,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const distro = wslTargetDistro();
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     let done = false;
     const finish = (code: number, stdout: string, stderr: string) => {
       if (done) return;
@@ -610,19 +753,25 @@ async function probeCli(adapter: CliAdapter): Promise<ProbeOk | ProbeErr> {
     // subsequent `node` interpreter only fires for adapters flagged
     // needsNode (WorkBuddy codebuddy etc.); non-node CLIs spawn their bin
     // directly with the appropriate shell flag.
+    //
+    // FIX (.cmd + needsNode): when a needsNode adapter's binary resolves to
+    // a .cmd/.bat shim (e.g. codebuddy ALSO npm-installed globally), spawning
+    // `node <file.cmd>` fails cryptically ("Unknown file extension"). In that
+    // case drop the node wrapper and run the shim through the shell instead.
     const isCmdBatch = process.platform === "win32" && /\.(cmd|bat)$/i.test(bin);
+    const useNode = adapter.needsNode && !isCmdBatch;
     const nodeBin = process.platform === "win32" ? "node.exe" : "node";
     // Guard: Windows CreateProcessW cmdline limit ~32KB. Detect up front
     // and surface a clear "prompt too long" error instead of the cryptic
     // ENAMETOOLONG that Node's child_process throws.
     if (process.platform === "win32") {
-      const fullArgv = adapter.needsNode ? [bin, ...args] : [bin, ...args];
+      const fullArgv = [bin, ...args];
       const cmdlineLen = fullArgv.reduce((s, x) => s + x.length + 1, 0);
       if (cmdlineLen > 30000) {
         return resolve({ ok: false, reason: `${adapter.label} probe prompt too long for Windows spawn (cmdline ${cmdlineLen} chars)` });
       }
     }
-    const child = adapter.needsNode
+    const child = useNode
       ? spawn(nodeBin, [bin, ...args], {
           stdio: ["ignore", "pipe", "pipe"],
           env: { ...process.env, ...adapter.extraEnv },
@@ -694,7 +843,11 @@ try {
 } catch {}
 const DISK_CACHE_FILE = join(_CACHE_DIR, "llm-providers-cache.json");
 const DISK_CACHE_VERSION = 1;
-const DISK_TTL_MS = 144 * 60 * 60_000; // 144 hours (6 days)
+// 48h — was 144h (6 days). Negative probe results were cached for almost a
+// week, so a CLI installed after the last probe stayed invisible far too long.
+// Positive results are still validated with existsSync on every read, so the
+// shorter TTL only costs an occasional re-probe.
+const DISK_TTL_MS = 48 * 60 * 60_000;
 
 interface CachedProvider {
   id: string;
@@ -898,14 +1051,21 @@ export interface InspectProvidersOptions {
   showUnavailable?: boolean;
   /** Optional list of provider ids the user has whitelisted (others hidden). */
   whitelist?: string[];
+  /** When true, skip the in-process + disk probe cache and re-probe every CLI
+   *  adapter live. This is what makes the dialog's “重新检测” button actually
+   *  re-detect (previously a second route handler could serve a stale
+   *  in-process cache for up to 5 minutes, so re-detection did nothing). */
+  force?: boolean;
 }
 
-export async function inspectProviders(opts: InspectProvidersOptions = {}): Promise<{
+export async function inspectProviders(
+  opts: InspectProvidersOptions = {},
+): Promise<{
   chosen: string;
   available: LlmProviderInfo[];
   totalClisScanned: number;
 }> {
-  const probes = await probeAll();
+  const probes = await probeAll(opts.force === true);
   const available: LlmProviderInfo[] = [];
   let totalClisScanned = 0;
 
@@ -957,7 +1117,7 @@ export async function inspectProviders(opts: InspectProvidersOptions = {}): Prom
   available.push({
     provider: "anthropic",
     bin: null,
-    icon: "🤖",
+    icon: "bot",
     label: "Anthropic SDK",
     reason: anthropicAvailable ? "ANTHROPIC_API_KEY is set" : "ANTHROPIC_API_KEY not set",
     available: anthropicAvailable,
@@ -968,7 +1128,7 @@ export async function inspectProviders(opts: InspectProvidersOptions = {}): Prom
   available.push({
     provider: "openai",
     bin: null,
-    icon: "🧠",
+    icon: "brain",
     label: "OpenAI SDK",
     reason: openaiAvailable ? "OPENAI_API_KEY is set" : "OPENAI_API_KEY not set",
     available: openaiAvailable,
@@ -982,7 +1142,7 @@ export async function inspectProviders(opts: InspectProvidersOptions = {}): Prom
   available.push({
     provider: "zai-sdk",
     bin: null,
-    icon: "🧊",
+    icon: "snowflake",
     label: "z-ai-web-dev-sdk",
     reason: zaiSdkAvailable
       ? "z-ai-web-dev-sdk installed (SciWrite default)"
@@ -990,6 +1150,29 @@ export async function inspectProviders(opts: InspectProvidersOptions = {}): Prom
     available: zaiSdkAvailable,
     via: "sdk",
   });
+
+  // ── OpenAI-compatible API providers (DSH-mode catalog) ──
+  // A catalog provider is *available* once an API key is configured via the
+  // LLM Config dialog (persisted at ~/.sciwrite/api-providers.json) or set in
+  // its conventional env var. Local runtimes (Ollama) count as available
+  // without a key.
+  for (const profile of PROVIDER_CATALOG) {
+    const hasKey = isApiProviderAvailable(profile.id);
+    const cfgReason = hasKey
+      ? profile.apiKeyOptional
+        ? `${profile.displayName} endpoint (local runtime — no key needed)`
+        : `${profile.displayName} API key configured`
+      : `No API key — configure in LLM Config → API Providers (or set ${profile.apiKeyEnv})`;
+    available.push({
+      provider: `api:${profile.id}`,
+      bin: null,
+      icon: profile.icon,
+      label: `${profile.displayName} (API)`,
+      reason: cfgReason,
+      available: hasKey,
+      via: "sdk",
+    });
+  }
 
   const chosen = available.find((p) => p.available)?.provider || "zai-sdk";
   const showAll = !!opts.showUnavailable;
@@ -1085,7 +1268,10 @@ async function callAnyLlm(
           via === "wsl"
             ? await runCliInWsl(adapter, probe.bin, prompt, cfg.model, adapterSessionId)
             : await runCli(adapter, probe.bin, prompt, cfg.model, adapterSessionId);
-        const text = result.text;
+        // Reasoning models behind CLI adapters may print <think> blocks in
+        // stdout — strip before the text reaches any consumer.
+        const text = stripReasoning(result.text).trim();
+        if (!text) throw new Error("returned only reasoning (<think>) content with no final answer");
         return {
           ok: true,
           content: text,
@@ -1113,7 +1299,10 @@ async function callAnyLlm(
       }
       try {
         const t0 = Date.now();
-        const text = await callAnthropic(prompt, cfg.system, cfg.model, { temperature: cfg.temperature, maxTokens: cfg.maxTokens });
+        const text = stripReasoning(
+          await callAnthropic(prompt, cfg.system, cfg.model, { temperature: cfg.temperature, maxTokens: cfg.maxTokens }),
+        ).trim();
+        if (!text) throw new Error("returned only reasoning (<think>) content with no final answer");
         return {
           ok: true,
           content: text,
@@ -1128,6 +1317,49 @@ async function callAnyLlm(
         continue;
       }
     }
+    // ── OpenAI-compatible API providers (DSH-mode catalog) ──
+    // `api:<catalogId>` — direct fetch against the provider's
+    // /chat/completions endpoint using the stored/edited baseURL + key.
+    // Only reached when explicitly selected (see decideProviderOrder — api
+    // providers sit after zai-sdk in auto mode so they never silently burn
+    // the user's API credits as a fallback).
+    if (id.startsWith("api:")) {
+      const profile = getProviderProfile(id.slice("api:".length));
+      if (!profile) {
+        errors.push(`${id}: unknown catalog provider`);
+        continue;
+      }
+      if (!isApiProviderAvailable(profile.id)) {
+        errors.push(
+          `${id}: no API key configured — set one in LLM Config → API Providers (or ${profile.apiKeyEnv})`,
+        );
+        continue;
+      }
+      try {
+        const t0 = Date.now();
+        const model = cfg.model || resolveDefaultModel(profile.id) || profile.defaultModel;
+        const text = stripReasoning(
+          await callOpenAiCompat(profile, prompt, cfg.system, model, {
+            temperature: cfg.temperature,
+            maxTokens: cfg.maxTokens,
+          }),
+        ).trim();
+        if (!text) throw new Error("returned only reasoning (<think>) content with no final answer");
+        return {
+          ok: true,
+          content: text,
+          text,
+          provider: id,
+          model,
+          durationMs: Date.now() - t0,
+          fallback: item.fallback,
+          meta: { baseURL: resolveBaseURL(profile.id) },
+        };
+      } catch (err: any) {
+        errors.push(`${id}: ${err?.message ?? String(err)}`);
+        continue;
+      }
+    }
     if (id === "openai") {
       if (!process.env.OPENAI_API_KEY) {
         errors.push("openai: OPENAI_API_KEY not set");
@@ -1135,7 +1367,10 @@ async function callAnyLlm(
       }
       try {
         const t0 = Date.now();
-        const text = await callOpenai(prompt, cfg.system, cfg.model, { temperature: cfg.temperature, maxTokens: cfg.maxTokens });
+        const text = stripReasoning(
+          await callOpenai(prompt, cfg.system, cfg.model, { temperature: cfg.temperature, maxTokens: cfg.maxTokens }),
+        ).trim();
+        if (!text) throw new Error("returned only reasoning (<think>) content with no final answer");
         return {
           ok: true,
           content: text,
@@ -1154,7 +1389,10 @@ async function callAnyLlm(
     if (id === "zai-sdk") {
       try {
         const t0 = Date.now();
-        const text = await callZai(prompt, cfg.system, cfg.model, { temperature: cfg.temperature, maxTokens: cfg.maxTokens });
+        const text = stripReasoning(
+          await callZai(prompt, cfg.system, cfg.model, { temperature: cfg.temperature, maxTokens: cfg.maxTokens }),
+        ).trim();
+        if (!text) throw new Error("returned only reasoning (<think>) content with no final answer");
         return {
           ok: true,
           content: text,
@@ -1199,6 +1437,15 @@ function decideProviderOrder(requested: string, _model?: string): OrderedProvide
   auto.push({ id: "openai", fallback: true });
   // z-ai SDK — always-available fallback candidate (SciWrite default)
   auto.push({ id: "zai-sdk", fallback: requested !== "zai-sdk" });
+  // OpenAI-compatible API providers go LAST in auto mode: they cost real
+  // money per call, so they must never be picked as a silent fallback ahead
+  // of the free z-ai-sdk default. They run when explicitly selected
+  // (`api:deepseek` etc.) — and if that call fails the walk continues to
+  // whatever sits after it (nothing, in auto order → hard failure with the
+  // provider's real error, which is the honest outcome).
+  for (const p of PROVIDER_CATALOG) {
+    auto.push({ id: `api:${p.id}`, fallback: requested !== `api:${p.id}` });
+  }
 
   if (!requested || requested === "auto") {
     return auto.map((p) => ({ ...p, fallback: false }));
@@ -1254,7 +1501,6 @@ function runCli(
   }
 
   return new Promise<{ text: string; sessionId: string | null }>((resolve, reject) => {
-    const isCmdBatch = process.platform === "win32" && /\.(cmd|bat)$/i.test(bin);
     // For Node shims (e.g. codebuddy) prefer spawning `node` directly; under
     // bun-exec the shebang lookup mis-fires and the next call leaks handles.
     // Guard: CLI providers pass the prompt as a command-line argument to
@@ -1263,7 +1509,7 @@ function runCli(
     // envp must fit within ARG_MAX (~2MB). In practice, prompts >24KB
     // cause ENAMETOOLONG on some CLI providers (codebuddy, hermes).
     // Detect up front and surface a clear error.
-    const fullArgv = adapter.needsNode ? [bin, ...args] : [bin, ...args];
+    const fullArgv = [bin, ...args];
     const cmdlineLen = fullArgv.reduce((s, x) => s + x.length + 1, 0);
     if (cmdlineLen > 30000) {
       const promptArg = args.find((a) => a.length > 100);
@@ -1275,7 +1521,12 @@ function runCli(
         ),
       );
     }
-    const child = adapter.needsNode
+    // FIX (.cmd + needsNode): a needsNode adapter whose binary resolved to a
+    // .cmd/.bat shim must NOT be spawned through `node` (node cannot execute
+    // .cmd files) — run the shim directly through the shell instead.
+    const isCmdBatch = process.platform === "win32" && /\.(cmd|bat)$/i.test(bin);
+    const useNode = adapter.needsNode && !isCmdBatch;
+    const child = useNode
       ? spawn("node", [bin, ...args], {
           stdio: ["ignore", "pipe", "pipe"],
           env: { ...process.env, ...adapter.extraEnv },
@@ -1441,8 +1692,8 @@ async function callAnthropic(prompt: string, system?: string, model?: string, op
     system: system || "You are a helpful assistant.",
     messages: [{ role: "user", content: prompt }],
   });
-  const block = resp.content?.[0];
-  return (block && block.type === "text" ? block.text : "") || "";
+  const block = resp.content?.find((b: any) => b?.type === "text");
+  return (block?.text as string) || "";
 }
 
 async function callOpenai(prompt: string, system?: string, model?: string, opts?: { temperature?: number; maxTokens?: number }): Promise<string> {
@@ -1468,7 +1719,12 @@ async function callOpenai(prompt: string, system?: string, model?: string, opts?
  * self-contained and the dispatch logic doesn't need a separate wiring step.
  */
 async function callZai(prompt: string, system?: string, model?: string, opts?: { temperature?: number; maxTokens?: number }): Promise<string> {
-  const ZAI = (await (eval("import"))("z-ai-web-dev-sdk")).default;
+  // FIX: the previous `eval("import")("z-ai-web-dev-sdk")` hack throws
+  // "Cannot use import statement outside a module" inside webpack-compiled
+  // API routes — the zai-sdk fallback branch of callAnyLlm never actually
+  // worked. A plain dynamic import is bundled natively and resolves fine
+  // (same package ai.ts imports statically).
+  const { default: ZAI } = await import("z-ai-web-dev-sdk");
   const zai = await ZAI.create();
   const resp = await zai.chat.completions.create({
     model: model || "glm-4.6",
@@ -1481,4 +1737,124 @@ async function callZai(prompt: string, system?: string, model?: string, opts?: {
     thinking: { type: "disabled" as const },
   });
   return resp.choices?.[0]?.message?.content || "";
+}
+
+// ─── OpenAI-compatible API providers (DSH-mode catalog) ───────────────────────
+//
+// Generic adapter for any OpenAI-compatible /chat/completions endpoint —
+// DeepSeek, OpenAI, Qwen, Moonshot, Zhipu, SiliconFlow, Together, OpenRouter,
+// Ollama, and any custom gateway the user points the base URL at. Ported from
+// pdb-tracker-web-v5's OpenAICompatAdapter (DSH mode), adapted to SciWrite's
+// direct-fetch style (same as callAnthropic/callOpenai above). Anthropic's
+// auth flavor (x-api-key + anthropic-version) is expressed through the
+// profile's authHeader/authPrefix/extraHeaders fields.
+
+const API_PROVIDER_TIMEOUT_MS = Number(process.env.API_PROVIDER_TIMEOUT_MS) || 240_000;
+
+export async function callOpenAiCompat(
+  profile: ProviderProfile,
+  prompt: string,
+  system?: string,
+  model?: string,
+  opts?: { temperature?: number; maxTokens?: number; apiKeyOverride?: string; baseURLOverride?: string },
+): Promise<string> {
+  const apiKey = opts?.apiKeyOverride?.trim() || resolveApiKey(profile.id);
+  if (!apiKey) {
+    throw new Error(
+      `No API key configured for ${profile.displayName}. Set it in LLM Config → API Providers or the ${profile.apiKeyEnv} env var.`,
+    );
+  }
+  const base = (opts?.baseURLOverride?.trim() || resolveBaseURL(profile.id) || profile.baseURL).replace(/\/+$/, "");
+  const url = `${base}/chat/completions`;
+
+  const authHeader = profile.authHeader ?? "Authorization";
+  const authPrefix = profile.authPrefix ?? "Bearer ";
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    [authHeader]: `${authPrefix}${apiKey}`,
+    ...(profile.extraHeaders ?? {}),
+  };
+
+  const body: Record<string, unknown> = {
+    model: model || profile.defaultModel,
+    messages: [
+      ...(system ? [{ role: "system", content: system }] : []),
+      { role: "user", content: prompt },
+    ],
+    ...(opts?.temperature !== undefined ? { temperature: opts.temperature } : {}),
+    ...(opts?.maxTokens ? { max_tokens: Math.min(opts.maxTokens, 32768) } : {}),
+    stream: false,
+  };
+
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(API_PROVIDER_TIMEOUT_MS),
+    });
+  } catch (err: any) {
+    if (err?.name === "TimeoutError" || err?.name === "AbortError") {
+      throw new Error(
+        `${profile.displayName} request timed out after ${Math.round(API_PROVIDER_TIMEOUT_MS / 1000)}s (${url})`,
+      );
+    }
+    throw new Error(
+      `${profile.displayName} fetch failed: ${err?.message ?? String(err)} — check the base URL (${base}) and your network`,
+    );
+  }
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => resp.statusText);
+    const isHtml = errText.trimStart().startsWith("<");
+    throw new Error(
+      isHtml
+        ? `${profile.displayName} API error ${resp.status}: server returned HTML instead of JSON — the base URL (${base}) is probably wrong`
+        : `${profile.displayName} API error ${resp.status}: ${errText.slice(0, 300)}`,
+    );
+  }
+
+  let raw: string;
+  try {
+    raw = await resp.text();
+  } catch (err: any) {
+    throw new Error(`${profile.displayName} failed reading response body: ${err?.message ?? String(err)}`);
+  }
+  // Some gateways return HTML error pages even with a 200 status.
+  if (raw.trimStart().startsWith("<")) {
+    throw new Error(
+      `${profile.displayName} API returned HTML instead of JSON — the base URL (${base}) is probably wrong`,
+    );
+  }
+  let json: any;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    throw new Error(`${profile.displayName} API returned invalid JSON response`);
+  }
+
+  const choice = json?.choices?.[0];
+  const rawContent = choice?.message?.content;
+  // Reasoning models (MiniMax-M3, DeepSeek-R1 distills, QwQ ...) emit their
+  // chain-of-thought INLINE in content wrapped in <think>...</think> tags —
+  // strip it here so even direct callers (provider test route) get clean text.
+  const content = typeof rawContent === "string" ? stripReasoning(rawContent) : "";
+  if (content.trim().length > 0) return content;
+  // Reasoning models may fill ONLY reasoning_content (the thinking channel)
+  // when the final answer is empty — usually a truncation (max_tokens hit
+  // mid-think). That text is chain-of-thought, NEVER article content: return
+  // an error so the provider fallback chain can move on honestly instead of
+  // writing thinking into the article (the exact bug observed with minimax-M3).
+  const reasoning = choice?.message?.reasoning_content;
+  if (typeof reasoning === "string" && reasoning.trim().length > 0) {
+    throw new Error(
+      "returned only reasoning content with no final answer (finish_reason=" +
+        (choice?.finish_reason ?? "unknown") +
+        ") — the model was likely truncated mid-thought; raise max tokens or disable thinking",
+    );
+  }
+  throw new Error(
+    `${profile.displayName} API returned no content (finish_reason=${choice?.finish_reason ?? "unknown"})`,
+  );
 }

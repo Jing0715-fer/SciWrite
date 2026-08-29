@@ -22,6 +22,7 @@ import {
   FileText,
   ExternalLink,
   GitCompare,
+  TriangleAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -240,7 +241,7 @@ export function ProteinStructureAnalysisDialog({
             </div>
           ) : error ? (
             <div className="flex flex-col items-center justify-center h-full py-20 gap-3">
-              <div className="text-4xl">⚠️</div>
+              <TriangleAlert className="h-10 w-10 text-amber-500" aria-hidden="true" />
               <p className="text-sm text-destructive font-medium">{error}</p>
               <p className="text-xs text-muted-foreground max-w-md text-center">
                 Make sure the PDB ID is valid (4 alphanumeric characters, e.g.
@@ -1010,7 +1011,7 @@ function BFactorTab({ a, t }: { a: any; t: TFunc }) {
 
         {isPlddt && (
           <div className="rounded-md border border-sky-200 dark:border-sky-900 bg-sky-50/50 dark:bg-sky-950/20 p-2 text-[11px] text-sky-700 dark:text-sky-300 mb-3">
-            ℹ️ B-factor values (range {b.min.toFixed(1)}–{b.max.toFixed(1)}, mean {b.mean.toFixed(1)}, {Math.round(integerRatio * 100)}% integer-valued) are consistent with AlphaFold pLDDT confidence scores
+            ℹ B-factor values (range {b.min.toFixed(1)}–{b.max.toFixed(1)}, mean {b.mean.toFixed(1)}, {Math.round(integerRatio * 100)}% integer-valued) are consistent with AlphaFold pLDDT confidence scores
             (≥90 very high, 70–90 confident, 50–70 low, &lt;50 very low).
           </div>
         )}
@@ -1894,7 +1895,7 @@ function CompareTab({
 
         {error && (
           <div className="rounded-md border border-rose-200 dark:border-rose-900 bg-rose-50/50 dark:bg-rose-950/20 p-2 text-[11px] text-rose-700 dark:text-rose-300 mb-3">
-            ⚠️ {error}
+            ⚠ {error}
           </div>
         )}
 

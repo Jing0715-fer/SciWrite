@@ -4,6 +4,7 @@ import { webSearch } from "@/lib/ai";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
 import { queryDatabase, fetchFullTextForPubMed } from "@/lib/databases";
 import { countWords, renumberByAppearance, sanitizeSectionContent, buildStructureContextFromDataSources } from "@/lib/writing";
+import { generateArticleTitle } from "@/lib/article-title";
 import { validateCitationsInline } from "@/lib/citation-audit";
 import {
   preFlightQuotaCheck,
@@ -160,6 +161,12 @@ export async function POST(req: NextRequest) {
       let sections: any[] = [];
       let project: any = null;
       let journalTemplate = "generic";
+      // v121: real article title. Until the compose step runs it falls back
+      // to the project topic (the old behavior); after compose it holds the
+      // LLM-synthesized title. All article.create / version snapshots below
+      // read these — the exported filename follows Article.title.
+      let articleTitle = "";
+      let articleTitleZh: string | null = null;
 
       try {
         project = await db.project.findUnique({ where: { id: projectId } });
@@ -2501,6 +2508,32 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
 
         let articleContent = cleanBody + "\n\n## References\n\n" + refList;
 
+        // v121: generate a real article title from what was actually written.
+        // The old code stored `project.topic` (the user's project-creation
+        // brief — often an instruction like “按照总分总的方式进行生成…”)
+        // as the Article title, so every export named the file after the
+        // brief instead of the article. Synthesize a journal-grade title from
+        // the outline + opening of the composed body; fall back to the topic
+        // on any failure so compose never breaks.
+        try {
+          send("step", { status: "progress", message: "Generating article title..." });
+          const titleResult = await generateArticleTitle({
+            topic: project.topic,
+            sectionTitles: sections.map((s: any) => s?.title).filter(Boolean),
+            excerpt: cleanBody.slice(0, 800),
+            wantZh: isBothMode,
+          });
+          articleTitle = titleResult.title;
+          articleTitleZh = titleResult.titleZh;
+          log(
+            `compose: article title ${titleResult.generated ? "(LLM-generated)" : "(fallback to project topic)"}: ${articleTitle}`,
+          );
+        } catch (titleErr: any) {
+          articleTitle = project.topic;
+          articleTitleZh = null;
+          log(`compose: title generation failed, using project topic: ${String(titleErr?.message ?? titleErr).slice(0, 120)}`);
+        }
+
         // Update each paragraph's content in the database with the globally
         // renumbered citations. This ensures that when users view paragraphs
         // in the main workspace (ParagraphCard), the citation numbers match
@@ -2530,7 +2563,8 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           preAuditArticle = await db.article.create({
             data: {
               projectId,
-              title: project.topic,
+              title: articleTitle,
+              ...(articleTitleZh ? { titleZh: articleTitleZh } : {}),
               content: articleContent,
               journalTemplate,
               articleParagraph: {
@@ -2549,7 +2583,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               articleId: preAuditArticle.id,
               content: articleContent,
               contentZh: null,
-              title: project.topic,
+              title: articleTitle,
               label: "auto-saved pre-audit (v104-1)",
               wordCount: countWords(articleContent),
             },
@@ -3295,6 +3329,10 @@ ${cleanEn}`;
               where: { id: preAuditArticle.id },
               data: {
                 content: articleContent,
+                // v121: keep the record's title in sync with the compose-time
+                // generated title (also refresh titleZh for bilingual runs).
+                ...(articleTitle ? { title: articleTitle } : {}),
+                ...(articleTitleZh ? { titleZh: articleTitleZh } : {}),
                 ...(articleContentZh ? { contentZh: articleContentZh } : {}),
               },
             });
@@ -3304,7 +3342,8 @@ ${cleanEn}`;
             article = await db.article.create({
               data: {
                 projectId,
-                title: project.topic,
+                title: articleTitle,
+                ...(articleTitleZh ? { titleZh: articleTitleZh } : {}),
                 content: articleContent,
                 ...(articleContentZh ? { contentZh: articleContentZh } : {}),
                 journalTemplate,
@@ -3322,7 +3361,8 @@ ${cleanEn}`;
           article = await db.article.create({
             data: {
               projectId,
-              title: project.topic,
+              title: articleTitle,
+              ...(articleTitleZh ? { titleZh: articleTitleZh } : {}),
               content: articleContent,
               ...(articleContentZh ? { contentZh: articleContentZh } : {}),
               journalTemplate,
@@ -3344,7 +3384,7 @@ ${cleanEn}`;
               articleId: article.id,
               content: articleContent,
               contentZh: articleContentZh || null,
-              title: project.topic,
+              title: articleTitle,
               label: "auto-saved on generate-full (post-audit)",
               wordCount: countWords(articleContent),
             },
@@ -3472,7 +3512,7 @@ ${cleanEn}`;
             const partialArticle = await db.article.create({
               data: {
                 projectId,
-                title: `${project.topic} (partial — ${generatedParagraphs.length}/${sections.length} sections)`,
+                title: `${articleTitle || project.topic} (partial — ${generatedParagraphs.length}/${sections.length} sections)`,
                 content: partialArticleContent,
                 journalTemplate,
                 articleParagraph: {

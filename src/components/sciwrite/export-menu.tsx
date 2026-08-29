@@ -12,6 +12,7 @@ import {
   BookOpen,
   Network,
   FileTerminal,
+  Library,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,7 +47,8 @@ type ExportFormat =
   | "markdown"
   | "latex"
   | "epub"
-  | "graph-report";
+  | "graph-report"
+  | "endnote";
 
 /**
  * Metadata for each export format — drives the menu rendering.
@@ -64,6 +66,7 @@ const FORMAT_META: {
 }[] = [
   { format: "docx", icon: FileType2, color: "text-blue-600", key: "export.word", ext: "docx", desc: "Microsoft Word" },
   { format: "pdf", icon: FileText, color: "text-rose-600", key: "export.pdf", ext: "pdf", desc: "Portable Document" },
+  { format: "endnote", icon: Library, color: "text-teal-600", key: "export.endnote", ext: "enw", langs: ["en"], desc: "EndNote library import" },
   { format: "markdown", icon: FileCode2, color: "text-emerald-600", key: "export.markdown", ext: "md", desc: "Plain text .md" },
   { format: "latex", icon: FileTerminal, color: "text-amber-700", key: "export.latex", ext: "tex", desc: "LaTeX source" },
   { format: "epub", icon: BookOpen, color: "text-indigo-600", key: "export.epub", ext: "epub", langs: ["en"], desc: "E-book" },

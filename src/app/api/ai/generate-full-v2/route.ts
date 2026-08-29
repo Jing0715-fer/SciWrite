@@ -6,6 +6,7 @@ import { webSearch } from "@/lib/ai";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
 import { countWords, sanitizeSectionContent } from "@/lib/writing";
+import { generateArticleTitle } from "@/lib/article-title";
 import {
   buildAuditReport,
   extractBodyCitations,
@@ -1260,6 +1261,27 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
 
         const articleContent = articleBody.trim() + "\n\n## References\n\n" + refList;
 
+        // v121: generate a real article title from what was actually written
+        // (the old code stored `project.topic` — the project-creation brief —
+        // as the title, so exports named the file after the brief).
+        let articleTitle = project.topic;
+        let articleTitleZh: string | null = null;
+        try {
+          send("step", { status: "progress", message: "Generating article title..." });
+          const titleResult = await generateArticleTitle({
+            topic: project.topic,
+            sectionTitles: sections.map((s: any) => s?.title).filter(Boolean),
+            excerpt: articleBody.trim().slice(0, 800),
+          });
+          articleTitle = titleResult.title;
+          articleTitleZh = titleResult.titleZh;
+          log(
+            `compose: article title ${titleResult.generated ? "(LLM-generated)" : "(fallback to project topic)"}: ${articleTitle}`,
+          );
+        } catch (titleErr: any) {
+          log(`compose: title generation failed, using project topic: ${String(titleErr?.message ?? titleErr).slice(0, 120)}`);
+        }
+
         // Update each paragraph's content + references to GLOBAL numbering so
         // the workspace view matches the article (v70-1 gap-fill pattern).
         // ★ FIX (atomic rewrite): update + reference deleteMany + reference
@@ -1319,7 +1341,8 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
         const article = await db.article.create({
           data: {
             projectId,
-            title: project.topic,
+            title: articleTitle,
+            ...(articleTitleZh ? { titleZh: articleTitleZh } : {}),
             content: articleContent,
             journalTemplate,
             articleParagraph: {
@@ -1335,7 +1358,7 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           data: {
             articleId: article.id,
             content: articleContent,
-            title: project.topic,
+            title: articleTitle,
             label: "v2 evidence-grounded (auto-saved)",
             wordCount: countWords(articleContent),
           },

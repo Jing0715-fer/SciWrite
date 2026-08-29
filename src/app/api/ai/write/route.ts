@@ -9,6 +9,7 @@ import {
   buildWritePrompt,
   countWords,
   renumberByAppearance,
+  stripReasoning,
   summarizeDataSource,
   writingSystemPrompt,
 } from "@/lib/writing";
@@ -185,6 +186,12 @@ export async function POST(req: NextRequest) {
             metadata: { format: body.format, scenario: body.scenario },
           })
         : await chat(prompt, { system, temperature: 0.65 });
+
+      // Defense-in-depth: reasoning models (MiniMax-M3, DeepSeek-R1, QwQ ...)
+      // inline <think>...</think> chain-of-thought in content. chat() already
+      // strips it at the adapter layer; strip again here so this route stays
+      // safe even if a future code path returns raw provider output.
+      content = stripReasoning(content);
 
       send("step", { status: "progress", message: "Sanitizing out-of-range citations..." });
 

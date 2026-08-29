@@ -22,8 +22,10 @@ import {
   parseCitationNumbers,
   parseRefLineForRecord,
   idsFromUrl,
+  buildEnwExport,
   type EndNoteRecord,
 } from "@/lib/endnote-fields";
+import { enrichRecordsFromPubmed, applyWebPageRefTypes, repairRecordsFromDbRows } from "@/lib/endnote-enrich";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -79,7 +81,14 @@ async function loadCJKFont(): Promise<Uint8Array | null> {
 interface ExportBody {
   type: "paragraph" | "article" | "project-merge";
   id: string;
-  format: "docx" | "pdf" | "markdown" | "latex" | "epub" | "graph-report";
+  format:
+    | "docx"
+    | "pdf"
+    | "markdown"
+    | "latex"
+    | "epub"
+    | "graph-report"
+    | "endnote";
   includeAnnotations?: boolean;
   journalTemplate?: string;
   mergeExport?: boolean;
@@ -391,24 +400,38 @@ export async function POST(req: NextRequest) {
             authors: parsed.authors
               .split(/\s*[,;]\s*/)
               .map((s) => s.trim())
-              .filter(Boolean),
+              // Drop "et al." pseudo-authors — EndNote would import it as a
+              // person named "al".
+              .filter((s) => s && !/^et\.?\s*al\.?$/i.test(s)),
             title: parsed.title,
             journal: parsed.journal || undefined,
             year: parsed.year || undefined,
             doi: doi || undefined,
             pmid,
             url: parsed.url || undefined,
+            // Round 23: lines without the "(YYYY)" anchor (compose omits it
+            // for Reference rows without a year) parse hollow/garbled — the
+            // DB-row repair pass below fills them from the source of truth.
+            lineMalformed: parsed.malformed || undefined,
           });
         }
       }
       if (enRecords.size === 0) {
         references.forEach((r, i) => {
+          // Same author sanitization as the compose pipelines: the gather
+          // step stores hostnames ("pmc.ncbi.nlm.nih.gov") in the authors
+          // field of web sources — export them as "Anonymous".
+          const rawAuthors = (r.authors || "").trim();
+          const authors =
+            !rawAuthors || /^(https?:\/\/)?(www\.)?[a-z0-9.-]+\.(gov|org|com|edu|net)$/i.test(rawAuthors)
+              ? ["Anonymous"]
+              : rawAuthors
+                  .split(/\s*[,;]\s*/)
+                  .map((s) => s.trim())
+                  .filter((s) => s && !/^et\.?\s*al\.?$/i.test(s));
           enRecords.set(i + 1, {
             n: i + 1,
-            authors: (r.authors || "")
-              .split(/\s*[,;]\s*/)
-              .map((s) => s.trim())
-              .filter(Boolean),
+            authors,
             title: r.title || "",
             journal: r.journal || undefined,
             year: r.year || undefined,
@@ -430,6 +453,66 @@ export async function POST(req: NextRequest) {
           if (row?.doi) rec.doi = row.doi;
           if (!rec.url && row?.url) rec.url = row.url;
         }
+      }
+
+      // ── Round 23: DB-row repair pass for hollow/malformed records ──────
+      // A bibliography line composed from a year-less Reference row has no
+      // "(YYYY)" segment, so its EndNote record parses with NO authors and NO
+      // year — the two keys EndNote uses to bind a citation, whose absence
+      // renders the citation "!!! INVALID CITATION !!!". The PubMed enrichment
+      // below repairs only the PMID-carrying subset; this pass borrows the
+      // authoritative fields from the DB Reference rows themselves (matched by
+      // PMID → DOI → normalized title), which is where the compose line was
+      // built from in the first place. See repairRecordsFromDbRows().
+      {
+        const repaired = repairRecordsFromDbRows(enRecords, references, dbByPmid);
+        if (repaired > 0) {
+          console.log(`[export] DB-row repair filled ${repaired} hollow/malformed EndNote record(s)`);
+        }
+        // Anything still without year AND authors after every repair would
+        // still be unmatchable in EndNote — surface it for diagnosis instead
+        // of failing silently (the record exports with whatever it has).
+        const unmatchable = [...enRecords.values()].filter((r) => !r.year && r.authors.length === 0);
+        if (unmatchable.length > 0) {
+          console.warn(
+            `[export] ${unmatchable.length} EndNote record(s) still have no year and no authors (no DB row matched): ` +
+              unmatchable.map((r) => `[${r.n}] ${r.title.slice(0, 50)}`).join(" | "),
+          );
+        }
+        // The flag is transport-only — never serialized into the record XML.
+        for (const rec of enRecords.values()) delete rec.lineMalformed;
+      }
+
+      // Round 22 — PubMed esummary enrichment for the EndNote-consuming
+      // formats (.docx traveling library + .enw library export): fill DOI /
+      // volume / issue / pages from the authoritative source (neither the
+      // body ref lines nor the DB rows carry them). Best-effort — a network
+      // failure just leaves the records as they were. Web sources without
+      // any journal/PMID/DOI become "Web Page" records so EndNote does not
+      // render a Journal Article with an empty journal as broken.
+      if (body.format === "docx" || body.format === "endnote") {
+        try {
+          const touched = await enrichRecordsFromPubmed(enRecords);
+          if (touched > 0) {
+            console.log(`[export] PubMed enrichment filled ${touched} EndNote record(s)`);
+          }
+        } catch (err: any) {
+          console.warn("[export] PubMed enrichment skipped:", err?.message || err);
+        }
+        // Round 23 last resort: records still without a year (web sources
+        // whose DB row never had one) adopt the bibliographic "n.d." (no
+        // date) convention — a self-consistent <Cite><Year> keeps the
+        // citation matchable in EndNote instead of INVALID, and EndNote
+        // renders "(n.d.)" exactly as a dated citation would render.
+        let nd = 0;
+        for (const rec of enRecords.values()) {
+          if (!rec.year) {
+            rec.year = "n.d.";
+            nd++;
+          }
+        }
+        if (nd > 0) console.log(`[export] ${nd} undated record(s) defaulted to "n.d."`);
+        applyWebPageRefTypes(enRecords);
       }
     }
 
@@ -834,6 +917,30 @@ export async function POST(req: NextRequest) {
         headers: {
           "Content-Type": "application/epub+zip",
           "Content-Disposition": buildFilename(filenameTitle, "epub", langSuffix),
+        },
+      });
+    }
+
+    if (body.format === "endnote") {
+      // Round 22 — EndNote library export: the tagged import file (.enw)
+      // with every record in the article's reference list, authors in canonical
+      // "Last, I.N.I.T." form, DOI/volume/issue/pages from PubMed. Import
+      // with File → Import → File (Import Option: "EndNote Import") or
+      // simply double-click the .enw — EndNote adds every reference to the
+      // selected library, ready for CWYW.
+      const records = [...enRecords.values()].sort((a, b) => a.n - b.n);
+      if (records.length === 0) {
+        return NextResponse.json(
+          { error: "No references found to export." },
+          { status: 400 }
+        );
+      }
+      const enw = buildEnwExport(records);
+      return new NextResponse(enw, {
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": buildFilename(filenameTitle, "enw", langSuffix),
+          ...(warningHeader ? { "X-Export-Warnings": warningHeader } : {}),
         },
       });
     }

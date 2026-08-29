@@ -18,6 +18,14 @@ import {
   ArrowRight,
   Box,
   Layers,
+  FileText,
+  Dna,
+  FlaskConical,
+  Puzzle,
+  Globe,
+  PenLine,
+  Package,
+  type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -43,15 +51,17 @@ const TYPE_BADGE: Record<string, string> = {
 // Display order for source types (most common first)
 const SOURCE_TYPE_ORDER = ["pubmed", "rcsb", "uniprot", "ncbi", "blast", "web", "manual"];
 
-const SOURCE_TYPE_ICONS: Record<string, string> = {
-  pubmed: "📄",
-  rcsb: "🧬",
-  uniprot: "🧪",
-  ncbi: "🧩",
-  blast: "🔬",
-  web: "🌐",
-  manual: "📝",
+// lucide icon per source type (no emoji icons in the UI — design rule).
+const SOURCE_TYPE_ICONS: Record<string, LucideIcon> = {
+  pubmed: FileText,
+  rcsb: Dna,
+  uniprot: FlaskConical,
+  ncbi: Puzzle,
+  blast: Microscope,
+  web: Globe,
+  manual: PenLine,
 };
+const SOURCE_TYPE_FALLBACK_ICON = Package;
 
 export function KnowledgePanel({
   projectId,
@@ -253,7 +263,7 @@ function SourcesList({
                 : "tab-pill-inactive"
             }`}
           >
-            <span className="text-[11px]">🗂️</span>
+            <FileStack className="h-3 w-3 shrink-0" aria-hidden="true" />
             <span>All</span>
             <span className={`text-[9px] px-1 rounded-full ${
               activeType === "all" ? "bg-primary/20 text-primary" : "bg-muted-foreground/15"
@@ -286,7 +296,12 @@ function SourcesList({
                     : "tab-pill-inactive"
                 }`}
               >
-                <span className="text-[11px]">{SOURCE_TYPE_ICONS[st] || "📦"}</span>
+                <span className="inline-flex items-center">
+                  {React.createElement(SOURCE_TYPE_ICONS[st] ?? SOURCE_TYPE_FALLBACK_ICON, {
+                    className: "h-3 w-3",
+                    "aria-hidden": true,
+                  })}
+                </span>
                 <span>{st}</span>
                 <span className={`text-[9px] px-1 rounded-full ${
                   isActive ? "bg-foreground/15" : "bg-muted-foreground/15"
