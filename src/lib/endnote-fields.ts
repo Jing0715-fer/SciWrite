@@ -48,6 +48,33 @@
  *      into their EndNote library (double-click the .enw, or
  *      File → Import → "EndNote Import").
  *
+ * Round 24 — "还是存在一些invalid的条目，好像比刚才多了" (still some invalid
+ * entries, seemingly MORE than before). Forensic diff of the user's exported
+ * docx against the real X7.8 sample isolated three residual deviations:
+ *
+ *   1. FUTURE foreign-key timestamps. Round 23's per-record hash-derived
+ *      timestamps landed 3 of 25 records in Nov 2026 – Jan 2027 (the hash
+ *      range ran to 1800000000). A real foreign-key timestamp is the record's
+ *      "added to library" epoch-seconds and can NEVER be in the future —
+ *      EndNote rejects such records as unmatchable. This also explains the
+ *      erratic count: round-22's single shared timestamp happened to be in
+ *      the past (2023-11-20), so its export showed only the "few" surname/
+ *      hollow-record failures; round-23's random per-record values regressed
+ *      records [1], [5] and [19] into the future → MORE invalid entries.
+ *      Fixed by clamping the deterministic hash into a fixed, forever-past
+ *      window (2023-11 .. 2026-02).
+ *   2. Multi-word surnames in <Cite><Author>. "de Jong SJ" (PubMed form)
+ *      reduced to "de" — the EndNote temp-citation fallback matches on
+ *      surname, and "de" matches nothing, so records 5/18 (both de Jong)
+ *      rendered INVALID. The surname is now derived by stripping the
+ *      trailing initials tokens, exactly like the hardened endnote_docx
+ *      converter (Zotero developers): "de Jong SJ" → "de Jong".
+ *   3. <database>/<source-app> elements inside every CWYW record. Real X7.8
+ *      traveling-library records carry NEITHER (they belong to the EndNote
+ *      library-XML export format, not the CWYW field payload), and the
+ *      authoritative converter omits them too. Removed for byte-shape parity
+ *      with real EndNote output.
+ *
  * Round 23 — "还是存在少量文献出现这种情况，比之前少了" (a few references
  * still show "!!! INVALID CITATION !!!" in EndNote) root-caused to HOLLOW
  * records: when a Reference row has no year, the compose pipelines write the
@@ -377,25 +404,49 @@ function libraryFor(occurrences: CitationOccurrence[]): EndNoteLibrary {
 }
 
 /**
- * Per-record "record added" epoch-seconds (round 23). Real traveling
- * libraries never share one timestamp across records — every foreign key
- * carries the time THAT record was added to its library, and a whole-export
- * identical value is a shape real EndNote never produces. Deterministic per
- * (library, record) pair so repeated exports stay stable.
+ * Per-record "record added" epoch-seconds (round 23 shape, round 24 range).
+ * Real traveling libraries never share one timestamp across records — every
+ * foreign key carries the time THAT record was added to its library. The value
+ * is deterministic per (library, record) pair so repeated exports stay stable,
+ * and it is clamped into a FIXED past window (2023-11-14 .. 2026-02-02): a
+ * real "record added" time can never be in the future, and EndNote treats a
+ * future-dated foreign key as an unmatchable record (round 24 root cause of
+ * the invalid-citation count INCREASING between exports). The upper bound is a
+ * constant, so it stays in the past forever — no clock reads are taken.
  */
+const FK_TS_MIN = 1700000000; // 2023-11-14
+const FK_TS_MAX = 1770000000; // 2026-02-02 — fixed constant, always past
 function foreignKeyTimestamp(lib: EndNoteLibrary, rec: EndNoteRecord): string {
   const digest = createHash("sha1")
     .update(`${lib.dbId}|${rec.n}|${rec.title}|${rec.doi || ""}`)
     .digest("hex");
-  return String(1700000000 + (parseInt(digest.slice(0, 8), 16) % 100000000));
+  return String(FK_TS_MIN + (parseInt(digest.slice(0, 8), 16) % (FK_TS_MAX - FK_TS_MIN)));
+}
+
+/**
+ * Is this token a trailing initials group ("APJ", "L.Y.", "J-P", "K X")?
+ * Mirrors the hardened endnote_docx converter's surname logic: 1–4 uppercase
+ * letters, dots/hyphens/spaces allowed between them. A genuine surname made
+ * of capitals only ("WHO") is protected by the caller's multi-token check.
+ */
+function isInitialsToken(token: string): boolean {
+  const compact = token.replace(/[.\s]/g, "");
+  if (!compact) return false;
+  return /^[A-ZÀ-ÖØ-Þ]{1,4}$/.test(compact) || /^[A-ZÀ-ÖØ-Þ](?:-[A-ZÀ-ÖØ-Þ])+$/.test(compact);
 }
 
 /**
  * Last name of an EndNote-canonical author string. Accepts both forms:
- *  - "Giese, A.P.J." (comma form — round 22 canonical) → "Giese"
- *  - "Giese APJ"     (legacy PubMed form)               → "Giese"
- * Real EndNote writes only the last name in <Cite><Author> — its
- * author/year fallback matching expects that form.
+ *  - "Giese, A.P.J."  (comma form — round 22 canonical)  → "Giese"
+ *  - "Giese APJ"      (legacy PubMed form)               → "Giese"
+ *  - "de Jong SJ"     (multi-word surname, PubMed form)   → "de Jong"
+ * Round 24: the PubMed form previously collapsed to the FIRST token ("de"),
+ * so <Cite><Author> no longer matched the record's own surname and EndNote
+ * rendered the citation INVALID. Trailing initials tokens are now stripped
+ * and the remaining tokens joined ("van der Berg A" → "van der Berg"),
+ * matching the authoritative endnote_docx converter's surname_from_author.
+ * Real EndNote writes only the surname in <Cite><Author> — its author/year
+ * fallback matching expects that form.
  */
 function lastNameOf(author?: string): string | undefined {
   if (!author) return undefined;
@@ -405,21 +456,27 @@ function lastNameOf(author?: string): string | undefined {
   if (commaIdx > 0) return trimmed.slice(0, commaIdx).trim() || undefined;
   // Corporate form "Group," (trailing comma) — no initials follow.
   if (trimmed.endsWith(",")) return trimmed.slice(0, -1).trim() || undefined;
-  const first = trimmed.split(/\s+/)[0];
-  return first || undefined;
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return undefined;
+  if (parts.length === 1) return parts[0];
+  // PubMed form "Surname I.N.I.T." — strip trailing initials tokens, join the
+  // rest (lowercase particles like "de"/"van" survive: they are not initials).
+  let keep = parts.length;
+  while (keep > 1 && isInitialsToken(parts[keep - 1])) keep--;
+  return parts.slice(0, keep).join(" ") || undefined;
 }
 
 function recordXml(rec: EndNoteRecord, lib: EndNoteLibrary): string {
   const parts: string[] = [];
-  // A real traveling-library record identifies its source library and the
-  // application that wrote it; round 22 adds both (EndNote builds that read
-  // them treat the record as a first-class library member, not an anonymous
-  // fragment).
-  parts.push(`<database name="SciWrite References.enl">SciWrite References.enl</database>`);
-  parts.push(`<source-app name="EndNote" version="20.6">EndNote</source-app>`);
+  // Round 24: <database>/<source-app> removed — real X7.8 CWYW
+  // traveling-library records carry neither element (they exist only in the
+  // EndNote library-XML export format), and the authoritative endnote_docx
+  // converter omits them too. The record starts at <rec-number> exactly like
+  // real EndNote output.
   parts.push(`<rec-number>${rec.n}</rec-number>`);
   // Round 23: per-record timestamp — real traveling libraries carry the
-  // record's own "added" time, never one shared value.
+  // record's own "added" time, never one shared value. Round 24: the value is
+  // clamped into a forever-past window (see foreignKeyTimestamp).
   parts.push(
     `<foreign-keys><key app="EN" db-id="${lib.dbId}" timestamp="${foreignKeyTimestamp(lib, rec)}">${rec.n}</key></foreign-keys>`,
   );
@@ -461,8 +518,12 @@ function recordXml(rec: EndNoteRecord, lib: EndNoteLibrary): string {
 export function buildEndnoteXml(display: string, records: EndNoteRecord[], lib: EndNoteLibrary): string {
   const cites = records
     .map((r, i) => {
+      // Round 24: derive the header surname from the SAME canonical string the
+      // record serializes ("de Jong, S.J."), so <Cite><Author> can never
+      // disagree with <author> — a disagreeing pair is unmatchable in EndNote.
+      const canonicalFirst = formatAuthorForEndnote(r.authors[0]);
       const head = [
-        el("Author", lastNameOf(r.authors[0])),
+        el("Author", lastNameOf(canonicalFirst) || lastNameOf(r.authors[0])),
         el("Year", r.year),
         `<RecNum>${r.n}</RecNum>`,
         i === 0 ? el("DisplayText", display) : "",

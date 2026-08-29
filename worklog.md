@@ -1818,3 +1818,27 @@ Stage Summary:
 - 修改文件：src/lib/endnote-fields.ts（解析回退+顺序+timestamp+空 run）、src/lib/endnote-enrich.ts（repairRecordsFromDbRows+主机名规则）、src/app/api/export/route.ts（malformed 标记+修复调用+n.d. 兜底+DB 兜底分支主机名规则）；新增 scripts/test-endnote-round23.ts（46 项）
 - 用户侧预期：重新导出 Word 后用 EndNote 打开，此前无效的少量文献应恢复为可匹配记录（无年份 web 源显示 Anonymous (n.d.) / Web Page 类型）；若仍有残留，dev.log 的 "still have no year and no authors" 警告即下一步线索
 - 提交信息：fix(round-23): hollow-record repair for EndNote invalid citations (bare-year parse fallback, DB-row repair, n.d. convention, byte-parity with real X7.8)
+
+---
+Task ID: round-24
+Agent: main (Z.ai Code orchestrator)
+Task: 彻底解决 EndNote "!!! INVALID CITATION !!!" 残留——用户反馈 round-23 修复后导出的 Word 仍有一些 invalid 条目且"好像比刚才多了"，并上传导出的 docx 供取证分析
+
+Work Log:
+- 取证（用户上传的 The-Transmembrane-Channel-Like-Protein-Family-St_20260829-180756.docx）：解压 document.xml，线性重建 209 个 fldChar 字段，解码全部 104 个 EN.CITE.DATA 载荷（23 组分组引用 + 81 单引用）→ 载荷结构层与真实 X7.8 完全一致（双 fldData、两个空 run、Cite 头齐备、RecNum↔rec-number 绑定、25 条记录内容完整、begin/end 91/91 平衡）
+- 时间线还原：文件名时间戳 18:07:56（UTC+8）与上传时刻 10:19 UTC 相差 11 分钟 → 该文件是用户在自己机器上运行的 SciWrite 实例（GitHub round-23 代码）导出的，其本地库有独立项目（沙箱 DB 无此文章）；代码行为一致，取证结论有效
+- 根因锁定①（未来时间戳）：逐记录检查 foreign-key timestamp 发现记录 1/5/19 的 timestamp 在 2026-11 ~ 2027-01（未来！）；round-23 的 foreignKeyTimestamp 哈希映射区间 [1700000000, 1800000000) 约有 12% 概率落入"现在（2026-08-29）之后"；真实 EndNote 的外键 timestamp 是记录入库时间，绝不可能是未来值，EndNote 视其为不可匹配记录 → INVALID；复算 round-22 的共享时间戳 = 1700452072（2023-11-20，过去值）→ round-22 导出只暴露姓氏错配等"少量"问题；round-23 的随机化恰好把 3 条记录打入未来 → "比刚才多了"（且能解释此前用户抱怨的 [1,2]——记录 1 正是未来时间戳）
+- 根因锁定②（多词姓氏）：记录 5/18（de Jong SJ 论文）的 <Cite><Author> 为 "de"——lastNameOf 对 PubMed 无逗号形式只取第一个 token；EndNote 临时引用 {Author, Year #RecNum} 按姓氏匹配记录，"de" 无法匹配 "de Jong, S.J." → INVALID；对照权威转换器 endnote_docx.py（Zotero 开发者维护）的 surname_from_author：剥离尾部缩写 token 后拼接剩余（"de Jong SJ" → "de Jong"）
+- 根因锁定③（多余元素）：CWYW 记录内的 <database>/<source-app>（round-22 从 EndNote 库 XML 格式借鉴）——真实 X7.8 CWYW 旅行库记录两者皆无，权威转换器也不写 → 移除，实现与真实输出的字节形状对齐
+- 修复（src/lib/endnote-fields.ts）：①foreignKeyTimestamp 钳制到固定过去窗口 [1700000000=2023-11-14, 1770000000=2026-02-02)（常量上界永远在过去，不读时钟；保持确定性/跨字段一致性）②lastNameOf 新增 isInitialsToken（1-4 个大写字母或连字符连接，如 APJ/LY/J-P），PubMed 形式剥离尾部缩写 token 后拼接（"de Jong SJ"→"de Jong"、"van der Berg A"→"van der Berg"、"Aponte Rivera R"→"Aponte Rivera"；单词形式不动防误伤 WHO）③recordXml 移除 database/source-app，记录从 <rec-number> 起（与真实 X7.8 完全一致）④buildEndnoteXml 的 Cite 头姓氏改从规范形（formatAuthorForEndnote 输出）推导，保证 <Cite><Author> 与 <author> 永不矛盾
+- 验证（scripts/test-endnote-round24.ts，38 项全过）：姓氏 12 例（de Jong/van der Berg/Aponte Rivera/Dupont J-P/Anonymous/WHO 单词保护/重音符/逗号形/头部与记录姓氏一致性断言）；时间戳（30 条记录全部落在固定窗口、无未来值、跨记录基本互异、确定性、跨字段一致）；记录形状（无 database/source-app、元素顺序与真实 X7.8 一致、记录始于 rec-number、DOI 在 urls 后、与 X7.8 模板字节一致[modulo timestamp]）；分组引用（DisplayText 仅首个 Cite、de Jong 头部正确、时间戳互异）；round-23 空运行序列回归；.enw 与解析器回归
+- E2E（真实路由）：提取用户 docx 的 25 条真实文献行构造测试文章（含 [2,4]/[5,17]/[18,17] 分组引用）→ POST /api/export (docx) 200（PubMed enrichment filled 25）→ 解码 24 载荷全量断言：0 未来时间戳（实际范围 2024-01-02 ~ 2026-01-21，24/24 互异）、0 姓氏错配（记录 5/18 头部 "de Jong" = 记录姓氏）、0 database/source-app、元素顺序全部正确、begin/end 49/49 平衡、分组 DisplayText 唯一、空 run 序列对齐；测试夹具已清理
+- E2E（agent-browser）：主页零 page error；打开项目 → Article 页签 → Export 菜单 7 项 → 点击 Word (.docx) → POST /api/export 200（18 条 PubMed 富集），0 console error
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 162 warning（=基线）；round-23 测试脚本回归 46/46 全过；dev.log 无未处理错误
+
+Stage Summary:
+- "比刚才多了"的根因：round-23 引入的哈希随机时间戳有 ~12% 概率落入未来，本次导出 3/25 条（含用户抱怨的 [1,2] 中的记录 1）中招；加上既有的 de Jong 姓氏错配（2 条），无效条目从 round-22 的少量增至 4-5 条
+- 修复三件套：时间戳钳制固定过去窗口（确定性保持）、多词姓氏正确提取（对齐权威转换器）、CWYW 记录移除 database/source-app——与真实 X7.8 输出的全部已知偏差清零（初始间隔 "E.J." vs "E. J." 为纯排版差异，round-22 已实测可导入，保留）
+- 修改文件：src/lib/endnote-fields.ts；新增 scripts/test-endnote-round24.ts（38 项）
+- 用户侧操作：在自己实例上 git pull 后重新导出 Word 即可验证；预期所有 INVALID CITATION 消失（含 [1,2]）
+- 提交信息：fix(round-24): EndNote invalid citations — clamp foreign-key timestamps to a fixed past window, multi-word surnames in Cite headers, drop database/source-app from CWYW records
