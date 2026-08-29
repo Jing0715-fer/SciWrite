@@ -179,13 +179,16 @@ console.log("\n[3] buildEndnoteXml — canonical element order + per-record time
 
 // ─────────────────────────────────────────────────────────────────────────────
 console.log("\n[4] injectEndnoteFields — X7.8 run sequence with empty runs");
+// (round 25: the nested dual-payload layout is the GROUPED-citation form;
+// single-record citations use the real X7.8 inline form — see round-25 test.)
 // ─────────────────────────────────────────────────────────────────────────────
 {
   const rec: EndNoteRecord = { n: 1, authors: ["Maginn EJ"], title: "Historical perspective", year: "2010" };
+  const rec2: EndNoteRecord = { n: 2, authors: ["Frenkel D"], title: "Understanding molecular simulation", year: "2002" };
   const para = `<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">CITE_TOKEN_1</w:t></w:r></w:p><w:p><w:r><w:rPr><w:i/></w:rPr><w:t xml:space="preserve">REFLIST_OPEN</w:t></w:r></w:p><w:p><w:r><w:t>refs</w:t></w:r></w:p><w:p><w:r><w:rPr><w:i/></w:rPr><w:t xml:space="preserve">REFLIST_CLOSE</w:t></w:r></w:p>`;
   const out = injectEndnoteFields(
     para,
-    [{ token: "CITE_TOKEN_1", marker: "[1]", records: [rec] }],
+    [{ token: "CITE_TOKEN_1", marker: "[1,2]", records: [rec, rec2] }],
     "REFLIST_OPEN",
     "REFLIST_CLOSE",
   );

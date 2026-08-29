@@ -1842,3 +1842,33 @@ Stage Summary:
 - 修改文件：src/lib/endnote-fields.ts；新增 scripts/test-endnote-round24.ts（38 项）
 - 用户侧操作：在自己实例上 git pull 后重新导出 Word 即可验证；预期所有 INVALID CITATION 消失（含 [1,2]）
 - 提交信息：fix(round-24): EndNote invalid citations — clamp foreign-key timestamps to a fixed past window, multi-word surnames in Cite headers, drop database/source-app from CWYW records
+
+---
+Task ID: round-25
+Agent: main (Z.ai Code orchestrator)
+Task: 修复用户实测（round-24 代码导出的 docx）EndNote 插件中"有一些信息正常，有更多是 invalid"——分析用户上传的 The-Transmembrane-Channel-Like-Protein-Family-St_20260829-191326.docx，彻底解决 INVALID CITATION
+
+Work Log:
+- 环境对齐：本地工作树停在 round-17（此前会话丢失），git fetch 发现 origin/main 已在 round-24（rounds 18-24 均已推送）；merge origin/main（db/custom.db 与 worklog.md 冲突取远端），沙箱恢复到用户实测的代码基线
+- 取证（用户 19:13 docx = round-24 输出；对照 18:07 docx = round-23 输出）：104 个引用字段全部解码比对——round-24 修复已生效（0 个未来时间戳、de Jong 姓氏正确、无 database/source-app、25 条记录 Author/Year/字段全部完整、结构无任何可检缺陷）→ 内容层无法解释"更多 invalid"
+- 证据链重建：两次导出均非本沙箱产物（dev.log 无导出请求；DB 无该文章）——用户在自己实例上运行 GitHub 代码；18:07=round-23（随机未来时间戳 3 条 + "de" 姓氏 2 条），19:13=round-24（全部修复）
+- 地面真值获取：下载真实 EndNote X7.8 CWYW 文档（pandoc issue #8433 附件 combined.docx，发布商产出）逐字节解剖，并克隆两个独立开源转换器（wmyung/endnote-fieldcode-gui + hardened endnote-fieldcode-converter）交叉验证——发现关键事实：**真实 EndNote 对单条引用与分组引用使用两种不同字段形态**
+  - 单条引用（1 条记录）：简单字段——XML 转义后内联在 instrText（" ADDIN EN.CITE <EndNote>…</EndNote>"），无 fldData、无嵌套 EN.CITE.DATA
+  - 分组引用（≥2 条记录）：嵌套复合字段——外层 EN.CITE + 嵌套 EN.CITE.DATA，双 fldData（真实样本两个 begin 各带一份相同 base64 载荷，round-12/23 的双载荷与空 run 序列经此再次确认正确）
+- 根因锁定：round-11 以来我们对**所有**引用（含单条）一律输出嵌套复合形态——用户文档 104 个字段中 81 个单引用字段是真实 EndNote 从不产生的形状；这些字段的记录绑定完全依赖 EndNote 对异形字段的容忍度，正是 "!!! INVALID CITATION !!!" 报告的绑定环节
+- 修复（src/lib/endnote-fields.ts）：
+  1. citationFieldXml 按基数分流——单条 → 内联形态（begin → instrText(内联转义 XML) → separate → 可见结果 → end）；分组 → 保持 round-23/24 逐字节对齐的嵌套双载荷形态
+  2. instrText 转义对齐真实字节行为——仅转义 & < >（引号保持字面量；真实 X7.8 内联载荷中 app="EN" 为字面引号）；fldData 路径不受影响（base64）
+  3. 头部文档更新（Round 25 注记 + 两种形态的字段布局说明）
+- 测试更新：round-23/24 脚本的字段序列断言改用分组引用（嵌套形态的回归保持），新增 scripts/test-endnote-round25.ts（35 项）：单条内联形态（序列/无 fldData/无 EN.CITE.DATA/载荷内联且头键齐备/引号字面量/标签平衡）、分组嵌套形态回归（双载荷一致/DisplayText 仅首个 Cite/序列含空 run）、单条与分组记录序列化等价、REFLIST 不受影响、enw 回归
+- 回归：round-23 脚本 46/46、round-24 脚本 38/38、round-25 脚本 35/35 全过；npx tsc --noEmit 0 错误；bun run lint 0 error / 162 warning（=基线）
+- E2E（真实路由）：TMC 文章 POST /api/export (docx) 200（PubMed enrichment filled 18）→ 解码 45 个引用字段：43 个单引用全部为内联形态（B-C-S 令牌流）、2 个分组引用为嵌套双载荷形态、18 条记录 0 问题（Author/Year 齐备、编号绑定、时间戳全部落在固定过去窗口且 18/18 互异、无 database/source-app、Cite 姓氏与记录姓氏一致）、begin/end 平衡；Content-Disposition 文件名 = LLM 生成标题 slug（round-21 机制正常）
+- E2E（agent-browser）：主页 0 page error → 打开项目 → Article 页签 → Export 菜单 7 项（含 EndNote Library (.enw)）→ 点击 Word (.docx) → POST /api/export 200、0 新增 console 错误；.enw 导出回归（canonical 作者 %A Giese, A.P.J. 等）
+- 卫生：删除临时脚本；dev server 以合并后代码重启；.zscripts/dev.pid 保持 untracked
+
+Stage Summary:
+- 根因：单条引用字段形态——真实 X7.8 单条引用用 instrText 内联 XML（无 fldData/无嵌套），我们从 round-11 起一律用嵌套复合形态（用户文档 81/104 字段为真实 EndNote 不产生的形状），绑定容错度差异导致部分引用 INVALID
+- 修复：citationFieldXml 按记录基数输出真实形态（单条内联 / 分组嵌套双载荷）+ instrText 转义对齐真实字节行为（仅 & < >）
+- 修改文件：src/lib/endnote-fields.ts、scripts/test-endnote-round23.ts、scripts/test-endnote-round24.ts；新增 scripts/test-endnote-round25.ts（35 项）；合并 origin/main（round-24 基线）
+- 用户侧操作：git pull 后重新导出 Word；若仍有残留 invalid，用 EndNote 菜单 "Export Traveling Library" 将移动库导入自有库后即可全部绑定（字段形态现已与真实 EndNote 完全一致）
+- 提交信息：fix(round-25): single-source citations use real X7.8 inline form (XML in instrText) — grouped citations keep nested dual-payload layout

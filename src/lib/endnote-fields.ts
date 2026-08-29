@@ -103,7 +103,39 @@
  *      writes between the nested EN.CITE.DATA instruction and its end, and
  *      between that end and the separate marker.
  *
+ * Round 25 — "导出的docx用endnote插件看文献有一些信息正常，有更多是invalid了"
+ * (some references show correct info in the EndNote add-in, but MORE are
+ * invalid than before). Full re-audit of the user's exported docx against
+ * the real X7.8 CWYW sample (pandoc issue #8433 attachment) isolated the
+ * last structural divergence: **single-source citations**. Real EndNote
+ * writes a single-record citation as a SIMPLE field with the EndNote XML
+ * inlined (XML-escaped) in the instruction text — no w:fldData, no nested
+ * EN.CITE.DATA field:
+ *
+ *   begin → instrText " ADDIN EN.CITE <EndNote>…</EndNote>" → separate
+ *         → result → end
+ *
+ * Only MULTI-record citations ("[1,2]") use the compound nested layout
+ * with the base64 payload on both begin fldChars. We had been emitting the
+ * nested layout for EVERY citation — an 81-of-104 majority of fields in
+ * the user's document were shaped in a way real EndNote never produces,
+ * leaving them dependent on EndNote's tolerance of foreign shapes when
+ * binding the citation to its record (the exact binding step that reports
+ * "!!! INVALID CITATION !!!"). citationFieldXml now emits the real form
+ * per cardinality, and instrText escaping matches real X7.8 byte behavior
+ * (only & < > escaped — quotes stay literal).
+ *
  * Field layout (identical to real EndNote — no w:dirty attribute):
+ *
+ * SINGLE-record citation (inline XML form — real X7.8 layout):
+ *
+ *   <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+ *   <w:r><w:instrText xml:space="preserve"> ADDIN EN.CITE &lt;EndNote&gt;…&lt;/EndNote&gt;</w:instrText></w:r>
+ *   <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+ *   …visible citation result runs (e.g. superscript "[1]")…
+ *   <w:r><w:fldChar w:fldCharType="end"/></w:r>
+ *
+ * MULTI-record citation (nested dual-payload form — real X7.8 layout):
  *
  *   <w:r><w:fldChar w:fldCharType="begin">
  *          <w:fldData xml:space="preserve">BASE64(EndNote XML)</w:fldData>
@@ -358,6 +390,16 @@ function escapeXml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+}
+
+/**
+ * Escape text destined for a <w:instrText> content node. Real EndNote X7.8
+ * escapes ONLY & < > inside the instruction text (quotes stay literal —
+ * verified on the inline single-citation form, where app="EN" appears with
+ * literal quotes). Round 25: matches real output byte-for-byte.
+ */
+function escapeInstrText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function el(tag: string, value?: string | null): string {
@@ -615,7 +657,7 @@ function fldCharRun(rpr: string, type: "begin" | "separate" | "end", fldData?: s
 }
 
 function instrRun(rpr: string, instr: string): string {
-  return ctrlRun(rpr, `<w:instrText xml:space="preserve">${escapeXml(instr)}</w:instrText>`);
+  return ctrlRun(rpr, `<w:instrText xml:space="preserve">${escapeInstrText(instr)}</w:instrText>`);
 }
 
 /** A visible text run carrying the given (already serialized) rPr. */
@@ -635,12 +677,18 @@ function emptyRun(rpr: string): string {
 }
 
 /**
- * Compound ADDIN EN.CITE field wrapping the visible citation run. The nested
- * EN.CITE.DATA field (with the base64 record payload) lives entirely inside
- * the outer field's instruction section, exactly as EndNote writes it. The
- * payload is duplicated on BOTH begin fldChars — real EndNote (verified
- * against an X7.8-generated document) writes both copies, and different
- * EndNote builds read the record from different locations.
+ * ADDIN EN.CITE field wrapping the visible citation run, in the exact shape
+ * real EndNote X7.8 emits for the citation's record cardinality (round 25):
+ *
+ *  - SINGLE record: a simple field — the EndNote XML is inlined (escaped)
+ *    inside the instruction text. No w:fldData, no nested field. This is the
+ *    form real EndNote writes for ordinary one-reference citations, and the
+ *    only form its binder can be assumed to validate strictly.
+ *
+ *  - MULTIPLE records: the compound nested layout — outer EN.CITE field plus
+ *    a nested EN.CITE.DATA field (with the base64 record payload) living
+ *    entirely inside the outer field's instruction section. The payload is
+ *    duplicated on BOTH begin fldChars — real EndNote writes both copies.
  */
 function citationFieldXml(
   rpr: string,
@@ -649,6 +697,16 @@ function citationFieldXml(
   records: EndNoteRecord[],
   lib: EndNoteLibrary,
 ): string {
+  if (records.length === 1) {
+    const inline = buildEndnoteXml(display, records, lib);
+    return [
+      fldCharRun(rpr, "begin"),
+      instrRun(rpr, ` ADDIN EN.CITE ${inline}`),
+      fldCharRun(rpr, "separate"),
+      visibleRunXml,
+      fldCharRun(rpr, "end"),
+    ].join("");
+  }
   const data = encodeFldData(buildEndnoteXml(display, records, lib));
   // Run sequence byte-identical to real EndNote X7.8, including the two
   // content-free runs (see emptyRun).
