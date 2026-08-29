@@ -24,6 +24,7 @@
  * handle a failure.
  */
 import type { EndNoteRecord } from "./endnote-fields";
+import type { Reference } from "./types";
 
 const UA =
   "Mozilla/5.0 (compatible; SciWriteAssistant/1.0; +https://example.com/sciwrite)";
@@ -151,4 +152,113 @@ export function applyWebPageRefTypes(records: Map<number, EndNoteRecord> | EndNo
       rec.refType = "Web Page";
     }
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DB-row repair for hollow/malformed records (round 23)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Normalize a title for matching: lowercase, alphanumerics + CJK only. */
+function normTitle(t: string): string {
+  return (t || "").toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, "");
+}
+
+/** Split a DB authors string the same way the route does ("et al." dropped).
+ * Hostname-shaped values (the gather step stores "pmc.ncbi.nlm.nih.gov" in
+ * the authors field of web sources) become "Anonymous" — the same rule the
+ * compose pipelines apply when writing the bibliography line. */
+function splitAuthors(authors: string): string[] {
+  const raw = authors.trim();
+  if (!raw || /^(https?:\/\/)?(www\.)?[a-z0-9.-]+\.(gov|org|com|edu|net)$/i.test(raw)) {
+    return ["Anonymous"];
+  }
+  return raw
+    .split(/\s*[,;]\s*/)
+    .map((s) => s.trim())
+    .filter((s) => s && !/^et\.?\s*al\.?$/i.test(s));
+}
+
+/**
+ * Repair hollow/malformed EndNote records from the DB Reference rows
+ * (round 23 — the "还是存在少量文献出现这种情况" root cause).
+ *
+ * A bibliography line composed from a year-less Reference row carries no
+ * "(YYYY)" segment, so its parsed EndNote record has NO authors and NO year —
+ * and <Cite><Author>/<Cite><Year> are the two keys EndNote uses to bind a
+ * citation to its record. A Cite missing them is unmatchable →
+ * "!!! INVALID CITATION !!!". PubMed enrichment (round 22) repairs only the
+ * PMID-carrying subset — this pass borrows the authoritative fields from the
+ * DB rows the compose line was built from, matched by PMID → DOI →
+ * normalized-title containment. For records flagged `lineMalformed` the
+ * journal/title split is also garbled (the author list gets read as the
+ * journal), so those fields are taken from the DB row as well.
+ *
+ * @param records parsed body-line records, mutated in place
+ * @param references the DB Reference rows for the export
+ * @param dbByPmid  PMID → row index the caller already built (optional)
+ * @returns number of records that were modified
+ */
+export function repairRecordsFromDbRows(
+  records: Map<number, EndNoteRecord> | EndNoteRecord[],
+  references: {
+    type?: string | null;
+    externalId?: string | null;
+    doi?: string | null;
+    title?: string | null;
+    year?: string | null;
+    authors?: string | null;
+    journal?: string | null;
+  }[],
+  dbByPmid?: Map<string, Reference>,
+): number {
+  const list = Array.isArray(records) ? records : [...records.values()];
+  const byPmid = dbByPmid ?? new Map<string, Reference>();
+  if (!dbByPmid) {
+    for (const r of references) {
+      if (r.type === "pubmed" && r.externalId) byPmid.set(r.externalId, r as Reference);
+    }
+  }
+  type Row = (typeof references)[number];
+  const byDoi = new Map<string, Row>();
+  const byTitle: Array<[string, Row]> = [];
+  for (const r of references) {
+    if (r.doi) byDoi.set(r.doi.toLowerCase(), r);
+    if (r.title) byTitle.push([normTitle(r.title), r]);
+  }
+
+  let repaired = 0;
+  for (const rec of list) {
+    const needYear = !rec.year;
+    const needAuthors = rec.authors.length === 0;
+    const malformed = !!rec.lineMalformed;
+    if (!needYear && !needAuthors && !malformed) continue;
+    let row: Row | undefined = rec.pmid ? byPmid.get(rec.pmid) : undefined;
+    if (!row && rec.doi) row = byDoi.get(rec.doi.toLowerCase());
+    if (!row) {
+      const nt = normTitle(rec.title);
+      if (nt.length >= 12) {
+        row = byTitle.find(
+          ([k]) => k.length >= 12 && (k === nt || k.includes(nt) || nt.includes(k)),
+        )?.[1];
+      }
+    }
+    if (!row) continue;
+    const before = JSON.stringify(rec);
+    if (needYear && row.year && /^\d{4}/.test(row.year)) {
+      rec.year = row.year.slice(0, 4);
+    }
+    if (needAuthors && row.authors) {
+      rec.authors = splitAuthors(row.authors);
+    }
+    if (malformed) {
+      // The line's journal/title split is unreliable (the author list gets
+      // read as the journal) — take the DB row's values; clear the journal
+      // when the row has none so applyWebPageRefTypes can still type the
+      // record as "Web Page".
+      rec.journal = row.journal || undefined;
+      if (row.title) rec.title = row.title;
+    }
+    if (JSON.stringify(rec) !== before) repaired++;
+  }
+  return repaired;
 }

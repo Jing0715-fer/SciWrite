@@ -1791,3 +1791,30 @@ Stage Summary:
 - PubMed esummary 批量富集：docx 移动库与 .enw 两种格式的记录字段完整化（DB 行没有的 DOI/卷/期/页从 NCBI 权威源补齐），best-effort 不阻断导出
 - 新文件：src/lib/endnote-enrich.ts；修改：src/lib/endnote-fields.ts（formatAuthorForEndnote/buildEnwExport/记录 XML 完整化）、src/app/api/export/route.ts（enrich 接入 + endnote 格式分支 + et al 过滤）、src/components/sciwrite/export-menu.tsx、src/lib/api-client.ts、src/lib/i18n.tsx（5 语言）
 - 提交信息：fix(round-22): EndNote record validity (canonical author names, PubMed-enriched fields, web-page types) + .enw library export
+
+---
+Task ID: round-23
+Agent: main (Z.ai Code orchestrator)
+Task: 修复 EndNote 集成残留问题：导出 Word 后仍有少量文献在 EndNote 中显示 "!!! INVALID CITATION !!!"（比 round-22 修复前少了）
+
+Work Log:
+- 取证：重导出 TMC 文章 docx（45 EN.CITE 字段）解码 19 个唯一载荷——结构层全部完好（CiteAuthor/CiteYear/title/authors/ref-type 齐备、双载荷一致、begin/end 平衡），排除结构损坏
+- 格式考古：下载真实 EndNote X7.8 CWYW 文档（pandoc issue #8433 附件，含 3-Cite 分组引用）+ EndNote 15 库 XML 导出样本（gist）逐元素路径 diff——锁定 4 处偏差：① 我们在 record 里加的 <database>/<source-app>（真实 CWYW 记录不带，但库 XML 格式合法，保留）② 元素顺序 electronic-resource-num/accession-num 在 urls 之前（真实 CWYW：urls 在前；真实库 XML：accession-num 在 urls 前）③ 全部外键共用同一 timestamp（真实 EndNote 逐记录不同）④ 字段运行序列缺两个空 run（真实 X7.8 在 EN.CITE.DATA 指令与 end 之间、end 与 separate 之间各有一个空 run）；Bookends→EndNote 转换器（Zotero 开发者维护）证明元素顺序对 EndNote 解析器宽松——顺序非根因但按权威顺序对齐
+- 根因锁定（用户症状 "[1,2]" + "Year: !!! INVALID CITATION !!!"）：**空洞记录**——generate-full / generate-full-v2 / compose 三个管线在 Reference 行无 year 时引用行完全不写 "(YYYY)" 段（`const yr = r.year ? \` (${r.year})\` : ""`），导出端 parseRefLineForRecord 的 "(YYYY)" 锚点失败 → authors=""、year=undefined、作者串被误读为期刊名 → <Cite> 头缺失 Author/Year 两个匹配键 → EndNote 无法绑定 → INVALID；round-22 的 PubMed 富集只救回带 PMID 的子集（解释"比之前少了"），无 PMID 的残留（=「还是存在少量文献」）；库内实测 475/2853（16.7%）引用行无年份，全部为 web 源（authors 字段竟存主机名 "pmc.ncbi.nlm.nih.gov"）；用户旧文章 21 条引用行跑解析器复测：20 条完好（1 条为 PDF 换行伪影）
+- 修复①（解析器回退，endnote-fields.ts）：parseRefLineForRecord 新增裸年份回退——"Authors. 2024. Journal. Title" / "Authors. 2024;15:e123." 形态恢复 Author+Year 对（年份须夹在分隔符之间，DOI 尾缀 "…-16.2016" 不会误判）；行首年份 "(2020), Nature…" 也恢复年份；所有回退路径标记 malformed 让导出端知悉 journal/title 切分不可靠
+- 修复②（DB 行修复通道，endnote-enrich.ts 新增 repairRecordsFromDbRows）：对空洞/malformed 记录按 PMID → DOI → 归一化标题包含匹配找到 DB Reference 行（引用行的同一数据源），回填缺失的 year/authors；malformed 记录的 journal/title 一并从 DB 行取（清掉误读的垃圾期刊，恢复 Web Page 类型判定）；主机名形 authors（gather 步骤的 web 源伪影）按 compose 同规则替换为 "Anonymous"
+- 修复③（n.d. 兜底，export 路由）：修复+富集后仍无年份的记录（web 源 DB 行本就无年份）采用学术惯例 "n.d."（no date）——自洽的 <Cite><Year> 保持引用可匹配，EndNote 渲染为 "(n.d.)"；无法修复的记录（无 DB 行匹配且无年份无作者）console.warn 诊断日志暴露而非静默
+- 修复④（字节级对齐，endnote-fields.ts）：recordXml 元素顺序改为权威顺序（…dates → accession-num → urls → electronic-resource-num，两份真实样本共同满足）；外键 timestamp 逐记录差异化（foreignKeyTimestamp，确定性哈希派生，同一记录跨字段稳定）；citationFieldXml 补两个空 run（emptyRun）使运行序列与真实 X7.8 完全一致
+- 离线验证（scripts/test-endnote-round23.ts，46 项全过）：解析器 7 形态（标准/裸年份/分号年份/无年份/行首年份/DOI 干扰/裸年份在前）、DB 修复 11 项（标题匹配/PMID/DOI/垃圾期刊清除/主机名→Anonymous/et al. 过滤/干净记录不触碰/无匹配诚实保留）、XML 顺序 3 断言、timestamp 差异化+确定性、分组 DisplayText 唯一、注入运行序列含空 run、enw 回归、parseCitationNumbers 回归
+- E2E（真实路由级复刻用户症状）：构造测试文章——分组引用 "[1,2]" 内含无年份 web 引用行 + 主机名作者 web 引用行 → 导出解码验证：记录 2 从「无 Author 无 Year 期刊串成作者名」修复为 Author=Wang/Year=n.d./作者/期刊/标题全部从 DB 行复原；记录 3 主机名作者 → Anonymous + Web Page(12) 类型正确；逐记录 timestamp 差异化生效；dev.log 完整记录修复链（"DB-row repair filled 2" + "PubMed enrichment filled 1" + "2 undated defaulted to n.d."）；TMC 文章重导出回归：19 载荷 Cite 头全部完整、18 记录 18 个差异化 timestamp、90 空运行（45 字段×2 精确）、91/91 平衡、.enw 不回归
+- E2E（agent-browser）：主页/项目/Article 页签渲染正常，Export 菜单 7 项（含 EndNote Library (.enw)），UI 触发 Word 导出 POST /api/export 200，0 page error / 0 新增 console 错误；测试夹具已清理
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 162 warning（=基线）；dev.log 无未处理错误
+
+Stage Summary:
+- 残留 INVALID 根因：无年份引用行 → 空洞记录（Cite 头缺 Author/Year 匹配键），非分组引用结构问题（分组载荷与真实 X7.8 逐元素一致已复核）
+- 修复链四层：解析器裸年份回退 → DB 行修复（PMID→DOI→标题三级匹配）→ PubMed 富集（既有）→ n.d. 学术惯例兜底；主机名作者 → Anonymous；垃圾期刊清除恢复 Web Page 类型判定
+- 字节级对齐：record 元素顺序权威化（accession-num 在 urls 前、electronic-resource-num 在 urls 后）、外键 timestamp 逐记录差异化、字段序列补两个空 run——与真实 X7.8 输出的全部已知偏差清零
+- 诊断可见性：repair/n.d./不可修复三级 console 日志，未来问题可在 dev.log 直接定位
+- 修改文件：src/lib/endnote-fields.ts（解析回退+顺序+timestamp+空 run）、src/lib/endnote-enrich.ts（repairRecordsFromDbRows+主机名规则）、src/app/api/export/route.ts（malformed 标记+修复调用+n.d. 兜底+DB 兜底分支主机名规则）；新增 scripts/test-endnote-round23.ts（46 项）
+- 用户侧预期：重新导出 Word 后用 EndNote 打开，此前无效的少量文献应恢复为可匹配记录（无年份 web 源显示 Anonymous (n.d.) / Web Page 类型）；若仍有残留，dev.log 的 "still have no year and no authors" 警告即下一步线索
+- 提交信息：fix(round-23): hollow-record repair for EndNote invalid citations (bare-year parse fallback, DB-row repair, n.d. convention, byte-parity with real X7.8)
