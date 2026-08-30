@@ -4,6 +4,7 @@ import { chatStream } from "@/lib/ai";
 import { saveSessionMessage } from "@/lib/llm-session";
 import { countWords, sanitizeSectionContent } from "@/lib/writing";
 import { safeErrorMessage } from "@/lib/api-helpers";
+import { translateSectionTitles } from "@/lib/section-title-zh";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -101,6 +102,20 @@ ${cleanEn}`;
 
     const zhWordCount = countWords(zhContent);
 
+    // round-28: also translate the section TITLE so the Chinese article's
+    // headings are Chinese (they used to stay English, which made the zh
+    // docx read like a patchwork). Best-effort — falls back to the English
+    // title on failure.
+    let titleZh: string | null = null;
+    if (paragraph.title && paragraph.title.trim()) {
+      try {
+        const [t] = await translateSectionTitles([paragraph.title.trim()]);
+        titleZh = t || null;
+      } catch {
+        titleZh = null;
+      }
+    }
+
     // Save session messages for context continuity
     try {
       await saveSessionMessage(paragraph.projectId, "translate", "user", translatePrompt, {
@@ -123,6 +138,7 @@ ${cleanEn}`;
       data: {
         contentZh: zhContent,
         wordCountZh: zhWordCount,
+        ...(titleZh ? { titleZh } : {}),
       },
     });
 
@@ -136,7 +152,7 @@ ${cleanEn}`;
             include: {
               articleParagraph: {
                 orderBy: { order: "asc" },
-                include: { paragraph: { select: { contentZh: true, title: true } } },
+                include: { paragraph: { select: { contentZh: true, title: true, titleZh: true } } },
               },
             },
           },
@@ -146,7 +162,10 @@ ${cleanEn}`;
         const zhSections: string[] = [];
         for (const apItem of ap.article.articleParagraph) {
           if (apItem.paragraph?.contentZh) {
-            zhSections.push(`## ${apItem.paragraph.title}\n\n${apItem.paragraph.contentZh}`);
+            // Prefer the Chinese title when present (round-28); fall back to
+            // the English title for legacy paragraphs without titleZh.
+            const zhTitle = apItem.paragraph.titleZh || apItem.paragraph.title;
+            zhSections.push(`## ${zhTitle}\n\n${apItem.paragraph.contentZh}`);
           }
         }
         if (zhSections.length > 0) {
@@ -174,6 +193,7 @@ ${cleanEn}`;
       paragraph: updated,
       contentZh: zhContent,
       wordCountZh: zhWordCount,
+      titleZh,
     });
   } catch (err: any) {
     console.error("[retranslate] error:", err);

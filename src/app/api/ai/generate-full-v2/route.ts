@@ -7,6 +7,7 @@ import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-
 import { queryDatabase } from "@/lib/databases";
 import { countWords, sanitizeSectionContent } from "@/lib/writing";
 import { generateArticleTitle } from "@/lib/article-title";
+import { translateSectionTitles } from "@/lib/section-title-zh";
 import {
   buildAuditReport,
   extractBodyCitations,
@@ -1409,6 +1410,23 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           });
           log(`translate: starting for ${generatedParagraphs.length} sections`);
 
+          // round-28: translate ALL section titles in ONE small batched call
+          // so the composed Chinese article carries Chinese headings (the
+          // English half keeps its own titles). Null entries fall back to the
+          // English title — a heading-translation failure never blocks
+          // generation.
+          const sectionTitles = generatedParagraphs.map(
+            (gp: any, i: number) => gp?.title || sections[i]?.title || "",
+          );
+          let titleZhs: (string | null)[] = [];
+          try {
+            titleZhs = await translateSectionTitles(sectionTitles);
+            const got = titleZhs.filter(Boolean).length;
+            log(`translate: section titles ${got}/${sectionTitles.length} translated`);
+          } catch (titleErr: any) {
+            log(`translate: section-title batch FAILED (keeping English headings): ${titleErr?.message?.slice(0, 80) || "unknown"}`);
+          }
+
           const translatedContents: string[] = [];
           for (let i = 0; i < generatedParagraphs.length; i++) {
             const p = generatedParagraphs[i];
@@ -1555,6 +1573,7 @@ ${cleanEn}`;
                 data: {
                   contentZh: zhContent,
                   wordCountZh: zhWordCount,
+                  ...(titleZhs[i] ? { titleZh: titleZhs[i] as string } : {}),
                 },
               });
 
@@ -1612,7 +1631,7 @@ ${cleanEn}`;
           });
 
           const zhBody = translatedContents
-            .map((c, i) => `## ${generatedParagraphs[i]?.title || sections[i]?.title || `Section ${i + 1}`}\n\n${c}`)
+            .map((c, i) => `## ${titleZhs[i] || generatedParagraphs[i]?.title || sections[i]?.title || `Section ${i + 1}`}\n\n${c}`)
             .join("\n\n");
 
           let cleanZhBody = zhBody.trim();

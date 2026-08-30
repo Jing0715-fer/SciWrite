@@ -9,6 +9,7 @@ import {
   PageNumber,
   AlignmentType,
   LevelFormat,
+  type IFontAttributesProperties,
 } from "docx";
 import { PDFDocument, StandardFonts, rgb, PDFName, PDFString, PDFNumber, PDFDict } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
@@ -41,6 +42,13 @@ export const maxDuration = 60;
  *  - Hiragana (U+3040–U+309F), Katakana (U+30A0–U+30FF) — Japanese
  *  - Hangul Syllables (U+AC00–U+D7AF) — Korean
  */
+/**
+ * Proofing-language tag for Word runs. `value` governs Latin text, `eastAsia`
+ * governs CJK text. (The docx lib types this shape internally as
+ * ILanguageOptions but does not export the type.)
+ */
+type RunLanguage = { value?: string; eastAsia?: string; bidirectional?: string };
+
 function containsCJK(text: string): boolean {
   for (const ch of text) {
     const code = ch.codePointAt(0) || 0;
@@ -1338,12 +1346,19 @@ function stripInlineMarkdown(text: string): string {
  * is emitted as a unique placeholder token instead of its literal text; the
  * post-processing pass later swaps the placeholder run for a compound
  * ADDIN EN.CITE field whose cached result is the original superscript text.
+ *
+ * round-28: `font` may be an object carrying an eastAsia slot (Chinese
+ * documents pair a Latin serif with 宋体 for CJK glyphs) and `language` tags
+ * every run with the eastAsia proofing language so Word does NOT spell-check
+ * Chinese text against the English dictionary (the cause of the sea of red
+ * squiggly underlines in exported zh docx files).
  */
 function parseInlineMarkdown(
   text: string,
-  font: string,
+  font: string | IFontAttributesProperties,
   size: number,
   citeSink?: (marker: string) => string,
+  language?: RunLanguage,
 ): TextRun[] {
   const runs: TextRun[] = [];
   const re = /(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(`[^`\n]+`)|(\[\d{1,3}(?:[,\-–\s]\d{1,3})*\])/g;
@@ -1351,25 +1366,25 @@ function parseInlineMarkdown(
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {
     if (m.index > last) {
-      runs.push(new TextRun({ text: text.slice(last, m.index), font, size }));
+      runs.push(new TextRun({ text: text.slice(last, m.index), font, size, language }));
     }
     const tok = m[0];
     if (tok.startsWith("**")) {
-      runs.push(new TextRun({ text: tok.slice(2, -2), bold: true, font, size }));
+      runs.push(new TextRun({ text: tok.slice(2, -2), bold: true, font, size, language }));
     } else if (tok.startsWith("`")) {
-      runs.push(new TextRun({ text: tok.slice(1, -1), font, size }));
+      runs.push(new TextRun({ text: tok.slice(1, -1), font, size, language }));
     } else if (tok.startsWith("[")) {
       const visible = citeSink ? citeSink(tok) : tok;
-      runs.push(new TextRun({ text: visible, superScript: true, font, size }));
+      runs.push(new TextRun({ text: visible, superScript: true, font, size, language }));
     } else {
-      runs.push(new TextRun({ text: tok.slice(1, -1), italics: true, font, size }));
+      runs.push(new TextRun({ text: tok.slice(1, -1), italics: true, font, size, language }));
     }
     last = m.index + tok.length;
   }
   if (last < text.length) {
-    runs.push(new TextRun({ text: text.slice(last), font, size }));
+    runs.push(new TextRun({ text: text.slice(last), font, size, language }));
   }
-  return runs.length ? runs : [new TextRun({ text, font, size })];
+  return runs.length ? runs : [new TextRun({ text, font, size, language })];
 }
 
 /**
@@ -1392,9 +1407,36 @@ async function buildDocx(
 
   // Formal manuscript fonts: Times New Roman serif; Nature/Science house
   // style uses a sans stack.
+  //
+  // round-28 CJK typography: when the document carries Chinese text (zh
+  // export or bilingual), Latin runs keep the Latin font while CJK glyphs
+  // get real Chinese fonts — 宋体 (SimSun) for body prose, 黑体 (SimHei) for
+  // headings — instead of forcing `eastAsia="Times New Roman"` (a font with
+  // NO Chinese glyphs, which made Word substitute whatever it liked and
+  // rendered terribly). Every run is additionally tagged with the eastAsia
+  // proofing language zh-CN so Word stops spell-checking Chinese text
+  // against the English dictionary — the root cause of the user-reported
+  // “很多红色的下划线” (a sea of red squiggly underlines) in zh docx exports.
+  // English-only documents keep the previous byte-identical output.
   const isNature = journalTemplate === "nature";
   const isScience = journalTemplate === "science";
-  const font = isNature || isScience ? "Arial" : "Times New Roman";
+  const latinFont = isNature || isScience ? "Arial" : "Times New Roman";
+  const hasCJK =
+    containsCJK(title) ||
+    containsCJK(abstract) ||
+    containsCJK(content) ||
+    refLines.some(containsCJK);
+  const bodyFont: string | IFontAttributesProperties = hasCJK
+    ? { ascii: latinFont, hAnsi: latinFont, cs: latinFont, eastAsia: "宋体" }
+    : latinFont;
+  const headingFont: string | IFontAttributesProperties = hasCJK
+    ? { ascii: latinFont, hAnsi: latinFont, cs: latinFont, eastAsia: "黑体" }
+    : latinFont;
+  // Latin text inside Chinese documents keeps English proofing (value),
+  // CJK text is proofed as Chinese (eastAsia) → no red squiggles on 中文.
+  const runLang: RunLanguage | undefined = hasCJK
+    ? { value: "en-US", eastAsia: "zh-CN" }
+    : undefined;
   const bodySize = 22;  // 11 pt
   const smallSize = 20; // 10 pt
   const refSize = 18;   // 9 pt
@@ -1418,7 +1460,7 @@ async function buildDocx(
   children.push(
     new Paragraph({
       alignment: AlignmentType.CENTER,
-      children: [new TextRun({ text: title, bold: true, size: 32, font, color: "000000" })],
+      children: [new TextRun({ text: title, bold: true, size: 32, font: headingFont, color: "000000", language: runLang })],
       spacing: { after: 80, line: 320 },
     })
   );
@@ -1428,13 +1470,13 @@ async function buildDocx(
     children.push(
       new Paragraph({
         alignment: AlignmentType.CENTER,
-        children: [new TextRun({ text: "Abstract", bold: true, size: bodySize, font, color: "000000" })],
+        children: [new TextRun({ text: containsCJK(abstract) ? "摘要" : "Abstract", bold: true, size: bodySize, font: headingFont, color: "000000", language: runLang })],
         spacing: { before: 160, after: 80 },
       })
     );
     children.push(
       new Paragraph({
-        children: parseInlineMarkdown(abstract, font, smallSize, sink),
+        children: parseInlineMarkdown(abstract, bodyFont, smallSize, sink, runLang),
         alignment: AlignmentType.JUSTIFIED,
         indent: { left: 567, right: 567 },
         spacing: { after: 240, line: 300 },
@@ -1457,7 +1499,7 @@ async function buildDocx(
           children: [
             new TextRun({
               text: `${h2}.${h3} ${b.replace(/^###\s+/, "")}`,
-              bold: true, size: 24, font, color: "000000",
+              bold: true, size: 24, font: headingFont, color: "000000", language: runLang,
             }),
           ],
           spacing: { before: 240, after: 100 },
@@ -1471,7 +1513,7 @@ async function buildDocx(
           children: [
             new TextRun({
               text: `${h2}. ${b.replace(/^##\s+/, "")}`,
-              bold: true, size: 26, font, color: "000000",
+              bold: true, size: 26, font: headingFont, color: "000000", language: runLang,
             }),
           ],
           spacing: { before: sawSection ? 320 : 120, after: 120 },
@@ -1486,7 +1528,7 @@ async function buildDocx(
       children.push(
         new Paragraph({
           alignment: AlignmentType.CENTER,
-          children: [new TextRun({ text: b.replace(/^#\s+/, ""), bold: true, size: 30, font, color: "000000" })],
+          children: [new TextRun({ text: b.replace(/^#\s+/, ""), bold: true, size: 30, font: headingFont, color: "000000", language: runLang })],
           pageBreakBefore: sawSection,
           spacing: { after: 200 },
         })
@@ -1496,10 +1538,16 @@ async function buildDocx(
       const para = b.split("\n").map((l) => l.replace(/^\s*[-*•]\s+/, "")).join(" ");
       children.push(
         new Paragraph({
-          children: parseInlineMarkdown(para, font, bodySize, sink),
+          children: parseInlineMarkdown(para, bodyFont, bodySize, sink, runLang),
           alignment: AlignmentType.JUSTIFIED,
           spacing: { after: 140, line: 340 },
-          indent: { firstLine: 360 },
+          // Chinese prose indents by 2 CHARACTERS (firstLineChars=200), the
+          // typographic standard — a fixed 360 twips is only ~1.6 chars at
+          // 11pt and reads as a mis-set indent. Latin paragraphs keep the
+          // fixed twip indent (byte-identical to the previous output).
+          indent: hasCJK && containsCJK(para)
+            ? { firstLineChars: 200 }
+            : { firstLine: 360 },
         })
       );
     }
@@ -1522,14 +1570,14 @@ async function buildDocx(
     children.push(
       new Paragraph({
         pageBreakBefore: true,
-        children: [new TextRun({ text: "References", bold: true, size: 26, font, color: "000000" })],
+        children: [new TextRun({ text: hasCJK ? "参考文献" : "References", bold: true, size: 26, font: headingFont, color: "000000", language: runLang })],
         spacing: { after: 160 },
       })
     );
     if (useEndnote) {
       children.push(
         new Paragraph({
-          children: [new TextRun({ text: reflistOpenToken, size: 2, font })],
+          children: [new TextRun({ text: reflistOpenToken, size: 2, font: bodyFont, language: runLang })],
           spacing: { before: 0, after: 0 },
         })
       );
@@ -1539,7 +1587,7 @@ async function buildDocx(
       const text = allowWordWrap(line.replace(/^\s*\[\d+\]\s*/, ""));
       children.push(
         new Paragraph({
-          children: [new TextRun({ text, size: refSize, font, color: "000000" })],
+          children: [new TextRun({ text, size: refSize, font: bodyFont, color: "000000", language: runLang })],
           numbering: { reference: "endnote-reflist", level: 0 },
           alignment: AlignmentType.JUSTIFIED,
           spacing: { after: 80, line: 260 },
@@ -1549,7 +1597,7 @@ async function buildDocx(
     if (useEndnote) {
       children.push(
         new Paragraph({
-          children: [new TextRun({ text: reflistCloseToken, size: 2, font })],
+          children: [new TextRun({ text: reflistCloseToken, size: 2, font: bodyFont, language: runLang })],
           spacing: { before: 0, after: 0 },
         })
       );
@@ -1566,7 +1614,7 @@ async function buildDocx(
           text: "[%1]",
           alignment: AlignmentType.START,
           style: {
-            run: { font, size: refSize, color: "000000" },
+            run: { font: bodyFont, size: refSize, color: "000000", language: runLang },
             paragraph: { indent: { left: 480, hanging: 480 } },
           },
         }],
@@ -1582,7 +1630,7 @@ async function buildDocx(
             new Paragraph({
               alignment: AlignmentType.CENTER,
               children: [
-                new TextRun({ children: [PageNumber.CURRENT], size: 18, font, color: "555555" }),
+                new TextRun({ children: [PageNumber.CURRENT], size: 18, font: bodyFont, color: "555555", language: runLang }),
               ],
             }),
           ],
@@ -1592,7 +1640,9 @@ async function buildDocx(
     }],
     styles: {
       default: {
-        document: { run: { font, size: bodySize } },
+        document: {
+          run: { font: bodyFont, size: bodySize, ...(runLang ? { language: runLang } : {}) },
+        },
       },
     },
   });

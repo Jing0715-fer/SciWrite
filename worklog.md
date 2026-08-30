@@ -1923,3 +1923,31 @@ Stage Summary:
 - 修改文件：src/app/api/ai/generate-full-v2/route.ts（language 解析 + STEP 9 翻译阶段 + stats complete）、src/components/sciwrite/unified-writing-dialog.tsx（语言透传 + STEPS + 双形状兜底 + 两处死代码修复 + willTranslate 估算/策略面板）、src/lib/writing.ts（countWords CJK）、scripts/full-generation-test.ts（--language/--skip-adversarial/bilingual 断言）
 - 用户侧预期：V2 + 中文+英文 重新生成 → 步骤条出现"翻译"步骤 → 完成提示显示真实字数与引用数 → 文章查看器 EN/中文 切换查看双语 → 导出中文 docx
 - 提交信息：fix(round-27): v2 bilingual generation — real language passthrough + post-compose translate stage (citation-preserving EN→中文), v1-shaped stats in complete event fixes "0 words" toast, CJK-aware word counting
+
+---
+Task ID: round-28
+Agent: main (Z.ai Code orchestrator)
+Task: 修复用户报告的中文版 docx 排版问题：导出的中文文档"排版很难看，有很多红色的下划线"（取证文件：upload/跨膜通道样蛋白家族-结构-多样化功能与疾病意义_20260830-152836-zh.docx）
+
+Work Log:
+- 取证（用户上传的 zh docx）：解压 document.xml 逐项检查——①全文 0 个 w:lang 证明语言标记、0 个 proofErr（红线非内嵌标记）→ Word 用默认英文词典校对中文，整句中文成为"一个不认识的英文单词"→ 满篇红色波浪线（根因①）；②1344 个 run 全部 w:eastAsia="Times New Roman"（docx 库的 string font 会填充全部四个字体槽）——TNR 无中文字形 → Word 随机替换字体，排版难看（根因②）；③16 个章节标题全部是英文（V1/V2 双语组装用 `## ${para.title}` 英文标题拼中文正文，round-27 引入翻译时遗漏标题）；④首行缩进固定 360 twips ≈ 1.6 字符（中文规范 2 字符）；⑤References 标签在纯中文文档中保持英文
+- 修复①（export/route.ts buildDocx CJK 感知排版）：hasCJK 检测（title+abstract+content+refLines）→ body run 字体对象 { ascii: TNR, hAnsi: TNR, cs: TNR, eastAsia: 宋体 }、标题 run eastAsia 黑体；每个 run 与 docDefaults 挂 language { value: en-US, eastAsia: zh-CN }（拉丁词按英文校对、中文按中文校对 → 红线根治）；中文段落缩进 firstLineChars=200（Word 原生 2 字符单位，按段落逐一判定，bilingual 文档英文段保持 360 twips）；References→参考文献、Abstract→摘要（按内容判定）；英文文档输出与之前逐字节一致（回归安全）
+- 修复②（章节标题翻译，三层落地）：
+  - 新文件 src/lib/section-title-zh.ts translateSectionTitles()：全部标题一次批量小调用（非逐段）、编号行解析（1. / 1、/ 1:）、CJK 校验 + 长度上限、已是中文的标题直接透传（零 LLM 调用）、总失败返回全 null（标题翻译绝不阻断生成）
+  - V1/V2 管线（generate-full / generate-full-v2）：翻译阶段开头批量译标题 → 段落 update 持久化 titleZh → zhBody 组装用 titleZh || 英文标题
+  - Prisma：Paragraph 新增 titleZh String?（db push 已执行）
+  - retranslate 路由：单段重译时顺带翻译该段标题（titleZh 持久化 + 返回）；文章 contentZh 重同步改为 titleZh || title（存量文章修复通道）
+- 修复③（前端查看器 article-viewer-tabs）：中文视图标题显示 article.titleZh（文章级）；章节 h3 显示 p.titleZh（viewLang=zh）；parallel 对照视图中文栏顶部显示中文标题；TOC 侧栏中文视图用中文标题；"批量翻译缺失章节"的缺失定义扩展为 !contentZh || !titleZh（存量双语文章一键修复英文标题——正是用户 TMC 文章的修复路径）
+- 单元测试（bun 脚本，真实 LLM 调用）：hasCJKText 判定、中文标题透传（零调用）、英文标题翻译（"Gating Dynamics and Energetics"→"门控动力学与能量学"）、空标题→null，4/4 PASS
+- E2E（retranslate 全链路，沙箱双语演示文章——round-27 产物，与用户文章同病：中文正文 + 英文标题）：单段重译 → titleZh="细菌机械敏感性通道简介" + article.contentZh 重同步该节中文标题；随后批量重译全部 7 节（模拟用户点击"批量翻译缺失章节"）→ contentZh 7/7 中文标题 + 参考文献；重新生成文章标题（generate-title wantZh）→ titleZh="细菌机械敏感通道MscL与MscS：结构、功能及应用"
+- E2E（导出断言，curl）：zh docx → 308 run 挂 zh-CN 校对语言、299 宋体 + 9 黑体（标题+7节+参考文献）、0 个 TNR eastAsia、16 段 firstLineChars=200、参考文献标签、7 节全中文标题 + 中文文章标题、Content-Disposition UTF-8 中文文件名正确、EndNote 域 41/41/41 平衡；en docx → 与改动前形状一致（0 lang、string font、360 twips、References，回归安全）；both docx → 595 run zh-CN、宋体577+黑体18、16 段 char 缩进（中文段）+16 段 twip 缩进（英文段）逐段判定精确、域 81/81/81 平衡
+- E2E（agent-browser）：主页零 page error；打开项目 → Article 页签 → 文章查看器 → 切换中文 → 文章标题 + 7 节标题全部中文渲染；Export 菜单三语组（EN/中/Both）→ 点击中文 Word (.docx) → POST /api/export 200；移动端 390×844 零报错
+- 回归：EndNote 测试脚本 round-23/24/25/26 全过（46+38+35+33 = 152 项）；npx tsc --noEmit 0 错误；bun run lint 0 error / 162 warning（=基线，清掉了自引入的 unused font 别名）；dev.log 无未处理错误；dev server 因 Prisma client 陈旧重启一次（dev-daemon.py 守护拉起）
+
+Stage Summary:
+- 红色下划线根治：每个 run + docDefaults 挂 w:lang value=en-US eastAsia=zh-CN——中文按中文校对（无红线）、拉丁词按英文校对（科学术语正常提示）
+- 排版根治：eastAsia 字体槽宋体（正文）/黑体（标题）替代无中文字形的 TNR；中文段落 2 字符首行缩进（firstLineChars=200）；参考文献/摘要标签中文化；英文文档字节不变
+- 中文标题根治：Paragraph.titleZh 新列 + 三层写入（V1/V2 管线批量翻译、retranslate 单段修复、批量重译一键修复存量文章）+ 查看器四处中文标题展示（文章标题/章节 h3/对照栏/TOC）
+- 修改文件：src/app/api/export/route.ts（buildDocx CJK 排版 + parseInlineMarkdown font/language 参数）、src/lib/section-title-zh.ts（新）、prisma/schema.prisma（Paragraph.titleZh）、src/app/api/ai/generate-full/route.ts、src/app/api/ai/generate-full-v2/route.ts、src/app/api/paragraphs/[id]/retranslate/route.ts、src/components/sciwrite/article-viewer-tabs.tsx
+- 用户侧操作：git pull 后——新生成的双语文章自动带中文标题+中文排版导出；存量双语文章在文章查看器点"批量翻译缺失章节"一键补齐中文标题（每节约 6-8s），再导出中文 docx 即为纯中文标题+宋体黑体排版+无红色下划线
+- 提交信息：fix(round-28): Chinese docx typography — zh-CN proofing language kills the red-squiggle sea, 宋体/黑体 eastAsia fonts, 2-char first-line indent, translated section/article titles (Paragraph.titleZh + batched LLM call + viewer/repair paths)

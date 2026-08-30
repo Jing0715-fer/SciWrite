@@ -113,6 +113,7 @@ interface Props {
   article: {
     id: string;
     title: string;
+    titleZh?: string | null;
     abstract?: string | null;
     content: string;
     contentZh?: string | null;
@@ -149,7 +150,10 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
   // project-creation brief) as their title — one click here rewrites it from
   // the article's actual content, so exports name the file after the article.
   const [titleOverride, setTitleOverride] = React.useState<string | null>(null);
-  const displayTitle = titleOverride ?? article.title;
+  // round-28: in the Chinese view show the Chinese article title when the
+  // bilingual pipeline produced one (falls back to the English title).
+  const displayTitle = titleOverride
+    ?? (viewLang === "zh" && article.titleZh ? article.titleZh : article.title);
   const regenerateTitleMut = useMutation({
     mutationFn: () => api.regenerateArticleTitle(article.id),
     onSuccess: (res: any) => {
@@ -548,9 +552,13 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Batch re-translate all sections missing contentZh
+  // Batch re-translate all sections missing contentZh or titleZh.
+  // round-28: titleZh joins the "missing" definition — legacy bilingual
+  // articles (translated before round-28) have Chinese bodies but ENGLISH
+  // headings, and the zh docx/export read like a patchwork. One batch pass
+  // repairs both the heading and the body per section.
   const batchRetranslate = async () => {
-    const missing = paragraphs.filter((p: any) => !p.contentZh);
+    const missing = paragraphs.filter((p: any) => !p.contentZh || !p.titleZh);
     if (missing.length === 0) {
       toast.info(t("articleViewer.allTranslated") || "All sections already have Chinese translations.");
       return;
@@ -973,7 +981,9 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                           </Button>
                         )}
                       </div>
-                      <h3 className={`text-sm font-semibold mb-2 ${isParallel ? "lg:col-span-2" : ""}`}>{p.title}</h3>
+                      <h3 className={`text-sm font-semibold mb-2 ${isParallel ? "lg:col-span-2" : ""}`}>
+                        {viewLang === "zh" && p.titleZh ? p.titleZh : p.title}
+                      </h3>
 
                       {/* Single-language view */}
                       {!isParallel && (
@@ -1009,6 +1019,9 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                               </Badge>
                               <span className="text-[9px] text-muted-foreground">{p.wordCountZh || 0}字</span>
                             </div>
+                            {p.titleZh && (
+                              <div className="text-[12px] font-semibold text-foreground/90">{p.titleZh}</div>
+                            )}
                             {p.contentZh ? (
                               <MarkdownCitations
                                 content={p.contentZh}
@@ -1039,7 +1052,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                 <ArticleTOCSidebar
                   sections={paragraphs.map((p: any, i: number) => ({
                     id: p.id,
-                    title: p.title,
+                    title: viewLang === "zh" && p.titleZh ? p.titleZh : p.title,
                     index: i,
                     format: p.format,
                     wordCount: p.wordCount,
