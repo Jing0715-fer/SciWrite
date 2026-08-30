@@ -64,9 +64,9 @@ export function CitationVerifyDialog({ open, onOpenChange, articleId }: Props) {
   const summary = verifyMut.data?.summary;
 
   const statusConfig = {
-    supported: { icon: CheckCircle2, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-950/20", border: "border-emerald-300/40", label: "Supported" },
-    weak: { icon: AlertTriangle, color: "text-amber-600", bg: "bg-amber-50 dark:bg-amber-950/20", border: "border-amber-300/40", label: "Weak" },
-    unsupported: { icon: XCircle, color: "text-red-600", bg: "bg-red-50 dark:bg-red-950/20", border: "border-red-300/40", label: "Unsupported" },
+    supported: { icon: CheckCircle2, color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-950/20", border: "border-emerald-300/40 dark:border-emerald-700/50", label: "Supported" },
+    weak: { icon: AlertTriangle, color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-50 dark:bg-amber-950/20", border: "border-amber-300/40 dark:border-amber-700/50", label: "Weak" },
+    unsupported: { icon: XCircle, color: "text-red-600 dark:text-red-400", bg: "bg-red-50 dark:bg-red-950/20", border: "border-red-300/40 dark:border-red-700/50", label: "Unsupported" },
     missing: { icon: ShieldAlert, color: "text-muted-foreground", bg: "bg-muted/20", border: "border-border/40", label: "Missing" },
   };
 
@@ -87,18 +87,18 @@ export function CitationVerifyDialog({ open, onOpenChange, articleId }: Props) {
         {summary && (
           <div className="px-5 py-2 border-b border-border/40 shrink-0 flex items-center gap-3 bg-muted/10">
             <div className="flex items-center gap-1.5">
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-              <span className="text-[10px] font-mono font-semibold text-emerald-600">{summary.supported}</span>
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+              <span className="text-[10px] font-mono font-semibold text-emerald-600 dark:text-emerald-400">{summary.supported}</span>
               <span className="text-[9px] text-muted-foreground">supported</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
-              <span className="text-[10px] font-mono font-semibold text-amber-600">{summary.weak}</span>
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+              <span className="text-[10px] font-mono font-semibold text-amber-600 dark:text-amber-400">{summary.weak}</span>
               <span className="text-[9px] text-muted-foreground">weak</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <XCircle className="h-3.5 w-3.5 text-red-600" />
-              <span className="text-[10px] font-mono font-semibold text-red-600">{summary.unsupported}</span>
+              <XCircle className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />
+              <span className="text-[10px] font-mono font-semibold text-red-600 dark:text-red-400">{summary.unsupported}</span>
               <span className="text-[9px] text-muted-foreground">unsupported</span>
             </div>
             {summary.missing > 0 && (

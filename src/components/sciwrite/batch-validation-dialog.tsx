@@ -47,9 +47,9 @@ export function BatchValidationDialog({ open, onOpenChange, projectId }: Props) 
             {isLoading ? (
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
             ) : allClean ? (
-              <ShieldCheck className="h-4 w-4 text-emerald-600" />
+              <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
             ) : agg ? (
-              <ShieldAlert className="h-4 w-4 text-amber-600" />
+              <ShieldAlert className="h-4 w-4 text-amber-600 dark:text-amber-400" />
             ) : (
               <ShieldCheck className="h-4 w-4 text-primary" />
             )}
@@ -80,9 +80,9 @@ export function BatchValidationDialog({ open, onOpenChange, projectId }: Props) 
                 >
                   <div className="flex items-center gap-2 mb-2">
                     {allClean ? (
-                      <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                      <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
                     ) : (
-                      <AlertTriangle className="h-5 w-5 text-amber-600" />
+                      <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                     )}
                     <span
                       className={`text-sm font-semibold ${
@@ -141,9 +141,9 @@ export function BatchValidationDialog({ open, onOpenChange, projectId }: Props) 
                             §{String(i + 1).padStart(2, "0")}
                           </span>
                           {clean ? (
-                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                           ) : (
-                            <XCircle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                            <XCircle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
                           )}
                           <span className="text-xs font-medium truncate flex-1">
                             {p.title}

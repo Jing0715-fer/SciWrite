@@ -370,10 +370,10 @@ export function ArticleInsights({
         </div>
 
         {/* Citation density summary */}
-        <div className="rounded-lg border border-emerald-200/40 dark:border-emerald-900/30 bg-emerald-50/30 dark:bg-emerald-950/10 p-3">
+        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
           <div className="flex items-center gap-1.5 mb-1">
-            <Quote className="h-3 w-3 text-emerald-600" />
-            <span className="text-[10px] uppercase tracking-wider text-emerald-700 dark:text-emerald-400 font-semibold">
+            <Quote className="h-3 w-3 text-primary" />
+            <span className="text-[10px] uppercase tracking-wider text-primary font-semibold">
               {t("articleViewer.citationSummary") || "Citation Summary"}
             </span>
           </div>
@@ -455,9 +455,9 @@ export function ArticleInsights({
                               isSelected
                                 ? "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-1 scale-110"
                                 : isOrphan
-                                ? "bg-red-100/70 dark:bg-red-950/40 text-red-600 dark:text-red-400 ring-1 ring-red-300/50"
+                                ? "bg-red-100/70 dark:bg-red-950/40 text-red-600 dark:text-red-400 ring-1 ring-red-300/50 dark:ring-red-700/50"
                                 : isOverCited
-                                ? "bg-amber-100/70 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 ring-1 ring-amber-300/50"
+                                ? "bg-amber-100/70 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 ring-1 ring-amber-300/50 dark:ring-amber-700/50"
                                 : "bg-muted/40 text-muted-foreground group-hover/th:bg-primary/20 group-hover/th:text-primary group-hover/th:scale-110"
                             }`}
                           >
@@ -540,11 +540,11 @@ export function ArticleInsights({
                 cited (low freq)
               </span>
               <span className="flex items-center gap-1">
-                <span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-100/70 dark:bg-red-950/40 ring-1 ring-red-300/50" />
+                <span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-100/70 dark:bg-red-950/40 ring-1 ring-red-300/50 dark:ring-red-700/50" />
                 orphan (never cited)
               </span>
               <span className="flex items-center gap-1">
-                <span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-100/70 dark:bg-amber-950/40 ring-1 ring-amber-300/50" />
+                <span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-100/70 dark:bg-amber-950/40 ring-1 ring-amber-300/50 dark:ring-amber-700/50" />
                 over-cited (≥4 sections)
               </span>
             </div>

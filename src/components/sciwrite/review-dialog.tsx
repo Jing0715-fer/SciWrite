@@ -207,11 +207,11 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                   >
                     <div className="flex items-center gap-2">
                       {verdict === "accept" ? (
-                        <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                        <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
                       ) : verdict === "reject" ? (
-                        <XCircle className="h-5 w-5 text-rose-600" />
+                        <XCircle className="h-5 w-5 text-rose-600 dark:text-rose-400" />
                       ) : (
-                        <AlertTriangle className="h-5 w-5 text-amber-600" />
+                        <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                       )}
                       <span
                         className={`text-sm font-semibold ${
@@ -247,10 +247,10 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                         const pct = (val / 10) * 100;
                         const color =
                           val >= 8
-                            ? "text-emerald-600"
+                            ? "text-emerald-600 dark:text-emerald-400"
                             : val >= 6
-                            ? "text-amber-600"
-                            : "text-rose-600";
+                            ? "text-amber-600 dark:text-amber-400"
+                            : "text-rose-600 dark:text-rose-400";
                         return (
                           <div key={key} className="rounded-md border border-border/50 p-2">
                             <div className="flex items-center justify-between mb-1">
@@ -336,7 +336,7 @@ export function ReviewDialog({ open, onOpenChange, articleId, articleTitle }: Pr
                           <span className="text-muted-foreground">{t(`review.${r.verdict}` as any)}</span>
                         )}
                         {r.phase === "revise" && (
-                          <span className="text-emerald-600">{t("review.revised")} ✓</span>
+                          <span className="text-emerald-600 dark:text-emerald-400">{t("review.revised")} ✓</span>
                         )}
                       </div>
                     ))}

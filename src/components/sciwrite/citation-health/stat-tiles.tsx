@@ -17,7 +17,7 @@ export function StatTiles({ agg }: { agg: HealthAggregate }) {
         <span className="text-muted-foreground">{t("citationHealth.statCitations")}</span>
       </span>
       <span className="surface-card rounded-md px-2 py-0.5 flex items-center gap-1 transition-all hover:shadow-md hover:border-primary/30">
-        <BookOpen className="h-3 w-3 text-teal-600 dark:text-teal-400" />
+        <BookOpen className="h-3 w-3 text-primary" />
         <span className="font-serif-text font-semibold tabular-nums text-foreground">{agg.totalReferences}</span>
         <span className="text-muted-foreground">{t("citationHealth.statRefs")}</span>
       </span>

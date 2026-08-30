@@ -184,7 +184,7 @@ export function AuditReportViewer({ projectId }: { projectId: string }) {
               className={cn(
                 "rounded-md border px-2 py-1.5 text-[11px] transition-colors",
                 r.trigger === "auto"
-                  ? "border-violet-300/40 bg-violet-50/30 dark:bg-violet-950/10"
+                  ? "border-violet-300/40 dark:border-violet-700/50 bg-violet-50/30 dark:bg-violet-950/10"
                   : "border-border/60 bg-card/50"
               )}
             >
@@ -201,14 +201,14 @@ export function AuditReportViewer({ projectId }: { projectId: string }) {
                   {r.trigger === "auto" ? (
                     <Badge
                       variant="outline"
-                      className="h-3.5 px-1 text-[8px] border-violet-300/60 text-violet-700 dark:text-violet-400"
+                      className="h-3.5 px-1 text-[8px] border-violet-300/60 dark:border-violet-700/50 text-violet-700 dark:text-violet-400"
                     >
                       auto
                     </Badge>
                   ) : (
                     <Badge
                       variant="outline"
-                      className="h-3.5 px-1 text-[8px] border-blue-300/60 text-blue-700 dark:text-blue-400"
+                      className="h-3.5 px-1 text-[8px] border-blue-300/60 dark:border-blue-700/50 text-blue-700 dark:text-blue-400"
                     >
                       manual
                     </Badge>
@@ -253,7 +253,7 @@ export function AuditReportViewer({ projectId }: { projectId: string }) {
                           className={cn(
                             "rounded px-1.5 py-1 text-[10px]",
                             isLowConf
-                              ? "bg-orange-50/50 dark:bg-orange-950/20 ring-1 ring-orange-300/30"
+                              ? "bg-orange-50/50 dark:bg-orange-950/20 ring-1 ring-orange-300/30 dark:ring-orange-700/50"
                               : "bg-amber-50/40 dark:bg-amber-950/15"
                           )}
                         >
@@ -280,7 +280,7 @@ export function AuditReportViewer({ projectId }: { projectId: string }) {
                             {isLowConf && (
                               <Badge
                                 variant="outline"
-                                className="h-3 px-0.5 text-[7px] uppercase border-orange-300/60 text-orange-700 dark:text-orange-400"
+                                className="h-3 px-0.5 text-[7px] uppercase border-orange-300/60 dark:border-orange-700/50 text-orange-700 dark:text-orange-400"
                               >
                                 manual review
                               </Badge>
@@ -383,7 +383,7 @@ export function AuditReportViewer({ projectId }: { projectId: string }) {
                     {r.bodyUpdated && (
                       <Badge
                         variant="outline"
-                        className="h-3 px-1 text-[7px] border-emerald-300/60 text-emerald-700 dark:text-emerald-400"
+                        className="h-3 px-1 text-[7px] border-emerald-300/60 dark:border-emerald-700/50 text-emerald-700 dark:text-emerald-400"
                       >
                         body updated
                       </Badge>

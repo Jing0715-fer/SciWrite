@@ -56,12 +56,12 @@ export function WorstOffendersList({
                 className={cn(
                   "rounded-md border px-2 py-1.5 text-[11px] cursor-pointer transition-all shadow-xs hover:shadow-md",
                   isFixingThis
-                    ? "border-amber-400/70 bg-amber-50/60 dark:bg-amber-950/25 ring-1 ring-amber-300/40"
+                    ? "border-amber-400/70 bg-amber-50/60 dark:bg-amber-950/25 ring-1 ring-amber-300/40 dark:ring-amber-700/50"
                     : isRegenerating
                     ? "border-primary/50 bg-primary/[0.06] dark:bg-primary/[0.08] ring-1 ring-primary/30"
                     : p.blockingCount > 0
-                    ? "border-red-300/60 bg-red-50/40 dark:bg-red-950/15 hover:border-red-400/60"
-                    : "border-amber-300/60 bg-amber-50/40 dark:bg-amber-950/15 hover:border-amber-400/60"
+                    ? "border-red-300/60 dark:border-red-700/50 bg-red-50/40 dark:bg-red-950/15 hover:border-red-400/60"
+                    : "border-amber-300/60 dark:border-amber-700/50 bg-amber-50/40 dark:bg-amber-950/15 hover:border-amber-400/60"
                 )}
                 onClick={() => !isFixingThis && !isRegenerating && onJumpParagraph?.(p.paragraphId)}
               >

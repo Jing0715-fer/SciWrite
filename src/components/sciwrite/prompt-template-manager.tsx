@@ -301,7 +301,7 @@ export function PromptTemplateManager({ open, onOpenChange }: Props) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="text-[10px] h-6 gap-1 text-red-600 hover:text-red-700"
+                      className="text-[10px] h-6 gap-1 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
                       onClick={() => {
                         deleteMut.mutate(editingId);
                         cancelEdit();

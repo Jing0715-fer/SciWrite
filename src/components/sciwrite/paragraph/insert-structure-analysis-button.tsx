@@ -122,7 +122,7 @@ export function InsertStructureAnalysisButton({
                   onInsert(buildInsertMarkdown(a));
                   setOpen(false);
                 }}
-                className="w-full text-left rounded-md border border-border/60 hover:border-amber-300 hover:bg-amber-50/50 dark:hover:bg-amber-950/20 p-2 transition-colors"
+                className="w-full text-left rounded-md border border-border/60 hover:border-amber-300 dark:hover:border-amber-700/50 hover:bg-amber-50/50 dark:hover:bg-amber-950/20 p-2 transition-colors"
               >
                 <div className="flex items-center gap-1.5">
                   <Badge

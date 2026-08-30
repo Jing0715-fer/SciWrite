@@ -83,7 +83,7 @@ export function StructureDialog({ open, onOpenChange, articleId }: Props) {
       <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
         <DialogHeader className="px-5 pt-4 pb-3 border-b border-border/60 shrink-0">
           <DialogTitle className="flex items-center gap-2 text-sm">
-            <LayoutGrid className="h-4 w-4 text-violet-600" />
+            <LayoutGrid className="h-4 w-4 text-violet-600 dark:text-violet-400" />
             AI Structure Analysis & Captions
           </DialogTitle>
           <DialogDescription className="text-xs">
@@ -118,7 +118,7 @@ export function StructureDialog({ open, onOpenChange, articleId }: Props) {
               <div className="px-5 py-4 space-y-4">
                 {structMut.isPending && (
                   <div className="flex flex-col items-center justify-center py-16 gap-3">
-                    <Loader2 className="h-8 w-8 animate-spin text-violet-600" />
+                    <Loader2 className="h-8 w-8 animate-spin text-violet-600 dark:text-violet-400" />
                     <p className="text-xs text-muted-foreground">
                       Analyzing article structure…
                     </p>
@@ -167,7 +167,7 @@ export function StructureDialog({ open, onOpenChange, articleId }: Props) {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div className="rounded-lg border border-emerald-200/60 dark:border-emerald-800/40 p-3">
                         <div className="flex items-center gap-1.5 mb-2">
-                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                           <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
                             Strengths
                           </span>
@@ -189,7 +189,7 @@ export function StructureDialog({ open, onOpenChange, articleId }: Props) {
                       </div>
                       <div className="rounded-lg border border-amber-200/60 dark:border-amber-800/40 p-3">
                         <div className="flex items-center gap-1.5 mb-2">
-                          <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                          <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
                           <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">
                             Weaknesses
                           </span>
@@ -214,7 +214,7 @@ export function StructureDialog({ open, onOpenChange, articleId }: Props) {
                     {/* Actionable suggestions */}
                     <div>
                       <div className="text-xs font-semibold mb-2 flex items-center gap-1.5">
-                        <ArrowRightCircle className="h-3.5 w-3.5 text-violet-600" />
+                        <ArrowRightCircle className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
                         Suggestions ({structMut.data.suggestions.length})
                       </div>
                       <div className="space-y-2">
@@ -233,17 +233,17 @@ export function StructureDialog({ open, onOpenChange, articleId }: Props) {
                                   variant="outline"
                                   className={`text-[8px] h-4 uppercase ${
                                     s.priority === "high"
-                                      ? "border-red-300/60 text-red-600"
+                                      ? "border-red-300/60 dark:border-red-700/50 text-red-600 dark:text-red-400"
                                       : s.priority === "medium"
-                                      ? "border-amber-300/60 text-amber-600"
-                                      : "border-slate-300/60 text-slate-500"
+                                      ? "border-amber-300/60 dark:border-amber-700/50 text-amber-600 dark:text-amber-400"
+                                      : "border-border/60 text-muted-foreground"
                                   }`}
                                 >
                                   {s.priority}
                                 </Badge>
                                 <Badge
                                   variant="outline"
-                                  className="text-[8px] h-4 uppercase border-violet-300/60 text-violet-600"
+                                  className="text-[8px] h-4 uppercase border-violet-300/60 dark:border-violet-700/50 text-violet-600 dark:text-violet-400"
                                 >
                                   {s.type}
                                 </Badge>
@@ -297,7 +297,7 @@ export function StructureDialog({ open, onOpenChange, articleId }: Props) {
                               <Badge
                                 key={i}
                                 variant="outline"
-                                className="text-[10px] border-red-300/60 text-red-600"
+                                className="text-[10px] border-red-300/60 dark:border-red-700/50 text-red-600 dark:text-red-400"
                               >
                                 {sec}
                               </Badge>
@@ -321,7 +321,7 @@ export function StructureDialog({ open, onOpenChange, articleId }: Props) {
               <div className="px-5 py-4 space-y-3">
                 {captionMut.isPending && (
                   <div className="flex flex-col items-center justify-center py-16 gap-3">
-                    <Loader2 className="h-8 w-8 animate-spin text-fuchsia-600" />
+                    <Loader2 className="h-8 w-8 animate-spin text-fuchsia-600 dark:text-fuchsia-400" />
                     <p className="text-xs text-muted-foreground">
                       Detecting figures & generating captions…
                     </p>
@@ -375,15 +375,15 @@ export function StructureDialog({ open, onOpenChange, articleId }: Props) {
                         {captionMut.data.captions.map((c, i) => (
                           <div
                             key={i}
-                            className="rounded-lg border border-border/60 p-3 hover:border-fuchsia-300/60 transition-colors"
+                            className="rounded-lg border border-border/60 p-3 hover:border-fuchsia-300/60 dark:hover:border-fuchsia-700/50 transition-colors"
                           >
                             <div className="flex items-center gap-2 mb-2">
                               <Badge
                                 variant="outline"
                                 className={`text-[9px] uppercase ${
                                   c.type === "figure"
-                                    ? "border-blue-300/60 text-blue-600"
-                                    : "border-emerald-300/60 text-emerald-600"
+                                    ? "border-blue-300/60 dark:border-blue-700/50 text-blue-600 dark:text-blue-400"
+                                    : "border-emerald-300/60 dark:border-emerald-700/50 text-emerald-600 dark:text-emerald-400"
                                 }`}
                               >
                                 {c.type}

@@ -732,7 +732,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
             <div className="flex items-center gap-1.5 ml-auto flex-wrap justify-end">
               {/* Batch translate progress indicator */}
               {batchProgress && (
-                <div className="flex items-center gap-2 text-[10px] text-fuchsia-700 dark:text-fuchsia-400 px-2 py-1 rounded-md border border-fuchsia-200/60 bg-fuchsia-50/50 dark:bg-fuchsia-950/20">
+                <div className="flex items-center gap-2 text-[10px] text-fuchsia-700 dark:text-fuchsia-400 px-2 py-1 rounded-md border border-fuchsia-200/60 dark:border-fuchsia-800/50 bg-fuchsia-50/50 dark:bg-fuchsia-950/20">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   <span className="font-mono">{batchProgress.done}/{batchProgress.total}</span>
                   <span className="hidden md:inline truncate max-w-[140px]">{batchProgress.current}</span>
@@ -782,27 +782,27 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                     {t("version.historyBtn") || "History"}
                   </DropdownMenuItem>
                   <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setCitationVerifyOpen(true)}>
-                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                     {t("citationVerify.btn") || "Verify"}
                   </DropdownMenuItem>
                   <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setSummaryOpen(true)}>
-                    <Sparkles className="h-3.5 w-3.5 text-amber-600" />
+                    <Sparkles className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
                     {t("summary.btn") || "Summary"}
                   </DropdownMenuItem>
                   <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setDiagramOpen(true)}>
-                    <GitBranch className="h-3.5 w-3.5 text-sky-600" />
+                    <GitBranch className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
                     {t("diagram.btn") || "Diagram"}
                   </DropdownMenuItem>
                   <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setStructureOpen(true)}>
-                    <LayoutGrid className="h-3.5 w-3.5 text-violet-600" />
+                    <LayoutGrid className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
                     Structure
                   </DropdownMenuItem>
                   <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setStyleOpen(true)}>
-                    <PenLine className="h-3.5 w-3.5 text-rose-600" />
+                    <PenLine className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" />
                     Style
                   </DropdownMenuItem>
                   <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setEnrichOpen(true)}>
-                    <Database className="h-3.5 w-3.5 text-teal-600" />
+                    <Database className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" />
                     Enrich
                   </DropdownMenuItem>
                   <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setImportOpen(true)}>
@@ -810,7 +810,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                     Import
                   </DropdownMenuItem>
                   <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setSubmissionOpen(true)}>
-                    <ClipboardCheck className="h-3.5 w-3.5 text-indigo-600" />
+                    <ClipboardCheck className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
                     Check
                   </DropdownMenuItem>
                   {/* Translation helpers — only relevant in parallel mode with
@@ -827,7 +827,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                           }
                         }}
                       >
-                        <SkipForward className="h-3.5 w-3.5 text-amber-600" />
+                        <SkipForward className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
                         {t("articleViewer.nextUntranslated") || "Next untranslated"}
                       </DropdownMenuItem>
                       <DropdownMenuItem
@@ -835,7 +835,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                         onClick={batchRetranslate}
                         disabled={retranslateMut.isPending || !!batchProgress}
                       >
-                        <Wand2 className="h-3.5 w-3.5 text-fuchsia-600" />
+                        <Wand2 className="h-3.5 w-3.5 text-fuchsia-600 dark:text-fuchsia-400" />
                         {t("articleViewer.batchTranslate") || "Translate all missing"}
                       </DropdownMenuItem>
                     </>
@@ -853,7 +853,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
               <Button
                 variant="outline"
                 size="sm"
-                className="h-8 w-8 p-0 border-red-300/60 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
+                className="h-8 w-8 p-0 border-red-300/60 dark:border-red-700/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
                 onClick={() => setDeleteConfirmOpen(true)}
                 title={t("articleViewer.deleteTitle") || "Delete this article"}
               >
@@ -958,7 +958,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                           {p.contentZh && ` · ${p.wordCountZh || 0}字 ZH`}
                         </span>
                         {viewLang === "zh" && !p.contentZh && (
-                          <Badge variant="outline" className="text-[8px] h-3.5 uppercase border-amber-300/60 text-amber-700 dark:text-amber-400">
+                          <Badge variant="outline" className="text-[8px] h-3.5 uppercase border-amber-300/60 dark:border-amber-700/50 text-amber-700 dark:text-amber-400">
                             EN fallback
                           </Badge>
                         )}
@@ -1000,7 +1000,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                         <>
                           <div className="space-y-1.5">
                             <div className="flex items-center gap-1.5 sticky top-0">
-                              <Badge variant="outline" className="text-[8px] h-3.5 border-blue-300/60 text-blue-700 dark:text-blue-400 uppercase">
+                              <Badge variant="outline" className="text-[8px] h-3.5 border-blue-300/60 dark:border-blue-700/50 text-blue-700 dark:text-blue-400 uppercase">
                                 EN
                               </Badge>
                               <span className="text-[9px] text-muted-foreground">{p.wordCount}w</span>
@@ -1014,7 +1014,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                           </div>
                           <div className="space-y-1.5">
                             <div className="flex items-center gap-1.5">
-                              <Badge variant="outline" className="text-[8px] h-3.5 border-fuchsia-300/60 text-fuchsia-700 dark:text-fuchsia-400 uppercase">
+                              <Badge variant="outline" className="text-[8px] h-3.5 border-fuchsia-300/60 dark:border-fuchsia-700/50 text-fuchsia-700 dark:text-fuchsia-400 uppercase">
                                 中文
                               </Badge>
                               <span className="text-[9px] text-muted-foreground">{p.wordCountZh || 0}字</span>
@@ -1030,7 +1030,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                                 className="text-[12px] leading-relaxed"
                               />
                             ) : (
-                              <div className="rounded-md border border-amber-200/60 bg-amber-50/40 dark:bg-amber-950/20 p-2 text-[11px] text-amber-700 dark:text-amber-400">
+                              <div className="rounded-md border border-amber-200/60 dark:border-amber-800/50 bg-amber-50/40 dark:bg-amber-950/20 p-2 text-[11px] text-amber-700 dark:text-amber-400">
                                 {t("articleViewer.noZhForSection") || "No Chinese version for this section. Click 重译 above to translate."}
                               </div>
                             )}
@@ -1070,7 +1070,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div className="space-y-2">
                           <div className="sticky top-0 bg-background/80 backdrop-blur-sm py-1 z-10">
-                            <Badge variant="outline" className="text-[9px] gap-1 border-blue-300/60 text-blue-700 dark:text-blue-400">
+                            <Badge variant="outline" className="text-[9px] gap-1 border-blue-300/60 dark:border-blue-700/50 text-blue-700 dark:text-blue-400">
                               EN — English
                             </Badge>
                           </div>
@@ -1078,7 +1078,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                         </div>
                         <div className="space-y-2 lg:border-l lg:border-border/40 lg:pl-6">
                           <div className="sticky top-0 bg-background/80 backdrop-blur-sm py-1 z-10">
-                            <Badge variant="outline" className="text-[9px] gap-1 border-fuchsia-300/60 text-fuchsia-700 dark:text-fuchsia-400">
+                            <Badge variant="outline" className="text-[9px] gap-1 border-fuchsia-300/60 dark:border-fuchsia-700/50 text-fuchsia-700 dark:text-fuchsia-400">
                               中文 — Chinese
                             </Badge>
                           </div>
@@ -1264,7 +1264,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
         <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-base">
-              <AlertTriangle className="h-5 w-5 text-red-600 shrink-0" />
+              <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0" />
               {t("articleViewer.deleteConfirmTitle") || "Delete this article?"}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-sm leading-relaxed">
@@ -1509,11 +1509,11 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
             {reviewData.verdict && (
               <div className={`rounded-lg border p-3 ${
                 reviewData.verdict === "accept"
-                  ? "border-emerald-200/60 bg-emerald-50/50"
-                  : "border-amber-200/60 bg-amber-50/50"
+                  ? "border-emerald-200/60 dark:border-emerald-800/50 bg-emerald-50/50 dark:bg-emerald-950/20"
+                  : "border-amber-200/60 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/20"
               }`}>
                 <span className={`text-sm font-semibold ${
-                  reviewData.verdict === "accept" ? "text-emerald-700" : "text-amber-700"
+                  reviewData.verdict === "accept" ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"
                 }`}>
                   {reviewData.verdict === "accept" ? t("articleViewer.acceptVerdict") : `⚠ ${reviewData.verdict}`}
                 </span>
@@ -1543,14 +1543,14 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
             {/* Strengths & Weaknesses */}
             {reviewData.review && (
               <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-md border border-emerald-200/50 bg-emerald-50/30 p-2">
-                  <p className="text-[10px] uppercase font-semibold text-emerald-700 mb-1">{t("articleViewer.strengths")}</p>
+                <div className="rounded-md border border-emerald-200/50 dark:border-emerald-800/50 bg-emerald-50/30 dark:bg-emerald-950/20 p-2">
+                  <p className="text-[10px] uppercase font-semibold text-emerald-700 dark:text-emerald-300 mb-1">{t("articleViewer.strengths")}</p>
                   {safeParse(reviewData.review.strengths).map((s: string, i: number) => (
                     <p key={i} className="text-[10px] mb-1">• {s}</p>
                   ))}
                 </div>
-                <div className="rounded-md border border-rose-200/50 bg-rose-50/30 p-2">
-                  <p className="text-[10px] uppercase font-semibold text-rose-700 mb-1">{t("articleViewer.weaknesses")}</p>
+                <div className="rounded-md border border-rose-200/50 dark:border-rose-800/50 bg-rose-50/30 dark:bg-rose-950/20 p-2">
+                  <p className="text-[10px] uppercase font-semibold text-rose-700 dark:text-rose-300 mb-1">{t("articleViewer.weaknesses")}</p>
                   {safeParse(reviewData.review.weaknesses).map((w: string, i: number) => (
                     <p key={i} className="text-[10px] mb-1">• {w}</p>
                   ))}
@@ -1703,13 +1703,13 @@ function RelationshipView({
         {/* Contradictions */}
         {data.contradictions?.length > 0 && (
           <div className="space-y-1.5">
-            <p className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold">
+            <p className="text-[10px] uppercase tracking-wider text-rose-600 dark:text-rose-400 font-semibold">
               {contradictionsLabel}
             </p>
             {data.contradictions.map((c: any, i: number) => (
-              <div key={i} className="rounded-md border border-rose-200/50 bg-rose-50/30 p-2">
+              <div key={i} className="rounded-md border border-rose-200/50 dark:border-rose-800/50 bg-rose-50/30 dark:bg-rose-950/20 p-2">
                 <div className="flex items-center gap-1.5 mb-0.5">
-                  <AlertTriangle className="h-3 w-3 text-rose-600" />
+                  <AlertTriangle className="h-3 w-3 text-rose-600 dark:text-rose-400" />
                   <Badge variant="outline" className="text-[8px] h-3.5">
                     {c.sourceLabels?.join(" vs ") || c.sourceIds?.join(" vs ")}
                   </Badge>
@@ -2143,7 +2143,7 @@ function ArticleTOCSidebar({
                   }}
                   className={`absolute top-1.5 right-1 p-0.5 rounded transition-all ${
                     isCopied
-                      ? "text-emerald-600 opacity-100"
+                      ? "text-emerald-600 dark:text-emerald-400 opacity-100"
                       : "text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-muted/80 hover:text-foreground"
                   }`}
                   title={isCopied
@@ -2436,7 +2436,7 @@ function ArticleSearchBar({
       </div>
       {/* Match count summary */}
       {query.trim() && matchCount > 0 && (
-        <Badge variant="outline" className="text-[9px] gap-1 border-yellow-300/60 text-yellow-700 dark:text-yellow-400">
+        <Badge variant="outline" className="text-[9px] gap-1 border-yellow-300/60 dark:border-yellow-700/50 text-yellow-700 dark:text-yellow-400">
           <Highlighter className="h-2.5 w-2.5" />
           {matchCount} {matchCount === 1 ? "match" : "matches"}
         </Badge>

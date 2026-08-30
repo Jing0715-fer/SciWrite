@@ -35,10 +35,10 @@ export function ArticleAuditList({ articles }: { articles: ArticleHealthReport[]
               className={cn(
                 "rounded-md border px-2 py-1.5 text-[11px] transition-all shadow-xs hover:shadow-md",
                 a.summary.blockingErrors > 0
-                  ? "border-red-300/60 bg-red-50/40 dark:bg-red-950/15 hover:border-red-400/60"
+                  ? "border-red-300/60 dark:border-red-700/50 bg-red-50/40 dark:bg-red-950/15 hover:border-red-400/60"
                   : a.summary.suspect + a.summary.unsupported > 0
-                  ? "border-amber-300/60 bg-amber-50/40 dark:bg-amber-950/15 hover:border-amber-400/60"
-                  : "border-emerald-300/60 bg-emerald-50/40 dark:bg-emerald-950/15 hover:border-emerald-400/60"
+                  ? "border-amber-300/60 dark:border-amber-700/50 bg-amber-50/40 dark:bg-amber-950/15 hover:border-amber-400/60"
+                  : "border-emerald-300/60 dark:border-emerald-700/50 bg-emerald-50/40 dark:bg-emerald-950/15 hover:border-emerald-400/60"
               )}
             >
               <div className="flex items-center gap-1.5 mb-1">

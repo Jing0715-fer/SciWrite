@@ -143,7 +143,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
               <SelectItem key={s.id} value={s.id} className="text-xs">
                 <span className="flex items-center gap-2">
                   <span
-                    className={`inline-block h-2 w-2 rounded-full ${SOURCE_DOT[s.color] || "bg-slate-400"}`}
+                    className={`inline-block h-2 w-2 rounded-full ${SOURCE_DOT[s.color] || "bg-muted-foreground/60"}`}
                   />
                   {s.shortName}
                 </span>

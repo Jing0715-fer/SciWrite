@@ -283,7 +283,7 @@ export function VersionHistoryDialog({ open, onOpenChange, articleId, articleTit
                             {v.label || `Version ${versions.length - i}`}
                           </span>
                           {i === 0 && (
-                            <Badge variant="outline" className="text-[7px] h-3 px-1 uppercase text-emerald-600 border-emerald-300/40">
+                            <Badge variant="outline" className="text-[7px] h-3 px-1 uppercase text-primary border-primary/40">
                               Latest
                             </Badge>
                           )}
@@ -330,7 +330,7 @@ export function VersionHistoryDialog({ open, onOpenChange, articleId, articleTit
         <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-base">
-              <RotateCcw className="h-5 w-5 text-amber-600 shrink-0" />
+              <RotateCcw className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
               {t("version.confirmRestoreTitle") || "Restore this version?"}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-sm leading-relaxed">

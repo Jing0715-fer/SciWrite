@@ -159,10 +159,10 @@ export function OutlineDialog({
             )}
 
             {summary && (
-              <div className="rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-3 mb-4">
+              <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 mb-4">
                 <div className="flex items-center gap-1.5 mb-1">
-                  <Lightbulb className="h-3.5 w-3.5 text-emerald-600" />
-                  <span className="text-[10px] uppercase tracking-wider text-emerald-700 dark:text-emerald-400 font-semibold">
+                  <Lightbulb className="h-3.5 w-3.5 text-primary" />
+                  <span className="text-[10px] uppercase tracking-wider text-primary font-semibold">
                     {t("outline.strategy")}
                   </span>
                 </div>

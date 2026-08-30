@@ -213,7 +213,7 @@ export function StyleAnalysisDialog({ open, onOpenChange, articleId }: Props) {
       <DialogContent className="max-w-4xl max-h-[88vh] flex flex-col gap-0 p-0 overflow-hidden">
         <DialogHeader className="px-5 pt-4 pb-3 border-b border-border/60 shrink-0">
           <DialogTitle className="flex items-center gap-2 text-sm">
-            <PenLine className="h-4 w-4 text-teal-600" />
+            <PenLine className="h-4 w-4 text-primary" />
             AI Writing Style Analysis
           </DialogTitle>
           <DialogDescription className="text-xs">
@@ -225,7 +225,7 @@ export function StyleAnalysisDialog({ open, onOpenChange, articleId }: Props) {
           <div className="px-5 py-4 space-y-5">
             {analyzeMut.isPending && (
               <div className="flex flex-col items-center justify-center py-20 gap-3">
-                <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 <p className="text-xs text-muted-foreground">
                   Analyzing writing style…
                 </p>
@@ -241,7 +241,7 @@ export function StyleAnalysisDialog({ open, onOpenChange, articleId }: Props) {
                 <div>
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-xs font-semibold flex items-center gap-1.5">
-                      <Gauge className="h-3.5 w-3.5 text-teal-600" />
+                      <Gauge className="h-3.5 w-3.5 text-primary" />
                       Style Scores
                     </h3>
                     <Button
@@ -303,7 +303,7 @@ export function StyleAnalysisDialog({ open, onOpenChange, articleId }: Props) {
                 {/* ── Quantitative metrics ──────────────────────────────────── */}
                 <div>
                   <h3 className="text-xs font-semibold flex items-center gap-1.5 mb-3">
-                    <FileText className="h-3.5 w-3.5 text-teal-600" />
+                    <FileText className="h-3.5 w-3.5 text-primary" />
                     Quantitative Metrics
                   </h3>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
@@ -391,7 +391,7 @@ export function StyleAnalysisDialog({ open, onOpenChange, articleId }: Props) {
                 {data.sections.length > 0 && (
                   <div>
                     <h3 className="text-xs font-semibold flex items-center gap-1.5 mb-3">
-                      <Gauge className="h-3.5 w-3.5 text-teal-600" />
+                      <Gauge className="h-3.5 w-3.5 text-primary" />
                       Per-Section Breakdown
                     </h3>
                     <div className="rounded-lg border border-border/60 overflow-hidden">
@@ -446,10 +446,10 @@ export function StyleAnalysisDialog({ open, onOpenChange, articleId }: Props) {
                                 <span
                                   className={
                                     s.passiveVoicePct > 30
-                                      ? "text-red-600 font-medium"
+                                      ? "text-red-600 dark:text-red-400 font-medium"
                                       : s.passiveVoicePct > 15
-                                        ? "text-amber-600"
-                                        : "text-emerald-600"
+                                        ? "text-amber-600 dark:text-amber-400"
+                                        : "text-emerald-600 dark:text-emerald-400"
                                   }
                                 >
                                   {s.passiveVoicePct}%
@@ -470,7 +470,7 @@ export function StyleAnalysisDialog({ open, onOpenChange, articleId }: Props) {
                 {data.issues.length > 0 && (
                   <div>
                     <h3 className="text-xs font-semibold flex items-center gap-1.5 mb-3">
-                      <AlertCircle className="h-3.5 w-3.5 text-orange-600" />
+                      <AlertCircle className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
                       Style Issues ({data.issues.length})
                     </h3>
                     <div className="space-y-2">
@@ -484,10 +484,10 @@ export function StyleAnalysisDialog({ open, onOpenChange, articleId }: Props) {
                               variant="outline"
                               className={`text-[8px] h-4 uppercase ${
                                 issue.severity === "high"
-                                  ? "border-red-300/60 text-red-600"
+                                  ? "border-red-300/60 dark:border-red-700/50 text-red-600 dark:text-red-400"
                                   : issue.severity === "medium"
-                                    ? "border-amber-300/60 text-amber-600"
-                                    : "border-slate-300/60 text-slate-500"
+                                    ? "border-amber-300/60 dark:border-amber-700/50 text-amber-600 dark:text-amber-400"
+                                    : "border-border/60 text-muted-foreground"
                               }`}
                             >
                               {issue.severity}
@@ -497,7 +497,7 @@ export function StyleAnalysisDialog({ open, onOpenChange, articleId }: Props) {
                             </span>
                           </div>
                           {issue.example && (
-                            <p className="text-[11px] text-muted-foreground italic bg-muted/40 rounded px-2 py-1 mt-1 border-l-2 border-orange-300/60">
+                            <p className="text-[11px] text-muted-foreground italic bg-muted/40 rounded px-2 py-1 mt-1 border-l-2 border-orange-300/60 dark:border-orange-700/50">
                               &ldquo;{issue.example}&rdquo;
                             </p>
                           )}
@@ -511,7 +511,7 @@ export function StyleAnalysisDialog({ open, onOpenChange, articleId }: Props) {
                 {data.suggestions.length > 0 && (
                   <div>
                     <h3 className="text-xs font-semibold flex items-center gap-1.5 mb-3">
-                      <Lightbulb className="h-3.5 w-3.5 text-amber-600" />
+                      <Lightbulb className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
                       Improvement Suggestions ({data.suggestions.length})
                     </h3>
                     <div className="space-y-2">

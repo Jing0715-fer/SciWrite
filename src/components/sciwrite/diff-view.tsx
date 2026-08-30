@@ -111,8 +111,8 @@ export function DiffView({ open, onOpenChange, before, after, title }: Props) {
           <DialogDescription className="text-xs">
             {title || t("diff.beforeAfter")}
             <span className="ml-2 inline-flex items-center gap-2">
-              <span className="text-rose-600">-{removedCount}w</span>
-              <span className="text-emerald-600">+{addedCount}w</span>
+              <span className="text-rose-600 dark:text-rose-400">-{removedCount}w</span>
+              <span className="text-emerald-600 dark:text-emerald-400">+{addedCount}w</span>
             </span>
           </DialogDescription>
         </DialogHeader>

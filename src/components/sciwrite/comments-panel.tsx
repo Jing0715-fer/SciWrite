@@ -107,7 +107,7 @@ export function CommentsPanel({ articleId }: Props) {
           {t("comments.title") || "Comments"} ({comments.length})
         </span>
         {resolvedCount > 0 && (
-          <Badge variant="outline" className="text-[8px] h-3.5 gap-0.5 text-emerald-600 border-emerald-300/40">
+          <Badge variant="outline" className="text-[8px] h-3.5 gap-0.5 text-emerald-600 dark:text-emerald-400 border-emerald-300/40 dark:border-emerald-700/50">
             <Check className="h-2.5 w-2.5" />
             {resolvedCount} {t("comments.resolved") || "resolved"}
           </Badge>
@@ -239,7 +239,7 @@ function CommentCard({
     <div
       className={`rounded-lg border p-2.5 space-y-1 transition-all hover:shadow-sm ${
         comment.resolved
-          ? "border-emerald-300/40 bg-gradient-to-br from-emerald-50/40 to-emerald-50/10 dark:from-emerald-950/15 dark:to-emerald-950/5"
+          ? "border-emerald-300/40 dark:border-emerald-700/50 bg-gradient-to-br from-emerald-50/40 to-emerald-50/10 dark:from-emerald-950/15 dark:to-emerald-950/5"
           : "border-border/50 bg-gradient-to-br from-muted/20 to-transparent hover:border-primary/30"
       }`}
     >
@@ -247,7 +247,7 @@ function CommentCard({
         <span className="text-[10px] font-medium text-foreground">{comment.author}</span>
         <span className="text-[8px] text-muted-foreground">{time}</span>
         {comment.resolved && (
-          <Badge variant="outline" className="text-[7px] h-3 px-1 text-emerald-600 border-emerald-300/40">
+          <Badge variant="outline" className="text-[7px] h-3 px-1 text-emerald-600 dark:text-emerald-400 border-emerald-300/40 dark:border-emerald-700/50">
             <Check className="h-2 w-2" />
           </Badge>
         )}
@@ -274,7 +274,7 @@ function CommentCard({
         <Button
           variant="ghost"
           size="sm"
-          className="h-4 px-1 text-[8px] text-red-600 hover:text-red-700"
+          className="h-4 px-1 text-[8px] text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
           onClick={onDelete}
         >
           <Trash2 className="h-2.5 w-2.5" />

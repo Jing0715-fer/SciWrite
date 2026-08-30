@@ -181,7 +181,7 @@ export function SubmissionCheckDialog({ open, onOpenChange, articleId }: Props) 
       <DialogContent className="max-w-3xl max-h-[88vh] flex flex-col gap-0 p-0 overflow-hidden">
         <DialogHeader className="px-5 pt-4 pb-3 border-b border-border/60 shrink-0">
           <DialogTitle className="flex items-center gap-2 text-sm">
-            <ClipboardCheck className="h-4 w-4 text-indigo-600" />
+            <ClipboardCheck className="h-4 w-4 text-primary" />
             Submission Readiness Check
           </DialogTitle>
           <DialogDescription className="text-xs">
@@ -193,7 +193,7 @@ export function SubmissionCheckDialog({ open, onOpenChange, articleId }: Props) 
           <div className="px-5 py-4 space-y-4">
             {checkMut.isPending && (
               <div className="flex flex-col items-center justify-center py-20 gap-3">
-                <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 <p className="text-xs text-muted-foreground">
                   Running submission checks…
                 </p>
@@ -203,7 +203,7 @@ export function SubmissionCheckDialog({ open, onOpenChange, articleId }: Props) 
             {data && (
               <>
                 {/* ── Overall score header ─────────────────────────────────── */}
-                <div className="flex items-center gap-5 p-4 rounded-xl bg-gradient-to-br from-indigo-50 via-white to-purple-50 dark:from-indigo-950/30 dark:via-card dark:to-purple-950/20 border border-indigo-200/50 dark:border-indigo-800/40">
+                <div className="flex items-center gap-5 p-4 rounded-xl bg-gradient-to-br from-primary/10 via-card to-primary/5 border border-primary/30">
                   <RadialScore value={data.overallScore} />
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
@@ -216,7 +216,7 @@ export function SubmissionCheckDialog({ open, onOpenChange, articleId }: Props) 
                           READY
                         </Badge>
                       ) : (
-                        <Badge variant="outline" className="text-[9px] border-amber-400/60 text-amber-600 gap-0.5">
+                        <Badge variant="outline" className="text-[9px] border-amber-400/60 text-amber-600 dark:text-amber-400 gap-0.5">
                           <AlertTriangle className="h-2.5 w-2.5" />
                           NEEDS WORK
                         </Badge>
@@ -267,7 +267,7 @@ export function SubmissionCheckDialog({ open, onOpenChange, articleId }: Props) 
                 {/* ── Checks checklist ─────────────────────────────────────── */}
                 <div>
                   <h3 className="text-xs font-semibold flex items-center gap-1.5 mb-3">
-                    <ClipboardCheck className="h-3.5 w-3.5 text-indigo-600" />
+                    <ClipboardCheck className="h-3.5 w-3.5 text-primary" />
                     Compliance Checklist
                   </h3>
                   <div className="space-y-2">
@@ -292,10 +292,10 @@ export function SubmissionCheckDialog({ open, onOpenChange, articleId }: Props) 
                                   variant="outline"
                                   className={`text-[8px] h-3.5 uppercase ${
                                     check.status === "pass"
-                                      ? "border-emerald-300/60 text-emerald-600"
+                                      ? "border-emerald-300/60 dark:border-emerald-700/50 text-emerald-600 dark:text-emerald-400"
                                       : check.status === "warn"
-                                        ? "border-amber-300/60 text-amber-600"
-                                        : "border-red-300/60 text-red-600"
+                                        ? "border-amber-300/60 dark:border-amber-700/50 text-amber-600 dark:text-amber-400"
+                                        : "border-red-300/60 dark:border-red-700/50 text-red-600 dark:text-red-400"
                                   }`}
                                 >
                                   {check.status}
@@ -305,10 +305,10 @@ export function SubmissionCheckDialog({ open, onOpenChange, articleId }: Props) 
                                     variant="outline"
                                     className={`text-[8px] h-3.5 uppercase ${
                                       check.severity === "high"
-                                        ? "border-red-400/60 text-red-600"
+                                        ? "border-red-400/60 text-red-600 dark:text-red-400"
                                         : check.severity === "medium"
-                                          ? "border-amber-400/60 text-amber-600"
-                                          : "border-slate-300/60 text-slate-500"
+                                          ? "border-amber-400/60 text-amber-600 dark:text-amber-400"
+                                          : "border-border/60 text-muted-foreground"
                                     }`}
                                   >
                                     {check.severity}

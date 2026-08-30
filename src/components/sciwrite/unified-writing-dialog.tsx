@@ -285,7 +285,7 @@ function SuccessCard({ title, children }: { title: string; children: React.React
   return (
     <div className="space-y-2 rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 bg-gradient-to-br from-emerald-50/50 to-transparent dark:from-emerald-950/20 p-4">
       <div className="flex items-center gap-2">
-        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+        <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
         <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">{title}</span>
       </div>
       {children}
@@ -478,8 +478,8 @@ function GatherTab({ projectId, topic, field, onInvalidate }: { projectId: strin
           <p className="text-xs text-muted-foreground leading-relaxed">{result.plan}</p>
           {result.addedResults?.length > 0 && (
             <div className="flex items-center gap-2 mt-2">
-              <Database className="h-3.5 w-3.5 text-emerald-600" />
-              <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium">
+              <Database className="h-3.5 w-3.5 text-primary" />
+              <span className="text-[11px] text-primary font-medium">
                 {result.addedResults.length} sources gathered
               </span>
             </div>
@@ -897,14 +897,14 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
             onClick={() => setPipeline("v2")}
             className={`rounded-lg border p-2.5 text-left transition-colors ${
               pipeline === "v2"
-                ? "border-emerald-500/60 bg-emerald-50/60 dark:bg-emerald-950/30"
-                : "border-border hover:border-emerald-500/30"
+                ? "border-primary/60 bg-primary/[0.06]"
+                : "border-border hover:border-primary/30"
             }`}
           >
             <div className="flex items-center gap-1.5">
-              <ShieldCheck className={`h-3.5 w-3.5 ${pipeline === "v2" ? "text-emerald-600" : "text-muted-foreground"}`} />
+              <ShieldCheck className={`h-3.5 w-3.5 ${pipeline === "v2" ? "text-primary" : "text-muted-foreground"}`} />
               <span className="text-xs font-semibold">{t("oneClick.pipelineV2") || "v2 · Evidence-Grounded"}</span>
-              {pipeline === "v2" && <Badge className="ml-auto h-4 px-1 text-[8px] bg-emerald-600">DEFAULT</Badge>}
+              {pipeline === "v2" && <Badge className="ml-auto h-4 px-1 text-[8px] bg-primary">DEFAULT</Badge>}
             </div>
             <p className="mt-1 text-[9px] leading-relaxed text-muted-foreground">
               {t("oneClick.pipelineV2Desc") ||
@@ -933,11 +933,11 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
       </ConfigCard>
 
       {pipeline === "v2" && (
-        <div className="rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-3">
+        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
           <div className="flex items-start gap-2">
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+            <ShieldCheck className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
             <div className="space-y-1">
-              <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold">
+              <p className="text-[10px] text-primary font-semibold">
                 {t("oneClick.v2AccuracyTitle") || "Citation accuracy guarantees (v2)"}
               </p>
               <ul className="text-[10px] text-muted-foreground leading-relaxed list-disc ml-3 space-y-0.5">
@@ -979,7 +979,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
       {willTranslate && (
         <div className="rounded-lg border border-fuchsia-200/60 dark:border-fuchsia-900/40 bg-fuchsia-50/40 dark:bg-fuchsia-950/20 p-3">
           <div className="flex items-start gap-2">
-            <Languages className="h-3.5 w-3.5 text-fuchsia-600 shrink-0 mt-0.5" />
+            <Languages className="h-3.5 w-3.5 text-fuchsia-600 dark:text-fuchsia-400 shrink-0 mt-0.5" />
             <div className="space-y-1">
               <p className="text-[10px] text-fuchsia-700 dark:text-fuchsia-400 font-semibold">
                 {t("oneClick.bothStrategyTitle")}
@@ -1037,7 +1037,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
       {/* Estimated cost & time panel — sky-themed */}
       <div className="rounded-lg border border-sky-200/60 dark:border-sky-900/40 bg-sky-50/40 dark:bg-sky-950/20 p-3 space-y-2">
         <div className="flex items-center gap-1.5">
-          <Clock className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+          <Clock className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
           <p className="text-[10px] uppercase tracking-wider text-sky-700 dark:text-sky-400 font-semibold flex-1">
             {t("oneClick.estimates") || "Estimated cost & duration"}
           </p>
@@ -1344,7 +1344,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
                     isDone ? "bg-emerald-100 dark:bg-emerald-950/40" : isActive ? "bg-primary/10" : "bg-muted/40"
                   }`}>
                     {isDone ? (
-                      <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                      <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
                     ) : isActive ? (
                       <Loader2 className="h-3 w-3 animate-spin text-primary" />
                     ) : (
@@ -1361,7 +1361,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
                       <p className="text-[9px] text-muted-foreground mt-0.5 truncate">{stepProgress[step.id]}</p>
                     )}
                   </div>
-                  {isDone && <span className="text-[9px] text-emerald-600 font-semibold">✓</span>}
+                  {isDone && <span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-semibold">✓</span>}
                 </div>
               );
             })}
@@ -1379,7 +1379,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
         <SuccessCard title={t("oneClick.generatedTitle")}>
           <div className="grid grid-cols-3 gap-3 text-center">
             <div className="rounded-md bg-background/40 p-2">
-              <p className="text-lg font-bold text-emerald-700 dark:text-emerald-400">{result.stats?.sourcesGathered || result.sourcesGathered || 0}</p>
+              <p className="text-lg font-bold text-primary">{result.stats?.sourcesGathered || result.sourcesGathered || 0}</p>
               <p className="text-[8px] uppercase text-muted-foreground">{t("oneClick.sourcesGathered")}</p>
             </div>
             <div className="rounded-md bg-background/40 p-2">
@@ -1422,7 +1422,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
         <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-base">
-              <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
+              <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
               {t("oneClick.confirmClearTitle") || "Clear existing data?"}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-sm leading-relaxed">
@@ -1435,7 +1435,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
           </AlertDialogHeader>
           <div className="rounded-md border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 p-3 my-2">
             <div className="flex items-start gap-2">
-              <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
               <div className="text-[11px] text-amber-700 dark:text-amber-400 space-y-1">
                 <p className="font-semibold">
                   {t("oneClick.confirmClearWillDelete") || "The following will be deleted:"}
@@ -1517,7 +1517,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
           {livePreview && (
             <div className="shrink-0 border-t border-violet-200/60 dark:border-violet-900/40 bg-violet-50/40 dark:bg-violet-950/20 p-2.5">
               <div className="flex items-center gap-1.5 mb-1">
-                <PenLine className="h-3 w-3 text-violet-600 animate-pulse shrink-0" />
+                <PenLine className="h-3 w-3 text-violet-600 dark:text-violet-400 animate-pulse shrink-0" />
                 <p className="text-[9px] uppercase tracking-wider text-violet-700 dark:text-violet-400 font-semibold flex-1 truncate">
                   {t("oneClick.livePreview") || "Live preview"}
                 </p>

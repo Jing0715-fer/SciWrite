@@ -159,7 +159,7 @@ export function ProteinStructureAnalysisDialog({
       <DialogContent className="max-w-5xl max-h-[92vh] flex flex-col p-0 gap-0">
         <DialogHeader className="px-6 pt-6 pb-3 border-b">
           <DialogTitle className="flex items-center gap-2 text-lg">
-            <Box className="h-5 w-5 text-amber-600" />
+            <Box className="h-5 w-5 text-amber-600 dark:text-amber-400" />
             {t("structure.title")}
             {data && (
               <Badge variant="secondary" className="ml-2 font-mono">
@@ -229,7 +229,7 @@ export function ProteinStructureAnalysisDialog({
         <div className="flex-1 overflow-hidden min-h-0">
           {loading ? (
             <div className="flex flex-col items-center justify-center h-full py-20 gap-3">
-              <Loader2 className="h-8 w-8 animate-spin text-amber-600" />
+              <Loader2 className="h-8 w-8 animate-spin text-amber-600 dark:text-amber-400" />
               <p className="text-sm text-muted-foreground">
                 {t("structure.analyzing")}
               </p>
@@ -658,11 +658,11 @@ function CompositionTab({ a, t }: { a: any; t: TFunc }) {
             </div>
             <div className="flex gap-3">
               <div>
-                <span className="text-2xl font-bold text-rose-600">{c.helixCount}</span>
+                <span className="text-2xl font-bold text-rose-600 dark:text-rose-400">{c.helixCount}</span>
                 <span className="text-[10px] text-muted-foreground ml-1">helices</span>
               </div>
               <div>
-                <span className="text-2xl font-bold text-amber-600">{c.sheetCount}</span>
+                <span className="text-2xl font-bold text-amber-600 dark:text-amber-400">{c.sheetCount}</span>
                 <span className="text-[10px] text-muted-foreground ml-1">sheets</span>
               </div>
             </div>
@@ -1248,7 +1248,7 @@ function ChargeTab({ a, t }: { a: any; t: TFunc }) {
           <div className="font-semibold mb-1">Interpretation guide</div>
           <div>
             • Net charge{" "}
-            <span className={netCharge >= 0 ? "text-sky-600 font-semibold" : "text-rose-600 font-semibold"}>
+            <span className={netCharge >= 0 ? "text-sky-600 dark:text-sky-400 font-semibold" : "text-rose-600 dark:text-rose-400 font-semibold"}>
               {netCharge >= 0 ? "+" : ""}
               {netCharge.toFixed(1)}
             </span>{" "}
@@ -1261,7 +1261,7 @@ function ChargeTab({ a, t }: { a: any; t: TFunc }) {
           </div>
           <div>
             • pI ={" "}
-            <span className="font-semibold text-violet-600">{pI?.toFixed(2)}</span>{" "}
+            <span className="font-semibold text-violet-600 dark:text-violet-400">{pI?.toFixed(2)}</span>{" "}
             — protein is{" "}
             {pI > 7 ? "basic (positively charged below pI)" : "acidic (negatively charged above pI)"}.
           </div>
@@ -1474,7 +1474,7 @@ function ContextTab({
         </div>
         <Button size="sm" variant="outline" onClick={onCopy} className="h-7">
           {copied ? (
-            <Check className="h-3.5 w-3.5 mr-1.5 text-emerald-600" />
+            <Check className="h-3.5 w-3.5 mr-1.5 text-emerald-600 dark:text-emerald-400" />
           ) : (
             <Copy className="h-3.5 w-3.5 mr-1.5" />
           )}
@@ -2078,7 +2078,7 @@ function CompareTab({
                 className="h-7"
               >
                 {copied ? (
-                  <Check className="h-3.5 w-3.5 mr-1.5 text-emerald-600" />
+                  <Check className="h-3.5 w-3.5 mr-1.5 text-emerald-600 dark:text-emerald-400" />
                 ) : (
                   <Copy className="h-3.5 w-3.5 mr-1.5" />
                 )}
