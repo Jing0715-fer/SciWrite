@@ -41,6 +41,10 @@ const TOPIC =
 const FIELD = arg("field", "molecular biology");
 const TARGET_WORDS = Number(arg("words", "1500"));
 const MAX_DB_QUERIES = Number(arg("maxDbQueries", "12"));
+// round-27: language passthrough — "both" exercises the new v2 translate
+// stage (EN sections → per-section translation → bilingual article).
+const LANGUAGE = arg("language", "en");
+const SKIP_ADVERSARIAL = args.includes("--skip-adversarial");
 
 // ----- helpers ---------------------------------------------------------------
 async function jfetch<T>(url: string, init?: RequestInit): Promise<T> {
@@ -169,7 +173,7 @@ async function main() {
         targetWords: TARGET_WORDS,
         maxDbQueries: MAX_DB_QUERIES,
         maxWebSearchQueries: 6,
-        language: "en",
+        language: LANGUAGE,
       },
       (event, data) => {
         if (event === "step") {
@@ -272,6 +276,35 @@ async function main() {
       totalParagraphRefs,
       firstChars: articleContent.slice(0, 400),
     };
+    // round-27: bilingual assertions — with language=both the article must
+    // carry contentZh, paragraphs must carry contentZh, and the complete
+    // payload must carry a v1-shaped stats block (articleWordCount etc.) so
+    // the UI completion toast shows real numbers instead of "0 words".
+    if (LANGUAGE === "both" || LANGUAGE === "中文") {
+      const a = articles[0] || {};
+      const zhContent = a.contentZh || "";
+      const zhBody = zhContent.split(/\n## 参考文献\b/)[0] || "";
+      const zhChars = (zhBody.match(/[\u4e00-\u9fff]/g) || []).length;
+      const paragraphsZh = liveParagraphs.filter((p: any) => p.contentZh).length;
+      const zhMarkers = (zhBody.match(/\[\d+(?:\s*[,，]\s*\d+)*\]/g) || []).length;
+      const complete = report.pipeline.complete || {};
+      report.bilingual = {
+        articleHasZh: zhContent.length > 0,
+        zhChars,
+        zhRefHeader: zhContent.includes("## 参考文献"),
+        zhMarkers,
+        paragraphsZh,
+        paragraphCount: liveParagraphs.length,
+        completeHasChinese: complete.hasChinese === true,
+        completeStatsArticleWordCount: complete.stats?.articleWordCount ?? null,
+        completeStatsReferencesSaved: complete.stats?.referencesSaved ?? null,
+        completeStatsArticleWordCountZh: complete.stats?.articleWordCountZh ?? null,
+        completeWordCount: complete.wordCount ?? null,
+      };
+      console.error(
+        `      bilingual: articleHasZh=${report.bilingual.articleHasZh} zhChars=${zhChars} paragraphsZh=${paragraphsZh}/${liveParagraphs.length} zhMarkers=${zhMarkers} stats.articleWordCount=${report.bilingual.completeStatsArticleWordCount} stats.articleWordCountZh=${report.bilingual.completeStatsArticleWordCountZh}`,
+      );
+    }
     console.error(
       `      words=${wordCount} markers=${citationMarkers} uniqueRefs=${uniqueRefNumbers.size} listedRefs=${listedRefs} paragraphs=${liveParagraphs.length}`,
     );
@@ -281,6 +314,9 @@ async function main() {
   }
 
   // 4. Adversarial review -------------------------------------------------
+  if (SKIP_ADVERSARIAL) {
+    console.error(`[4/4] Adversarial review skipped (--skip-adversarial).`);
+  } else {
   console.error(`[4/4] Running adversarial citation review on the article...`);
   if (report.article?.id) {
     const tAdv = nowMs();
@@ -303,6 +339,7 @@ async function main() {
       report.adversarial = { error: err.message };
       console.error(`      ADVERSARIAL ERROR: ${err.message}`);
     }
+  }
   }
 
   report.meta.finishedAt = new Date().toISOString();

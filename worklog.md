@@ -1896,3 +1896,30 @@ Stage Summary:
 - 修改文件：src/lib/endnote-fields.ts（统一内联形态）、src/app/page.tsx（目标三层机制+单 effect）、src/components/sciwrite/progress-tracker.tsx（阶梯+自定义+格式化）、src/components/sciwrite/unified-writing-dialog.tsx（onGenerationTargetWords 回调）、src/lib/i18n.tsx（en/zh 2 键）；更新 scripts/test-endnote-round23/24/25.ts、新增 scripts/test-endnote-round26.ts
 - 用户侧操作：git pull 后重新导出 Word，用 EndNote 21 打开——[2,4]/[7,8]/[21][22] 等分组引用应全部正常绑定（与已验证正常的单条引用同构）；写作进度条目标随项目和生成目标自动调整，可点开自定义
 - 提交信息：fix(round-26): grouped citations use the inline EN.CITE form (real EndNote 21 shape) — retires the nested fldData layout; writing-progress goal becomes per-project persisted + generation-synced + content-derived
+
+---
+Task ID: round-27
+Agent: main (Z.ai Code orchestrator)
+Task: 修复用户报告的两个 V2 管线问题：① 生成完成的 toast 显示 "0 words"（实际文章已产生）；② V2 模式"中文+英文"生成没有将写好的英文翻译成中文
+
+Work Log:
+- 根因①（0 words）：前端 toast 读 data.stats.articleWordCount / data.stats.referencesSaved（V1 的 complete 事件形状），而 V2 的 complete 事件只有顶层 wordCount/references、无 stats 块 → 所有 V2 运行成功后 toast 恒显示 "0 words, 0 references"；结果面板（sourcesGathered/sectionsPlanned/articleWordCount）同样全 0
+- 根因②（无翻译）：unified-writing-dialog.tsx 第 765 行对 V2 硬编码 language: "English"（pipeline === "v2" ? "English" : language），用户选择"中文+英文"被静默丢弃；V2 后端完全不解析 language 参数、无翻译阶段；V2 STEPS 也无 translate 步骤
+- 修复②（后端 src/app/api/ai/generate-full-v2/route.ts）：解析 requestedLanguage/isBothMode（both 与 中文 都视为双语——V2 证据管线英文优先是设计约束，中文只能来自翻译）；compose（段落已全局重编号）之后新增 STEP 9 翻译阶段：逐段 EN→中文（chatWithSessionStream 流式 + 降级 chatWithSession，temperature 0.3，prompt 与 V1 翻译阶段逐字一致：保留 [n] 引用/markdown/术语一致性），剥离 ### Citations 块与前置 preamble，sanitizeSectionContent 清洗，保存 paragraph.contentZh/wordCountZh；确定性引用完整性检查（EN/ZH 唯一引用号集合比对，drift 仅记日志不阻断）；组装中文文章（## 标题 + 译文，剥 AI 自产参考文献，追加 ## 参考文献 + globalRefs 中文文献表）；article.update 挂载 contentZh；版本快照移到翻译后创建（含 contentZh）；全部翻译失败防护——不保存 headers-only 空壳中文文章（提示用户可在查看器批量重译）；generateArticleTitle 补传 wantZh: isBothMode（V1 一直传，V2 漏传导致 titleZh 恒 null）
+- 修复①（complete 事件）：补齐 V1 形状 stats 块（sourcesGathered/referencesSaved/curatedReferences/sectionsPlanned/paragraphsGenerated/totalWords/articleWordCount[+Zh]/globalReferenceCount/pipelineDuration/targetWords/achievementRate）+ 顶层 hasChinese；保留原顶层 wordCount/references 兼容旧客户端
+- 修复（前端 unified-writing-dialog.tsx）：①doGenerate 传递真实 language 给 V2；②V2 STEPS 双语时追加 translate 步骤（置于 compose 后，与后端事件顺序一致，步骤条正向流动）；③toast 与结果面板双形状兜底（stats.articleWordCount || wordCount || 0 等）；④顺带修两个死代码 bug——livePreview 判断 event === "generate" 永假（后端事件 event 恒为 "step"，步骤名在 data.step，改为匹配 data.step 后流式实时预览真正生效）；setStepProgress 以 event（恒 "step"）为键而步骤条读 stepProgress[step.id]（改为 data.step 键后每步实时进度文案首次可见）；⑤双语策略面板对 V2+中文 也显示（willTranslate = v1: both；v2: both 或 中文）并区分 V2 四步流程文案；⑥时间/token/调用次数估算同步 willTranslate
+- 修复（src/lib/writing.ts countWords）：CJK 感知计数——中文无空格分词，旧实现整段中文算 1 个"词"（2,732 字的双语文章报告 456 "chars"、单段翻译日志 "2 Chinese chars"）；现每个 CJK 字符计 1 + 非中日韩按空格分词；纯英文行为逐字节不变（34=34 回归验证）；元数据面板正确显示 "3,591字"
+- 测试脚本（scripts/full-generation-test.ts）：--language 透传 + --skip-adversarial + bilingual 断言块（articleHasZh/zhChars/zhMarkers/paragraphsZh/complete stats 字段）
+- E2E（三次真实运行，前两次因提供方 429 限流中止——环境问题非代码问题，但正好验证了翻译阶段失败路径与全部失败防护）：第三次完整成功（targetWords 600，7 sections）：toast stats 块 articleWordCount=1961/referencesSaved=72/articleWordCountZh=456（修复前恒 0）；7/7 段落翻译、contentZh 7181 字符、真实学术中文（"细菌细胞持续面临环境挑战…"）；引用完整性完美——EN 18 = ZH 18 唯一引用号、0 缺失 0 多余、7 段零 drift；无 <think> 泄漏；版本快照含 contentZh；参考文献头存在
+- E2E（agent-browser）：Full Article 页签 V2+English+中文 → 双语策略面板显示 V2 四步流程（生成英文→组合验证→逐段翻译[引用保留]→组装双语）；估算面板 "Sections to translate" 行出现；Article 页签 EN/中文 切换正常（DOM 点击验证中文视图渲染完整译文）；zh docx 导出 200（中文正文 + 引用列表齐备）；0 console error / 0 page error
+- 附带发现：沙箱 Bash 会话结束后台进程被杀（curl SSE 断连触发 V2 路由 clientDisconnected → 段落全跳过）——复用 .zscripts/v2-run-daemon.py 双 fork 守护进程解决
+- 卫生：tsc 0 错误；lint 0 error / 162 warning（=基线）；删除临时脚本；清理失败测试项目（保留成功的双语演示文章供预览）
+
+Stage Summary:
+- "0 words" 根因：V2 complete 事件缺 V1 形状 stats 块 → 补齐 + 前端双形状兜底
+- V2 双语根因：前端硬编码 language="English" + 后端无翻译阶段 → 传递真实语言选择 + compose 后逐段翻译阶段（段落此时携带最终全局引用号，翻译保留 [n] 即保证中英引用一致——E2E 实测 18=18 零漂移）
+- V2 语义："both" 与 "中文" 均产出双语文章（英文主体 + 中文挂载 contentZh，查看器 EN/中文 切换、zh 导出）
+- 附带修复：livePreview/stepProgress 两处 event vs data.step 死代码（流式预览与每步进度文案首次真正生效）、countWords CJK 感知（中文按字计数，英文不变）、wantZh 中文标题、全部翻译失败防护
+- 修改文件：src/app/api/ai/generate-full-v2/route.ts（language 解析 + STEP 9 翻译阶段 + stats complete）、src/components/sciwrite/unified-writing-dialog.tsx（语言透传 + STEPS + 双形状兜底 + 两处死代码修复 + willTranslate 估算/策略面板）、src/lib/writing.ts（countWords CJK）、scripts/full-generation-test.ts（--language/--skip-adversarial/bilingual 断言）
+- 用户侧预期：V2 + 中文+英文 重新生成 → 步骤条出现"翻译"步骤 → 完成提示显示真实字数与引用数 → 文章查看器 EN/中文 切换查看双语 → 导出中文 docx
+- 提交信息：fix(round-27): v2 bilingual generation — real language passthrough + post-compose translate stage (citation-preserving EN→中文), v1-shaped stats in complete event fixes "0 words" toast, CJK-aware word counting
