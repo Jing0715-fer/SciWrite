@@ -29,7 +29,11 @@ interface Props {
   onWordGoalChange?: (goal: number) => void;
 }
 
-const WORD_GOAL_PRESETS = [500, 1000, 2000, 3000, 5000];
+// Round 26: the ladder now spans real article scales — the old
+// [500..5000] ceiling made every full-article project sit at 100% forever.
+const WORD_GOAL_PRESETS = [500, 1000, 2000, 5000, 10000, 20000, 50000];
+
+const fmt = (n: number) => n.toLocaleString();
 
 export function ProgressTracker({
   totalWords,
@@ -43,8 +47,18 @@ export function ProgressTracker({
 }: Props) {
   const { t } = useI18n();
   const [showGoalSelector, setShowGoalSelector] = React.useState(false);
+  const [customGoal, setCustomGoal] = React.useState("");
   const wordProgress = wordGoal > 0 ? Math.min(100, (totalWords / wordGoal) * 100) : 0;
   const goalMet = totalWords >= wordGoal;
+
+  const applyCustomGoal = () => {
+    const n = Math.round(Number(customGoal));
+    if (customGoal.trim() !== "" && Number.isFinite(n) && n >= 100) {
+      onWordGoalChange?.(n);
+      setCustomGoal("");
+      setShowGoalSelector(false);
+    }
+  };
 
   return (
     <div className="glass-subtle px-5 py-2.5 border-b hairline">
@@ -61,7 +75,7 @@ export function ProgressTracker({
               className="text-[10px] font-mono text-muted-foreground hover:text-primary transition-colors tabular-nums"
               title={t("progress.setWordGoalTitle")}
             >
-              {totalWords} / {wordGoal}w
+              {fmt(totalWords)} / {fmt(wordGoal)}w
               {goalMet && <span className="ml-1 text-emerald-600">✓</span>}
             </button>
           </div>
@@ -85,9 +99,28 @@ export function ProgressTracker({
                       : "tab-pill-inactive"
                   }`}
                 >
-                  {g}
+                  {fmt(g)}
                 </button>
               ))}
+              <span className="flex items-center gap-0.5">
+                <input
+                  value={customGoal}
+                  onChange={(e) => setCustomGoal(e.target.value.replace(/[^\d]/g, ""))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") applyCustomGoal();
+                  }}
+                  placeholder={t("progress.customGoalPlaceholder")}
+                  inputMode="numeric"
+                  aria-label={t("progress.customGoalPlaceholder")}
+                  className="w-16 text-[9px] px-1.5 py-0.5 rounded border border-border/60 bg-background text-foreground tabular-nums focus:outline-none focus:ring-1 focus:ring-primary/40"
+                />
+                <button
+                  onClick={applyCustomGoal}
+                  className="text-[9px] px-1.5 py-0.5 rounded tab-pill-inactive transition-all hover:text-primary"
+                >
+                  {t("progress.setCustomGoal")}
+                </button>
+              </span>
             </div>
           )}
         </div>

@@ -840,6 +840,8 @@ export const translations = {
 
     // Progress tracker extras
     "progress.setWordGoalTitle": "Set word count goal",
+    "progress.customGoalPlaceholder": "Custom",
+    "progress.setCustomGoal": "Set",
 
     // Writing tips extras
     "tips.formatLabel": "Format:",
@@ -2160,6 +2162,8 @@ export const translations = {
 
     // Progress tracker extras
     "progress.setWordGoalTitle": "设置字数目标",
+    "progress.customGoalPlaceholder": "自定义",
+    "progress.setCustomGoal": "设置",
 
     // Writing tips extras
     "tips.formatLabel": "格式：",

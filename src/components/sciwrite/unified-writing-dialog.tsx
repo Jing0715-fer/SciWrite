@@ -78,6 +78,10 @@ interface Props {
   field?: string;
   paragraphCount: number;
   initialTab?: WriteTab;
+  /** Fired when a full-article generation starts — carries the pipeline's
+   *  targetWords so the workspace progress bar can track the REAL goal
+   *  instead of a stale hard-coded one (round 26). */
+  onGenerationTargetWords?: (targetWords: number) => void;
 }
 
 const TAB_CONFIG: { id: WriteTab; icon: any }[] = [
@@ -96,6 +100,7 @@ export function UnifiedWritingDialog({
   field,
   paragraphCount,
   initialTab = "outline",
+  onGenerationTargetWords,
 }: Props) {
   const { t } = useI18n();
   const qc = useQueryClient();
@@ -204,6 +209,7 @@ export function UnifiedWritingDialog({
               paragraphCount={paragraphCount}
               onInvalidate={invalidate}
               onRunningChange={setIsFullArticleRunning}
+              onGenerationTargetWords={onGenerationTargetWords}
             />
           )}
         </div>
@@ -650,7 +656,7 @@ function ComposeTab({ projectId, topic, paragraphCount, onInvalidate }: { projec
 }
 
 // ==================== Full Article Tab ====================
-function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate, onRunningChange }: { projectId: string; topic: string; field?: string; paragraphCount: number; onInvalidate: () => void; onRunningChange?: (running: boolean) => void }) {
+function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate, onRunningChange, onGenerationTargetWords }: { projectId: string; topic: string; field?: string; paragraphCount: number; onInvalidate: () => void; onRunningChange?: (running: boolean) => void; onGenerationTargetWords?: (targetWords: number) => void }) {
   const { t } = useI18n();
   const [language, setLanguage] = React.useState("English");
   const [targetWords, setTargetWords] = React.useState(5000);
@@ -748,6 +754,9 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
     setResult(null);
     setStreamLog([]);
     setLivePreview("");
+    // Report the real generation target so the workspace progress bar
+    // tracks THIS run's goal (round 26 — no more fixed 1000w bar).
+    onGenerationTargetWords?.(targetWords);
     try {
       const streamFn = pipeline === "v2" ? api.aiGenerateFullV2Stream : api.aiGenerateFullStream;
       const data = await streamFn(

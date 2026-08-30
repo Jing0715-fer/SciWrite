@@ -1,16 +1,20 @@
 /**
  * Round 25 verification — single-source citations must use the real
- * EndNote X7.8 INLINE form (XML in the instruction text, no fldData, no
- * nested EN.CITE.DATA field); grouped citations keep the nested dual-payload
- * form. Both templates below are transcribed from a genuine X7.8 CWYW
- * document (pandoc issue #8433 attachment, EndNote X7.8 Bld 11583).
+ * EndNote INLINE form (XML in the instruction text, no fldData, no nested
+ * EN.CITE.DATA field).
+ *
+ * UPDATED ROUND 26: grouped citations ALSO use the inline form now — real
+ * EndNote 21 (verified against the SJSUTST 126, 2025 published source XML)
+ * writes multi-record grouped citations as simple inline fields with
+ * multiple <Cite> elements. The nested EN.CITE.DATA dual-payload layout was
+ * retired after EndNote 21 marked every grouped citation INVALID while
+ * binding every inline single perfectly (user-verified round 26).
  *
  * Run: bun run scripts/test-endnote-round25.ts
  */
 import {
   buildEndnoteXml,
   buildEnwExport,
-  encodeFldData,
   injectEndnoteFields,
   type EndNoteLibrary,
   type EndNoteRecord,
@@ -113,7 +117,7 @@ console.log("\n[1] single-record citation → real X7.8 INLINE form");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-console.log("\n[2] grouped citation → nested dual-payload form (unchanged X7.8 parity)");
+console.log("\n[2] grouped citation → INLINE form too (round 26: multi-Cite payload)");
 // ─────────────────────────────────────────────────────────────────────────────
 {
   const out = injectEndnoteFields(
@@ -123,22 +127,24 @@ console.log("\n[2] grouped citation → nested dual-payload form (unchanged X7.8
     "REFLIST_CLOSE",
   );
   const seq = runSequence(out).join(" → ");
-  const expected =
-    "BEGIN+DATA → INSTR → BEGIN+DATA → INSTR → EMPTY → END → EMPTY → SEP → TEXT → END";
-  check("grouped sequence matches round-23/24 template", seq.startsWith(expected), seq);
+  const expected = "BEGIN → INSTR → SEP → TEXT → END";
+  check("grouped sequence is the inline shape", seq.startsWith(expected), seq);
   check(
     "next field after citation is the REFLIST opener",
     seq.startsWith(expected + " → BEGIN → INSTR → SEP"),
     seq,
   );
-  const fldDatas = out.match(/<w:fldData[^>]*>([\s\S]*?)<\/w:fldData>/g) || [];
-  check("exactly two fldData payloads", fldDatas.length === 2, String(fldDatas.length));
-  const d1 = (fldDatas[0].match(/>([\s\S]*?)</) || ["", ""])[1].replace(/\s+/g, "");
-  const d2 = (fldDatas[1].match(/>([\s\S]*?)</) || ["", ""])[1].replace(/\s+/g, "");
-  check("both payloads identical", d1 === d2);
-  const decoded = Buffer.from(d1, "base64").toString("utf-8");
-  check("payload has two <Cite>", (decoded.match(/<Cite>/g) || []).length === 2);
+  check("no fldData anywhere (nested form retired)", !/<w:fldData/.test(out));
+  check("no EN.CITE.DATA field", !out.includes("ADDIN EN.CITE.DATA"));
+  const instr = out.match(/<w:instrText[^>]*>([\s\S]*?)<\/w:instrText>/)![1];
+  const decoded = instr
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+  check("inline payload has two <Cite>", (decoded.match(/<Cite>/g) || []).length === 2);
   check("DisplayText only on first Cite", decoded.indexOf("<DisplayText>[1,2]</DisplayText>") < decoded.indexOf("</Cite>"));
+  check("both Cites carry header keys", /<Author>Maginn<\/Author><Year>2010<\/Year><RecNum>1<\/RecNum>/.test(decoded) && /<Author>Frenkel<\/Author><Year>2002<\/Year><RecNum>2<\/RecNum>/.test(decoded));
+  check("both records embedded", (decoded.match(/<record>/g) || []).length === 2);
   check("payload has no <database>/<source-app>", !decoded.includes("<database") && !decoded.includes("<source-app"));
   const begins = (out.match(/fldCharType="begin"/g) || []).length;
   const ends = (out.match(/fldCharType="end"/g) || []).length;
@@ -158,40 +164,26 @@ console.log("\n[3] inline vs grouped payload equivalence");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-console.log("\n[4] real X7.8 template parity (transcribed from the genuine document)");
+console.log("\n[4] ground-truth shapes (real documents, for documentation)");
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  // Real single citation (Khalifi 2020, rec 1534): run shape transcribed from
-  // word/document.xml of the genuine X7.8 attachment.
-  const REAL_SINGLE_SHAPE = [
+  // Real single citation (X7.8, Khalifi 2020) and real multi-record inline
+  // citation (EndNote 21 era, SJSUTST 2025, "[1-3]" ×3 records) share the
+  // SAME simple shape — this is the form we emit for every citation now:
+  const REAL_INLINE_SHAPE = [
     "fldChar:begin", // no fldData
-    "instrText: ADDIN EN.CITE <EndNote>…</EndNote>", // inline escaped XML
+    "instrText: ADDIN EN.CITE <EndNote>…</EndNote>", // inline escaped XML (1..n <Cite>)
     "fldChar:separate",
-    "t:[175]", // noProof result run
+    "t:[175]", // result run
     "fldChar:end",
   ];
   check(
-    "real single = begin / inline instr / separate / result / end",
-    REAL_SINGLE_SHAPE.join("|") === "fldChar:begin|instrText: ADDIN EN.CITE <EndNote>…</EndNote>|fldChar:separate|t:[175]|fldChar:end",
+    "real inline shape = begin / inline instr / separate / result / end",
+    REAL_INLINE_SHAPE.join("|") === "fldChar:begin|instrText: ADDIN EN.CITE <EndNote>…</EndNote>|fldChar:separate|t:[175]|fldChar:end",
   );
-  // Real grouped citation (Maginn+Frenkel+Biscay): run shape transcribed.
-  const REAL_GROUPED_SHAPE = [
-    "fldChar:begin+fldData", // outer, WITH payload
-    "instrText: ADDIN EN.CITE ",
-    "fldChar:begin+fldData", // nested, WITH payload
-    "instrText: ADDIN EN.CITE.DATA ",
-    "fldChar:end",
-    "run:empty",
-    "fldChar:separate",
-    "t:[39,201-202]",
-    "fldChar:end",
-  ];
-  check(
-    "real grouped = begin+data / instr / begin+data / EN.CITE.DATA / end / empty / separate / result / end",
-    REAL_GROUPED_SHAPE.length === 9,
-  );
-  // And our emissions match those shapes (already proven in [1] and [2] by
-  // the sequence checks; the constants above document the ground truth).
+  // The X7.8-era nested EN.CITE.DATA dual-payload layout (retained by some
+  // EndNote 21 edit paths but NOT required for binding) is retired — see
+  // round-26 notes in endnote-fields.ts.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -229,11 +221,9 @@ console.log("\n[6] escaping — instrText keeps quotes literal (real X7.8 byte b
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-console.log("\n[7] regressions — encodeFldData wrap + .enw export");
+console.log("\n[7] regressions — .enw export");
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  const wrapped = encodeFldData("<EndNote>x</EndNote>");
-  check("fldData base64 wrapped at 76", wrapped.split("\n").every((l) => l.length <= 76));
   const enw = buildEnwExport([maginn]);
   check("enw exports Maginn canonically", enw.includes("%A Maginn, E.J."));
   check("enw has DOI", enw.includes("%R 10.1021/ie901898k"));

@@ -136,7 +136,64 @@ function Home() {
   // Derived progress stats
   const progressStats = React.useMemo(() => computeProgressStats(paragraphs), [paragraphs]);
 
+  // ─── Word-count goal for the writing progress bar ─────────────────────────
+  // Round 26: the goal used to be a hard-coded 1000 that reset on every page
+  // load — pegging every real article's progress at 100%. Now it is:
+  //   1. persisted per project (localStorage), surviving reloads;
+  //   2. synced from the full-generation target when a generation starts
+  //      (the dialog reports its targetWords — the user's actual goal);
+  //   3. auto-scaled to the project's real content while the user has never
+  //      set a custom goal (rounded up to the next 1,000).
+  // Load + derive + uplift live in ONE effect: two separate effects raced on
+  // project load (the uplift pass saw the stale pre-load custom flag and
+  // clobbered the stored goal).
   const [wordGoal, setWordGoal] = React.useState(1000);
+  const goalKey = activeProjectId ? `sciwrite:wordGoal:${activeProjectId}` : null;
+  const lastGoalProjectRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    // Wait until the ACTIVE project's data has actually loaded (project may
+    // briefly hold the previous project while the new query is in flight).
+    if (!goalKey || !project || project.id !== activeProjectId) return;
+    const projectSwitched = lastGoalProjectRef.current !== activeProjectId;
+    lastGoalProjectRef.current = activeProjectId;
+    try {
+      const stored = window.localStorage.getItem(goalKey);
+      const n = Number(stored);
+      if (stored && n > 0) {
+        // A stored goal is the user's (or a generation run's) explicit
+        // choice — it always wins and is never auto-scaled.
+        setWordGoal(n);
+        return;
+      }
+    } catch {
+      /* localStorage unavailable (private mode) — fall through to derived goal */
+    }
+    // Never customized: keep the goal one round-1,000 above the live word
+    // count. On a project switch it is derived fresh; while the project's
+    // content grows it only ever RAISES the goal (progress never shrinks).
+    const floor = Math.max(1000, Math.ceil((progressStats.totalWords || 0) / 1000) * 1000);
+    if (projectSwitched) {
+      setWordGoal(floor);
+    } else {
+      setWordGoal((prev) => (prev < floor ? floor : prev));
+    }
+  }, [goalKey, activeProjectId, project, progressStats.totalWords]);
+
+  const handleWordGoalChange = React.useCallback(
+    (goal: number) => {
+      const g = Math.max(100, Math.round(goal));
+      setWordGoal(g);
+      if (goalKey) {
+        try {
+          window.localStorage.setItem(goalKey, String(g));
+        } catch {
+          /* storage unavailable — in-memory goal still applies */
+        }
+      }
+    },
+    [goalKey],
+  );
 
   // Keyboard shortcuts (defined after paragraphs so it can reference it)
   useHomeKeyboardShortcuts({
@@ -204,7 +261,7 @@ function Home() {
                   onOpenOutline={() => { setUnifiedWriteTab("outline"); setUnifiedWriteOpen(true); }}
                   progressStats={progressStats}
                   wordGoal={wordGoal}
-                  onWordGoalChange={setWordGoal}
+                  onWordGoalChange={handleWordGoalChange}
                   tipsOpen={tipsOpen}
                   onTipsOpenChange={setTipsOpen}
                   onOpenUserData={() => setUserDataOpen(true)}
@@ -287,7 +344,7 @@ function Home() {
               onOpenOutline={() => { setUnifiedWriteTab("outline"); setUnifiedWriteOpen(true); }}
               progressStats={progressStats}
               wordGoal={wordGoal}
-              onWordGoalChange={setWordGoal}
+              onWordGoalChange={handleWordGoalChange}
               tipsOpen={tipsOpen}
               onTipsOpenChange={setTipsOpen}
               onOpenUserData={() => setUserDataOpen(true)}
@@ -333,6 +390,7 @@ function Home() {
           field={project.field ?? undefined}
           paragraphCount={paragraphs.length}
           initialTab={unifiedWriteTab}
+          onGenerationTargetWords={handleWordGoalChange}
         />
         </React.Suspense>
       )}

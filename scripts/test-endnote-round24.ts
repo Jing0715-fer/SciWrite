@@ -217,21 +217,25 @@ console.log("\n[5] field run sequence — X7.8 parity regression (round 23; roun
     if (r.includes('fldCharType="begin"')) return r.includes("fldData") ? "BEGIN+DATA" : "BEGIN";
     if (r.includes('fldCharType="separate"')) return "SEP";
     if (r.includes('fldCharType="end"')) return "END";
-    if (r.includes("instrText")) return "INSTR:" + (r.match(/<w:instrText[^>]*>([\s\S]*?)<\/w:instrText>/)?.[1] || "").trim();
+    if (r.includes("instrText")) return "INSTR:" + (r.match(/<w:instrText[^>]*>([\s\S]*?)<\/w:instrText>/)?.[1] || "").trim().slice(0, 25);
     if (r.includes("<w:t")) return "TEXT";
     return "EMPTY";
   });
+  // Round 26: grouped citations use the inline form (multi-Cite payload in
+  // instrText) — the nested EN.CITE.DATA layout is retired.
   const expected =
-    "BEGIN+DATA → INSTR:ADDIN EN.CITE → BEGIN+DATA → INSTR:ADDIN EN.CITE.DATA → EMPTY → END → EMPTY → SEP → TEXT → END";
-  check("run sequence matches real X7.8", runs.join(" → ").startsWith(expected), runs.join(" → "));
+    "BEGIN → INSTR:ADDIN EN.CITE &lt;EndNote → SEP → TEXT → END";
+  check("run sequence is inline form (round 26)", runs.join(" → ").startsWith(expected), runs.join(" → "));
   const begins = (out.match(/fldCharType="begin"/g) || []).length;
   const ends = (out.match(/fldCharType="end"/g) || []).length;
   check("field begin/end balanced", begins === ends, `${begins}/${ends}`);
-  // The decoded payload must contain no <database> either (round-24).
-  const b64 = out.match(/<w:fldData[^>]*>([\s\S]*?)<\/w:fldData>/)![1].replace(/\s+/g, "");
-  const decoded = Buffer.from(b64, "base64").toString("utf-8");
-  check("decoded payload has no <database>/<source-app>", !decoded.includes("<database") && !decoded.includes("<source-app"));
-  check("decoded payload has <Cite> + <record>", decoded.includes("<Cite>") && decoded.includes("<record>"));
+  // The inline payload must contain no <database> either (round-24).
+  const instr = out.match(/<w:instrText[^>]*>([\s\S]*?)<\/w:instrText>/)![1]
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+  check("payload has no <database>/<source-app>", !instr.includes("<database") && !instr.includes("<source-app"));
+  check("payload has two <Cite> + two <record>", (instr.match(/<Cite>/g) || []).length === 2 && (instr.match(/<record>/g) || []).length === 2);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

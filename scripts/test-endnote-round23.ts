@@ -198,14 +198,16 @@ console.log("\n[4] injectEndnoteFields — X7.8 run sequence with empty runs");
     if (r.includes('fldCharType="begin"')) return r.includes("fldData") ? "BEGIN+DATA" : "BEGIN";
     if (r.includes('fldCharType="separate"')) return "SEP";
     if (r.includes('fldCharType="end"')) return "END";
-    if (r.includes("instrText")) return "INSTR:" + (r.match(/<w:instrText[^>]*>([\s\S]*?)<\/w:instrText>/)?.[1] || "").trim();
+    if (r.includes("instrText")) return "INSTR:" + (r.match(/<w:instrText[^>]*>([\s\S]*?)<\/w:instrText>/)?.[1] || "").trim().slice(0, 25);
     if (r.includes("<w:t")) return "TEXT";
     return "EMPTY";
   });
   const seq = runs.join(" → ");
+  // Round 26: grouped citations use the inline form (multi-Cite payload in
+  // instrText) — the nested EN.CITE.DATA layout is retired.
   const expected =
-    "BEGIN+DATA → INSTR:ADDIN EN.CITE → BEGIN+DATA → INSTR:ADDIN EN.CITE.DATA → EMPTY → END → EMPTY → SEP → TEXT → END";
-  check("run sequence matches real X7.8 (incl. empty runs)", seq.startsWith(expected), seq);
+    "BEGIN → INSTR:ADDIN EN.CITE &lt;EndNote → SEP → TEXT → END";
+  check("run sequence is inline form (round 26)", seq.startsWith(expected), seq);
   const begins = (out.match(/fldCharType="begin"/g) || []).length;
   const ends = (out.match(/fldCharType="end"/g) || []).length;
   check("field begin/end balanced", begins === ends, `${begins}/${ends}`);

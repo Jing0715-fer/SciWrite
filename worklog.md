@@ -1872,3 +1872,27 @@ Stage Summary:
 - 修改文件：src/lib/endnote-fields.ts、scripts/test-endnote-round23.ts、scripts/test-endnote-round24.ts；新增 scripts/test-endnote-round25.ts（35 项）；合并 origin/main（round-24 基线）
 - 用户侧操作：git pull 后重新导出 Word；若仍有残留 invalid，用 EndNote 菜单 "Export Traveling Library" 将移动库导入自有库后即可全部绑定（字段形态现已与真实 EndNote 完全一致）
 - 提交信息：fix(round-25): single-source citations use real X7.8 inline form (XML in instrText) — grouped citations keep nested dual-payload layout
+
+---
+Task ID: round-26
+Agent: main (Z.ai Code orchestrator)
+Task: 修复用户实测（round-25 代码导出）两类问题：① EndNote 21 中 [2]/[4] 单独引用正常、[2][4] 分组引用显示 INVALID（[7][8]、[21][22] 同样）；② writing progress 目标固定为 1000w 不符合实际
+
+Work Log:
+- 取证（用户上传 The-Transmembrane-Channel-Like-Protein-Family-St_20260830-081606.docx = round-25 输出）：解码全部字段——104 个单条引用全部为 round-25 内联形态（用户确认正常），15 个分组引用全部为 X7.8 嵌套双 fldData 形态（用户确认 INVALID）→ 失效面与字段形态精确一一对应
+- 记录层排查：30 个 fldData 载荷（15 组 × 双份）内容完好（Cite 头齐备、DisplayText 仅首个、双份一致）；跨字段一致性检查 25 条记录 × 全部 119 字段——timestamp/db-id/author/year 零不一致；字段 run 序列（含两个空 run）与真实 X7.8 逐字节一致 → 结构与内容均无缺陷，但 EndNote 21 仍拒绑 → 结论：嵌套 fldData 形态本身在 EndNote 21 对外来文档失效
+- 地面真值获取（决定性证据）：下载 2025 年发表的 SJSUTST vol.126 论文源 XML（EndNote 20/21 时代产出）——现代 EndNote 自己对多记录分组引用（"[1-3]"×3 记录、"[14, 15]"、"[16, 17]"、"[36, 43, 44]"×3 记录）写的就是**内联形态**（多个 <Cite> 进同一 instrText，DisplayText 仅首个），嵌套形态只出现在它自己的编辑周期簿记中；交叉验证 wmyung/endnote-fieldcode-gui（已发布工具）同样对含分组的所有引用一律生成内联形态
+- 修复①（src/lib/endnote-fields.ts）：citationFieldXml 撤销按基数分流——所有引用（单条/分组）统一内联形态（begin → instrText(" ADDIN EN.CITE " + 多 Cite XML) → separate → 可见结果 → end）；移除嵌套形态残留（encodeFldData 导出、emptyRun、fldCharRun 的 fldData 参数）；injectEndnoteFields 结构校验升级为 begin/separate/end 三者相等；文件头文档加 Round 26 考古记录
+- 修复②（writing progress）：根因 page.tsx `useState(1000)` 硬编码 + 无持久化 → 三层机制：1) 按项目持久化 localStorage（sciwrite:wordGoal:{projectId}）；2) 全文生成启动时 FullArticleTab 回调 onGenerationTargetWords(targetWords) 把管线真实目标写入目标值；3) 无自定义目标时按内容智能推导（总字数向上取整到下一个 1000，只升不降）；进度条预设阶梯扩至 [500..50000] + 自定义数字输入（en/zh i18n）
+- 竞态修复：初版两个 effect（加载 + 自动抬升）在同一次 commit 里运行，uplift 用旧闭包的 goalIsCustom=false 把刚加载的持久化目标覆盖回推导值（实测复现：15000 存储被 2000 覆盖）→ 合并为单一 effect（localStorage 存在即用户选择永不自动缩放；项目切换重新推导且不跨项目污染——用 lastGoalProjectRef + project.id===activeProjectId 门控）
+- 测试：round-23/24/25 脚本断言更新为内联形态（46/38/35 全过）；新增 scripts/test-endnote-round26.ts 33 项（两记录/三记录分组内联形态、de Jong 多词姓氏回归、混合文档单/分组同构、记录跨字段序列化一致、payload 转义与标签平衡、时间戳窗口、.enw 回归）
+- E2E（真实路由）：TMC 文章导出 docx → 45 个 EN.CITE 字段 100% 内联形态、0 EN.CITE.DATA、0 fldData、begin/separate/end 46/46/46 平衡、43 单条 + 2 分组（分组 2 Cite+2 record+1 DisplayText 全部良构）；分组载荷骨架与真实 EndNote 21 分组内联字段逐元素一致（EndNote>Cite>Author>Year>RecNum>DisplayText>record>…）；.enw 导出回归（18 条 %0 记录、%A Giese, A.P.J. 规范）
+- E2E（agent-browser）：进度条显示 "1,671 / 2,000w"（按内容推导，非固定 1000）；自定义 15000 → 刷新持久化（发现并修复 effect 竞态后通过）；预设阶梯 500–50,000 + Custom 输入框；项目切换目标隔离（切换后按新项目内容重新推导）；导出菜单点击 Word (.docx) → POST /api/export 200 + "Exported" toast + PubMed 富集 18 条；移动端 390×844 进度条正常；0 page error
+- 卫生：goalIsCustom 死状态清理（合并 effect 后 localStorage 即 custom 信号）；dev server 中途被沙箱杀死一次（dev-daemon.py 守护重启恢复）；质量门 npx tsc --noEmit 0 错误、bun run lint 0 error / 162 warning（=基线）
+
+Stage Summary:
+- 分组引用 INVALID 根治：嵌套 EN.CITE.DATA 双 fldData 形态整体退役——所有引用统一为真实 EndNote 21 自产的内联形态（多 Cite 单字段），这是用户 EndNote 21 已验证可绑定的唯一形态；载荷与地面真值逐元素一致
+- writing progress 目标真实化：按项目持久化 + 生成目标联动 + 内容智能推导（只升不降）+ 扩展预设阶梯与自定义输入；单一 effect 消除加载/抬升竞态
+- 修改文件：src/lib/endnote-fields.ts（统一内联形态）、src/app/page.tsx（目标三层机制+单 effect）、src/components/sciwrite/progress-tracker.tsx（阶梯+自定义+格式化）、src/components/sciwrite/unified-writing-dialog.tsx（onGenerationTargetWords 回调）、src/lib/i18n.tsx（en/zh 2 键）；更新 scripts/test-endnote-round23/24/25.ts、新增 scripts/test-endnote-round26.ts
+- 用户侧操作：git pull 后重新导出 Word，用 EndNote 21 打开——[2,4]/[7,8]/[21][22] 等分组引用应全部正常绑定（与已验证正常的单条引用同构）；写作进度条目标随项目和生成目标自动调整，可点开自定义
+- 提交信息：fix(round-26): grouped citations use the inline EN.CITE form (real EndNote 21 shape) — retires the nested fldData layout; writing-progress goal becomes per-project persisted + generation-synced + content-derived
