@@ -287,7 +287,11 @@ export function WritingWorkspace({
                       : latestArticle.content
                   )}
                   onCitationClick={(ref, idx) => {
-                    const refEl = document.getElementById(`ref-${idx}`);
+                    // r37 fix: the reference list ids are 1-BASED (ref-1, ref-2…)
+                    // while idx here is a 0-based findIndex — clicking [1] used to
+                    // look up `ref-0` (nonexistent → silent no-op) and [3] jumped
+                    // to entry [2].
+                    const refEl = document.getElementById(`ref-${idx + 1}`);
                     if (refEl) {
                       refEl.scrollIntoView({ behavior: "smooth", block: "center" });
                       refEl.classList.add("ring-2", "ring-primary", "ring-offset-1");

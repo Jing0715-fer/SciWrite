@@ -53,7 +53,13 @@ const PRIVATE_HOST_PATTERNS = [
   /^\[?::1\]?$/,
   /^fc00:/i,
   /^fe80:/i,
-  /^fd/i,
+  /^fd[0-9a-f]{2}:/i, // r37: was /^fd/i — matched "fda.gov" (real site!)
+  /^::ffff:127\./i,   // r37: IPv4-mapped IPv6 loopback bypass
+  /^::ffff:10\./i,
+  /^::ffff:192\.168\./i,
+  /^0x[0-9a-f]+$/i,   // r37: hex loopback (0x7f000001)
+  /^\d{8,10}$/,       // r37: decimal loopback (2130706433)
+  /^0[0-7]+\./,       // r37: octal loopback (0177.0.0.1)
   /\.internal$/i,
   /\.local$/i,
   /^metadata\./i,

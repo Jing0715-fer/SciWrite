@@ -579,9 +579,20 @@ export function sanitizeSectionContent(content: string): string {
   //          leading line ONLY when it matches a numbered/labelled title pattern
   //          AND is followed by actual body content. This is conservative — we
   //          never strip a line that looks like a real sentence paragraph.
+  //          r37 fix: a legitimate numbered LIST first line ("1. Samples were
+  //          prepared by standard protocols.") also matched and was deleted
+  //          outright. Guard: only strip when the NEXT line is NOT another
+  //          numbered list item (a title leak is followed by prose; a list
+  //          is followed by item 2).
   cleaned = cleaned.replace(
-    /^\s*(?:\d{1,3}[.)]\s+|Section\s+\d{1,3}[.:)]?\s+|SECTION\s+\d{1,3}\s*[-–—:]?\s*|Part\s+\d{1,3}[.:)]?\s+|Step\s+\d{1,3}[.:)]?\s+)[^\n]{10,200}\n+/i,
-    "",
+    /^\s*(?:\d{1,3}[.)]\s+|Section\s+\d{1,3}[.:)]?\s+|SECTION\s+\d{1,3}\s*[-–—:]?\s*|Part\s+\d{1,3}[.:)]?\s+|Step\s+\d{1,3}[.:)]?\s+)([^\n]{10,200})\n+(?!\s*\d{1,3}[.)]\s)/i,
+    (_m, firstLine: string) =>
+      // If the matched line reads like a sentence (ends with a period and
+      // contains multiple words), keep it — it's list/prose content, not a
+      // title echo. Otherwise it's a title prefix: drop the line.
+      /\.$/.test(firstLine.trim()) && firstLine.trim().split(/\s+/).length > 6
+        ? _m
+        : "",
   );
   // Some LLMs put the numbered title and the first real sentence on the SAME
   // line (e.g. "2. Genomic Organization... The mammalian TMC family was...").

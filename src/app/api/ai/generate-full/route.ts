@@ -113,6 +113,11 @@ export async function POST(req: NextRequest) {
   }
 
   const encoder = new TextEncoder();
+  // r37 fix (client-disconnect waste — ported from v2): without a cancel()
+  // handler the pipeline kept running for up to 30 minutes after the browser
+  // closed the SSE connection (LLM calls + destructive DB writes for an
+  // audience of zero). The section loop checks this flag each iteration.
+  let clientDisconnected = false;
   const stream = new ReadableStream({
     async start(controller) {
       let isClosed = false;
@@ -162,6 +167,15 @@ export async function POST(req: NextRequest) {
       let sections: any[] = [];
       let project: any = null;
       let journalTemplate = "generic";
+      // r37: pre-run snapshot for the crash-safe rollback (assigned in STEP 1
+      // before the force-clear; restored by the catch on fatal failure with
+      // zero generated sections — ported from v2's data-loss guard).
+      let snapshot: {
+        paragraphs: any[];
+        dataSources: any[];
+        articleParagraphs: any[];
+      } | null = null;
+      let hadPriorWork = false;
       // v121: real article title. Until the compose step runs it falls back
       // to the project topic (the old behavior); after compose it holds the
       // LLM-synthesized title. All article.create / version snapshots below
@@ -243,6 +257,26 @@ export async function POST(req: NextRequest) {
           message: "Clearing existing data sources and re-gathering fresh sources...",
         });
         log("gather: starting, clearing existing rows");
+
+        // r37 fix (data-loss guard — ported from v2): the force-clear below
+        // DELETEs all paragraphs/references/dataSources of the project. If
+        // the pipeline then dies before any section is saved (LLM timeout,
+        // crash, rate-limit abort, network drop), the user's prior work
+        // would be gone FOREVER. Snapshot everything the delete removes; on
+        // fatal failure with ZERO new sections, the catch restores it.
+        snapshot = {
+          paragraphs: await db.paragraph.findMany({
+            where: { projectId },
+            include: { references: true, annotations: true },
+          }),
+          dataSources: await db.dataSource.findMany({ where: { projectId } }),
+          articleParagraphs: await db.articleParagraph.findMany({
+            where: { paragraph: { projectId } },
+          }),
+        };
+        hadPriorWork =
+          snapshot.paragraphs.length > 0 || snapshot.dataSources.length > 0;
+        log(`snapshot: ${snapshot.paragraphs.length} paragraphs, ${snapshot.dataSources.length} data sources (rollback safety net)`);
 
         await db.$transaction([
           db.annotation.deleteMany({ where: { paragraph: { projectId } } }),
@@ -1116,6 +1150,13 @@ Output JSON only.`;
           const section = sections[i];
           const sectionNum = i + 1;
           const sectionStart = Date.now();
+
+          // r37 (ported from v2): stop all remaining work when the browser
+          // closed the SSE connection — no LLM calls / DB writes for zero.
+          if (clientDisconnected) {
+            log(`section ${sectionNum} SKIPPED — client disconnected.`);
+            break;
+          }
 
           // v53-恢复: Abort on rate limit — if a previous call set the
           // abort flag (429 storm or quota exhaustion), stop generating
@@ -2031,8 +2072,17 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           // Link ONLY cited references (copies, not move)
           for (let idx = 0; idx < citedRefs.length; idx++) {
             const ref = citedRefs[idx] as any;
-            const existing = await db.reference.findFirst({
-              where: { externalId: ref.externalId, paragraphId: paragraph.id },
+        // r37 fix (W1 identity — ported from ai/write): findFirst on
+        // externalId alone matched ANY same-paragraph ref with a null
+        // externalId — with >=2 null-extId refs (manual/web) every later one
+        // collapsed into a citationOrder update on the WRONG row.
+        // Identity rule: externalId present -> type+externalId; else title+type.
+        const existing = ref.externalId
+          ? await db.reference.findFirst({
+              where: { externalId: ref.externalId, type: ref.type, paragraphId: paragraph.id },
+            })
+          : await db.reference.findFirst({
+              where: { paragraphId: paragraph.id, title: ref.title, type: ref.type || "pubmed" },
             });
             if (!existing) {
               await db.reference.create({
@@ -2706,7 +2756,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             let result: any = null;
             try {
               const r = await fetch(
-                `http://localhost:3000/api/paragraphs/${p.id}/deep-audit-citations?trigger=auto`,
+                `${req.nextUrl.origin}/api/paragraphs/${p.id}/deep-audit-citations?trigger=auto`,
                 { method: "POST", signal: AbortSignal.timeout(auditTimeoutMs) }
               );
               if (r.ok) result = await r.json();
@@ -2791,7 +2841,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             log(`audit: starting auto-fix (window count ${getWindowCount()})`);
             try {
               const fixRes = await fetch(
-                `http://localhost:3000/api/projects/${projectId}/batch-auto-fix-citations`,
+                `${req.nextUrl.origin}/api/projects/${projectId}/batch-auto-fix-citations`,
                 { method: "POST", signal: AbortSignal.timeout(300000) }
               );
               if (fixRes.ok) {
@@ -2873,7 +2923,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                 // count. If still > 0, log a warning (user may need manual fix).
                 try {
                   const healthRes = await fetch(
-                    `http://localhost:3000/api/projects/${projectId}/citation-health`,
+                    `${req.nextUrl.origin}/api/projects/${projectId}/citation-health`,
                     { signal: AbortSignal.timeout(30000) }
                   );
                   if (healthRes.ok) {
@@ -2979,7 +3029,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
 
                         // Re-validate
                         const healthRes2 = await fetch(
-                          `http://localhost:3000/api/projects/${projectId}/citation-health`,
+                          `${req.nextUrl.origin}/api/projects/${projectId}/citation-health`,
                           { signal: AbortSignal.timeout(30000) }
                         );
                         if (healthRes2.ok) {
@@ -3563,12 +3613,65 @@ ${cleanEn}`;
             log(`error recovery failed: ${recoveryErr?.message}`);
             send("error", { error: `${err?.message || "Generation failed."} (Recovery also failed: ${recoveryErr?.message})` });
           }
+        } else if (hadPriorWork && snapshot) {
+          // r37 fix (crash-safe rollback — ported from v2): 0 sections were
+          // generated AND the project had prior work that the force-clear
+          // already deleted. Restore the pre-run snapshot so a failed run
+          // leaves the project exactly as it was (atomic semantics).
+          const snap = snapshot;
+          try {
+            log(`rollback: restoring snapshot (${snap.paragraphs.length} paragraphs, ${snap.dataSources.length} data sources)`);
+            await db.$transaction([
+              db.annotation.deleteMany({ where: { paragraph: { projectId } } }),
+              db.articleParagraph.deleteMany({ where: { paragraph: { projectId } } }),
+              db.paragraph.deleteMany({ where: { projectId } }),
+              db.dataSource.deleteMany({ where: { projectId } }),
+              db.reference.deleteMany({ where: { projectId } }),
+            ]);
+            for (const ds of snap.dataSources) {
+              await db.dataSource.create({ data: { ...ds } });
+            }
+            for (const para of snap.paragraphs) {
+              const { references, annotations, ...paraData } = para as any;
+              // Recreate with the ORIGINAL id so article-paragraph links
+              // stay valid.
+              await db.paragraph.create({
+                data: {
+                  ...paraData,
+                  ...(references?.length
+                    ? { references: { create: references.map(({ id: _id, paragraphId: _pid, ...r }: any) => r) } }
+                    : {}),
+                  ...(annotations?.length
+                    ? { annotations: { create: annotations.map(({ id: _aid, paragraphId: _apid, ...a }: any) => a) } }
+                    : {}),
+                },
+              });
+            }
+            if (snap.articleParagraphs.length > 0) {
+              await db.articleParagraph.createMany({
+                data: snap.articleParagraphs.map(({ id: _id, ...ap }: any) => ap),
+              });
+            }
+            log(`rollback: restored ${snap.paragraphs.length} paragraphs, ${snap.dataSources.length} data sources, ${snap.articleParagraphs.length} article links`);
+            send("error", {
+              error: `Generation failed before any section was saved: ${safeErrorMessage(err, "Generation failed.")}. Your previous ${snap.paragraphs.length} paragraphs and ${snap.dataSources.length} data sources were RESTORED — the project is unchanged.`,
+            });
+          } catch (restoreErr: any) {
+            log(`ROLLBACK FAILED: ${String(restoreErr?.message ?? restoreErr).slice(0, 200)}`);
+            send("error", {
+              error: `Generation failed: ${safeErrorMessage(err, "Generation failed.")} (automatic rollback also failed: ${String(restoreErr?.message ?? restoreErr).slice(0, 120)}). Check the server log.`,
+            });
+          }
         } else {
           send("error", { error: safeErrorMessage(err, "Generation failed.") });
         }
       } finally {
         safeClose();
       }
+    },
+    cancel() {
+      // Browser closed the SSE stream (navigate away / refresh / drop).
+      clientDisconnected = true;
     },
   });
 

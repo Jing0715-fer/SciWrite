@@ -2373,3 +2373,50 @@ Stage Summary:
 - 溢出防线三层齐备：viewport display:block（结构层）+ markdown-citations 全路径断词（文本层）+ externalId/徽章截断（卡片头槽位层）
 - paragraphs 框套框按用户要求移除：段落卡直落桌面 + pl-6 拖拽手柄 gutter，几何精确对齐
 - 修改文件：globals.css、markdown-citations.tsx、home/writing-workspace.tsx、knowledge-panel.tsx、database-query-panel.tsx、protein-structure-analysis-dialog.tsx、diagram-dialog.tsx
+
+---
+Task ID: round-37
+Agent: main (Z.ai Code orchestrator) + 5 parallel review subagents (r37-a/b/c/d/e)
+Task: 用户指令「全面进行代码审查，寻找bug并修复」— 5 域并行审查（lib 管线 / API 路由 / 核心渲染组件 / 工作区面板 / 导出与领域库），~50 项疑似发现，逐个核验后修复确认项
+
+Work Log:
+- 审查方法：5 个 general-purpose 子代理分域深查（各自读文件+追调用点+模拟验证触发路径，仅报告不改动），主代理对所有 critical/high 逐个亲自核验后修复
+- 前端崩溃/输入类修复：
+  ①use-keyboard-shortcuts 反逻辑守卫 — `sc.mod !== "none"` 条件使无修饰键快捷键（s/v/h/1-9/Delete）完全绕过输入框保护：输入时按键被吞且触发对话框（Delete 直接弹删除确认）。改为输入态仅放行 Escape 和 cmd/ctrl 组合。E2E 合成事件验证：textarea 内 s/Delete defaultPrevented=false 零对话框，body 上正常触发
+  ②markdown-citations 稀疏 null 引用崩溃 — references prop 经 paragraph-card 的 globalArticleRefs（parseCitationsBlock 编号缺口填 null）流入 merged，null 使 resolveCitation(r.type)/点击 findIndex(r.externalId)/列表渲染(r.auditStatus) 三路崩溃（应用无 error boundary = 整页白屏）。prop 规范化为 missing 哨兵
+  ③paragraph-card stale draft — Revise/Regenerate 后同一卡片实例的 draft 仍是旧值，Edit→Save 静默回退 AI 修订。加非编辑态同步 effect
+  ④引用跳转 off-by-one — ref-N 列表 id 是 1 基而点击传 0 基 findIndex，[1] 查 ref-0 永远无操作、[3] 跳到 [2]。+1 修正
+- API 数据丢失类修复：
+  ⑤ai/review auto-iterate 陈旧循环 — article 仅 POST 时加载一次，round2 评审修改前内容、改写自原始内容（round1 修订被静默丢弃）、每轮 Review 行 round=1。每轮重载 article+reviews
+  ⑥ai/review runRevise — 失败返回 200{jfetch 不抛错→假成功 toast}；reviewId 无 articleId 归属校验（B 文评论驱动 A 文改写）。404 状态码 + 归属检查
+  ⑦generate-full v1 数据丢失守卫（从 v2 移植）— 强制清空前的快照 + catch 内 0 章节且曾有任何存量时整包恢复（原数据已删、管线中途死=永久丢失）；cancel() 断连标志 + 章节循环每轮检查（原浏览器关掉后管线继续跑 30 分钟 LLM+DB 写入）
+  ⑧ai/compose 引用重建事务化（从 v2 移植）— 内容更新与引用删除/重建原为分离无事务写入，delete 后失败=段落有引用标记但引用面板空
+  ⑨W1 引用身份 bug 两处移植（ai/write 已修）— regenerate 与 generate-full v1 的 findFirst(externalId) 在 null externalId 时匹配任意同段落行（≥2 条 null-extId 引用时后条坍缩为对错误行的 citationOrder 更新，body[n] 与 DB 漂移）。身份规则：externalId 存在→type+externalId，否则 title+type
+  ⑩localhost:3000 硬编码自请求 ×5 — 换 req.nextUrl.origin（非 3000 端口部署时 v1 审计阶段全部静默失败）
+  ⑪paragraphs/[id]/revise 错误路径状态回写 — 原恢复为固定 "annotated"（draft 段落从未合法持有），改恢复原状态
+  ⑫data-sources/[id] 与 references/[id] P2025 清扫 — 双击/陈旧 UI 删除已删行抛未处理 500，改幂等成功/404（含 PATCH 无效 JSON 400）
+  ⑬projects/import 全流程事务化 — 原 N 步分离写入，中途验证失败留下半导入项目且报错让用户重导造成重复
+- 工作区类修复：
+  ⑭删除活跃项目幽灵态 — delMut 仅失效 ["projects"]（不动 ["project", id]），activeProjectId 不清空→工作区继续渲染已删项目、所有变更 404。onDeleted 回调→page 清选→自动重选
+  ⑮ destructive 确认门 — 原仅 paragraphCount>0 门控；gather-first 流（有源无段落）清空全部数据源无任何确认（警告文案却列着数据源）。加 sourceCount/articleCount 门控
+  ⑯citation-health 项目切换竞态 — 慢报告 A 在切换到 B 后落地覆盖 B 的报告（违规者点击滚动到不存在段落）。请求 id 守卫
+  ⑰流中途断开假成功 — SSE 无 complete 事件时 resolve null→"0 words 0 references" 成功 toast。null 即抛错
+  ⑱对话框中途关闭 isFullArticleRunning 楔死 — Radix 卸载 DialogContent 不触发清理，父级永远 true→下次打开误渲染 96vw 宽布局。effect 清理回调
+  ⑲项目删除 spinner 全卡片联动 — delMut.isPending 传所有卡，改 variables===p.id 每卡独立
+  ⑳article-viewer `|| true` 死过滤器 — Sections tab 统计/TOC/翻译覆盖包含不属于该文的段落；projects/[id] API 补 articleParagraph include，过滤器用真实链接数据（陈旧缓存回退安全）
+- lib 类修复：
+  ㉑cleanFill 括号哨兵绕过 — LLM 回写 "[journal=MISSING]" 字面哨兵，round-35 的 bare 检查不剥包装。剥 []/()/field= 前缀后再测
+  ㉒readPage 短文本兜底 — text 为 1-49 字符垃圾（"Log in"）时 html 提取不运行→deep-read 422（恰是 round-34 要修的场景）。≥50 才跳过提取
+  ㉓SSRF 守卫双向修复 — /^fd/i 误杀 fda.gov（真实可引站点）；补 ::ffff: 映射 IPv6、十六进制/十进制/八进制回环编码
+  ㉔LaTeX 导出 $ 未转义 — 正文 "$P < 0.05$" 使 TeX 进数学模式编译失败；范围引用 [3-5] 不转换（逗号组才匹配）留字面文本。两处补
+  ㉕docx 模板引用双编号 — nature/science/jbc/plos 的 refLines 是 "n. " 前缀，strip 只剥 "[n]"→Word 自动编号+字面 "1. " 同显。strip 模式扩展
+  ㉖sanitizeSectionContent 误删编号列表首行 — "1. Samples were prepared..." 整行被删。加下一行非编号项前置守卫 + 句式判别
+  ㉗llm-cache 过期条目只在同 key 复请求时删除 — 进程级慢泄漏。set 时清扫
+  ㉘chatStream SSE 单换行分帧 — 多行 data 帧首行后全丢。改 \n\n 分帧 + SSE 规范多 data 行拼接
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/162 warning（基线 161，+1 条 warning 级边缘警告，净新增 0 错误）；E2E：应用加载 159 卡零崩溃、快捷键守卫合成事件双向验证（textarea 不拦 / body 正常）、API articleParagraph 7/7、Sections tab 7 段落+40 引用渲染、0 page error；dev.log 仅一条 LLM 配额 429（既知状况）
+- 审查确认但暂缓项（风险/范围考量）：titleSimilarity 含containment 度量（改度量需重调 0.72 阈值+全量 E2E）、adversarial-review 段落同步（文档承诺 vs 实现，功能级变更）、查看器搜索高亮与虚拟化互斥（复杂重设计）、虚拟化占位符全内容渲染（性能非正确性）、A3 引用表联合去重
+
+Stage Summary:
+- 28 处确认 bug 修复：1 输入吞噬+误触危险对话框、1 整页崩溃、2 静默数据回退、1 数据丢失守卫缺失（v1 管线）、1 假成功、1 幽灵项目、2 事务性缺失、2 W1 引用身份、1 确认门漏洞、1 竞态、1 断连浪费、5 localhost 硬编码、其余为导出正确性/SSRF/哨兵/泄漏类
+- 方法论价值：并行 5 域审查 + 主代理逐项触发路径核验，把 ~50 项疑似收敛为 28 项确认修复（其余为不可达/故意设计/既有守卫覆盖）
+- 修改文件：use-keyboard-shortcuts.ts、markdown-citations.tsx、paragraph-card.tsx、writing-workspace.tsx、projects-sidebar.tsx、page.tsx、unified-writing-dialog.tsx、citation-health-dashboard.tsx、article-viewer-tabs.tsx、api/ai/review、api/ai/generate-full（快照+取消+回滚+W1）、api/ai/compose、api/paragraphs/[id]/regenerate+W1、api/paragraphs/[id]/revise、api/projects/[id]+import、api/data-sources/[id]、api/references/[id]、api/projects/[id]/batch-auto-fix-citations、api/export/route.ts、lib/knowledge-verify.ts、lib/ai.ts、lib/llm-cache.ts、lib/api-helpers.ts、lib/writing.ts

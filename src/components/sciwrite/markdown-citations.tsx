@@ -573,6 +573,22 @@ export function MarkdownCitations({
   onlyCitedRefs?: boolean;
 }) {
   const { bodySegments, citationsBlock, contentRefText, citedRefs, allRefs, hasContentRefs, citedIdx } = React.useMemo(() => {
+    // r37 fix: the `references` prop can arrive SPARSE (parseCitationsBlock
+    // fills numbering gaps with null — e.g. paragraph-card feeds
+    // globalArticleRefs). Nulls flowing into `merged` crashed three paths:
+    // resolveCitation (r.type), the citation-click findIndex (r.externalId)
+    // and the reference-list render (r.auditStatus). Normalize nulls to the
+    // missing sentinel so gaps render as red flags instead of exceptions.
+    const propRefs: CitationRef[] = (references as (CitationRef | null)[]).map(
+      (r, k) =>
+        r || {
+          type: "missing",
+          title: `Reference ${k + 1} (missing)`,
+          auditStatus: "missing",
+          auditReason: `No entry [${k + 1}] found in the References section.`,
+        }
+    );
+
     const highlights = buildHighlightRanges(content, annotations);
     const citeRe = new RegExp(CITE_RE_SOURCE, "g");
     const segments: Segment[] = [];
@@ -650,8 +666,8 @@ export function MarkdownCitations({
     }
     // If no article/AI refs were found, fall back to the `references` prop
     // (for standalone paragraph rendering without a composed article).
-    if (merged.length === 0 && references.length > 0) {
-      merged.push(...references);
+    if (merged.length === 0 && propRefs.length > 0) {
+      merged.push(...propRefs);
     }
 
     const pushCited = (ref: CitationRef) => {

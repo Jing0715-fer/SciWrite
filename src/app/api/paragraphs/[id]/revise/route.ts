@@ -13,6 +13,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  // r37 fix: capture the ORIGINAL status BEFORE the try block so the catch
+  // can restore it — previously the catch always wrote "annotated", which
+  // a draft-status paragraph in polish/instructions mode never held.
+  let prevStatus: string | null = null;
   try {
     const body = await req.json();
     const mode = (body.mode as "annotations" | "instructions" | "polish") || "annotations";
@@ -35,6 +39,7 @@ export async function POST(
       );
     }
 
+    prevStatus = paragraph.status;
     await db.paragraph.update({ where: { id }, data: { status: "revising" } });
 
     const prompt = buildRevisePrompt({
@@ -77,10 +82,13 @@ export async function POST(
     });
   } catch (err: any) {
     console.error("[revise] error:", err);
-    // revert status on failure
-    await db.paragraph
-      .update({ where: { id }, data: { status: "annotated" } })
-      .catch(() => {});
+    // revert status on failure (to the ORIGINAL status, not a blanket
+    // "annotated" — see prevStatus note above)
+    if (prevStatus) {
+      await db.paragraph
+        .update({ where: { id }, data: { status: prevStatus } })
+        .catch(() => {});
+    }
     return NextResponse.json(
       { error: safeErrorMessage(err, "Revision failed.") },
       { status: 500 }

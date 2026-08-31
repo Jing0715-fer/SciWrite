@@ -244,6 +244,11 @@ function Home() {
                     setActiveProjectId(id);
                     setMobilePanel("workspace");
                   }}
+                  onDeleted={(deletedId) => {
+                    // r37 ghost-project fix — clear the deleted selection;
+                    // auto-select effect picks the first remaining project.
+                    if (deletedId === activeProjectId) setActiveProjectId(null);
+                  }}
                   articles={articles}
                   onOpenArticle={(a) => setViewArticle(a as Article)}
                 />
@@ -324,6 +329,11 @@ function Home() {
               projects={projects}
               activeId={activeProjectId}
               onSelect={setActiveProjectId}
+              onDeleted={(deletedId) => {
+                // r37 ghost-project fix — clear the deleted selection;
+                // auto-select effect picks the first remaining project.
+                if (deletedId === activeProjectId) setActiveProjectId(null);
+              }}
               articles={articles}
               onOpenArticle={(a) => setViewArticle(a as Article)}
             />
@@ -389,6 +399,8 @@ function Home() {
           topic={project.topic}
           field={project.field ?? undefined}
           paragraphCount={paragraphs.length}
+          sourceCount={dataSources.length}
+          articleCount={articles.length}
           initialTab={unifiedWriteTab}
           onGenerationTargetWords={handleWordGoalChange}
         />

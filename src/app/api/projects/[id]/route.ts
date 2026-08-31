@@ -26,6 +26,10 @@ export async function GET(
           annotations: { orderBy: { createdAt: "desc" } },
           references: { orderBy: [{ citationOrder: "asc" }, { createdAt: "asc" }] },
           _count: { select: { annotations: true, references: true } },
+          // r37: article-paragraph links (all articles — the client filters
+          // to the article it is viewing; previously this data was absent so
+          // the viewer's Sections-tab filter was a no-op `|| true`).
+          articleParagraph: { select: { articleId: true, order: true } },
         },
       },
       dataSources: { orderBy: { createdAt: "desc" } },

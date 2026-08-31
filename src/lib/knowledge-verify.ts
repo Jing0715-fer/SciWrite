@@ -109,8 +109,19 @@ function cleanFill(value: unknown, maxLen: number): string | null {
   if (!v) return null;
   // The prompt marks gaps with [field=MISSING]; the LLM sometimes wraps
   // echoes in quotes or trailing periods before/after the sentinel.
+  // r37 fix: it ALSO echoes the bracketed/prefixed sentinel itself —
+  // "[journal=MISSING]" or "(journal=MISSING)". Strip wrapper brackets
+  // and an optional "field=" prefix before the sentinel test, or the
+  // literal sentinel string gets written to the DB (verified: the round-35
+  // bare check passed "[journal=MISSING]" straight through).
   v = v.replace(/^["'`]([\s\S]*)["'`]$/, "$1").replace(/[.\s]+$/, "").trim();
-  const bare = v.toLowerCase().replace(/[.:;]+$/, "").trim();
+  const bare = v
+    .toLowerCase()
+    .replace(/^[\[(]\s*/, "")
+    .replace(/[\])]$/, "")
+    .replace(/^[a-z]+\s*=\s*/, "")
+    .replace(/[.:;]+$/, "")
+    .trim();
   if (SENTINEL_VALUES.has(bare)) return null;
   if (!v) return null;
   return v.slice(0, maxLen);

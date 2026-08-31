@@ -59,6 +59,15 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
   const qc = useQueryClient();
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(paragraph.content);
+  // r37 fix: keep `draft` synced with server content while NOT editing.
+  // After Revise/Regenerate the query refetches and this same card
+  // (key=p.id) re-renders with NEW paragraph.content — but the stale
+  // `draft` init value survived, so Edit showed the pre-revision text and
+  // Save silently reverted the AI revision. Sync only outside editing so
+  // mid-edit typing is never clobbered.
+  React.useEffect(() => {
+    if (!editing) setDraft(paragraph.content);
+  }, [paragraph.content, editing]);
   const [annOpen, setAnnOpen] = React.useState(false);
   const [activeAnnotation, setActiveAnnotation] = React.useState<Annotation | null>(null);
   const [selection, setSelection] = React.useState<{ text: string; rect: DOMRect } | null>(null);

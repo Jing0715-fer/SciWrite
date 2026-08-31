@@ -78,9 +78,17 @@ export function getCachedLLMResult(key: string): any | null {
  * Store an LLM response in the cache with the standard TTL.
  */
 export function setCachedLLMResult(key: string, result: any): void {
+  // r37 fix: expired entries were only deleted when their exact key was
+  // re-requested — distinct prompts (results up to ~32KB) accumulated for
+  // the process lifetime, a slow memory leak on a long-lived server. Sweep
+  // expired entries on every set (O(n) over keys, cheap: string-keyed Map).
+  const now = Date.now();
+  for (const [k, entry] of cache) {
+    if (entry.expiresAt <= now) cache.delete(k);
+  }
   cache.set(key, {
     result,
-    expiresAt: Date.now() + CACHE_TTL_MS,
+    expiresAt: now + CACHE_TTL_MS,
   });
 }
 

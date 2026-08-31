@@ -32,7 +32,7 @@ export const maxDuration = 300;
  * sanitization (replacing [n] with [$REF]) happens at write/regenerate time.
  */
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -92,7 +92,7 @@ export async function POST(
       // This uses the LLM to suggest database queries, executes them, and
       // saves found references to the paragraph.
       const fixRes = await fetch(
-        `http://localhost:3000/api/paragraphs/${p.id}/auto-fix-citations`,
+        `${req.nextUrl.origin}/api/paragraphs/${p.id}/auto-fix-citations`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

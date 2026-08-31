@@ -85,6 +85,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // r37 fix: the whole import previously ran as ~N separate untransacted
+    // writes — a malformed entry at step 4 committed a half-imported
+    // "(imported)" project (paragraphs/references in, error returned), and
+    // re-importing then duplicated the partial project. One transaction,
+    // all-or-nothing.
+    const importedProject = await db.$transaction(async (tx: any) => {
+      const db = tx; // shadow the global client inside this scope
     // Create the project
     const project = await db.project.create({
       data: {
@@ -202,8 +209,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Close the transaction — commit everything or nothing.
+    return project;
+    });
+
     return NextResponse.json({
-      project,
+      project: importedProject,
       stats: {
         paragraphs: body.paragraphs?.length || 0,
         dataSources: body.dataSources?.length || 0,

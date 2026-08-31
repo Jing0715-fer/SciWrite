@@ -289,28 +289,36 @@ export async function POST(req: NextRequest) {
               }
             }
           }
-          await db.reference.deleteMany({ where: { paragraphId: paraId } });
-          for (let globalNum = 1; globalNum <= maxCitedNum; globalNum++) {
-            const ref = globalRefs[globalNum - 1];
-            if (ref) {
-              await db.reference.create({
-                data: {
-                  type: ref.type || "manual",
-                  externalId: ref.externalId,
-                  title: ref.title,
-                  authors: ref.authors,
-                  journal: ref.journal,
-                  year: ref.year,
-                  url: ref.url,
-                  doi: ref.doi,
-                  abstract: ref.abstract,
-                  projectId: body.projectId,
-                  paragraphId: paraId,
-                  citationOrder: globalNum - 1,
-                },
-              });
+          // r37 fix (atomic rewrite — ported from v2's compose): the
+          // content update + reference delete/re-create were previously
+          // separate untransacted writes; a failure between the delete and
+          // the re-creates left the paragraph referenceless (citations
+          // [1][2][3] in the body, empty reference panel) and every later
+          // validate/audit mis-resolved. One transaction, all or nothing.
+          await db.$transaction(async (tx: any) => {
+            await tx.reference.deleteMany({ where: { paragraphId: paraId } });
+            for (let globalNum = 1; globalNum <= maxCitedNum; globalNum++) {
+              const ref = globalRefs[globalNum - 1];
+              if (ref) {
+                await tx.reference.create({
+                  data: {
+                    type: ref.type || "manual",
+                    externalId: ref.externalId,
+                    title: ref.title,
+                    authors: ref.authors,
+                    journal: ref.journal,
+                    year: ref.year,
+                    url: ref.url,
+                    doi: ref.doi,
+                    abstract: ref.abstract,
+                    projectId: body.projectId,
+                    paragraphId: paraId,
+                    citationOrder: globalNum - 1,
+                  },
+                });
+              }
             }
-          }
+          });
         } catch (e) {
           console.warn("[compose] Failed to sync paragraph references:", e);
         }

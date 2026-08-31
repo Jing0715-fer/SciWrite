@@ -80,6 +80,12 @@ interface Props {
   topic: string;
   field?: string;
   paragraphCount: number;
+  /** r37: the generation pipeline wipes dataSources/references/articles too
+   *  — the destructive-confirm gate needs these counts (previously only
+   *  paragraphCount gated it, so a gather-first flow with saved sources but
+   *  0 paragraphs cleared everything WITHOUT confirmation). */
+  sourceCount?: number;
+  articleCount?: number;
   initialTab?: WriteTab;
   /** Fired when a full-article generation starts — carries the pipeline's
    *  targetWords so the workspace progress bar can track the REAL goal
@@ -102,6 +108,8 @@ export function UnifiedWritingDialog({
   topic,
   field,
   paragraphCount,
+  sourceCount = 0,
+  articleCount = 0,
   initialTab = "outline",
   onGenerationTargetWords,
 }: Props) {
@@ -218,6 +226,8 @@ export function UnifiedWritingDialog({
               topic={topic}
               field={field}
               paragraphCount={paragraphCount}
+              sourceCount={sourceCount}
+              articleCount={articleCount}
               onInvalidate={invalidate}
               onRunningChange={setIsFullArticleRunning}
               onGenerationTargetWords={onGenerationTargetWords}
@@ -779,7 +789,7 @@ function ComposeTab({ projectId, topic, paragraphCount, onInvalidate }: { projec
 }
 
 // ==================== Full Article Tab ====================
-function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate, onRunningChange, onGenerationTargetWords }: { projectId: string; topic: string; field?: string; paragraphCount: number; onInvalidate: () => void; onRunningChange?: (running: boolean) => void; onGenerationTargetWords?: (targetWords: number) => void }) {
+function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount = 0, articleCount = 0, onInvalidate, onRunningChange, onGenerationTargetWords }: { projectId: string; topic: string; field?: string; paragraphCount: number; sourceCount?: number; articleCount?: number; onInvalidate: () => void; onRunningChange?: (running: boolean) => void; onGenerationTargetWords?: (targetWords: number) => void }) {
   const { t } = useI18n();
   const [language, setLanguage] = React.useState("English");
   const [targetWords, setTargetWords] = React.useState(5000);
@@ -875,13 +885,23 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
   // without squeezing the main column.
   React.useEffect(() => {
     onRunningChange?.(isRunning);
+    // r37 fix: Radix unmounts DialogContent (and this tab with it) when the
+    // dialog closes mid-generation — without this cleanup the parent kept
+    // isFullArticleRunning=true forever, so the next open rendered the
+    // 96vw-wide layout for a non-running dialog.
+    return () => onRunningChange?.(false);
   }, [isRunning, onRunningChange]);
 
   const run = async () => {
-    // If the project already has paragraphs or articles, show a confirmation
-    // dialog before proceeding — the generation pipeline clears ALL existing
-    // data (paragraphs, articles, data sources, references, annotations).
-    if (paragraphCount > 0) {
+    // If the project already has paragraphs, articles, or gathered sources,
+    // show a confirmation dialog before proceeding — the generation pipeline
+    // clears ALL existing data (paragraphs, articles, data sources,
+    // references, annotations).
+    // r37 fix: the gate previously tested paragraphCount only — a
+    // gather-first flow (sources saved, 0 paragraphs) or a
+    // paragraphs-trashed-but-articles-remain project cleared everything
+    // WITHOUT any confirmation, despite the warning copy listing sources.
+    if (paragraphCount > 0 || articleCount > 0 || sourceCount > 0) {
       setConfirmClearOpen(true);
       return;
     }
@@ -975,6 +995,15 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
         }
       );
       setCurrentStep(STEPS.length);
+      // r37 fix: a stream that ends WITHOUT a "complete" event (server
+      // restart / route crash mid-pipeline) resolves to null — previously
+      // that rendered a "0 words, 0 references" SUCCESS toast and silently
+      // returned to the form. Treat it as the failure it is.
+      if (data == null) {
+        throw new Error(
+          "The generation stream ended without completing (server restarted or connection dropped). No article was saved."
+        );
+      }
       setResult(data);
       setLivePreview("");
       onInvalidate();

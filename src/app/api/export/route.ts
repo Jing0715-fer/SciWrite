@@ -1150,10 +1150,31 @@ function buildLatex(
   const convertInline = (text: string): string => {
     let result = text;
     // [n] citations → \cite{refN}
-    result = result.replace(/\[(\d{1,3}(?:[,]\s?\d{1,3})*)\]/g, (_, nums) => {
-      const keys = nums.split(/[,]\s*/).map((n: string) => `ref${n.trim()}`).join(", ");
-      return `\\cite{${keys}}`;
-    });
+    // r37 fix: accept ranges ([3-5] / [3–5]) like every other exporter —
+    // previously only comma groups matched, so range markers stayed as
+    // literal text and their references became uncited in the .tex.
+    result = result.replace(
+      /\[(\d{1,3}(?:[\u2013-]\s?\d{1,3}|[,]\s?\d{1,3})*)\]/g,
+      (_, nums) => {
+        const keys = nums
+          .split(/[,;]\s*/)
+          .flatMap((part: string) => {
+            const rm = part.match(/^(\d+)\s*[\u2013-]\s*(\d+)$/);
+            if (rm) {
+              const a = parseInt(rm[1], 10);
+              const b = parseInt(rm[2], 10);
+              const lo = Math.min(a, b);
+              const hi = Math.max(a, b);
+              const out: string[] = [];
+              for (let n = lo; n <= hi && n - lo < 50; n++) out.push(`ref${n}`);
+              return out;
+            }
+            return part.trim() ? [`ref${part.trim()}`] : [];
+          })
+          .join(", ");
+        return `\\cite{${keys}}`;
+      }
+    );
     // **bold** → \textbf{...}
     result = result.replace(/\*\*([^*]+)\*\*/g, (_, inner) => `\\textbf{${escapeLatex(inner)}}`);
     // *italic* → \textit{...}
@@ -1167,8 +1188,13 @@ function buildLatex(
     result = result
       .replace(/&/g, "\\&")
       .replace(/%/g, "\\%")
+      .replace(/\$/g, "\\$")
       .replace(/#/g, "\\#")
       .replace(/_/g, "\\_");
+    // r37 fix: `$` was missing from the escape chain — a body sentence like
+    // "$P < 0.05$" or "US$500" emitted a raw dollar → TeX entered math
+    // mode → "Missing $ inserted" / runaway argument → the exported .tex
+    // failed to compile.
     return result;
   };
 
@@ -1583,8 +1609,14 @@ async function buildDocx(
       );
     }
     refLines.forEach((line) => {
-      // The "[n] " prefix is rendered by the list numbering, not the text.
-      const text = allowWordWrap(line.replace(/^\s*\[\d+\]\s*/, ""));
+      // The "[n] " (or template "n. ") prefix is rendered by the list
+      // numbering, not the text. r37 fix: nature/science/jbc/plos templates
+      // build refLines as "n. Authors…" — the \[\d+\]-only strip let the
+      // literal "1. " survive while Word ALSO rendered "[1]", producing
+      // "[1] 1. Jinek M (2012)…".
+      const text = allowWordWrap(
+        line.replace(/^\s*(?:\[\d+\]|\d+[.)])\s*/, "")
+      );
       children.push(
         new Paragraph({
           children: [new TextRun({ text, size: refSize, font: bodyFont, color: "000000", language: runLang })],

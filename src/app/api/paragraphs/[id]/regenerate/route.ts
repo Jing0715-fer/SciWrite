@@ -232,9 +232,18 @@ Compose ONE cohesive section without markdown headers. Do NOT add any preamble, 
       // Upsert cited refs with new citationOrder.
       for (let idx = 0; idx < citedRefs.length; idx++) {
         const ref = citedRefs[idx] as any;
-        const existing = await db.reference.findFirst({
-          where: { externalId: ref.externalId, paragraphId: id },
-        });
+        // r37 fix (W1 identity — ported from ai/write): findFirst on
+        // externalId alone matched ANY same-paragraph ref with a null
+        // externalId — with >=2 null-extId refs (manual/web) every later one
+        // collapsed into a citationOrder update on the WRONG row.
+        // Identity rule: externalId present -> type+externalId; else title+type.
+        const existing = ref.externalId
+          ? await db.reference.findFirst({
+              where: { externalId: ref.externalId, type: ref.type, paragraphId: id },
+            })
+          : await db.reference.findFirst({
+              where: { paragraphId: id, title: ref.title, type: ref.type || "manual" },
+            });
         if (!existing) {
           await db.reference.create({
             data: {

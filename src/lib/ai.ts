@@ -344,14 +344,20 @@ export async function chatStream(
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
-      // SSE events are separated by double newlines
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      // SSE events are separated by DOUBLE newlines (r37: was split("\n") —
+      // a multi-line `data:` frame would be split mid-payload and its lines
+      // after the first silently dropped, since only lines starting with
+      // "data:" are parsed). Frame on "\n\n" like consumeSSEStream, then
+      // join any multi-line data fields per the SSE spec.
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() || "";
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith("data:")) continue;
-        const data = trimmed.slice(5).trim();
+      for (const frame of frames) {
+        const dataLines = frame
+          .split("\n")
+          .filter((l) => l.startsWith("data:"));
+        if (dataLines.length === 0) continue;
+        const data = dataLines.map((l) => l.slice(5).trim()).join("\n");
         if (data === "[DONE]") continue;
         try {
           const parsed = JSON.parse(data);
@@ -561,10 +567,15 @@ export async function readPage(url: string): Promise<PageReadResult> {
     // many journal pages). Fall back to extracting text from the html (with
     // leading site-chrome trimmed), and as a last resort to the meta
     // description, so deep-read keeps working.
+    // r37 fix: run the html extraction when rawText is EMPTY **or
+    // TOO SHORT to be real content** (1-49 junk chars like "Log in") —
+    // previously the short-but-present case kept the junk and deep-read
+    // 422'd, the exact failure this fallback was built to prevent.
     const rawText: string | undefined = data?.text;
-    const htmlText = rawText
-      ? undefined
-      : trimLeadingBoilerplate(htmlToText(String(data?.html || "")));
+    const htmlText =
+      rawText && rawText.trim().length >= 50
+        ? undefined
+        : trimLeadingBoilerplate(htmlToText(String(data?.html || "")));
     const fallbackText =
       rawText && rawText.trim().length >= 50
         ? rawText

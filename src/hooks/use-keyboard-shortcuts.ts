@@ -64,10 +64,20 @@ export function useKeyboardShortcuts(
       for (const sc of shortcuts) {
         if (sc.enabled === false) continue;
 
-        // Skip input-context shortcuts when typing, except Escape
-        if (isInputLike && sc.key !== "Escape" && sc.mod !== "none") {
-          // Allow Cmd/Ctrl+K even in inputs (global shortcut)
-          if (!(sc.mod === "cmd" || sc.mod === "ctrl")) continue;
+        // Skip input-context shortcuts when typing, except Escape and
+        // Cmd/Ctrl combos (global shortcuts like Cmd+K must still work in
+        // inputs). r37 fix: the previous condition (`sc.mod !== "none"`)
+        // let plain-letter shortcuts (s/v/h/1-9/Delete) bypass this guard
+        // entirely — typing in a text field swallowed the keystroke AND
+        // fired the shortcut (e.g. "Delete" popped the delete-article
+        // confirmation while editing).
+        if (
+          isInputLike &&
+          sc.key !== "Escape" &&
+          sc.mod !== "cmd" &&
+          sc.mod !== "ctrl"
+        ) {
+          continue;
         }
 
         // Check modifier

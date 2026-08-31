@@ -86,8 +86,16 @@ export function CitationHealthDashboard({
   // Per-paragraph fixing state — supports the "Fix this" button on each
   // worst-offender row.
   const [fixingParagraphId, setFixingParagraphId] = React.useState<string | null>(null);
+  // r37 fix (project-switch race): a slow health report for project A could
+  // resolve AFTER the user switched to project B (the effect re-ran, but the
+  // in-flight promise from the old callback still set state) — the dashboard
+  // then showed A's grade/offenders while the workspace showed B, and
+  // offender clicks scrolled to paragraphs that don't exist. A monotonic
+  // request id makes late responses from a previous project a no-op.
+  const healthReqId = React.useRef(0);
 
   const fetchHealth = React.useCallback(async () => {
+    const reqId = ++healthReqId.current;
     setLoading(true);
     setError(null);
     try {
@@ -95,15 +103,17 @@ export function CitationHealthDashboard({
       // error surface) — the dashboard previously bypassed the api client
       // with a raw fetch that hung forever on a stuck request.
       const data = (await api.getCitationHealth(projectId)) as HealthReport;
+      if (healthReqId.current !== reqId) return; // superseded by a newer fetch
       setReport(data);
       // Auto-expand when there are blocking errors so the user sees them.
       if (data.aggregate.totalBlocking > 0) setOpen(true);
     } catch (err: any) {
+      if (healthReqId.current !== reqId) return;
       setError(err?.message || t("citationHealth.loadFailed"));
     } finally {
-      setLoading(false);
+      if (healthReqId.current === reqId) setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, t]);
 
   // Fix a single paragraph by calling the paragraph-level auto-fix endpoint.
   // Used by both the batch loop and the per-paragraph "Fix this" button.

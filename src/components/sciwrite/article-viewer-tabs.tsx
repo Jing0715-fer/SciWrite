@@ -400,8 +400,20 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
   });
 
   const paragraphs = (paragraphsQ.data?.project?.paragraphs || []).filter(
-    (p: any) => p.articleParagraph?.some((ap: any) => ap.articleId === article.id) ||
-    true // show all if we can't filter
+    // r37 fix: the `|| true` fallback made this filter a no-op — the
+    // Sections tab / stats / TOC counted ALL project paragraphs even for
+    // articles composed from a subset (or article B in a 2-article project).
+    // The projects API now includes articleParagraph links (filtered to
+    // this article) so the filter has real data; keep a safe fallback for
+    // stale caches only when NO paragraph carries link data at all.
+    (p: any) =>
+      p.articleParagraph
+        ? p.articleParagraph.some(
+            (ap: any) => ap.articleId === article.id
+          )
+        : paragraphsQ.data?.project?.paragraphs?.every(
+              (x: any) => !x.articleParagraph
+            ) ?? false
   );
   // Update the ref in an effect so jumpToNextUntranslated (declared above)
   // can access the latest paragraphs without triggering react-hooks rules.

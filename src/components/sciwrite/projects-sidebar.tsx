@@ -80,6 +80,9 @@ interface Props {
   projects: (Project & { _count?: any })[];
   activeId: string | null;
   onSelect: (id: string) => void;
+  /** r37: fired when a project is deleted, so the parent can clear the
+   *  active selection (prevents the ghost-project state). */
+  onDeleted?: (deletedId: string) => void;
   /** Articles belonging to the currently-active project. Rendered as a list
    *  below the project list so the user can jump to any composed article. */
   articles?: any[];
@@ -87,7 +90,7 @@ interface Props {
   onOpenArticle?: (a: any) => void;
 }
 
-export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], onOpenArticle }: Props) {
+export function ProjectsSidebar({ projects, activeId, onSelect, onDeleted, articles = [], onOpenArticle }: Props) {
   const { t } = useI18n();
   const qc = useQueryClient();
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -107,10 +110,17 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
 
   const delMut = useMutation({
     mutationFn: (id: string) => api.deleteProject(id),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       toast.success(t("toast.projectDeleted"));
       qc.invalidateQueries({ queryKey: ["projects"] });
       if (editingId) setEditingId(null);
+      // r37 fix (ghost project): when the ACTIVE project is deleted, the
+      // ["projects"] invalidation does NOT touch the ["project", id] cache
+      // (different key root) and activeProjectId stays set — the workspace
+      // kept rendering the deleted project until every mutation 404'd.
+      // Notify the parent so it can clear the selection (page.tsx then
+      // auto-selects the first remaining project, or shows the empty state).
+      if (id === activeId) onDeleted?.(id);
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -259,7 +269,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
                   active={p.id === activeId}
                   onSelect={() => onSelect(p.id)}
                   onDelete={() => delMut.mutate(p.id)}
-                  deleting={delMut.isPending}
+                  deleting={delMut.isPending && delMut.variables === p.id}
                 />
               ))}
             </div>

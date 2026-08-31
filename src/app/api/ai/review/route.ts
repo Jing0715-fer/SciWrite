@@ -33,7 +33,26 @@ export async function POST(req: NextRequest) {
     }
     if (mode === "revise") {
       const reviewId = body.reviewId as string;
-      return NextResponse.json(await runRevise(article, reviewId));
+      // r37 fix: ownership check — a reviewId from ANOTHER article could
+      // drive a revision of this article (review.revisedContent built from
+      // the foreign article would overwrite this one).
+      if (reviewId) {
+        const review = await db.review.findUnique({ where: { id: reviewId } });
+        if (!review || review.articleId !== articleId) {
+          return NextResponse.json(
+            { error: "Review not found for this article." },
+            { status: 404 }
+          );
+        }
+      }
+      const reviseResult = await runRevise(article, reviewId);
+      // r37 fix: runRevise returned { error } with HTTP 200 — jfetch only
+      // throws on !res.ok, so the client showed the success toast with
+      // nothing revised. Surface it as a real error status.
+      if ((reviseResult as any)?.error) {
+        return NextResponse.json(reviseResult, { status: 404 });
+      }
+      return NextResponse.json(reviseResult);
     }
     if (mode === "auto-iterate") {
       const rounds = Math.min(Math.max(body.rounds || 2, 1), 5);
@@ -182,12 +201,31 @@ Output the revised article in Markdown. Do NOT add commentary — output only th
 async function runAutoIterate(article: any, rounds: number) {
   const results: any[] = [];
   for (let i = 0; i < rounds; i++) {
+    // r37 fix (stale-loop): reload the article (with reviews) EVERY round —
+    // previously `article` was loaded once in POST, so round 2 reviewed the
+    // PRE-revision content, round 2's revise rewrote from the ORIGINAL
+    // content (round 1's revision silently discarded), and every review row
+    // was created with round=1 (stale reviews[0].round).
+    const fresh = await db.article.findUnique({
+      where: { id: article.id },
+      include: { reviews: { orderBy: { round: "desc" } } },
+    });
+    if (!fresh) break;
+    article.content = fresh.content;
+    article.reviews = fresh.reviews;
+
     // 1. Review
     const reviewResult = await runReview(article);
     results.push({ round: i + 1, phase: "review", ...reviewResult });
 
     // 2. If not accepted, revise
     if (reviewResult.verdict !== "accept") {
+      // Refresh content AFTER the revision too, so the next round's prompt
+      // sees it (runRevise already persisted it).
+      const revisedArticle = await db.article.findUnique({
+        where: { id: article.id },
+      });
+      if (revisedArticle) article.content = revisedArticle.content;
       const reviseResult = await runRevise(article, reviewResult.review.id);
       results.push({ round: i + 1, phase: "revise", ...reviseResult });
     } else {
