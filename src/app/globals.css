@@ -91,7 +91,10 @@
   --shadow-md: 0 4px 8px oklch(0.28 0.05 162 / 0.08), 0 2px 4px oklch(0.28 0.05 162 / 0.05);
   --shadow-lg: 0 8px 20px oklch(0.28 0.05 162 / 0.1), 0 3px 6px oklch(0.28 0.05 162 / 0.06);
   --shadow-xl: 0 14px 34px oklch(0.28 0.05 162 / 0.12), 0 6px 12px oklch(0.28 0.05 162 / 0.07);
-  --shadow-glow: 0 0 0 1px oklch(0.48 0.14 164 / 0.18), 0 6px 18px oklch(0.48 0.14 164 / 0.12);
+  /* Brand glow derives from --primary via color-mix so custom theme
+     colors (ocean/sunset/violet) recolor it too. */
+  --shadow-glow: 0 0 0 1px color-mix(in oklch, var(--primary) 18%, transparent),
+    0 6px 18px color-mix(in oklch, var(--primary) 12%, transparent);
 
   /* Motion — a single set of easing tokens so transitions feel
      consistent across the whole app. */
@@ -141,6 +144,15 @@
   --primary-foreground: oklch(0.16 0.02 230);
   --ring: oklch(0.7 0.14 230);
   --sidebar-primary: oklch(0.7 0.14 230);
+  /* Dark variants of the ocean accent family — without these the emerald
+     .dark accents would leak through and panels would stay green while
+     primary buttons turn blue (the "partially themed" look). */
+  --accent: oklch(0.3 0.055 230);
+  --accent-foreground: oklch(0.88 0.05 230);
+  --sidebar-accent: oklch(0.3 0.055 230);
+  --sidebar-accent-foreground: oklch(0.88 0.05 230);
+  --sidebar-ring: oklch(0.7 0.14 230);
+  --chart-1: oklch(0.7 0.13 230);
 }
 
 /* Sunset — warm amber-rose primary */
@@ -163,6 +175,12 @@
   --primary-foreground: oklch(0.16 0.02 30);
   --ring: oklch(0.7 0.16 30);
   --sidebar-primary: oklch(0.7 0.16 30);
+  --accent: oklch(0.32 0.06 30);
+  --accent-foreground: oklch(0.9 0.05 30);
+  --sidebar-accent: oklch(0.32 0.06 30);
+  --sidebar-accent-foreground: oklch(0.9 0.05 30);
+  --sidebar-ring: oklch(0.7 0.16 30);
+  --chart-1: oklch(0.68 0.15 30);
 }
 
 /* Violet — purple primary */
@@ -185,6 +203,12 @@
   --primary-foreground: oklch(0.16 0.02 300);
   --ring: oklch(0.7 0.2 300);
   --sidebar-primary: oklch(0.7 0.2 300);
+  --accent: oklch(0.32 0.07 300);
+  --accent-foreground: oklch(0.9 0.05 300);
+  --sidebar-accent: oklch(0.32 0.07 300);
+  --sidebar-accent-foreground: oklch(0.9 0.05 300);
+  --sidebar-ring: oklch(0.7 0.2 300);
+  --chart-1: oklch(0.66 0.16 300);
 }
 
 /* Dark mode — deeper, less flat. The background gets a subtle
@@ -229,7 +253,8 @@
   --shadow-md: 0 4px 10px oklch(0 0 0 / 0.32), 0 2px 4px oklch(0 0 0 / 0.24);
   --shadow-lg: 0 10px 24px oklch(0 0 0 / 0.36), 0 3px 8px oklch(0 0 0 / 0.26);
   --shadow-xl: 0 18px 40px oklch(0 0 0 / 0.4), 0 6px 14px oklch(0 0 0 / 0.3);
-  --shadow-glow: 0 0 0 1px oklch(0.72 0.14 164 / 0.24), 0 8px 22px oklch(0.72 0.14 164 / 0.16);
+  --shadow-glow: 0 0 0 1px color-mix(in oklch, var(--primary) 24%, transparent),
+    0 8px 22px color-mix(in oklch, var(--primary) 16%, transparent);
 }
 
 @layer base {
@@ -242,22 +267,22 @@
     /* A faint warm radial wash behind everything — gives the app a
        subtle "studio" depth instead of a flat sheet of paper. */
     background-image:
-      radial-gradient(ellipse 80% 50% at 50% -10%, oklch(0.48 0.14 164 / 0.05), transparent 70%),
-      radial-gradient(ellipse 60% 40% at 100% 0%, oklch(0.62 0.12 185 / 0.04), transparent 60%);
+      radial-gradient(ellipse 80% 50% at 50% -10%, color-mix(in oklch, var(--primary) 5%, transparent), transparent 70%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, color-mix(in oklch, var(--primary) 3.5%, transparent), transparent 60%);
     background-attachment: fixed;
   }
   .dark body {
     background-image:
-      radial-gradient(ellipse 80% 50% at 50% -10%, oklch(0.72 0.14 164 / 0.09), transparent 70%),
-      radial-gradient(ellipse 60% 40% at 100% 0%, oklch(0.55 0.16 300 / 0.05), transparent 60%);
+      radial-gradient(ellipse 80% 50% at 50% -10%, color-mix(in oklch, var(--primary) 9%, transparent), transparent 70%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, color-mix(in oklch, var(--primary) 5%, transparent), transparent 60%);
   }
-  /* Selection — emerald-tinted so highlights match the brand. */
+  /* Selection — primary-tinted so highlights always match the active theme. */
   ::selection {
-    background: oklch(0.48 0.14 164 / 0.22);
+    background: color-mix(in oklch, var(--primary) 22%, transparent);
     color: oklch(0.2 0.03 150);
   }
   .dark ::selection {
-    background: oklch(0.72 0.14 164 / 0.32);
+    background: color-mix(in oklch, var(--primary) 32%, transparent);
     color: oklch(0.16 0.02 162);
   }
 }
@@ -370,32 +395,55 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 
-/* Brand mark — the logo tile gradient. */
+/* Brand mark — the logo tile gradient. Derived from --primary via
+   color-mix so it recolors with the active theme (ocean/sunset/violet). */
 .brand-tile {
-  background-image: linear-gradient(135deg, oklch(0.52 0.15 164), oklch(0.5 0.13 185));
-  box-shadow: 0 2px 6px oklch(0.48 0.14 164 / 0.32), inset 0 1px 0 oklch(1 0 0 / 0.25);
+  background-image: linear-gradient(
+    135deg,
+    color-mix(in oklch, var(--primary), white 10%),
+    color-mix(in oklch, var(--primary), black 8%)
+  );
+  box-shadow: 0 2px 6px color-mix(in oklch, var(--primary) 32%, transparent),
+    inset 0 1px 0 oklch(1 0 0 / 0.25);
 }
 .dark .brand-tile {
-  background-image: linear-gradient(135deg, oklch(0.6 0.15 164), oklch(0.55 0.14 185));
-  box-shadow: 0 2px 8px oklch(0.72 0.14 164 / 0.3), inset 0 1px 0 oklch(1 0 0 / 0.18);
+  background-image: linear-gradient(
+    135deg,
+    color-mix(in oklch, var(--primary), white 6%),
+    color-mix(in oklch, var(--primary), black 10%)
+  );
+  box-shadow: 0 2px 8px color-mix(in oklch, var(--primary) 30%, transparent),
+    inset 0 1px 0 oklch(1 0 0 / 0.18);
 }
 
-/* Primary gradient button — for the headline CTA. */
+/* Primary gradient button — for the headline CTA. Derived from --primary
+   so the CTA follows the active theme color. */
 .btn-gradient-primary {
-  background-image: linear-gradient(135deg, oklch(0.52 0.15 164), oklch(0.46 0.14 168));
-  box-shadow: 0 2px 6px oklch(0.48 0.14 164 / 0.28), inset 0 1px 0 oklch(1 0 0 / 0.18);
+  background-image: linear-gradient(
+    135deg,
+    color-mix(in oklch, var(--primary), white 8%),
+    color-mix(in oklch, var(--primary), black 10%)
+  );
+  box-shadow: 0 2px 6px color-mix(in oklch, var(--primary) 28%, transparent),
+    inset 0 1px 0 oklch(1 0 0 / 0.18);
   transition: box-shadow 0.18s var(--ease-out), transform 0.18s var(--ease-out), filter 0.18s var(--ease-out);
 }
 .btn-gradient-primary:hover {
   filter: brightness(1.06);
-  box-shadow: 0 4px 12px oklch(0.48 0.14 164 / 0.34), inset 0 1px 0 oklch(1 0 0 / 0.22);
+  box-shadow: 0 4px 12px color-mix(in oklch, var(--primary) 34%, transparent),
+    inset 0 1px 0 oklch(1 0 0 / 0.22);
 }
 .btn-gradient-primary:active {
   transform: translateY(0.5px);
 }
 .dark .btn-gradient-primary {
-  background-image: linear-gradient(135deg, oklch(0.68 0.15 164), oklch(0.6 0.14 168));
-  box-shadow: 0 2px 8px oklch(0.72 0.14 164 / 0.3), inset 0 1px 0 oklch(1 0 0 / 0.14);
+  background-image: linear-gradient(
+    135deg,
+    color-mix(in oklch, var(--primary), white 5%),
+    color-mix(in oklch, var(--primary), black 8%)
+  );
+  box-shadow: 0 2px 8px color-mix(in oklch, var(--primary) 30%, transparent),
+    inset 0 1px 0 oklch(1 0 0 / 0.14);
 }
 
 /* Refined tab indicator — pill background + soft shadow.
@@ -430,15 +478,16 @@ h1, h2, h3, h4, h5, h6 {
    Legacy utility classes — preserved & enhanced.
    ============================================================ */
 
-/* Citation markers */
+/* Citation markers — derived from --primary/--accent so they recolor
+   with the active theme (the most numerous accent in the article body). */
 .cite-marker {
   display: inline;
   font-family: var(--font-mono), ui-monospace, monospace;
   font-size: 0.72em;
   vertical-align: super;
   line-height: 0;
-  color: oklch(0.42 0.12 164);
-  background: oklch(0.94 0.035 178 / 0.6);
+  color: color-mix(in oklch, var(--primary), black 12%);
+  background: color-mix(in oklch, var(--accent) 60%, transparent);
   border-radius: 0.3rem;
   padding: 0.06em 0.34em;
   margin: 0 0.04em;
@@ -448,22 +497,22 @@ h1, h2, h3, h4, h5, h6 {
     box-shadow 0.15s var(--ease-out);
 }
 .cite-marker:hover {
-  background: oklch(0.86 0.07 178);
-  color: oklch(0.32 0.11 164);
+  background: color-mix(in oklch, var(--accent), black 8%);
+  color: color-mix(in oklch, var(--primary), black 30%);
   transform: translateY(-1px) scale(1.06);
-  box-shadow: 0 1px 3px oklch(0.42 0.12 164 / 0.28);
+  box-shadow: 0 1px 3px color-mix(in oklch, var(--primary) 28%, transparent);
 }
 .cite-marker:focus-visible {
-  outline: 2px solid oklch(0.48 0.14 164);
+  outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
 .dark .cite-marker {
-  color: oklch(0.78 0.1 164);
-  background: oklch(0.3 0.05 178 / 0.5);
+  color: color-mix(in oklch, var(--primary), white 8%);
+  background: color-mix(in oklch, var(--accent) 50%, transparent);
 }
 .dark .cite-marker:hover {
-  background: oklch(0.4 0.08 178);
-  color: oklch(0.88 0.1 164);
+  background: color-mix(in oklch, var(--accent), white 12%);
+  color: color-mix(in oklch, var(--primary), white 18%);
 }
 
 /* Adversarial citation-audit marker states */
@@ -601,7 +650,7 @@ h1, h2, h3, h4, h5, h6 {
   background-clip: padding-box;
 }
 .scroll-academic::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.72 0.06 164);
+  background: color-mix(in oklch, var(--primary), white 40%);
   background-clip: padding-box;
   border: 2px solid transparent;
 }
@@ -611,7 +660,7 @@ h1, h2, h3, h4, h5, h6 {
   border: 2px solid transparent;
 }
 .dark .scroll-academic::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.45 0.06 164);
+  background: color-mix(in oklch, var(--primary), black 40%);
   background-clip: padding-box;
 }
 
@@ -638,25 +687,26 @@ h1, h2, h3, h4, h5, h6 {
 .typing-caret::after {
   content: "▌";
   margin-left: 1px;
-  color: oklch(0.48 0.14 164);
+  color: var(--primary);
   animation: blink-caret 1s steps(1) infinite;
 }
 .dark .typing-caret::after {
-  color: oklch(0.72 0.14 164);
+  color: var(--primary);
 }
 
-/* Gradient ring for active states */
+/* Gradient ring for active states — derives from --primary so the active
+   project card glow follows the active theme color. */
 .ring-academic {
   box-shadow:
-    0 0 0 1px oklch(0.48 0.14 164 / 0.28),
+    0 0 0 1px color-mix(in oklch, var(--primary) 28%, transparent),
     0 1px 2px oklch(0.3 0.05 162 / 0.08),
-    0 4px 14px oklch(0.48 0.14 164 / 0.08);
+    0 4px 14px color-mix(in oklch, var(--primary) 8%, transparent);
 }
 .dark .ring-academic {
   box-shadow:
-    0 0 0 1px oklch(0.72 0.14 164 / 0.3),
+    0 0 0 1px color-mix(in oklch, var(--primary) 30%, transparent),
     0 1px 2px oklch(0 0 0 / 0.2),
-    0 4px 16px oklch(0.72 0.14 164 / 0.1);
+    0 4px 16px color-mix(in oklch, var(--primary) 10%, transparent);
 }
 
 /* Source badge gradients */

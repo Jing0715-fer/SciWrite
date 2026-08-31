@@ -860,14 +860,14 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
             onClick={() => setPipeline("v2")}
             className={`rounded-lg border p-2.5 text-left transition-colors ${
               pipeline === "v2"
-                ? "border-emerald-500/60 bg-emerald-50/60 dark:bg-emerald-950/30"
-                : "border-border hover:border-emerald-500/30"
+                ? "border-primary/60 bg-primary/[0.06]"
+                : "border-border hover:border-primary/30"
             }`}
           >
             <div className="flex items-center gap-1.5">
-              <ShieldCheck className={`h-3.5 w-3.5 ${pipeline === "v2" ? "text-emerald-600" : "text-muted-foreground"}`} />
+              <ShieldCheck className={`h-3.5 w-3.5 ${pipeline === "v2" ? "text-primary" : "text-muted-foreground"}`} />
               <span className="text-xs font-semibold">{t("oneClick.pipelineV2") || "v2 · Evidence-Grounded"}</span>
-              {pipeline === "v2" && <Badge className="ml-auto h-4 px-1 text-[8px] bg-emerald-600">DEFAULT</Badge>}
+              {pipeline === "v2" && <Badge className="ml-auto h-4 px-1 text-[8px] bg-primary text-primary-foreground">DEFAULT</Badge>}
             </div>
             <p className="mt-1 text-[9px] leading-relaxed text-muted-foreground">
               {t("oneClick.pipelineV2Desc") ||

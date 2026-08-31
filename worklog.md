@@ -1896,3 +1896,30 @@ Stage Summary:
 - 修改文件：src/lib/endnote-fields.ts（统一内联形态）、src/app/page.tsx（目标三层机制+单 effect）、src/components/sciwrite/progress-tracker.tsx（阶梯+自定义+格式化）、src/components/sciwrite/unified-writing-dialog.tsx（onGenerationTargetWords 回调）、src/lib/i18n.tsx（en/zh 2 键）；更新 scripts/test-endnote-round23/24/25.ts、新增 scripts/test-endnote-round26.ts
 - 用户侧操作：git pull 后重新导出 Word，用 EndNote 21 打开——[2,4]/[7,8]/[21][22] 等分组引用应全部正常绑定（与已验证正常的单条引用同构）；写作进度条目标随项目和生成目标自动调整，可点开自定义
 - 提交信息：fix(round-26): grouped citations use the inline EN.CITE form (real EndNote 21 shape) — retires the nested fldData layout; writing-progress goal becomes per-project persisted + generation-synced + content-derived
+
+---
+Task ID: round-27
+Agent: main (Z.ai Code orchestrator)
+Task: 彻底修复主题切换不完整问题——用户报告"主题切换只换了部分组件，很多主要组件都没有变化"，要求用 VLM 确认所有元件的换色效果
+
+Work Log:
+- 取证（agent-browser + 像素采样仲裁）：先验证 light/dark 切换本身——受控实验（刷新基线 → UI 按钮切换 → 采样 header/侧栏/正文/底部）双向全部正常（亮 95.6%→暗 2.7%→亮 95.6%，关键点颜色 255↔14 精确翻转）→ 排除明暗切换故障；定位真问题在**主题色切换**（Emerald/Ocean/Sunset/Violet）
+- 根因①（暗色模式 accent 泄漏）：globals.css 中 [data-theme="ocean"].dark 等自定义主题的暗色变体只覆盖 --primary/--ring 等 4 个变量，--accent/--sidebar-accent/--chart-1 未覆盖 → 暗色下切主题色时 primary 系组件变色但 accent 系表面（hover 高亮、accent 面板、侧栏 accent）滞留 emerald-teal——正是"只换了部分组件"；浏览器实测 dark+ocean 的 --accent = lab(19.4% -17.5 0.5)（teal）而 --primary 已是蓝色，坐实
+- 根因②（品牌色硬编码 emerald）：globals.css 多处品牌 accent 写死 emerald oklch 色值不引用 var(--primary)——.brand-tile logo 渐变（像素实证 Ocean/Violet 主题下 logo 仍 rgb(0,127,93) 绿）、.btn-gradient-primary AI Hub 渐变按钮、.ring-academic 活动卡片光晕、.cite-marker 正文引用标记（用户"正文区域"）、::selection 选中高亮、.typing-caret 流式光标、body 径向底纹、--shadow-glow、滚动条 hover
+- 根因③（组件层选中态硬编码）：unified-writing-dialog 的 v2 管线选择器选中态用 emerald（v1 用 border-primary，同组件内不一致）；writing-workspace 的领域字段标签借用 badge-teal 装饰（非类别编码用途）
+- 修复①（globals.css）：[data-theme="ocean"].dark / sunset.dark / violet.dark 补全 --accent、--accent-foreground、--sidebar-accent、--sidebar-accent-foreground、--sidebar-ring、--chart-1（暗色 accent 与 primary 同色相）
+- 修复②（globals.css 品牌色全部改用 color-mix(in oklch, var(--primary), …) 动态派生）：brand-tile/btn-gradient-primary 渐变与投影、ring-academic 三层阴影、cite-marker 全状态（含 hover/focus/dark）、::selection、typing-caret、body 径向底纹（亮暗两版）、--shadow-glow（亮暗两版）、滚动条 hover（亮暗两版）——Chromium 111+ 全支持
+- 修复③（组件）：v2 管线选择器选中态改 border-primary/60 bg-primary/[0.06] + DEFAULT 徽章 bg-primary text-primary-foreground + ShieldCheck text-primary（与 v1 模式统一）；字段标签改 bg-primary/10 text-primary
+- 语义色保留原则（有意不跟随主题）：健康等级（A=emerald B=teal…）、成功/校验状态（CheckCircle2/verdict accept/fold same-fold）、diff 增删行、分类编码徽章（badge-* 系列按来源/章节/数据类型、侧栏三类计数徽章、进度条达标 emerald）、footer 在线状态点——逐文件审查 192 处 emerald + 18 处 teal/green 用法后分类处置
+- 验证矩阵（用户要求的 VLM 全面确认）：4 主题色 × 亮/暗 8 组合截图 + 关键元素像素采样——logo 品牌块色相 emerald158°/ocean197°/sunset7°/violet266°（亮暗全对）、AI Hub 按钮/进度条/引用标记/flask 图标同矩阵全对、字段标签 156°→198°→264°、活动卡片边框 ocean 下 807px 蓝色像素（跟随）；CSS 变量层实测三主题暗色 --accent 色相与 --primary 一致（lab 负a负b=蓝 / 正a正b=橙 / 正a负b=紫）
+- VLM 多轮交叉验证（识别幻觉并用像素仲裁）：首次 VLM 对比报告"header/主内容/右栏白色孤岛"经像素采样证伪（截图全暗 0-2.7% 亮色）→ 后续 VLM 报告 flask 图标"不变绿"经计算样式+像素证伪（text-primary/70 计算色 oklab(0.52 -0.09 -0.11) 蓝、笔画像素 hue 157°→198°→267°）；VLM 真实发现并修复：v2 选择器 emerald、字段标签 badge-teal；最终 VLM 终验 sunset 暗色：6 类品牌元素（logo/AI Hub/进度条/字段标签/引用标记/卡片光晕）全部橙色一致、无绿色残留表面、剩余绿色均为小型语义指示
+- E2E（agent-browser）：原生 select 命令真实切换主题色（React onChange 触发，data-theme=sunset、logo 变橙 hue=6°）；UI 按钮亮暗切换；0 page error / 0 console error；dev.log 无新增错误（仅历史 EADDRINUSE 残留）
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 162 warning（=基线）
+
+Stage Summary:
+- 主题切换不完整的三层根因：暗色自定义主题 accent 变量缺失（部分组件变色的直接原因）+ 品牌色 accent 硬编码 emerald（logo/CTA/引用标记/选中高亮/光晕全不跟随）+ 组件层个别选中态/装饰标签硬编码
+- 修复策略：品牌色一律 color-mix(in oklch, var(--primary), …) 动态派生（色相自动跟随四种主题）；语义色（等级/成功/分类/状态）有意保留固定色相——"该变的变、不该变的稳"
+- 修改文件：src/app/globals.css（暗色主题变量补全 + 9 组品牌色动态化）、src/components/sciwrite/unified-writing-dialog.tsx（v2 选择器主题化）、src/components/sciwrite/home/writing-workspace.tsx（字段标签主题化）
+- 验证方法论沉淀：VLM 视觉判断必须配合像素采样/计算样式仲裁（本轮 VLM 两次幻觉均被像素证据纠正）；8 组合矩阵 + 关键元素坐标采样是主题回归的可复用模式
+- 用户侧预期：切换主题色（Emerald/Ocean/Sunset/Violet）时 logo、AI Hub 按钮、进度条、引用标记、活动卡片光晕、字段标签、选中高亮、滚动条 hover 全部跟随；暗色模式下 accent 系表面同样跟随（此前滞留绿色）；健康等级/成功勾/分类徽章等语义色保持不变为设计意图
+- 提交信息：fix(round-27): complete theme-color switching — dark-mode accent overrides for custom themes, brand accents derived from --primary via color-mix (logo/CTA/cite-markers/selection/glow), selection states un-hardcoded
