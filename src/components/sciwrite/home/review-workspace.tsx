@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Gavel, Loader2 } from "lucide-react";
@@ -8,6 +9,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { api } from "@/lib/api-client";
 import { useI18n } from "@/lib/i18n";
 import { safeParseArr } from "@/lib/parse-utils";
+
+// round-39: one auto-run attempt per article per page session. Module-level
+// so switching tabs (which remounts this component) never retries a failed
+// auto-run in a loop; a page reload grants exactly one fresh attempt.
+const autoReviewAttempts = new Set<string>();
 
 export function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: { articleId?: string; articleTitle?: string; projectId: string }) {
   const { t } = useI18n();
@@ -19,30 +25,48 @@ export function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: 
     enabled: !!articleId,
     staleTime: Infinity,
   });
-  const { data: reviewData } = useQuery({
-    queryKey: ["article-review", articleId],
-    queryFn: () => api.aiReview({ mode: "review", articleId: articleId! }),
-    enabled: false,
-    staleTime: Infinity,
-  });
 
   const reviewMut = useMutation({
     mutationFn: () => articleId ? api.aiReview({ mode: "review", articleId }) : Promise.reject(new Error("No article")),
     onSuccess: (data) => {
-      qc.setQueryData(["article-review", articleId], data);
+      // Prime the saved-review cache with the fresh result so the tab shows
+      // it without a flash; the invalidate then reconciles with the DB row
+      // (same content — runReview persisted it before responding).
+      qc.setQueryData(["saved-review", articleId], data);
       qc.invalidateQueries({ queryKey: ["saved-review", articleId] });
       toast.success(t("toast.reviewCompleted"));
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Use freshly-run review if available, else saved from DB
-  const displayData = reviewData || (savedReview && !savedReview.notFound ? savedReview : null);
+  // round-39: auto-run a review once when the article has no saved review.
+  // Previously the Review tab read only the Review table — which NOTHING
+  // ever wrote (the generation pipelines never ran a peer review), so the
+  // tab was empty after every run and every click. The pipelines now
+  // auto-review at completion (round-39 backend); this covers articles
+  // composed/generated BEFORE that fix, where no review exists yet.
+  React.useEffect(() => {
+    if (!articleId || autoReviewAttempts.has(articleId)) return;
+    if (
+      savedReview &&
+      (savedReview as any).notFound &&
+      !reviewMut.isPending &&
+      !reviewMut.data
+    ) {
+      autoReviewAttempts.add(articleId);
+      reviewMut.mutate();
+    }
+  }, [articleId, savedReview, reviewMut]);
+
+  // Freshly-run review if available, else the persisted one from DB
+  const displayData =
+    reviewMut.data ||
+    (savedReview && !(savedReview as any).notFound ? savedReview : null);
 
   return (
     <ScrollArea className="flex-1 min-h-0 scroll-academic">
       <div className="px-5 py-4">
-        {!displayData && !reviewMut.isPending && (
+        {!displayData && !reviewMut.isPending && !reviewMut.isError && (
           <div className="text-center py-12">
             <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
               <Gavel className="h-7 w-7 text-primary" />
@@ -57,7 +81,25 @@ export function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: 
           </div>
         )}
         {reviewMut.isPending && !displayData && (
-          <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+          <div className="text-center py-12">
+            <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto mb-3" />
+            <p className="text-xs text-muted-foreground">
+              {t("workspace.reviewAutoRunning")}
+            </p>
+          </div>
+        )}
+        {reviewMut.isError && !displayData && !reviewMut.isPending && (
+          <div className="text-center py-12">
+            <div className="h-14 w-14 mx-auto rounded-2xl bg-destructive/10 flex items-center justify-center mb-3">
+              <Gavel className="h-7 w-7 text-destructive" />
+            </div>
+            <p className="text-xs text-destructive mb-4 max-w-sm mx-auto">
+              {(reviewMut.error as Error)?.message?.slice(0, 200)}
+            </p>
+            <Button size="sm" className="gap-1.5 text-xs" onClick={() => reviewMut.mutate()} disabled={!articleId}>
+              <Gavel className="h-3.5 w-3.5" /> {t("workspace.retryBtn") || "Retry"}
+            </Button>
+          </div>
         )}
         {displayData && !reviewMut.isPending && (
           <div className="space-y-3">
@@ -70,7 +112,7 @@ export function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: 
             )}
             {displayData.scores && (
               <div className="grid grid-cols-3 gap-2">
-                {Object.entries(displayData.scores).map(([key, val]: [string, any]) => (
+                {Object.entries(displayData.scores).filter(([, val]: [string, any]) => val != null).map(([key, val]: [string, any]) => (
                   <div key={key} className="rounded-md border border-border/50 p-2 text-center">
                     <p className="text-sm font-bold">{val}/10</p>
                     <p className="text-[9px] uppercase text-muted-foreground">{key}</p>

@@ -6,7 +6,9 @@ import { safeErrorMessage } from "@/lib/api-helpers";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-// GET: Load saved relationship analysis from DB
+// GET: Load saved relationship analysis from DB.
+// round-39: also returns sourceCount so the Relationships tab can decide
+// whether an auto-run on first open is possible (needs ≥2 sources).
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const projectId = searchParams.get("projectId");
@@ -18,7 +20,8 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: "desc" },
   });
   if (!latest) {
-    return NextResponse.json({ notFound: true });
+    const sourceCount = await db.dataSource.count({ where: { projectId } });
+    return NextResponse.json({ notFound: true, sourceCount });
   }
   return NextResponse.json({
     summary: latest.summary,
@@ -62,8 +65,16 @@ export async function POST(req: NextRequest) {
       }, { status: 422 });
     }
 
+    // round-39: cap the analysis list. Projects routinely hold 100+ sources
+    // (V1 gather saves EVERYTHING with no cap), and the previous prompt
+    // inlined ALL of them — token-limit failures or shallow results. Analyze
+    // the 60 most recent; S-labels, nodeMap, nodes and the prompt count all
+    // refer to this capped list so edges/themes resolve correctly.
+    const MAX_ANALYZE_SOURCES = 60;
+    const analysisSources = sources.slice(0, MAX_ANALYZE_SOURCES);
+
     // Build source summaries for LLM context
-    const sourceList = sources.map((s, i) => {
+    const sourceList = analysisSources.map((s, i) => {
       const parts = [`[S${i + 1}] (${s.source}) ${s.title || s.query}`];
       if (s.authors) parts.push(`Authors: ${s.authors}`);
       if (s.journal) parts.push(`Journal: ${s.journal}`);
@@ -80,7 +91,7 @@ export async function POST(req: NextRequest) {
 
     const prompt = `RESEARCH TOPIC: ${project.topic}
 
-DATA SOURCES (${sources.length}):
+DATA SOURCES (${analysisSources.length}):
 ${sourceList}
 
 Analyze the relationships between these sources. Respond as STRICT JSON:
@@ -130,11 +141,11 @@ Output JSON only. Focus on scientific substance, not metadata similarity.`;
 
     // Map S1, S2, etc. back to actual source IDs
     const nodeMap: Record<string, string> = {};
-    sources.forEach((s, i) => {
+    analysisSources.forEach((s, i) => {
       nodeMap[`S${i + 1}`] = s.id;
     });
 
-    const nodes = sources.map((s, i) => ({
+    const nodes = analysisSources.map((s, i) => ({
       id: s.id,
       label: `S${i + 1}`,
       title: s.title || s.query,

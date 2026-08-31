@@ -900,6 +900,59 @@ Analyze how these sources relate. Respond as STRICT JSON:
           relationshipSummary = relParsed.summary || "";
           relationshipContext = `\nSOURCE RELATIONSHIP ANALYSIS (use to write deeper, more connected discussion):\n${relParsed.summary || ""}\n\nKey connections between sources:\n${(relParsed.keyConnections || []).map((k: string, i: number) => `${i + 1}. ${k}`).join("\n")}\n\nThematic clusters:\n${(relParsed.themes || []).map((t: any) => `- ${t.name}: ${t.description}`).join("\n")}\n${(relParsed.contradictions || []).length ? `\nContradictions to discuss:\n${(relParsed.contradictions || []).map((c: any) => `- ${c.sourceLabels.join(" vs ")}: ${c.description}`).join("\n")}` : ""}`;
 
+          // round-39: persist the structured analysis to RelationshipAnalysis
+          // so the workspace's Relationships tab shows it after generation.
+          // This step has ALWAYS run (the progress UI shows it), but only the
+          // summary was kept as writing context — the structured result was
+          // discarded, so the tab was empty every time. Shape mirrors the
+          // standalone /api/ai/source-relationships POST: themes/insights/
+          // contradictions as the LLM produced them; nodes built from the
+          // curated refs the S-labels refer to; edges synthesized faithfully
+          // from the themes (sources grouped by the LLM share a theme) and
+          // contradictions. Best-effort: a persist failure never breaks the
+          // pipeline.
+          try {
+            const relSourceCap = 40; // same cap the analysis prompt used
+            const nodeIdx: Record<string, number> = {};
+            const relNodes = curatedRefs.slice(0, relSourceCap).map((r: any, i: number) => {
+              nodeIdx[`S${i + 1}`] = i;
+              return {
+                id: r.externalId || r.title?.slice(0, 80) || `S${i + 1}`,
+                label: `S${i + 1}`,
+                title: r.title || "",
+                source: r.type || "reference",
+                externalId: r.externalId || null,
+                year: r.year || null,
+              };
+            });
+            const relEdges: any[] = [];
+            for (const th of relParsed.themes || []) {
+              const labels = (th.sourceLabels || []).filter((l: string) => nodeIdx[l] !== undefined);
+              for (let li = 1; li < labels.length; li++) {
+                relEdges.push({ from: labels[li - 1], to: labels[li], type: "shares-theme", label: th.name || "" });
+              }
+            }
+            for (const c of relParsed.contradictions || []) {
+              if (Array.isArray(c.sourceLabels) && c.sourceLabels.length >= 2) {
+                relEdges.push({ from: c.sourceLabels[0], to: c.sourceLabels[1], type: "contradicts", label: c.description || "" });
+              }
+            }
+            await db.relationshipAnalysis.create({
+              data: {
+                projectId,
+                summary: relationshipSummary,
+                themes: JSON.stringify(relParsed.themes || []),
+                edges: JSON.stringify(relEdges),
+                nodes: JSON.stringify(relNodes),
+                keyInsights: JSON.stringify(relParsed.keyConnections || []),
+                contradictions: JSON.stringify(relParsed.contradictions || []),
+              },
+            });
+            log(`relationships: analysis persisted (${relNodes.length} nodes, ${relEdges.length} edges, ${(relParsed.themes || []).length} themes)`);
+          } catch (relPersistErr: any) {
+            log(`relationships: persist FAILED: ${String(relPersistErr?.message ?? relPersistErr).slice(0, 100)}`);
+          }
+
           send("step", {
             step: "relationships",
             status: "done",
@@ -3471,6 +3524,54 @@ ${cleanEn}`;
           ...(articleContentZh ? { articleWordCountZh: countWords(articleContentZh), hasZh: true } : {}),
           message: `Article composed: ${countWords(articleContent)} English words${articleContentZh ? ` + ${countWords(articleContentZh)} Chinese chars` : ""}, ${globalRefs.length} references.`,
         });
+
+        // ============ STEP 9: Auto peer review (round-39) ============
+        // The workspace's Review tab read ONLY from the Review table, which
+        // nothing in this pipeline ever wrote — the tab was empty after every
+        // full generation. Run one structured peer review now (best-effort,
+        // non-fatal: LLM 429/timeout just leaves the manual "Run review"
+        // button) so the tab has persisted content the moment generation
+        // finishes. Reuses the exact /api/ai/review logic (same scoring
+        // prompt, same Review row) via the established self-fetch pattern
+        // (r37: req.nextUrl.origin, never a hardcoded host).
+        try {
+          send("step", {
+            step: "review",
+            status: "started",
+            message: "Running peer review of the final article...",
+          });
+          const reviewRes = await fetch(`${req.nextUrl.origin}/api/ai/review`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: "review", articleId: article.id }),
+            signal: AbortSignal.timeout(120000),
+          });
+          if (reviewRes.ok) {
+            const rv = await reviewRes.json();
+            send("step", {
+              step: "review",
+              status: "done",
+              verdict: rv.verdict,
+              message: `Peer review saved: ${rv.verdict || "done"}${rv.scores?.overall != null ? ` (overall ${rv.scores.overall}/10)` : ""} — see the Review tab.`,
+            });
+            log(`review: auto peer review saved (verdict=${rv.verdict}, overall=${rv.scores?.overall ?? "?"})`);
+          } else {
+            const errTxt = await reviewRes.text().catch(() => "");
+            send("step", {
+              step: "review",
+              status: "skipped",
+              message: `Peer review skipped (service returned ${reviewRes.status}) — run it manually from the Review tab.`,
+            });
+            log(`review: auto review FAILED (${reviewRes.status}): ${errTxt.slice(0, 100)}`);
+          }
+        } catch (e: any) {
+          send("step", {
+            step: "review",
+            status: "skipped",
+            message: "Peer review skipped (timeout or LLM error) — run it manually from the Review tab.",
+          });
+          log(`review: auto review ERROR: ${String(e?.message ?? e).slice(0, 100)}`);
+        }
 
         // ============ FINAL RESULT ============
         // v95-1: Borrowed from deepseek-harness's session log pattern —

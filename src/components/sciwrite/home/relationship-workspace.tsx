@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -14,6 +15,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { api } from "@/lib/api-client";
 import { useI18n } from "@/lib/i18n";
 
+// round-39: one auto-run attempt per project per page session. Module-level
+// so switching tabs (which remounts this component) never retries a failed
+// auto-run in a loop; a page reload grants exactly one fresh attempt.
+const autoRelAttempts = new Set<string>();
+
 export function RelationshipWorkspace({ projectId }: { projectId: string }) {
   const { t } = useI18n();
   const qc = useQueryClient();
@@ -24,24 +30,7 @@ export function RelationshipWorkspace({ projectId }: { projectId: string }) {
     enabled: !!projectId,
     staleTime: Infinity,
   });
-  const { data: freshRel, isLoading: loading, error: relError } = useQuery({
-    queryKey: ["source-relationships", projectId],
-    queryFn: async () => {
-      const res = await fetch("/api/ai/source-relationships", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId }),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text.slice(0, 200) || t("workspace.analysisFailedError", { status: res.status }));
-      }
-      const data = await res.json();
-      qc.invalidateQueries({ queryKey: ["saved-relationships", projectId] });
-      return data;
-    },
-    enabled: false, // Only on manual trigger
-  });
+
   const relMut = useMutation({
     mutationFn: () =>
       fetch("/api/ai/source-relationships", {
@@ -62,26 +51,57 @@ export function RelationshipWorkspace({ projectId }: { projectId: string }) {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const relData = freshRel || (savedRel && !savedRel.notFound ? savedRel : null);
+  // round-39: auto-run once when nothing is saved and the project has
+  // enough sources. Previously the tab showed an empty state + manual
+  // button EVERY time, even though the generation pipeline had already
+  // run relationship analysis (V1) or the sources were sitting there —
+  // results were never persisted/displayed. The pipeline now persists
+  // them (round-39 backend); this covers projects generated BEFORE that
+  // fix and any pipeline where the auto-step was skipped (LLM 429 etc.).
+  React.useEffect(() => {
+    if (!projectId || autoRelAttempts.has(projectId)) return;
+    const sourceCount = (savedRel as any)?.sourceCount ?? 0;
+    if (
+      savedRel &&
+      (savedRel as any).notFound &&
+      sourceCount >= 2 &&
+      !relMut.isPending &&
+      !relMut.data
+    ) {
+      autoRelAttempts.add(projectId);
+      relMut.mutate();
+    }
+  }, [projectId, savedRel, relMut]);
+
+  const relData = (relMut.data && !(relMut.data as any).notFound)
+    ? (relMut.data as any)
+    : savedRel && !(savedRel as any).notFound
+      ? savedRel
+      : null;
 
   return (
     <ScrollArea className="flex-1 min-h-0 scroll-academic">
       <div className="px-5 py-4">
         {relMut.isPending && (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          <div className="text-center py-12">
+            <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto mb-3" />
+            <p className="text-xs text-muted-foreground">
+              {t("workspace.relAutoRunning")}
+            </p>
           </div>
         )}
-        {relError && !relMut.isPending && (
+        {relMut.isError && !relMut.isPending && !relData && (
           <div className="text-center py-12">
             <Network className="h-10 w-10 mx-auto opacity-40 mb-3" />
-            <p className="text-xs text-destructive mb-3">{(relError as Error).message}</p>
+            <p className="text-xs text-destructive mb-3">
+              {(relMut.error as Error)?.message?.slice(0, 200)}
+            </p>
             <Button size="sm" className="gap-1.5 text-xs" onClick={() => relMut.mutate()}>
               <Network className="h-3.5 w-3.5" /> {t("workspace.retryBtn")}
             </Button>
           </div>
         )}
-        {!relMut.isPending && !relError && !relData && (
+        {!relMut.isPending && !relMut.isError && !relData && (
           <div className="text-center py-12">
             <Network className="h-10 w-10 mx-auto opacity-40 mb-3" />
             <p className="text-xs font-medium text-muted-foreground mb-1">{t("workspace.noRelData")}</p>
@@ -91,13 +111,13 @@ export function RelationshipWorkspace({ projectId }: { projectId: string }) {
             </Button>
           </div>
         )}
-        {!relMut.isPending && !relError && relData?.skipped && (
+        {relMut.isPending === false && relData?.skipped && (
           <div className="text-center py-12">
             <Network className="h-10 w-10 mx-auto opacity-40 mb-3" />
             <p className="text-xs text-muted-foreground">{relData.message}</p>
           </div>
         )}
-        {!relMut.isPending && !relError && relData && !relData.skipped && (
+        {relData && !relData.skipped && !relMut.isPending && !relMut.isError && (
           <div className="space-y-3">
             {relData.summary && (
               <div className="rounded-lg border border-primary/20 bg-primary/[0.03] p-3">
@@ -122,10 +142,10 @@ export function RelationshipWorkspace({ projectId }: { projectId: string }) {
             {relData.themes?.length > 0 && (
               <div className="space-y-2">
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{t("workspace.thematicClusters")}</p>
-                {relData.themes.map((t: any, i: number) => (
+                {relData.themes.map((th: any, i: number) => (
                   <div key={i} className="rounded-md border border-border/50 p-2.5">
-                    <span className="text-xs font-semibold">{t.name}</span>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">{t.description}</p>
+                    <span className="text-xs font-semibold">{th.name}</span>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{th.description}</p>
                   </div>
                 ))}
               </div>

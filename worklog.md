@@ -2444,3 +2444,35 @@ Stage Summary:
 - 纸材统一完成：paragraph 卡与 article 稿纸/查看器画布现为同一连续纸面（双模式逐位等值实测），玻璃工具条叠纸色根上分层自然
 - 2 个 unlayered-CSS-vs-utilities 级联类潜伏 UI bug 修复（annotation 类型色渲染、hover 抬升），并全应用 sweep 确认无同类受害点
 - 修改文件：globals.css（.surface-paper-card 新增、.paper-surface 重定义）、paragraph-card.tsx（根类替换）、paragraph/annotations-section.tsx（去 surface-card）
+
+---
+Task ID: round-39
+Agent: main (Z.ai Code)
+Task: review/relationship 标签内容持久化——运行期已执行的分析要持久显示，不要每次点进去都是空的
+
+Work Log:
+- 根因定位（DB 实证）：Review 表与 RelationshipAnalysis 表均为 **0 行**——
+  ① V1 generate-full 的 STEP 3 relationships 一直在跑（进度 UI 明确展示该步骤），但结构化结果仅用作写作上下文后即丢弃，从未落库；
+  ② V2 管线根本没有 relationships 步骤；③ 两条管线的 peer review 从未自动执行（Review 表只由 Review 标签的手动按钮写入）。用户"运行过程中已经执行过了"的直觉对 V1 relationships 完全成立
+- 后端修复：
+  ① V1 STEP 3 落库：relParsed → RelationshipAnalysis 行（summary/themes/keyInsights= keyConnections/contradictions 原样；nodes 由 curatedRefs（Reference 行）映射 S1..S40；edges 忠实合成——同 theme 的源链式 shares-theme、contradiction 对 contradicts），try/catch 永不阻断管线
+  ② V1 管线末（compose done 后、FINAL RESULT 前）自动 peer review：self-fetch POST /api/ai/review（r37 模式 req.nextUrl.origin），120s 超时，429/失败仅发送 skipped 步骤事件，不阻断
+  ③ V2 管线末（version snapshot 后、complete 前）同模式自动 source-relationships + peer review 双落库（V2 无 relationships 步骤，走独立端点）
+  ④ /api/ai/source-relationships：GET notFound 时附带 sourceCount（前端自动触发守卫依据）；POST 分析列表 60 条上限（旧代码内联全部 100+ 源 → token 爆炸/浅结果；S 标签/nodeMap/nodes/prompt 计数全部基于截断后列表）
+- 前端修复（双标签）：
+  ⑤ 自动触发：saved 数据 notFound 且条件满足（relationships 需 sourceCount≥2；review 需 articleId）时自动发起一次分析——首次打开即计算并持久化，覆盖修复前生成的存量项目与 compose 流文章；module 级 Set 守卫（每次页面会话每项目/每文章恰一次），失败显示 error + Retry（不再静默循环重试）
+  ⑥ RelationshipWorkspace 清理死代码：enabled:false 的 freshRel query（error 分支因此永不显示）删除，错误态改用 relMut.error；pending 态显示"正在自动分析…"文案
+  ⑦ ReviewWorkspace：onSuccess 直接 setQueryData 到 saved-review 键（免闪现）；错误态新增（原先 mutation 失败只弹 toast，UI 停留在空态）；scores 过滤 null（避免 "null/10" 卡片）
+  ⑧ i18n：workspace.relAutoRunning / workspace.reviewAutoRunning（EN+ZH）
+- E2E 验证（agent-browser；LLM 全程 429 限流 → 以请求触发+持久化渲染契约为验证轴）：
+  - GET notFound 响应携带 sourceCount:429 ✓
+  - 自动触发双标签实弹验证：Relationships 打开→POST 发出→auto 文案+spinner→429→error+Retry 态；Review 同路径 POST /api/ai/review ✓
+  - 持久化渲染契约（直插模拟行验证管线的落库形状）：summary/themes(MscL gating/MscS diversity)/insights/contradictions 全渲染；Review verdict/scores/strengths/summary 全渲染 ✓
+  - 持久性三重验证：remount（tab 切走切回）✓ / 整页 reload ✓ / 有数据时自动触发静默（notFound=false 不发请求）✓
+  - 溢出扫描 0 违规 @1440 与 @390；console/page error 零新增
+  - 为演示持久化效果，测试项目（Full Generation Test）保留了一条手工种子 RelationshipAnalysis 行 + 一条 Review 行（真实管线跑通后会被新结果自然取代）
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（较基线 -1：删除死 query 顺带消一条）
+
+Stage Summary:
+- 根因是"算而不存"：V1 relationships 结果丢弃、两条管线 review 从未自动跑、V2 无 relationships——三处全部补上落库
+- 修改文件：api/ai/generate-full/route.ts（STEP 3 落库 + STEP 9 auto review）、api/ai/generate-full-v2/route.ts（管线末双 self-fetch 落库）、api/ai/source-relationships/route.ts（GET sourceCount + POST 60 上限）、home/relationship-workspace.tsx（自动触发+死代码清理+错误态）、home/review-workspace.tsx（自动触发+错误态+null 分数过滤）、lib/i18n.tsx（2 键 ×2 语言）

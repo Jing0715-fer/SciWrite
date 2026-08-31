@@ -1839,6 +1839,65 @@ ${cleanEn}`;
           log(`compose: version snapshot FAILED: ${String(versionErr?.message ?? versionErr).slice(0, 120)}`);
         });
 
+        // ============ Post-pipeline persistence (round-39) ============
+        // The workspace's Relationships + Review tabs read only from the
+        // RelationshipAnalysis / Review tables — v2 writes NEITHER (its
+        // evidence pipeline has no relationships step and no peer review),
+        // so both tabs were empty after every v2 generation. Run both now
+        // (best-effort, non-fatal: an LLM 429/timeout just leaves the manual
+        // buttons) via the established self-fetch pattern (r37:
+        // req.nextUrl.origin, never a hardcoded host). Both endpoints
+        // persist their results, so the tabs have content immediately.
+        try {
+          send("step", { step: "relationships", status: "started", message: "Analyzing source relationships..." });
+          const relRes = await fetch(`${req.nextUrl.origin}/api/ai/source-relationships`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ projectId }),
+            signal: AbortSignal.timeout(120000),
+          });
+          if (relRes.ok) {
+            const relJson = await relRes.json();
+            send("step", {
+              step: "relationships",
+              status: "done",
+              message: `Relationship analysis saved: ${relJson.themes?.length || 0} themes, ${relJson.edges?.length || 0} connections — see the Relationships tab.`,
+            });
+            log(`relationships: auto analysis saved (${relJson.themes?.length || 0} themes)`);
+          } else {
+            send("step", { step: "relationships", status: "skipped", message: `Relationship analysis skipped (${relRes.status}) — run it manually from the Relationships tab.` });
+            log(`relationships: auto analysis FAILED (${relRes.status})`);
+          }
+        } catch (relErr: any) {
+          send("step", { step: "relationships", status: "skipped", message: "Relationship analysis skipped (timeout or LLM error)." });
+          log(`relationships: auto analysis ERROR: ${String(relErr?.message ?? relErr).slice(0, 100)}`);
+        }
+        try {
+          send("step", { step: "review", status: "started", message: "Running peer review of the final article..." });
+          const reviewRes = await fetch(`${req.nextUrl.origin}/api/ai/review`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: "review", articleId: article.id }),
+            signal: AbortSignal.timeout(120000),
+          });
+          if (reviewRes.ok) {
+            const rv = await reviewRes.json();
+            send("step", {
+              step: "review",
+              status: "done",
+              verdict: rv.verdict,
+              message: `Peer review saved: ${rv.verdict || "done"}${rv.scores?.overall != null ? ` (overall ${rv.scores.overall}/10)` : ""} — see the Review tab.`,
+            });
+            log(`review: auto peer review saved (verdict=${rv.verdict}, overall=${rv.scores?.overall ?? "?"})`);
+          } else {
+            send("step", { step: "review", status: "skipped", message: `Peer review skipped (${reviewRes.status}) — run it manually from the Review tab.` });
+            log(`review: auto review FAILED (${reviewRes.status})`);
+          }
+        } catch (revErr: any) {
+          send("step", { step: "review", status: "skipped", message: "Peer review skipped (timeout or LLM error)." });
+          log(`review: auto review ERROR: ${String(revErr?.message ?? revErr).slice(0, 100)}`);
+        }
+
         const totalMs = Date.now() - t0;
         const articleWordCount = countWords(articleContent);
         send("complete", {
