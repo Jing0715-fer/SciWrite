@@ -2094,3 +2094,24 @@ Stage Summary:
 - 修改文件：src/app/globals.css、src/components/sciwrite/theme-switcher.tsx、src/components/sciwrite/ 下 47 个组件（sidebar/paragraph-card/article-viewer-tabs/unified-writing-dialog/llm-config/insights/audit-report/protein-structure 等全部批次）、progress-tracker.tsx、home/writing-workspace.tsx、home/footer.tsx、llm-config-dialog.tsx（cache hits）；worklog.md 由 5 个 subagent 追加 5 节 + 本节
 - 用户侧预期：git pull 后任意主题切换（Ocean/Sunset/Violet × 深/浅）全应用一致换装——logo、引用标记、徽章、统计、选中态、氛围光全部跟随；状态语义（成功绿/警告琥珀/错误红）与数据库身份色保持稳定以保证信息含义
 - 提交信息：fix(round-29): complete theme response — brand emerald hardcoded classes/CSS vars → live --primary tokens across 53 components, ThemeSwitcher popover replaces white native select, dark-mode partners for all kept semantic hues
+
+---
+Task ID: round-30
+Agent: main (Z.ai Code orchestrator)
+Task: 用户反馈 round-29 主题修复后"还是不彻底"，要求用 VLM 确认所有元件的换色效果
+
+Work Log:
+- 环境对齐：本地停在 round-26 + 本会话独立完成的主题修复（commit e44139c，与 round-29 撞题）；git fetch 发现 origin/main 已推进到 round-29（另一会话完成 rounds 27-29：v2 双语生成、中文 docx 排版、53 组件主题清扫）→ 用户的"还是不彻底"针对的是 round-29 基线
+- 合并策略：db/两 tsx（字段标签、v2 选择器——与 round-29 逐字相同，真重复）/worklog 取远端；globals.css 取远端为底 + 叠加本会话独有的 3 处修复
+- round-29 遗漏修复（globals.css，本会话独有贡献）：①--shadow-glow 亮/暗两版仍硬编码 emerald → color-mix(var(--primary)) ②.typing-caret::after 亮/暗仍 emerald → var(--primary) ③.ring-academic 亮/暗三层阴影仍 emerald → color-mix(var(--primary))——活动项目卡片光晕是高频可见元素，像素实证合并前 ocean 主题下卡片边框区绿色残留、合并后 918px 蓝色（sunset 657px 红、violet 701px 紫）
+- 合并后全面审计（像素采样 + VLM 双通道）：8 组合矩阵（4 主题色 × 亮/暗）logo/AI Hub/进度条/字段标签/引用标记/活动卡片光晕全部跟随（色相 emerald158°/ocean196°/sunset7°/violet265°）；文章查看器 5 页签（Sections/Composed/Review/Relationships/Analysis）violet 下绿色残留仅 0.03-0.06%（语义小元素）、紫色主导；AI Hub 对话框 0.00% 绿 / 3.17% 紫；Insights 0.33% 绿（图表分类色）；引用标记像素实证变色（emerald 382px 绿调 vs violet 175px 紫调，VLM 对浅色小元素误报 STUCK 经像素仲裁纠正）
+- round-29 新组件验证：ThemeSwitcher Popover（Radix radiogroup 4 色点选项）端到端工作——点击 Ocean → data-theme=ocean + logo hue 196° 蓝；暗色模式无白下拉
+- 修复 round-28 遗留：合并后 tsc 报 retranslate 路由 titleZh 类型错误（Prisma client 未同步 schema）→ bun run db:push 重新生成 client → 0 错误
+- 质量门：npx tsc --noEmit 0 错误；bun run lint 0 error / 162 warning（=基线）；dev.log 无新增错误；0 page error / 0 console error
+
+Stage Summary:
+- 本会话与 round-29 平行撞题：核心修复（暗色 accent 变量补全、品牌类 color-mix 化、字段标签/v2 选择器主题化）双方一致；本会话独有补上 round-29 漏掉的 shadow-glow/typing-caret/ring-academic 三处（其中 ring-academic 活动卡片光晕为高频可见）
+- 验证方法论：VLM 视觉判断必须配像素采样/计算样式仲裁（本会话 VLM 三次误报均被像素证据纠正——首次对比幻觉"白色孤岛"、flask 图标"stuck"、引用标记"STUCK"）；残留 emerald（159 处/30 文件）经逐文件审查确认为语义色（等级/成功/diff/分类编码）且已配 dark: 伙伴
+- 修改文件（相对 round-29）：src/app/globals.css（3 处品牌色补修）
+- 用户侧预期：任意主题色 × 亮/暗组合下，logo、AI Hub 按钮、进度条、引用标记、活动卡片光晕、字段标签、选中态、光标、滚动条 hover、发光阴影全部跟随；语义色（成功绿/警告琥珀/错误红/分类徽章/健康等级）保持稳定
+- 提交信息：fix(round-30): close round-29 theme gaps — ring-academic/typing-caret/shadow-glow follow --primary via color-mix; merge with remote rounds 27-29 (v2 bilingual, zh docx, 53-component theme sweep)
