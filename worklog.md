@@ -2351,3 +2351,25 @@ Stage Summary:
 - 实测修复的幻觉防线：MISSING 哨兵回写、域名作者/月份年份（源头+存量双修）、wwPDB 结构条目冒充文献、同工作异 ID 重复、unverified 行与核实结果的重复卡
 - 用户可见：Data 面板 crossref 类型 chip + 三色溯源徽章；Gather tab 结果卡 Crossref/转正/回填计数 chip；verify 二跑零堆积恒成立
 - 修改文件：lib/knowledge-verify.ts（+~430）、lib/databases.ts（+~145）、lib/types.ts、lib/constants.ts、lib/i18n.tsx、api/ai/gather/route.ts、api/ai/generate-full-v2/route.ts、api/ai/generate-full/route.ts、components/sciwrite/knowledge-panel.tsx、components/sciwrite/unified-writing-dialog.tsx
+
+---
+Task ID: round-36
+Agent: main (Z.ai Code orchestrator)
+Task: 用户反馈「中间文字显示，切到article后，右侧内容没有显示全，框的宽度超过了窗口的宽度。paragraphs部分框套框感觉有些冗余了，最外面的框可以移除掉。继续检查其他UI问题并修正」
+
+Work Log:
+- 复现（agent-browser 几何测量为最终仲裁）：MscL 项目 article tab，1920 渲染后缩窗至 1024 —— Radix ScrollArea 视口 inner div（内联 display:table; min-width:100%）保持陈旧宽度 843px 而视口仅 498px，overflow-x:hidden 裁切 → canvas-paper 宽 803 右缘 1048 超出窗口 1024、超出视口右缘 723 达 325px（用户"框宽度超过窗口宽度"实测吻合）。浏览器内注入 display:block 即时验证：视口 498=498 零溢出
+- 根因定性（比 round-34 更深一层）：round-34 发现 display:table 被长不可断 token 撑宽（min-content 收缩包裹）；本轮实测发现第二条触发路径 —— 面板/窗口变窄时 table 不重新收缩（为宽布局计算的宽度被保留）。两条路径同根：Radix 的 table 布局在收缩场景全面失效
+- 修复①（根治全类）：globals.css 的 round-34 作用域规则 .source-scroll 升级为全局规则 [data-radix-scroll-area-viewport] > div { display:block !important }（审计确认全应用无横向 orientation 的 ScrollArea，table 布局零收益；block 保留 min-width:100% 短内容拉伸语义且始终跟随视口宽度）；knowledge-panel/database-query-panel 移除死 source-scroll 类名并更新注释
+- 修复②（断词兜底）：markdown-citations 全路径加固 —— 引用 fallback 块与"## References"字面文本块（whitespace-pre-wrap 无断词，MscL 文章实测含 115 字符 URL token）加 break-words；参考文献行 flex-1 加 min-w-0 break-words；hover 卡标题加 break-words、DOI 双处加 break-all；protein-structure-analysis-dialog 与 diagram-dialog 的两处 pre 加 break-words（rg 审计：全应用 pre-wrap 现已 100% 带断词）
+- 修复③（用户点名）：paragraphs tab 移除外层 canvas-paper 纸张框（框套框冗余）—— 段落卡本身是完整 surface-card，直接落在工作区桌面上；外框原 p-5 padding 同时供养 -left-6 拖拽手柄，移除后补 pl-6 gutter（实测卡片左缘 377 = 视口 333 + px-5 + pl-6 精确对齐，手柄 353 在界内）
+- 修复④（继续检查发现）：KnowledgePanel SourceCard 头部 externalId span 无截断 —— 实测 DB 615 条 web 源中 545 条 externalId 是 67 字符 URL，span 不收缩把动作按钮行推出卡片右缘 55px（E2E 在 review/relationships tab 均捕获到该视口 scrollW 499 > clientW 435）→ truncate + min-w-0（按钮容器补 shrink-0）；database-query-panel 结果徽章 source:externalId 同型隐患加 max-w-full truncate 防御
+- E2E 几何验证（agent-browser）：①缩窗复现路径 1024：paper 458 右缘 703 ≤ 视口 723、display:block、scrollW=clientW ✓ ②拖拽面板手柄缩至 390：paper 350 右缘 595 ≤ 615、ok ✓ ③1536 深色：ok ✓ ④文章查看器对话框 1920/1024（含打开态缩窗）：paper 677 右缘 963 ≤ 1003、scrollW=clientW ✓ ⑤移动端 390：文档零横向溢出 ✓ ⑥1536 全视口扫描：0 溢出视口、139 可见卡片 0 溢出 ✓ ⑦paragraphs：外框移除、7 卡、手柄界内、卡片界内 ✓ ⑧0 page error、console 仅既有 resizable 警告（=基线）
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）；dev.log 无新错误；浏览器状态重置（theme=light，已关闭）
+- VLM 复核不可用说明：两次尝试（含 90 秒退避重试）均 429，与 round-34/35 相同状况，按 round-30~35 既定方法论以 DOM 几何测量为最终仲裁（全部通过）
+
+Stage Summary:
+- article tab 溢出根治：Radix display:table 的两条失效路径（长 token 撑宽 + 收缩不回缩）被全局 display:block 规则一并消灭，全应用所有 ScrollArea（含查看器对话框、review/relationships、知识面板）在窗口缩放与面板拖拽下始终贴合视口
+- 溢出防线三层齐备：viewport display:block（结构层）+ markdown-citations 全路径断词（文本层）+ externalId/徽章截断（卡片头槽位层）
+- paragraphs 框套框按用户要求移除：段落卡直落桌面 + pl-6 拖拽手柄 gutter，几何精确对齐
+- 修改文件：globals.css、markdown-citations.tsx、home/writing-workspace.tsx、knowledge-panel.tsx、database-query-panel.tsx、protein-structure-analysis-dialog.tsx、diagram-dialog.tsx

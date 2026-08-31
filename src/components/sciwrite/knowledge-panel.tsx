@@ -361,11 +361,10 @@ function SourcesList({
         </div>
       </div>
       {/* Source cards for the active type.
-          source-scroll clamps the Radix viewport's display:table wrapper to
-          the panel width — without it, long unbreakable tokens (deep-read
-          summaries, URLs) widen the table past the viewport and the card's
-          right border gets clipped off-screen (round-34). */}
-      <ScrollArea className="source-scroll flex-1 min-h-0 scroll-academic">
+          round-36: the Radix display:table wrapper is killed globally in
+          globals.css ([data-radix-scroll-area-viewport] > div), so long
+          unbreakable tokens can never push cards off-screen. */}
+      <ScrollArea className="flex-1 min-h-0 scroll-academic">
         <div className="px-3 py-2 space-y-2">
           {filteredItems.length === 0 ? (
             <div className="text-center py-6 text-[10px] text-muted-foreground">
@@ -449,12 +448,15 @@ function SourceCard({
   return (
     <div className="surface-card rounded-lg p-2.5 space-y-1 transition-all hover:border-primary/30 hover:shadow-md">
       <div className="flex items-start gap-1.5">
+        {/* round-36: externalId can be a full URL for web sources (545/615
+            rows measured) — truncate + min-w-0 so the ID slot never pushes
+            the action buttons (or the card border) past the panel width. */}
         {d.externalId && (
-          <span className="text-[9px] font-mono text-muted-foreground">
+          <span className="text-[9px] font-mono text-muted-foreground truncate min-w-0">
             {d.externalId}
           </span>
         )}
-        <div className="ml-auto flex items-center gap-0.5">
+        <div className="ml-auto flex items-center gap-0.5 shrink-0">
           {/* Molcraft fusion: Analyze 3D structure button (RCSB sources only) */}
           {isRcsb && (
             <Button

@@ -235,10 +235,10 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
         )}
       </div>
 
-      {/* source-scroll (round-34): kills the Radix display:table wrapper
-          so long unbreakable tokens in expanded abstracts cannot push the
-          result card's right border off-screen. */}
-      <ScrollArea className="source-scroll flex-1 min-h-0 scroll-academic">
+      {/* round-36: the Radix display:table wrapper is killed globally in
+          globals.css ([data-radix-scroll-area-viewport] > div), so long
+          unbreakable tokens can never push cards off-screen. */}
+      <ScrollArea className="flex-1 min-h-0 scroll-academic">
         <div className="px-4 py-3 space-y-2.5">
           {error && (
             <div className="text-xs text-destructive bg-destructive/5 border border-destructive/20 rounded-md p-2.5">
@@ -352,7 +352,7 @@ function ResultCard({
         </div>
         <div className="flex flex-wrap items-center gap-1 pl-6">
           <span
-            className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide ${badgeClass}`}
+            className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide max-w-full truncate ${badgeClass}`}
           >
             {item.source}
             {item.externalId ? `:${item.externalId}` : ""}

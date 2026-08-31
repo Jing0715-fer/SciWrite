@@ -1481,7 +1481,7 @@ function ContextTab({
           {t("structure.copyContext")}
         </Button>
       </div>
-      <pre className="rounded-lg border bg-muted/30 p-3 text-[10px] leading-relaxed font-mono whitespace-pre-wrap max-h-[60vh] overflow-y-auto">
+      <pre className="rounded-lg border bg-muted/30 p-3 text-[10px] leading-relaxed font-mono whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto">
         {markdown}
       </pre>
     </div>

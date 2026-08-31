@@ -728,16 +728,20 @@ h1, h2, h3, h4, h5, h6 {
   background-clip: padding-box;
 }
 
-/* round-34: Radix ScrollArea wraps viewport content in a
-   display:table / min-width:100% div. Tables shrink-wrap to their
-   content's min-content width, so a single unbreakable token (deep-read
-   summary URL, long ID) widens the table past the viewport and the
-   source card's right border gets clipped off-screen. Note: a plain
-   max-width:100% does NOT clamp a display:table box (measured), so we
-   override the display itself — block keeps the min-width:100% stretch
-   behavior for short content while never growing past the viewport;
-   long tokens are wrapped at the text level via break-words. */
-.source-scroll [data-radix-scroll-area-viewport] > div {
+/* round-34, generalized round-36: Radix ScrollArea wraps viewport content
+   in a display:table / min-width:100% div. Tables shrink-wrap to their
+   content's min-content width, and — measured in round-36 — a table sized
+   for a wider layout does NOT re-shrink when the viewport narrows
+   (resizable panel dragged / window resized): viewport 498px kept a stale
+   843px table, so overflow-x:hidden clipped the canvas-paper's right
+   border off-screen (the article-tab "box wider than the window" bug).
+   Note: a plain max-width:100% does NOT clamp a display:table box
+   (measured, round-34), so we override the display itself — block keeps
+   the min-width:100% stretch behavior for short content, always tracks
+   the viewport width, and long tokens wrap at the text level via
+   break-words. Audited round-36: no ScrollArea in this app uses
+   horizontal orientation, so the table layout is never needed. */
+[data-radix-scroll-area-viewport] > div {
   display: block !important;
 }
 

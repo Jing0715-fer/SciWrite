@@ -55,7 +55,7 @@ export function DiagramDialog({ open, onOpenChange, articleId }: Props) {
   const renderTable = (md: string) => {
     if (!md) return null;
     const lines = md.trim().split("\n").filter(l => l.trim().startsWith("|"));
-    if (lines.length < 2) return <pre className="text-[10px] font-mono whitespace-pre-wrap">{md}</pre>;
+    if (lines.length < 2) return <pre className="text-[10px] font-mono whitespace-pre-wrap break-words">{md}</pre>;
     const headers = lines[0].split("|").filter(c => c.trim()).map(c => c.trim());
     const rows = lines.slice(2).map(line => line.split("|").filter(c => c.trim()).map(c => c.trim()));
     return (

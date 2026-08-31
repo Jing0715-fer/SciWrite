@@ -461,7 +461,7 @@ function renderSegment(
             <div className="space-y-1.5">
               {refs.map((r, ri) => (
                 <div key={ri} className="space-y-0.5">
-                  <p className="font-semibold leading-snug font-sans text-[11px]">
+                  <p className="font-semibold leading-snug font-sans text-[11px] break-words">
                     {r.title}
                   </p>
                   <p className="text-[10px] text-muted-foreground leading-snug">
@@ -486,7 +486,7 @@ function renderSegment(
                       </span>
                     )}
                     {r.doi && (
-                      <span className="text-[9px] font-mono text-muted-foreground">
+                      <span className="text-[9px] font-mono text-muted-foreground break-all">
                         DOI:{r.doi}
                       </span>
                     )}
@@ -767,7 +767,7 @@ export function MarkdownCitations({
 
       {/* Fallback: raw AI-generated citation block (only if no structured refs) */}
       {citationsBlock && citedRefs.length === 0 && (
-        <div className="mt-3 pt-3 border-t border-dashed border-border/70 text-xs text-muted-foreground font-mono whitespace-pre-wrap leading-relaxed">
+        <div className="mt-3 pt-3 border-t border-dashed border-border/70 text-xs text-muted-foreground font-mono whitespace-pre-wrap break-words leading-relaxed">
           {citationsBlock}
         </div>
       )}
@@ -776,7 +776,7 @@ export function MarkdownCitations({
           Rendered as literal text — no duplicate component-generated list is added. */}
       {contentRefText && (
         <div className="mt-4 pt-3 border-t border-border/70">
-          <div className="text-[11px] leading-snug font-sans text-foreground/85 whitespace-pre-wrap">
+          <div className="text-[11px] leading-snug font-sans text-foreground/85 whitespace-pre-wrap break-words">
             {contentRefText}
           </div>
         </div>
@@ -812,7 +812,7 @@ export function MarkdownCitations({
                 <span className="font-mono text-primary font-semibold shrink-0">
                   [{i + 1}]
                 </span>
-                <span className="flex-1">
+                <span className="flex-1 min-w-0 break-words">
                   {r.authors && <span>{r.authors} </span>}
                   {r.year && (
                     <span className="text-muted-foreground">({r.year}) </span>
@@ -830,7 +830,7 @@ export function MarkdownCitations({
                     </span>
                   )}
                   {r.doi && (
-                    <span className="ml-1 text-[9px] font-mono text-muted-foreground">
+                    <span className="ml-1 text-[9px] font-mono text-muted-foreground break-all">
                       doi:{r.doi}
                     </span>
                   )}

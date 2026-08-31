@@ -222,9 +222,12 @@ export function WritingWorkspace({
                     <Trash2 className="h-3 w-3" />
                   </button>
                 </div>
-                {/* The document sheet — paragraphs read as a stack of cards
-                    laid on a warm paper surface. */}
-                <div className="canvas-paper rounded-xl p-5 sm:p-6">
+                {/* round-36: removed the outer canvas-paper sheet — each paragraph
+                    is already a surface card, so the box-in-box framing read as
+                    redundant (user feedback). Cards sit directly on the desk.
+                    pl-6 keeps a left gutter for the drag handle (absolute
+                    -left-6, previously roomed by the sheet's p-5 padding). */}
+                <div className="pl-6">
                   <SortableParagraphs paragraphs={paragraphs} projectId={activeProjectId} articleContent={articles[0]?.content} />
                 </div>
                 <div className="pt-3">
