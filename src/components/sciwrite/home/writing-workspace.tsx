@@ -189,7 +189,7 @@ export function WritingWorkspace({
       {/* Paragraphs tab */}
       {workspaceTab === "paragraphs" && (
         <ScrollArea className="flex-1 min-h-0 scroll-academic">
-          <div className="px-5 py-4 max-w-3xl mx-auto">
+          <div className="px-5 py-4">
             {paragraphs.length === 0 ? (
               <div className="text-center py-16 acad-fade-in">
                 <div className="h-18 w-18 mx-auto rounded-[1.25rem] bg-primary/10 flex items-center justify-center mb-4 ring-academic">
@@ -242,7 +242,7 @@ export function WritingWorkspace({
       {/* Article tab */}
       {workspaceTab === "article" && (
         <ScrollArea className="flex-1 min-h-0 scroll-academic">
-          <div className="px-5 py-4 max-w-3xl mx-auto">
+          <div className="px-5 py-4">
             {latestArticle ? (
               <div className="canvas-paper rounded-xl p-5 sm:p-6">
                 <div className="flex items-center gap-2 mb-3">

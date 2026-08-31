@@ -66,7 +66,7 @@ export function RelationshipWorkspace({ projectId }: { projectId: string }) {
 
   return (
     <ScrollArea className="flex-1 min-h-0 scroll-academic">
-      <div className="px-5 py-4 max-w-2xl mx-auto">
+      <div className="px-5 py-4">
         {relMut.isPending && (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-primary" />

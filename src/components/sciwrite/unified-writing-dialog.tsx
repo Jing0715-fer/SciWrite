@@ -128,11 +128,12 @@ export function UnifiedWritingDialog({
           // the streaming-log panel can sit beside the main content as an
           // independent column.
           //   Not running → max-w-5xl (64rem): main column only.
-          //   Running     → max-w-7xl (80rem): main column (~60rem) +
-          //                                     log panel (20rem).
+          //   Running     → max-w-[96vw] (round-32): the article being
+          //                 generated gets the full screen width — no wasted
+          //                 side margins on wide displays.
           // (The Dialog component no longer carries a default sm:max-w-lg
           // that would override these — see ui/dialog.tsx.)
-          isFullArticleRunning ? "max-w-7xl" : "max-w-5xl",
+          isFullArticleRunning ? "max-w-[96vw]" : "max-w-5xl",
           // Only the Full Article tab gets a concrete h-[92vh]: its root is
           // absolutely positioned (absolute inset-0) and needs a real height
           // to fill. Every other tab lets its content define the dialog height

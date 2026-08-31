@@ -242,7 +242,7 @@ export function ArticleInsights({
 
   return (
     <ScrollArea className="h-full scroll-academic">
-      <div className="px-8 py-5 max-w-4xl mx-auto space-y-5">
+      <div className="px-8 py-5 space-y-5">
         {/* Header — v88-1: Enhanced with gradient + icon styling */}
         <div className="flex items-center gap-2 pb-3 border-b border-border/40">
           <div className="flex items-center gap-2">

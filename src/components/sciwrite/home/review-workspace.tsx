@@ -41,7 +41,7 @@ export function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: 
 
   return (
     <ScrollArea className="flex-1 min-h-0 scroll-academic">
-      <div className="px-5 py-4 max-w-2xl mx-auto">
+      <div className="px-5 py-4">
         {!displayData && !reviewMut.isPending && (
           <div className="text-center py-12">
             <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">

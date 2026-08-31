@@ -612,7 +612,10 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
 
   return (
     <Dialog open={true} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-6xl h-[90vh] max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
+      {/* round-32: the viewer fills ~96vw — the article reading surface
+          uses the available screen width instead of a fixed max-w column
+          (user request: no width cap, no wasted side margins on wide screens). */}
+      <DialogContent className="max-w-[96vw] h-[90vh] max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 shrink-0 bg-gradient-to-r from-primary/5 via-muted/10 to-transparent overflow-hidden">
           <div className="flex items-start gap-3">
             <div className="flex-1 min-w-0">
@@ -891,10 +894,9 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
             <ScrollArea className="h-full w-full scroll-academic">
               {/* round-31: reading surface — one canvas-paper sheet with generous
                   margins; sections separated by hairlines instead of bordered
-                  cards so the tab reads as a document, not a dashboard. */}
-              <div className={`px-6 sm:px-10 py-6 mx-auto ${
-                viewLang === "parallel" ? "max-w-5xl" : "max-w-3xl"
-              }`}>
+                  cards so the tab reads as a document, not a dashboard.
+                  round-32: no max-w cap — the sheet fills the panel width. */}
+              <div className="px-6 sm:px-10 py-6">
                 <div className="canvas-paper rounded-xl p-6 sm:p-8 space-y-6">
                 {paragraphsQ.isLoading && paragraphs.length === 0 && (
                   <>
@@ -1082,7 +1084,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                 <ReadingProgressIndicator contentRef={composedContentRef} />
                 {viewLang === "parallel" && hasZh ? (
                   <ScrollArea className="flex-1 min-h-0 w-full scroll-academic">
-                    <div ref={composedContentRef} className="px-6 py-6 max-w-5xl mx-auto">
+                    <div ref={composedContentRef} className="px-6 py-6">
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                         {/* round-31: each language column is its own paper sheet. */}
                         <div className="canvas-paper rounded-xl p-5 sm:p-6 space-y-2">
@@ -1106,7 +1108,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                   </ScrollArea>
                 ) : (
                   <ScrollArea className="flex-1 min-h-0 w-full scroll-academic">
-                    <div ref={composedContentRef} className="px-6 sm:px-10 py-6 max-w-3xl mx-auto overflow-hidden">
+                    <div ref={composedContentRef} className="px-6 sm:px-10 py-6 overflow-hidden">
                       {/* Adversarial citation-audit banner (Layer 3). Runs a
                           deterministic audit on mount and offers an optional
                           LLM deep-audit. Non-dismissable when blocking errors. */}
@@ -1505,7 +1507,7 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
 
   return (
     <ScrollArea className="h-full scroll-academic">
-      <div className="px-8 py-5 max-w-2xl mx-auto">
+      <div className="px-8 py-5">
         {!reviewData && !reviewMut.isPending && (
           <div className="text-center py-12">
             <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 ring-1 ring-primary/15 flex items-center justify-center mb-4">
@@ -1650,7 +1652,7 @@ function RelationshipView({
 
   return (
     <ScrollArea className="h-full scroll-academic">
-      <div className="px-8 py-5 max-w-2xl mx-auto space-y-4">
+      <div className="px-8 py-5 space-y-4">
         {/* Interactive citation graph — visualizes themes + connections as
             a radial node-edge graph. Hover a node to highlight its
             connections. Rendered above the text summary so users get a
@@ -2551,7 +2553,7 @@ function AnalysisTab({
         )}
         {subTab === "audit" && (
           <ScrollArea className="h-full scroll-academic">
-            <div className="px-6 py-5 max-w-3xl mx-auto">
+            <div className="px-6 py-5">
               <div className="flex items-center gap-2 mb-3">
                 <ScanSearch className="h-4 w-4 text-violet-600 dark:text-violet-400" />
                 <h3 className="text-sm font-semibold">

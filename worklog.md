@@ -2253,3 +2253,21 @@ Stage Summary:
 - 方法论沉淀：VLM 评审必须配 DOM 几何/计算样式仲裁（本轮 2 次误报均被数值证伪）；自定义 globals 类为 unlayered、会压过同元素 Tailwind 工具类——需用 wrapper div 或 important 变体共存
 - 用户侧预期：浅色=羊皮纸灰桌面+纯白卡片浮起+纸张画布+流光进度条；深色=近黑工作室+更亮卡片+AA 对比；激活态左指示条、统一 chips/eyebrow 语言、AI Hub 无空 void、移动端底部导航正常
 - 提交信息：feat(round-31): visual quality elevation — zoned paper background, night-studio dark tokens, eyebrow/canvas-paper/progress-glow utilities, 4-batch component polish (shell/workspace/viewer/AI-hub), unified chip language; VLM-verified 6→8 (light) 4→8 (dark)
+
+---
+Task ID: round-32
+Agent: main (Z.ai Code orchestrator)
+Task: 用户反馈「中间显示文章的部分不要限制宽度，页面较宽时两侧空白太多浪费空间」— 解除文章显示区的宽度限制
+
+Work Log:
+- 定位所有宽度约束（rg max-w-3xl/2xl/4xl/5xl/6xl/7xl + mx-auto）：article-viewer-tabs.tsx 7 处（dialog 壳 max-w-6xl + Sections/Composed(单/并行)/Review/Relationships/Analysis 各列 cap）、writing-workspace 2 处（paragraphs/article tab max-w-3xl）、review/relationship-workspace（max-w-2xl）、article-insights（max-w-4xl）、unified-writing-dialog（运行态 max-w-7xl）
+- 修复：viewer DialogContent max-w-6xl → max-w-[96vw]（铺满视口，仅留 2vw 浮动感）；全部阅读面去掉 max-w cap + mx-auto（保留 px-6 sm:px-10 阅读留白节奏）；AI Hub 全文生成运行态 max-w-7xl → max-w-[96vw]（未运行态保持 max-w-5xl 表单宽度不变）
+- 共 6 文件 21+/18-，diff 审计确认全部为 className/注释级修改，零逻辑/props/事件改动
+- E2E（agent-browser 1920×1080 实测几何）：dialog 1843px=96vw（两侧各 38px）；Sections sheet 1761px（原 768px cap）；Composed sheet 1537px + TOC rail 223px 填满 dialog（原 768px）；文本列 1471px（原 688px）；workspace paragraphs/article sheet 906px 铺满可拖拽中栏（原 768px cap）
+- VLM 复核：Sections「excellent use of horizontal space, no large wasted empty spaces」；Composed 首次评审误报「两侧大量空白」→ DOM 几何仲裁证伪（sheet 303→1841 vs dialog 38→1882，仅 41px padding），聚焦复询后改口「~78% paper sheet + 无浪费空白区」（延续 round-30/31 记录的 VLM 视觉误报模式，几何测量为准）
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）；移动端 390×844 无横向溢出；console 仅 2 条既有基线 warning；dev.log 无新错误；浏览器状态已重置（theme=light）
+
+Stage Summary:
+- 文章显示区宽度全部解封：viewer 96vw 铺满 + 阅读纸面填满面板宽度（Sections 1761px / Composed 文本列 1471px，均约为原来的 2.2 倍）；中栏 workspace 三 tab（paragraphs/article/review/relationships）去掉 768/672px cap 随拖拽栏宽自适应
+- AI Hub 仅在全文生成运行态放宽到 96vw（流式文章 + 日志面板并排获得全部屏宽），配置表单态保持 5xl 不变
+- 验证三通道齐备：tsc/lint 基线、1920px 实测 DOM 几何、VLM 双评（含一次误报仲裁）
