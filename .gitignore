@@ -60,3 +60,4 @@ server.log
 .zscripts/dev.pid
 # user-uploaded files (exported PDFs sent for review etc.)
 /upload/
+.tmp-*
