@@ -207,10 +207,13 @@ export const translations = {
     "gather.selected": "selected",
     "gather.noSources": "No sources gathered. Go back and run the organize step.",
     "gather.verifyBtn": "Cross-check with LLM knowledge",
-    "gather.verifyDesc": "Confirm the gathered sources against the LLM's own domain knowledge: fill missing metadata (authors/year/journal) and add important missing works — PubMed-verified before they become citable.",
+    "gather.verifyDesc": "Confirm the gathered sources against the LLM's own domain knowledge: fill missing metadata (authors/year/journal) and add important missing works — PubMed or Crossref-verified before they become citable.",
     "gather.verifyResultTitle": "Knowledge cross-check ✓",
     "gather.fieldsCompleted": "missing fields completed",
+    "gather.dbFieldsCompleted": "from PubMed records",
     "gather.gapSourcesAdded": "gap sources verified & added",
+    "gather.crossrefSourcesAdded": "via Crossref registry",
+    "gather.promotedSuggestions": "unverified suggestions promoted",
     "gather.unverifiedSuggestions": "unverified suggestions (saved for review, not citable)",
     "toast.verifyCompleted": "Knowledge cross-check done: {fields} fields completed, {added} sources added",
 
@@ -1106,6 +1109,11 @@ export const translations = {
 
     // Knowledge panel "query:" label
     "knowledge.queryLabel": "query:",
+    "knowledge.badgePromoted": "verified & promoted from suggestion",
+    "knowledge.badgeCrossrefVerified": "LLM knowledge gap-fill · Crossref-verified",
+    "knowledge.badgePubmedVerified": "LLM knowledge gap-fill · PubMed-verified",
+    "knowledge.badgeDbBackfilled": "completed from PubMed record · {fields}",
+    "knowledge.badgeUnverified": "LLM suggestion · unverified (not citable)",
 
     // Molcraft fusion — structure analysis
     "knowledge.analyzeStructure": "Analyze 3D structure",
@@ -1537,10 +1545,13 @@ export const translations = {
     "gather.selected": "已选",
     "gather.noSources": "未收集到数据源。请返回运行组织步骤。",
     "gather.verifyBtn": "结合 LLM 知识校验补全",
-    "gather.verifyDesc": "用 LLM 自身的专业知识校验已收集的数据源：补全缺失的元数据（作者/年份/期刊），并补上搜索遗漏的重要文献——经 PubMed 核实后方可被引用。",
+    "gather.verifyDesc": "用 LLM 自身的专业知识校验已收集的数据源：补全缺失的元数据（作者/年份/期刊），并补上搜索遗漏的重要文献——经 PubMed 或 Crossref 核实后方可被引用。",
     "gather.verifyResultTitle": "知识交叉校验 ✓",
     "gather.fieldsCompleted": "个缺失字段已补全",
+    "gather.dbFieldsCompleted": "个来自 PubMed 官方记录",
     "gather.gapSourcesAdded": "篇遗漏文献已核实并加入",
+    "gather.crossrefSourcesAdded": "篇经 Crossref 核实",
+    "gather.promotedSuggestions": "条未核实建议已转正",
     "gather.unverifiedSuggestions": "条未核实建议（已保存供人工审阅，不可引用）",
     "toast.verifyCompleted": "知识校验完成：补全 {fields} 个字段，新增 {added} 个数据源",
 
@@ -2436,6 +2447,11 @@ export const translations = {
 
     // Knowledge panel "query:" label
     "knowledge.queryLabel": "查询：",
+    "knowledge.badgePromoted": "已核实并从建议转正",
+    "knowledge.badgeCrossrefVerified": "LLM 知识补源 · Crossref 已核实",
+    "knowledge.badgePubmedVerified": "LLM 知识补源 · PubMed 已核实",
+    "knowledge.badgeDbBackfilled": "由 PubMed 记录补全 · {fields}",
+    "knowledge.badgeUnverified": "LLM 建议 · 未核实（不可引用）",
 
     // Molcraft fusion — structure analysis
     "knowledge.analyzeStructure": "分析三维结构",

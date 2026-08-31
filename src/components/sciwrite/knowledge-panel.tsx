@@ -41,6 +41,7 @@ import type { DataSource, Reference } from "@/lib/types";
 
 const TYPE_BADGE: Record<string, string> = {
   pubmed: "badge-emerald",
+  crossref: "badge-emerald",
   uniprot: "badge-teal",
   rcsb: "badge-amber",
   ncbi: "badge-rose",
@@ -50,11 +51,12 @@ const TYPE_BADGE: Record<string, string> = {
 };
 
 // Display order for source types (most common first)
-const SOURCE_TYPE_ORDER = ["pubmed", "rcsb", "uniprot", "ncbi", "blast", "web", "manual"];
+const SOURCE_TYPE_ORDER = ["pubmed", "crossref", "rcsb", "uniprot", "ncbi", "blast", "web", "manual"];
 
 // lucide icon per source type (no emoji icons in the UI — design rule).
 const SOURCE_TYPE_ICONS: Record<string, LucideIcon> = {
   pubmed: FileText,
+  crossref: BookCheck,
   rcsb: Dna,
   uniprot: FlaskConical,
   ncbi: Puzzle,
@@ -579,18 +581,31 @@ function SourceCard({
           {d.journal && <span> · <em>{d.journal}</em></span>}
         </p>
       )}
-      {/* round-33: provenance badges from the LLM-knowledge cross-check.
-          PubMed-verified gap fills are citable (emerald); unconfirmed LLM
-          suggestions are flagged amber and never enter the reference pool. */}
+      {/* round-33/35: provenance badges from the LLM-knowledge cross-check.
+          Registry-verified gap fills are citable (emerald — PubMed or
+          Crossref channel; promoted rows were previously amber unverified
+          suggestions); unconfirmed suggestions stay amber and never enter
+          the reference pool. */}
       {extraObj?.llmSuggested && !extraObj?.unverified && (
         <span className="inline-flex items-center gap-1 text-[8px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
-          <BookCheck className="h-2.5 w-2.5" /> LLM knowledge gap-fill · PubMed-verified
+          <BookCheck className="h-2.5 w-2.5" />
+          {extraObj?.promotedFrom === "unverified"
+            ? t("knowledge.badgePromoted")
+            : d.source === "crossref"
+              ? t("knowledge.badgeCrossrefVerified")
+              : t("knowledge.badgePubmedVerified")}
+        </span>
+      )}
+      {extraObj?.dbFilled && Array.isArray(extraObj.dbFilled) && extraObj.dbFilled.length > 0 && !extraObj?.llmSuggested && (
+        <span className="inline-flex items-center gap-1 text-[8px] font-semibold text-muted-foreground uppercase tracking-wider">
+          <DatabaseIcon className="h-2.5 w-2.5" />
+          {t("knowledge.badgeDbBackfilled", { fields: extraObj.dbFilled.join("/") })}
         </span>
       )}
       {extraObj?.unverified && (
         <div className="mt-0.5 rounded-md bg-amber-50/60 dark:bg-amber-950/25 border border-amber-200/50 dark:border-amber-900/40 px-1.5 py-1 space-y-0.5">
           <div className="flex items-center gap-1 text-[8px] font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider">
-            <BookCheck className="h-2.5 w-2.5" /> LLM suggestion · unverified (not citable)
+            <BookCheck className="h-2.5 w-2.5" /> {t("knowledge.badgeUnverified")}
           </div>
           {extraObj.llmReason && (
             <p className="text-[8px] text-muted-foreground leading-snug break-words">

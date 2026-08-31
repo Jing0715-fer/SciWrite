@@ -35,7 +35,7 @@
  */
 
 import { chatWithSession } from "@/lib/llm-session";
-import { queryDatabase } from "@/lib/databases";
+import { queryDatabase, fetchPubMedSummaries, searchCrossref, lookupCrossrefDoi } from "@/lib/databases";
 import { safeParseJSON } from "@/lib/generate-full-helpers";
 
 export interface KVSourceInput {
@@ -89,11 +89,30 @@ type FillField = (typeof FILLABLE_FIELDS)[number];
 // DOIs are machine-checkable identifiers — a wrong one is worse than none.
 // (Real DOIs arrive via database gather or the reference-enrich flow.)
 
+/**
+ * Values that are placeholders, not data. Round-35 audit found the LLM
+ * echoing the prompt's "[journal=MISSING]" sentinel straight back — that
+ * landed as journal="MISSING" in the DB (cleanFill only rejected
+ * unknown/n/a/none). Reject every sentinel-ish string, case-insensitive,
+ * including punctuation-wrapped variants.
+ */
+const SENTINEL_VALUES = new Set([
+  "missing", "missng", "unknown", "n/a", "na", "none", "null", "nil",
+  "not available", "not applicable", "not known", "unavailable", "no data",
+  "no record", "tbd", "uncertain", "-", "—", "?", "??",
+]);
+
 /** Sanitize a single LLM-provided fill value. Returns null when unusable. */
 function cleanFill(value: unknown, maxLen: number): string | null {
   if (typeof value !== "string") return null;
-  const v = value.replace(/[\u0000-\u001f\u007f]/g, "").trim();
-  if (!v || v.toLowerCase() === "unknown" || v.toLowerCase() === "n/a" || v.toLowerCase() === "none") return null;
+  let v = value.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  if (!v) return null;
+  // The prompt marks gaps with [field=MISSING]; the LLM sometimes wraps
+  // echoes in quotes or trailing periods before/after the sentinel.
+  v = v.replace(/^["'`]([\s\S]*)["'`]$/, "$1").replace(/[.\s]+$/, "").trim();
+  const bare = v.toLowerCase().replace(/[.:;]+$/, "").trim();
+  if (SENTINEL_VALUES.has(bare)) return null;
+  if (!v) return null;
   return v.slice(0, maxLen);
 }
 
@@ -141,10 +160,22 @@ You have TWO jobs:
 
   for (let b = 0; b < sources.length; b += batchSize) {
     const batch = sources.slice(b, b + batchSize);
+    // round-35: rows whose three fillable fields are ALL complete get a
+    // single compact line — the LLM has nothing to fill for them, they only
+    // matter for gap detection. Rows with gaps keep the detailed
+    // MISSING-marked form. This roughly halves prompt tokens on mature
+    // projects and focuses the model on the rows that need work.
     const list = batch
       .map((s, j) => {
         const marks = (f: string, v?: string | null) =>
           v && String(v).trim() ? ` [${f}=${String(v).slice(0, 160)}]` : ` [${f}=MISSING]`;
+        const complete =
+          s.authors && String(s.authors).trim() &&
+          s.year && String(s.year).trim() &&
+          s.journal && String(s.journal).trim();
+        if (complete) {
+          return `(${b + j + 1}) (${s.source}${s.externalId ? ":" + s.externalId : ""}) TITLE: ${s.title.slice(0, 200)} [complete]`;
+        }
         return (
           `(${b + j + 1}) (${s.source}${s.externalId ? ":" + s.externalId : ""}) ` +
           `TITLE: ${s.title.slice(0, 200)}` +
@@ -226,7 +257,17 @@ Output JSON only.`;
         });
       }
     } catch (err: any) {
-      log(`knowledge-verify: batch ${Math.floor(b / batchSize) + 1} failed: ${String(err?.message ?? err).slice(0, 120)}`);
+      const errMsg = String(err?.message ?? err);
+      log(`knowledge-verify: batch ${Math.floor(b / batchSize) + 1} failed: ${errMsg.slice(0, 120)}`);
+      // Fail fast on process-wide aborts (429-quota / aborted-flag): trying
+      // the remaining batches just produces a wall of identical errors.
+      if (/previous call aborted|quota exhausted|daily quota/i.test(errMsg)) {
+        const remaining = Math.ceil((sources.length - b) / batchSize) - 1;
+        if (remaining > 0) {
+          log(`knowledge-verify: LLM unavailable — skipping ${remaining} remaining batch(es); database backfill is already applied`);
+        }
+        break;
+      }
     }
   }
 
@@ -311,6 +352,7 @@ export async function verifyMissingViaPubMed(
   missing: KVMissingSource[],
   opts: { onLog?: (msg: string) => void; minSimilarity?: number } = {}
 ): Promise<{ verified: VerifiedMissingItem[]; unverified: KVMissingSource[] }> {
+  // (round-35: see verifyMissingViaCrossref below for the second channel)
   const log = opts.onLog || (() => {});
   const minSim = opts.minSimilarity ?? 0.72;
   const verified: VerifiedMissingItem[] = [];
@@ -475,4 +517,528 @@ export async function applyKnowledgeCompletions(
   }
 
   return { fieldsCompleted, sourcesCompleted, byField };
+}
+
+/* ==================== round-35 additions ==================== */
+
+/**
+ * Authoritative metadata backfill — runs BEFORE the LLM pass.
+ *
+ * A source saved from PubMed carries its PMID in externalId; when fields
+ * went missing (thin esummary rows, older saving paths), PubMed's OWN
+ * record for that PMID is ground truth — filling from it has zero
+ * hallucination risk, unlike LLM fills. After this pass the LLM only sees
+ * the gaps no database can close (web-scraped rows, registry misses).
+ *
+ * Also repairs the two systematic web-gather defects found in the round-35
+ * audit of real project data:
+ *   - authors holding the website DOMAIN ("www.nature.com") — not a person;
+ *   - year holding a month fragment ("Jul ") from date.slice(0, 4).
+ * Those strings are non-empty so fill-gaps-only passes skipped them forever;
+ * here they are treated as garbage and reset so they can be refilled.
+ */
+const GARBAGE_AUTHORS =
+  /^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?$/i; // bare domain-ish string
+const GARBAGE_YEAR = /^(19|20)\d{2}$/;
+
+export function looksLikeDomain(value?: string | null): boolean {
+  if (!value) return false;
+  const v = String(value).trim();
+  if (/\s/.test(v)) return false; // domains never contain whitespace
+  return GARBAGE_AUTHORS.test(v);
+}
+
+export function isValidYear(value?: string | null): boolean {
+  const v = String(value || "").trim();
+  return GARBAGE_YEAR.test(v);
+}
+
+export async function backfillFromExternalIds(
+  projectId: string,
+  dataSources: { id: string; source: string; externalId?: string | null; title?: string | null; authors?: string | null; year?: string | null; journal?: string | null; doi?: string | null; extra?: string | null }[],
+  references: { id: string; externalId?: string | null; title?: string | null; authors?: string | null; year?: string | null; journal?: string | null; doi?: string | null }[],
+  db: { dataSource: { update: (a: any) => Promise<any> }; reference: { update: (a: any) => Promise<any> } },
+  opts: { onLog?: (msg: string) => void } = {}
+): Promise<{ fieldsCompleted: number; sourcesCompleted: number; repairedGarbage: number; byField: Record<string, number> }> {
+  const log = opts.onLog || (() => {});
+
+  // Reset garbage values in-memory AND in the DB so fill-gaps-only passes
+  // (this one and the LLM one after it) can repair them.
+  let repairedGarbage = 0;
+  for (const ds of dataSources) {
+    const patch: Record<string, null> = {};
+    if (looksLikeDomain(ds.authors)) patch.authors = null;
+    if (ds.year && !isValidYear(ds.year)) patch.year = null;
+    if (ds.journal && SENTINEL_VALUES.has(String(ds.journal).toLowerCase().replace(/[.:;]+$/, "").trim())) patch.journal = null;
+    if (Object.keys(patch).length) {
+      try {
+        await db.dataSource.update({ where: { id: ds.id }, data: patch });
+        Object.assign(ds, patch);
+        repairedGarbage++;
+        log(`backfill: reset garbage metadata (${Object.keys(patch).join(", ")}) on "${String(ds.title).slice(0, 50)}"`);
+      } catch { /* non-fatal */ }
+    }
+  }
+
+  // Collect PMID-backed rows with remaining gaps
+  const needs = dataSources.filter(
+    (ds) =>
+      ds.source === "pubmed" &&
+      ds.externalId &&
+      /^\d{1,9}$/.test(String(ds.externalId)) &&
+      (!ds.authors || !ds.year || !ds.journal || !ds.doi)
+  );
+  if (!needs.length) return { fieldsCompleted: 0, sourcesCompleted: 0, repairedGarbage, byField: {} };
+
+  const summaries = await fetchPubMedSummaries(needs.map((ds) => String(ds.externalId)));
+  log(`backfill: PubMed summaries fetched for ${summaries.size}/${needs.length} PMID-backed rows`);
+
+  // Reference lookup mirrors applyKnowledgeCompletions
+  const refByExtId = new Map<string, any>();
+  const refByTitle = new Map<string, any[]>();
+  for (const r of references) {
+    if (r.externalId) refByExtId.set(String(r.externalId), r);
+    const key = normalizeTitle(r.title || "");
+    if (key) {
+      const arr = refByTitle.get(key) || [];
+      arr.push(r);
+      refByTitle.set(key, arr);
+    }
+  }
+
+  let fieldsCompleted = 0;
+  let sourcesCompleted = 0;
+  const byField: Record<string, number> = {};
+
+  for (const ds of needs) {
+    const sum = summaries.get(String(ds.externalId));
+    if (!sum) continue;
+    const patch: Record<string, string> = {};
+    if (!ds.authors && sum.authors) { patch.authors = sum.authors.slice(0, 400); }
+    if (!ds.year && sum.year) { patch.year = sum.year; }
+    if (!ds.journal && sum.journal) { patch.journal = sum.journal.slice(0, 200); }
+    if (!ds.doi && sum.doi) { patch.doi = sum.doi.slice(0, 120); }
+    if (!Object.keys(patch).length) continue;
+
+    const extraPatch = (() => {
+      try {
+        const cur = ds.extra ? JSON.parse(String(ds.extra)) : {};
+        const prevList: string[] = Array.isArray(cur.dbFilled) ? cur.dbFilled : [];
+        cur.dbFilled = [...new Set([...prevList, ...Object.keys(patch)])];
+        return JSON.stringify(cur);
+      } catch {
+        return JSON.stringify({ dbFilled: Object.keys(patch) });
+      }
+    })();
+
+    try {
+      await db.dataSource.update({
+        where: { id: ds.id },
+        data: { ...patch, extra: extraPatch },
+      });
+      Object.assign(ds, patch, { extra: extraPatch });
+      // Mirror to the reference twin (fill-gaps-only there too)
+      const ref =
+        (ds.externalId && refByExtId.get(String(ds.externalId))) ||
+        (refByTitle.get(normalizeTitle(ds.title || "")) || [])[0];
+      if (ref) {
+        const refPatch: Record<string, string> = {};
+        for (const [k, v] of Object.entries(patch)) {
+          if (!ref[k] || !String(ref[k]).trim()) refPatch[k] = v;
+        }
+        if (Object.keys(refPatch).length) {
+          await db.reference.update({ where: { id: ref.id }, data: refPatch });
+        }
+      }
+      for (const k of Object.keys(patch)) byField[k] = (byField[k] || 0) + 1;
+      fieldsCompleted += Object.keys(patch).length;
+      sourcesCompleted++;
+      log(`backfill: PMID ${ds.externalId} completed [${Object.keys(patch).join(", ")}] for "${String(ds.title).slice(0, 50)}"`);
+    } catch (err: any) {
+      log(`backfill: apply failed for "${String(ds.title).slice(0, 50)}": ${String(err?.message ?? err).slice(0, 100)}`);
+    }
+  }
+
+  return { fieldsCompleted, sourcesCompleted, repairedGarbage, byField };
+}
+
+/**
+ * Stage B' — Crossref, the SECOND verification channel (round-35).
+ *
+ * Suggestions that PubMed's title search could not confirm are not
+ * necessarily hallucinations: PubMed indexes biomed journals only, so
+ * preprints, non-indexed journals, and much older landmark work fall
+ * through. Crossref registers DOIs for ~160M works across all disciplines,
+ * so we re-try each unconfirmed suggestion there:
+ *   1. If the suggestion carries a claimed DOI (extra llmDoi path), resolve
+ *      it in the Crossref registry and title-match the result — a match
+ *      means the LLM's DOI claim was actually right, and the registry's
+ *      metadata is authoritative (real DOI, real journal, real year).
+ *   2. Otherwise (or when the DOI resolves to a different work) do a
+ *      bibliographic title search and pick the best normalized-title match.
+ *
+ * Only matches at the same ≥0.72 similarity bar as the PubMed channel
+ * become citable; the rest stay unverified. DOI-level dedup guards two
+ * suggestions resolving to the same registered work.
+ */
+export async function verifyMissingViaCrossref(
+  missing: KVMissingSource[],
+  opts: { onLog?: (msg: string) => void; minSimilarity?: number } = {}
+): Promise<{ verified: VerifiedMissingItem[]; unverified: KVMissingSource[] }> {
+  const log = opts.onLog || (() => {});
+  const minSim = opts.minSimilarity ?? 0.72;
+  const verified: VerifiedMissingItem[] = [];
+  const unverified: KVMissingSource[] = [];
+  const claimedDois = new Set<string>();
+
+  for (const suggestion of missing) {
+    let matched: { item: any; sim: number; via: "doi" | "title" } | null = null;
+    // E2E finding: bibliographic search surfaces wwPDB structure entries
+    // ("10.2210/pdb2oar/pdb", crossrefType "component") whose titles ARE
+    // protein names like "Mechanosensitive Channel of Large Conductance
+    // (MscL)" — they fuzzy-match literature suggestions and would verify
+    // them against a STRUCTURE, not the suggested paper. Only literature
+    // types are acceptable verification targets.
+    const isLiterature = (item: any): boolean => {
+      const t = String(item?.extra?.crossrefType || "");
+      if (["component", "dataset", "peer-review"].includes(t)) return false;
+      if (/^10\.2210\//i.test(String(item?.externalId || ""))) return false; // wwPDB entries
+      return true;
+    };
+    try {
+      // 1. LLM-claimed DOI (kept in suggestion.doi by the gather route)
+      if (suggestion.doi) {
+        try {
+          const direct = await lookupCrossrefDoi(suggestion.doi);
+          if (direct && isLiterature(direct)) {
+            const sim = titleSimilarity(suggestion.title, direct.title || "");
+            if (sim >= minSim) {
+              matched = { item: direct, sim, via: "doi" };
+            } else {
+              log(`knowledge-verify: LLM DOI ${suggestion.doi} resolves to a DIFFERENT work (sim ${sim.toFixed(2)}) — claim discarded`);
+            }
+          }
+        } catch (err: any) {
+          log(`knowledge-verify: DOI lookup failed for ${suggestion.doi}: ${String(err?.message ?? err).slice(0, 80)}`);
+        }
+      }
+      // 2. Bibliographic title search
+      if (!matched) {
+        const items = (await searchCrossref(suggestion.title, 5)).filter(isLiterature);
+        let best: { item: any; sim: number } | null = null;
+        for (const item of items) {
+          const sim = titleSimilarity(suggestion.title, item.title || "");
+          if (!best || sim > best.sim) best = { item, sim };
+        }
+        if (best && best.sim >= minSim && best.item?.externalId) {
+          matched = { item: best.item, sim: best.sim, via: "title" };
+        }
+      }
+
+      if (matched && matched.item?.externalId) {
+        const doiKey = String(matched.item.externalId).toLowerCase();
+        if (claimedDois.has(doiKey)) {
+          log(`knowledge-verify: "${suggestion.title.slice(0, 50)}" resolves to already-claimed DOI ${doiKey} — skipped`);
+          continue; // duplicate of an earlier suggestion — do not save twice
+        }
+        claimedDois.add(doiKey);
+        const it = matched.item;
+        verified.push({
+          item: {
+            source: "crossref",
+            externalId: doiKey,
+            title: it.title || suggestion.title,
+            authors: it.authors || suggestion.authors,
+            year: it.year || suggestion.year,
+            journal: it.journal || suggestion.journal,
+            doi: doiKey,
+            url: it.url || `https://doi.org/${doiKey}`,
+            abstract: it.abstract,
+            extra: {
+              llmSuggested: true,
+              llmKind: suggestion.kind,
+              llmReason: suggestion.reason,
+              matchSimilarity: Math.round(matched.sim * 100) / 100,
+              matchedVia: matched.via,
+            },
+            gatherMethod: matched.via === "doi"
+              ? "llm-knowledge-verified-crossref-doi"
+              : "llm-knowledge-verified-crossref",
+            reason: suggestion.reason,
+            kind: suggestion.kind,
+          },
+          suggestion,
+          similarity: matched.sim,
+        });
+        log(`knowledge-verify: "${suggestion.title.slice(0, 50)}" confirmed in Crossref via ${matched.via} (DOI ${doiKey}, sim ${matched.sim.toFixed(2)})`);
+      } else {
+        unverified.push(suggestion);
+        log(`knowledge-verify: "${suggestion.title.slice(0, 50)}" not confirmed in Crossref either — stays unverified`);
+      }
+    } catch (err: any) {
+      unverified.push(suggestion);
+      log(`knowledge-verify: Crossref lookup failed for "${suggestion.title.slice(0, 50)}": ${String(err?.message ?? err).slice(0, 100)}`);
+    }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+
+  return { verified, unverified };
+}
+
+export interface PersistKnowledgeOutcome {
+  addedSources: {
+    title: string;
+    journal?: string;
+    year?: string;
+    externalId: string;
+    source: string;
+    verified: true;
+    reason: string;
+  }[];
+  promoted: number;
+  unverifiedSaved: KVMissingSource[];
+  skippedDuplicates: number;
+}
+
+/**
+ * Shared persistence for knowledge-verified gap sources + remaining
+ * unverified suggestions (round-35; previously duplicated ~90 lines across
+ * the gather-verify route and the v2 pipeline, which had drifted).
+ *
+ * Verified items (PubMed or Crossref channel):
+ *   - skipped when the project already holds the same externalId;
+ *   - when a previously-saved UNVERIFIED suggestion row matches the
+ *     verified work (claimed llmDoi, or title similarity ≥ 0.8), that row
+ *     is PROMOTED IN PLACE — source/metadata upgraded, unverified flag
+ *     dropped, reference created — instead of leaving a duplicate pair
+ *     (one amber "unverified" card + one verified card for the same paper);
+ *   - otherwise saved as a new citable dataSource + reference.
+ *
+ * Unverified suggestions: normalized-title dedup against ALL project rows
+ * (round-34 rule) then saved flagged + non-citable.
+ */
+export async function persistKnowledgeSuggestions(
+  projectId: string,
+  verified: VerifiedMissingItem[],
+  unverified: KVMissingSource[],
+  db: any,
+  opts: { onLog?: (msg: string) => void; onSaved?: (ds: any, ref: any) => void } = {}
+): Promise<PersistKnowledgeOutcome> {
+  const log = opts.onLog || (() => {});
+
+  // Full current snapshot: extId dedup, title dedup, and promotion targets.
+  const allRows: any[] = await db.dataSource.findMany({
+    where: { projectId },
+    select: { id: true, source: true, externalId: true, title: true, authors: true, journal: true, year: true, doi: true, url: true, abstract: true, extra: true, query: true, rawJson: true, pinned: true },
+  });
+  const existingExtIds = new Set(allRows.map((r) => r.externalId).filter(Boolean));
+  const existingTitleKeys = new Set(
+    allRows.map((r) => normalizeTitle(r.title || "")).filter(Boolean)
+  );
+  // round-35 E2E: verified items must also be checked against NON-llm rows by
+  // TITLE — a Crossref bibliographic hit can be the same work already
+  // gathered under a different identifier namespace (RCSB structure rows
+  // hold PDB ids, not DOIs, so the extId check alone misses them).
+  const nonLlmRows = allRows.filter((r) => r.source !== "llm");
+  const isTitleDuplicate = (title: string): boolean => {
+    const key = normalizeTitle(title);
+    if (key && existingTitleKeys.has(key)) {
+      // exact title dupes on llm rows are promotion candidates, handled
+      // elsewhere — only non-llm rows make a real duplicate here
+      return nonLlmRows.some((r) => normalizeTitle(r.title || "") === key);
+    }
+    return nonLlmRows.some((r) => titleSimilarity(String(r.title || ""), title) >= 0.8);
+  };
+  // Unverified-suggestion rows are promotion candidates
+  const llmRows = allRows.filter((r) => {
+    if (r.source !== "llm") return false;
+    try {
+      return Boolean(JSON.parse(String(r.extra || "{}")).unverified);
+    } catch {
+      return false;
+    }
+  });
+
+  const findPromotable = (v: VerifiedMissingItem): any | null => {
+    for (const row of llmRows) {
+      let claimedDoi: string | null = null;
+      try {
+        const ex = JSON.parse(String(row.extra || "{}"));
+        if (ex.llmDoi) claimedDoi = String(ex.llmDoi).toLowerCase();
+      } catch { /* ignore */ }
+      if (claimedDoi && v.item.doi && claimedDoi === String(v.item.doi).toLowerCase()) return row;
+      if (titleSimilarity(String(row.title || ""), v.item.title) >= 0.8) return row;
+    }
+    return null;
+  };
+
+  const addedSources: PersistKnowledgeOutcome["addedSources"] = [];
+  let promoted = 0;
+  let skippedDuplicates = 0;
+
+  const upsertReference = async (item: any) => {
+    try {
+      return await db.reference.create({
+        data: {
+          type: item.source === "crossref" ? "crossref" : "pubmed",
+          externalId: item.externalId,
+          title: item.title,
+          authors: item.authors || null,
+          journal: item.journal || null,
+          year: item.year || null,
+          url: item.url || null,
+          doi: item.doi || null,
+          abstract: item.abstract || null,
+          projectId,
+        },
+      });
+    } catch (err: any) {
+      log(`reference create failed: ${String(err?.message ?? err).slice(0, 100)}`);
+      return null;
+    }
+  };
+
+  for (const v of verified) {
+    if (existingExtIds.has(v.item.externalId)) {
+      skippedDuplicates++;
+      continue;
+    }
+    // Title-level guard: the same work may already be gathered under a
+    // different identifier namespace (RCSB structure rows, web rows).
+    if (isTitleDuplicate(String(v.item.title || ""))) {
+      skippedDuplicates++;
+      log(`knowledge-verify: verified "${String(v.item.title).slice(0, 50)}" duplicates an already-gathered source — skipped`);
+      continue;
+    }
+    try {
+      const promotable = findPromotable(v);
+      if (promotable) {
+        // Promote the unverified row in place — metadata from the registry,
+        // provenance kept, amber flag removed.
+        const extra = (() => {
+          try {
+            const cur = JSON.parse(String(promotable.extra || "{}"));
+            delete cur.unverified;
+            delete cur.note;
+            cur.llmSuggested = true;
+            cur.llmKind = v.item.extra?.llmKind;
+            cur.llmReason = v.item.extra?.llmReason;
+            cur.matchSimilarity = v.item.extra?.matchSimilarity;
+            cur.matchedVia = v.item.extra?.matchedVia;
+            cur.promotedFrom = "unverified";
+            return JSON.stringify(cur);
+          } catch {
+            return JSON.stringify({ llmSuggested: true, promotedFrom: "unverified" });
+          }
+        })();
+        const ds = await db.dataSource.update({
+          where: { id: promotable.id },
+          data: {
+            source: v.item.source,
+            externalId: v.item.externalId,
+            title: v.item.title,
+            url: v.item.url || null,
+            authors: v.item.authors || promotable.authors || null,
+            journal: v.item.journal || promotable.journal || null,
+            year: v.item.year || promotable.year || null,
+            doi: v.item.doi || null,
+            abstract: v.item.abstract || null,
+            extra,
+            pinned: true,
+          },
+        });
+        existingExtIds.add(v.item.externalId);
+        promoted++;
+        const ref = await upsertReference(v.item);
+        opts.onSaved?.(ds, ref);
+        addedSources.push({
+          title: v.item.title,
+          journal: v.item.journal,
+          year: v.item.year,
+          externalId: v.item.externalId,
+          source: v.item.source,
+          verified: true,
+          reason: v.item.reason,
+        });
+        log(`knowledge-verify: promoted unverified row → ${v.item.source} ${v.item.externalId} ("${String(v.item.title).slice(0, 50)}")`);
+        continue;
+      }
+      const ds = await db.dataSource.create({
+        data: {
+          projectId,
+          source: v.item.source,
+          query: "llm-knowledge cross-check",
+          rawJson: JSON.stringify({ items: [v.item] }),
+          title: v.item.title,
+          externalId: v.item.externalId,
+          url: v.item.url,
+          authors: v.item.authors || null,
+          journal: v.item.journal || null,
+          year: v.item.year || null,
+          doi: v.item.doi || null,
+          abstract: v.item.abstract || null,
+          extra: JSON.stringify(v.item.extra),
+          pinned: true,
+        },
+      });
+      existingExtIds.add(v.item.externalId);
+      const ref = await upsertReference(v.item);
+      opts.onSaved?.(ds, ref);
+      addedSources.push({
+        title: v.item.title,
+        journal: v.item.journal,
+        year: v.item.year,
+        externalId: v.item.externalId,
+        source: v.item.source,
+        verified: true,
+        reason: v.item.reason,
+      });
+    } catch (err: any) {
+      log(`save verified source failed: ${String(err?.message ?? err).slice(0, 100)}`);
+    }
+  }
+
+  // Unconfirmed suggestions — flagged, non-citable (round-34 rules:
+  // normalizeTitle dedup over ALL project sources; LLM DOIs kept out of
+  // structured fields, preserved in extra.llmDoi for human review).
+  const unverifiedSaved: KVMissingSource[] = [];
+  for (const s of unverified) {
+    try {
+      const key = normalizeTitle(s.title || "");
+      if (key && existingTitleKeys.has(key)) {
+        log(`unverified suggestion "${String(s.title).slice(0, 50)}" already saved — skipped`);
+        continue;
+      }
+      if (key) existingTitleKeys.add(key);
+      await db.dataSource.create({
+        data: {
+          projectId,
+          source: "llm",
+          query: "llm-knowledge cross-check (unverified)",
+          rawJson: JSON.stringify({ items: [s] }),
+          title: s.title,
+          externalId: null,
+          url: null,
+          authors: s.authors || null,
+          journal: s.journal || null,
+          year: s.year || null,
+          doi: null,
+          abstract: null,
+          extra: JSON.stringify({
+            unverified: true,
+            llmKind: s.kind,
+            llmReason: s.reason,
+            ...(s.doi ? { llmDoi: s.doi } : {}),
+            note: "Proposed by LLM knowledge; not confirmed in PubMed or Crossref — review before citing.",
+          }),
+          pinned: false,
+        },
+      });
+      unverifiedSaved.push(s);
+    } catch (err: any) {
+      log(`save unverified suggestion failed: ${String(err?.message ?? err).slice(0, 100)}`);
+    }
+  }
+
+  return { addedSources, promoted, unverifiedSaved, skippedDuplicates };
 }

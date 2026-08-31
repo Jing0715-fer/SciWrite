@@ -548,9 +548,11 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
                 source: "web",
                 externalId: item.url,
                 title: item.name || item.url,
-                authors: item.host_name || undefined,
+                // round-35: host is not an author; extract a real 4-digit
+                // year from the date string instead of slicing "Jul ".
+                authors: undefined,
                 journal: undefined,
-                year: item.date?.slice(0, 4) || undefined,
+                year: item.date?.match(/\b(19|20)\d{2}\b/)?.[0] || undefined,
                 url: item.url,
                 doi: undefined,
                 abstract: item.snippet,

@@ -2323,3 +2323,31 @@ Stage Summary:
 - UI 双修：数据源/数据库查询卡片永不撑出面板（display:table 收缩行为根除 + 全字段断词），左侧项目/文章卡片宽度恒等（统一滚动容器结构 + scrollbar-gutter:stable）
 - 数据收集能力三处实质修复：deep-read 从必 422 到可用（page_reader 无 text 字段 → htmlToText + 样板裁剪）、unverified 建议零堆积（normalizeTitle 跨次去重）、幻觉 DOI 不再进结构化字段（gather + v2 两路由同步 + 存量清洗）
 - 修改文件：knowledge-panel.tsx、database-query-panel.tsx、projects-sidebar.tsx、globals.css、lib/ai.ts、api/ai/gather/route.ts、api/ai/generate-full-v2/route.ts（227+/25-，其中 ai.ts +114 为提取器）
+
+---
+Task ID: round-35
+Agent: main (Z.ai Code orchestrator)
+Task: 用户指令「继续测试和打磨数据源收集和校验能力」— 审计真实数据找缺陷、Crossref 第二核实通道、PubMed 权威回填、原位晋升、存量清洗
+
+Work Log:
+- 现场恢复：round-34 已提交（65ee215），对 MscL/MscS 项目（131 源）做元数据审计发现三类真实缺陷：①3 行 journal 字面值 "MISSING"（extra.llmFilled=["journal"]）— LLM 把 prompt 的 [journal=MISSING] 哨兵原样回写，cleanFill 只拒 unknown/n/a/none；②40 行 authors 存的是网站域名（"www.nature.com"）+ 11 行 year 是月份碎片（"Jul "）— v1/v2 gather 的 web 映射 `authors: item.host_name`、`year: item.date?.slice(0,4)` 所致；③12 条 unverified LLM 建议多数是真实论文（PubMed 题名检索就是找不到：非 biomed 期刊/老论文/预印本）
+- 修复①：knowledge-verify cleanFill 加 SENTINEL_VALUES 全集（missing/unknown/n/a/none/null/not available/tbd/标点包裹变体），引号剥离 + 尾标点剥离
+- 修复②（根治源头）：v1+v2 路由 web 映射 authors 不再存 host（extra.host 保留溯源）、year 用 /\b(19|20)\d{2}\b/ 提取真实 4 位年份；backfillFromExternalIds 新增垃圾重置（域名作者/坏年份/哨兵 journal → null，让 fill-gaps-only 管线可修复）
+- 新增 databases.ts：fetchPubMedSummaries（PMID 批量 esummary，200/块）+ searchCrossref（query.bibliographic 题名检索）+ lookupCrossrefDoi（DOI 直查）；DatabaseSource 联合类型加 "crossref"；Crossref 标题剥 <i> 标签与换行（实测 Science 标题带 markup）
+- 新增 knowledge-verify verifyMissingViaCrossref（第二核实通道）：PubMed 失败的建议先试 LLM 声称的 DOI 直查（Crossref 注册题名与建议题名相似度 ≥0.72 才算对——错误声明实测被证伪丢弃：10.1038/nature00828 指向不同文献 sim 0.13/10.1002/pro.699 sim 0.08）、再题名检索取最佳匹配；E2E 发现并修复：wwPDB 结构条目（10.2210/ DOI、crossrefType component/dataset，标题就是蛋白名）会被书目检索命中 → isLiterature 过滤（component/dataset/peer-review/10.2210 前缀全拒）
+- 新增 backfillFromExternalIds（数据库优先于 LLM）：PMID 源缺失字段从 PubMed 自己的 esummary 记录回填（零幻觉风险）+ extra.dbFilled 溯源 + reference 镜像；Stage A 提示词紧凑化（三字段齐全的行压成单行 [complete]，省 token 聚焦缺口行）
+- 新增 persistKnowledgeSuggestions（两路由共享持久化，替换原先 90 行漂移重复代码）：核实条目 extId 去重 + 新增标题级防重（非 llm 行 normalizeTitle 相等或相似度 ≥0.8 → 跳过，防 RCSB/web 行同工作异名重复）+ 原位晋升（已存 unverified 行按 llmDoi 或题名 ≥0.8 匹配核实工作 → UPDATE 升级为可引用而非新建重复卡）；未核实建议沿用 round-34 规则
+- 两路由接入新管线（gather verify + v2 STEP1.5）：backfill → LLM Stage A → PubMed 通道 → Crossref 通道 → persist；v2 stats 扩 5 个遥测字段（knowledgeDbFieldsCompleted/CrossrefAdded/Promoted 等）；SSE done 消息带 Crossref/晋升明细
+- Stage A 批处理加 fail-fast：429/配额 abort 后不再逐批报错（11 行失败墙 → 3 行清晰日志）
+- 前端：knowledge-panel 新徽章体系（emerald Crossref-verified / muted "completed from PubMed record · 字段" / promoted 转正徽章，i18n EN+ZH 12 键）；TYPE_BADGE/SOURCE_TYPE_ORDER/图标加 crossref（badge-emerald + BookCheck）；GatherTab 结果卡新 chip（teal dbFields / emerald crossref / violet promoted）；SOURCE_COLOR 补 crossref
+- 存量清洗脚本：全库 DataSource 615 行域名作者 + 105 行坏年份 + 3 行哨兵 journal 清零，Reference 649 行同步清洗，extra.llmFilled 列表同步修正；残留 throwaway 项目删除
+- E2E 验证（真实网络调用，LLM 配额 429 期间全跑通）：Crossref 通道对 MscL 12 条 unverified 干跑 4 条核实（PDB 过滤前误中 2 条已去重跳过）；一次性项目全流程 — 垃圾重置 1 行、PMID 11275684 权威回填 [authors,year,journal,doi]、LLM DOI 声明证伪、题名检索命中真论文 10.1126/science.1077945、原位晋升（unv:false+promo:unverified+Science 2002 真实元数据+reference 创建）、二跑幂等（0 added, skippedDup 1）；MscL API verify 两轮 — backfill 12 个真实 DOI 入库（dbFilled 溯源+91 条 pubmed reference 镜像后仅 5 条 PubMed 本身无 DOI）、fail-fast 生效
+- 浏览器验证（agent-browser 1920×1080）：crossref chip "crossref1" 渲染、Crossref 卡片完整（干净标题/真实作者年份期刊/emerald 徽章）、dbFilled 徽章 9 行显 + 3 行 llmSuggested 行显优先级 PubMed-verified 徽章（设计如此）、12 行 amber 未核实徽章；深色徽章 lab 亮度 73-75 可读；浅深双模式 scrollW=clientW=1920 零溢出；Gather tab LLM Knowledge 卡+按钮+新描述文案；0 page error、console 仅既有 warning；浏览器状态已重置（theme=light）
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）；dev.log 无新错误
+- VLM 复核不可用说明：LLM/VLM provider 配额 429（与 round-34 相同状况，重试 3 次跨 ~20 分钟），按 round-30/31/34 既定方法论以 DOM 几何/计算样式测量为最终仲裁标准（全部通过）；Stage A 的 LLM 代码路径在 round-33/34 已全量 E2E，本轮仅改列表格式（解析逻辑零改动）
+
+Stage Summary:
+- 校验能力三级信任成型：PubMed 自有记录（权威回填，0 幻觉）→ LLM 知识（fill-gaps-only+哨兵拒绝）→ 双注册表核实（PubMed + Crossref，同一 0.72 相似度门槛；LLM DOI 声明可用 Crossref 注册题名实测证伪/证实）
+- 实测修复的幻觉防线：MISSING 哨兵回写、域名作者/月份年份（源头+存量双修）、wwPDB 结构条目冒充文献、同工作异 ID 重复、unverified 行与核实结果的重复卡
+- 用户可见：Data 面板 crossref 类型 chip + 三色溯源徽章；Gather tab 结果卡 Crossref/转正/回填计数 chip；verify 二跑零堆积恒成立
+- 修改文件：lib/knowledge-verify.ts（+~430）、lib/databases.ts（+~145）、lib/types.ts、lib/constants.ts、lib/i18n.tsx、api/ai/gather/route.ts、api/ai/generate-full-v2/route.ts、api/ai/generate-full/route.ts、components/sciwrite/knowledge-panel.tsx、components/sciwrite/unified-writing-dialog.tsx

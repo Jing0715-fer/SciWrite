@@ -6,7 +6,8 @@ export type DatabaseSource =
   | "pubmed"
   | "ncbi"
   | "blast"
-  | "web";
+  | "web"
+  | "crossref"; // round-35: DOI-registry verification channel
 
 export type ParagraphFormat =
   | "background"

@@ -762,6 +762,154 @@ export async function runBlast(
   };
 }
 
+/* ---------------- PubMed summaries by PMID (round-35) ---------------- */
+
+export interface PubMedSummary {
+  title: string;
+  authors?: string;
+  journal?: string;
+  year?: string;
+  doi?: string;
+}
+
+/**
+ * Batch-fetch authoritative esummary records for a list of PMIDs.
+ *
+ * round-35: sources saved with an externalId (PMID) but missing
+ * authors/year/journal can be completed from PubMed's OWN record for that
+ * PMID — zero hallucination risk, unlike LLM fills. Chunks of 200 PMIDs per
+ * request (E-utilities recommended max).
+ */
+export async function fetchPubMedSummaries(
+  pmids: string[]
+): Promise<Map<string, PubMedSummary>> {
+  const out = new Map<string, PubMedSummary>();
+  const clean = [...new Set(pmids.map((p) => String(p).trim()).filter(Boolean))];
+  for (let i = 0; i < clean.length; i += 200) {
+    const chunk = clean.slice(i, i + 200);
+    try {
+      const url =
+        `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${chunk.join(",")}&retmode=json`;
+      const data = await withRetry(() => fetchJson(url), 2, 800);
+      const result = data?.result ?? {};
+      for (const id of chunk) {
+        const r = result[id];
+        if (!r || r.error) continue;
+        const authors = (r.authors || [])
+          .map((a: any) => a.name)
+          .filter(Boolean)
+          .join(", ");
+        out.set(id, {
+          title: String(r.title || "").replace(/\.$/, ""),
+          authors: authors || undefined,
+          journal: r.fulljournalname || r.source || undefined,
+          year: (String(r.pubdate || "").match(/\d{4}/) || [])[0],
+          doi: r.elocationid?.startsWith?.("doi:")
+            ? String(r.elocationid).replace("doi:", "").trim()
+            : (r.articleids || []).find((a: any) => a.idtype === "doi")?.value,
+        });
+      }
+    } catch {
+      // One failed chunk must not poison the whole backfill — the LLM
+      // knowledge pass still runs afterwards on whatever stayed missing.
+    }
+  }
+  return out;
+}
+
+/* ---------------- Crossref (round-35 verification channel) ---------------- */
+
+function crossrefItemToResultItem(msg: any): DatabaseResultItem {
+  const authors = (msg.author || [])
+    .map((a: any) => `${a.family || ""} ${a.given || ""}`.trim())
+    .filter(Boolean)
+    .join(", ");
+  // Crossref titles often carry inline markup ("Crystal Structure of
+  // <i>Escherichia coli</i> MscS") and embedded newlines — strip both.
+  const title = String(msg.title?.[0] || "(untitled)")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const year = String(
+    msg.issued?.["date-parts"]?.[0]?.[0] ||
+      msg.published?.["date-parts"]?.[0]?.[0] ||
+      msg.created?.["date-parts"]?.[0]?.[0] ||
+      ""
+  ).slice(0, 4);
+  const abstract = msg.abstract
+    ? String(msg.abstract)
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 800)
+    : undefined;
+  return {
+    source: "crossref",
+    externalId: String(msg.DOI || "").toLowerCase(),
+    title,
+    authors: authors || undefined,
+    journal:
+      msg["container-title"]?.[0] ||
+      msg["short-container-title"]?.[0] ||
+      undefined,
+    year: /^\d{4}$/.test(year) ? year : undefined,
+    url: msg.URL || (msg.DOI ? `https://doi.org/${msg.DOI}` : ""),
+    doi: String(msg.DOI || "").toLowerCase() || undefined,
+    abstract: abstract || undefined,
+    extra: {
+      crossrefType: msg.type,
+      publisher: msg.publisher,
+    },
+  };
+}
+
+/**
+ * Crossref bibliographic (title-ish) search — the second verification
+ * channel for LLM-suggested gap sources (round-35). PubMed title search
+ * misses preprints, non-indexed journals, and older landmark papers;
+ * Crossref registers DOIs for ~160M works across all disciplines.
+ * Relevance-ranked; callers must title-match the returned candidates.
+ */
+export async function searchCrossref(
+  query: string,
+  rows = 5
+): Promise<DatabaseResultItem[]> {
+  const q = query.trim().slice(0, 200);
+  if (!q) return [];
+  const url =
+    `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(q)}` +
+    `&rows=${rows}&select=DOI,title,author,issued,published,created,container-title,short-container-title,URL,abstract,type,publisher`;
+  const data = await withRetry(
+    () => fetchJson(url, undefined, 20000),
+    2,
+    1000
+  );
+  const items: any[] = data?.message?.items || [];
+  return items
+    .filter((m) => m?.DOI && m?.title?.[0])
+    .map(crossrefItemToResultItem);
+}
+
+/**
+ * Direct DOI lookup in the Crossref registry. Used to TEST an LLM-claimed
+ * DOI (round-33 showed LLM DOIs are often plausible-but-wrong): if the DOI
+ * resolves AND its registered title matches the suggestion, the claim was
+ * right and we can trust the registry's full metadata.
+ */
+export async function lookupCrossrefDoi(doi: string): Promise<DatabaseResultItem | null> {
+  const d = doi.trim().replace(/^https?:\/\/(dx\.)?doi\.org\//i, "").replace(/^doi:/i, "");
+  if (!/^10\.\d{4,9}\/\S+$/i.test(d)) return null;
+  const url = `https://api.crossref.org/works/${encodeURIComponent(d)}`;
+  const data = await withRetry(
+    () => fetchJson(url, undefined, 20000),
+    1,
+    1000
+  );
+  const msg = data?.message;
+  if (!msg?.DOI) return null;
+  return crossrefItemToResultItem(msg);
+}
+
 /* ---------------- Router ---------------- */
 export async function queryDatabase(
   source: DatabaseSource,

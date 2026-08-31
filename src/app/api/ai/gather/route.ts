@@ -6,8 +6,10 @@ import { db } from "@/lib/db";
 import {
   verifySourcesWithKnowledge,
   verifyMissingViaPubMed,
+  verifyMissingViaCrossref,
   applyKnowledgeCompletions,
-  normalizeTitle,
+  backfillFromExternalIds,
+  persistKnowledgeSuggestions,
   type KVSourceInput,
 } from "@/lib/knowledge-verify";
 import type { DatabaseSource } from "@/lib/types";
@@ -247,15 +249,21 @@ Output JSON only. 'index' in remove suggestions is 1-based into the gathered sou
   };
 }
 
-/* ---------------- Knowledge cross-check (round-33) ---------------- */
+/* ---------------- Knowledge cross-check (round-33, hardened round-34/35) ---------------- */
 /**
  * Standalone knowledge-verify mode: runs the LLM-knowledge cross-check on
  * the project's ALREADY-SAVED data sources (no regeneration, no clearing).
- *   A. fills missing metadata (fill-gaps-only) on saved data sources and
- *      their reference twins;
- *   B. adds LLM-suggested missing sources — PubMed-confirmed ones become
- *      citable references; unconfirmed ones are saved as flagged,
- *      non-citable suggestions.
+ * Round-35 pipeline order (database-first, LLM-second):
+ *   0. backfillFromExternalIds — PMID-backed rows completed from PubMed's
+ *      own esummary record (zero hallucination risk) + garbage metadata
+ *      reset (domain-as-authors, month-fragment years, sentinel journals);
+ *   A. LLM fills whatever gaps remain (fill-gaps-only);
+ *   B. LLM-suggested missing sources verified in PubMed BY TITLE;
+ *   B'. leftovers re-verified in Crossref (registry DOI + bibliographic
+ *      title search — catches preprints/non-indexed/older landmark work);
+ *   C. persistKnowledgeSuggestions — verified items saved citable
+ *      (previously-unverified rows matching a verified work are promoted
+ *      in place instead of duplicated), leftovers saved flagged.
  */
 async function runVerify(body: GatherBody, sendLog: (msg: string) => void) {
   const projectId = body.projectId;
@@ -272,6 +280,16 @@ async function runVerify(body: GatherBody, sendLog: (msg: string) => void) {
   });
   const references = await db.reference.findMany({ where: { projectId } });
   sendLog(`Loaded ${dataSources.length} saved sources (${references.length} references).`);
+
+  // 0. Authoritative backfill (PubMed's own records) BEFORE the LLM pass
+  const backfill = await backfillFromExternalIds(
+    projectId, dataSources as any, references as any, db, { onLog: sendLog }
+  );
+  if (backfill.fieldsCompleted || backfill.repairedGarbage) {
+    sendLog(
+      `PubMed backfill: ${backfill.fieldsCompleted} fields completed, ${backfill.repairedGarbage} rows of garbage metadata reset.`
+    );
+  }
 
   const kvInputs: KVSourceInput[] = dataSources.map((ds: any) => ({
     id: ds.id,
@@ -296,135 +314,35 @@ async function runVerify(body: GatherBody, sendLog: (msg: string) => void) {
     { onLog: sendLog }
   );
 
-  const { verified, unverified } = await verifyMissingViaPubMed(kv.missing, { onLog: sendLog });
+  // B. PubMed channel — then B'. Crossref channel for the leftovers
+  const pubmed = await verifyMissingViaPubMed(kv.missing, { onLog: sendLog });
+  const crossref = pubmed.unverified.length
+    ? await verifyMissingViaCrossref(pubmed.unverified, { onLog: sendLog })
+    : { verified: [], unverified: [] };
+  const allVerified = [...pubmed.verified, ...crossref.verified];
 
-  const existingExtIds = new Set(dataSources.map((ds: any) => ds.externalId).filter(Boolean));
-  const addedSources: any[] = [];
-  for (const v of verified) {
-    if (existingExtIds.has(v.item.externalId)) continue;
-    try {
-      await db.dataSource.create({
-        data: {
-          projectId,
-          source: v.item.source,
-          query: "llm-knowledge cross-check",
-          rawJson: JSON.stringify({ items: [v.item] }),
-          title: v.item.title,
-          externalId: v.item.externalId,
-          url: v.item.url,
-          authors: v.item.authors || null,
-          journal: v.item.journal || null,
-          year: v.item.year || null,
-          doi: v.item.doi || null,
-          abstract: v.item.abstract || null,
-          extra: JSON.stringify(v.item.extra),
-          pinned: true,
-        },
-      });
-      // Claim the PMID so a later duplicate suggestion can't re-save it
-      existingExtIds.add(v.item.externalId);
-      // Mirror as a citable reference (PubMed-verified = real metadata + PMID)
-      try {
-        await db.reference.create({
-          data: {
-            type: "pubmed",
-            externalId: v.item.externalId,
-            title: v.item.title,
-            authors: v.item.authors || null,
-            journal: v.item.journal || null,
-            year: v.item.year || null,
-            url: v.item.url || null,
-            doi: v.item.doi || null,
-            abstract: v.item.abstract || null,
-            projectId,
-          },
-        });
-      } catch (refErr: any) {
-        sendLog(`Reference create failed: ${String(refErr?.message ?? refErr).slice(0, 100)}`);
-      }
-      addedSources.push({
-        title: v.item.title,
-        journal: v.item.journal,
-        year: v.item.year,
-        externalId: v.item.externalId,
-        verified: true,
-        reason: v.item.reason,
-      });
-    } catch (err: any) {
-      sendLog(`Save verified source failed: ${String(err?.message ?? err).slice(0, 100)}`);
-    }
-  }
-
-  // Unconfirmed suggestions are saved as NON-citable flagged data sources
-  // (source='llm', extra.unverified=true) for the user to review.
-  // round-34 hardening:
-  //  - dedup uses normalizeTitle over ALL project sources — the previous
-  //    exact-title check let re-worded suggestions from repeated verify runs
-  //    pile up as near-duplicates;
-  //  - LLM-provided DOIs are no longer stored in externalId/doi/url.
-  //    Round-33 established LLM DOIs are frequently plausible-but-wrong;
-  //    storing them as structured identifiers showed them as card IDs and
-  //    sent deep-reads to dead links. The raw suggestion (with DOI) stays in
-  //    rawJson, and extra.llmDoi marks it for human review.
-  const existingTitleKeys = new Set(
-    dataSources.map((ds: any) => normalizeTitle(ds.title || "")).filter(Boolean)
+  // C. Shared persist — promotion-in-place of previously-unverified rows
+  const persisted = await persistKnowledgeSuggestions(
+    projectId, allVerified, crossref.unverified, db, { onLog: sendLog }
   );
-  const unverifiedSuggestions: any[] = [];
-  for (const s of unverified) {
-    try {
-      const key = normalizeTitle(s.title || "");
-      if (key && existingTitleKeys.has(key)) {
-        sendLog(`Unverified suggestion "${String(s.title).slice(0, 50)}" already saved — skipped`);
-        continue;
-      }
-      if (key) existingTitleKeys.add(key);
-      await db.dataSource.create({
-        data: {
-          projectId,
-          source: "llm",
-          query: "llm-knowledge cross-check (unverified)",
-          rawJson: JSON.stringify({ items: [s] }),
-          title: s.title,
-          externalId: null,
-          url: null,
-          authors: s.authors || null,
-          journal: s.journal || null,
-          year: s.year || null,
-          doi: null,
-          abstract: null,
-          extra: JSON.stringify({
-            unverified: true,
-            llmKind: s.kind,
-            llmReason: s.reason,
-            ...(s.doi ? { llmDoi: s.doi } : {}),
-            note: "Proposed by LLM knowledge; not confirmed in PubMed — review before citing.",
-          }),
-          pinned: false,
-        },
-      });
-      unverifiedSuggestions.push({
-        title: s.title,
-        authors: s.authors,
-        year: s.year,
-        journal: s.journal,
-        doi: s.doi,
-        reason: s.reason,
-        kind: s.kind,
-      });
-    } catch (err: any) {
-      sendLog(`Save unverified suggestion failed: ${String(err?.message ?? err).slice(0, 100)}`);
-    }
-  }
 
   return {
     mode: "verify",
-    fieldsCompleted: applied.fieldsCompleted,
-    sourcesCompleted: applied.sourcesCompleted,
-    byField: applied.byField,
-    sourcesAdded: addedSources.length,
-    addedSources,
-    unverifiedCount: unverifiedSuggestions.length,
-    unverifiedSuggestions,
+    fieldsCompleted: applied.fieldsCompleted + backfill.fieldsCompleted,
+    dbFieldsCompleted: backfill.fieldsCompleted,
+    garbageRepaired: backfill.repairedGarbage,
+    sourcesCompleted: applied.sourcesCompleted + backfill.sourcesCompleted,
+    byField: Object.fromEntries(
+      [...new Set([...Object.keys(applied.byField), ...Object.keys(backfill.byField)])].map(
+        (k) => [k, (applied.byField[k] || 0) + (backfill.byField[k] || 0)]
+      )
+    ),
+    sourcesAdded: persisted.addedSources.length,
+    crossrefSourcesAdded: persisted.addedSources.filter((s) => s.source === "crossref").length,
+    promotedSuggestions: persisted.promoted,
+    addedSources: persisted.addedSources,
+    unverifiedCount: persisted.unverifiedSaved.length,
+    unverifiedSuggestions: persisted.unverifiedSaved,
   };
 }
 

@@ -172,6 +172,7 @@ export const STATUS_STYLES: Record<
 
 export const SOURCE_COLOR: Record<DatabaseSource, string> = {
   pubmed: "emerald",
+  crossref: "emerald",
   uniprot: "teal",
   rcsb: "amber",
   ncbi: "rose",

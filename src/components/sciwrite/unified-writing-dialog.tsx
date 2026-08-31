@@ -29,6 +29,7 @@ import {
   Target,
   ShieldCheck,
   BookCheck,
+  ArrowUpCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -547,10 +548,28 @@ function GatherTab({ projectId, topic, field, onInvalidate }: { projectId: strin
               <CheckCircle2 className="h-3 w-3 shrink-0" />
               {verifyResult.fieldsCompleted ?? 0} {t("gather.fieldsCompleted")}
             </span>
+            {(verifyResult.dbFieldsCompleted ?? 0) > 0 && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-teal-500/10 dark:bg-teal-500/20 text-teal-600 dark:text-teal-400 text-[9px] font-semibold uppercase tracking-wide tabular-nums">
+                <Database className="h-3 w-3 shrink-0" />
+                {verifyResult.dbFieldsCompleted} {t("gather.dbFieldsCompleted")}
+              </span>
+            )}
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/10 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[9px] font-semibold uppercase tracking-wide tabular-nums">
               <Database className="h-3 w-3 shrink-0" />
               {verifyResult.sourcesAdded ?? 0} {t("gather.gapSourcesAdded")}
             </span>
+            {(verifyResult.crossrefSourcesAdded ?? 0) > 0 && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/10 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[9px] font-semibold uppercase tracking-wide tabular-nums">
+                <BookCheck className="h-3 w-3 shrink-0" />
+                {verifyResult.crossrefSourcesAdded} {t("gather.crossrefSourcesAdded")}
+              </span>
+            )}
+            {(verifyResult.promotedSuggestions ?? 0) > 0 && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-violet-500/10 dark:bg-violet-500/20 text-violet-600 dark:text-violet-400 text-[9px] font-semibold uppercase tracking-wide tabular-nums">
+                <ArrowUpCircle className="h-3 w-3 shrink-0" />
+                {verifyResult.promotedSuggestions} {t("gather.promotedSuggestions")}
+              </span>
+            )}
             {verifyResult.unverifiedCount > 0 && (
               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/10 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 text-[9px] font-semibold uppercase tracking-wide tabular-nums">
                 <AlertTriangle className="h-3 w-3 shrink-0" />
