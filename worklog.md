@@ -2476,3 +2476,28 @@ Work Log:
 Stage Summary:
 - 根因是"算而不存"：V1 relationships 结果丢弃、两条管线 review 从未自动跑、V2 无 relationships——三处全部补上落库
 - 修改文件：api/ai/generate-full/route.ts（STEP 3 落库 + STEP 9 auto review）、api/ai/generate-full-v2/route.ts（管线末双 self-fetch 落库）、api/ai/source-relationships/route.ts（GET sourceCount + POST 60 上限）、home/relationship-workspace.tsx（自动触发+死代码清理+错误态）、home/review-workspace.tsx（自动触发+错误态+null 分数过滤）、lib/i18n.tsx（2 键 ×2 语言）
+
+---
+Task ID: round-40
+Agent: main (Z.ai Code)
+Task: 用户指令「目前限流应该解除了，重新测试并根据测试结果提出后续改进意见」——限流解除后全量重测（真实 LLM 链路 + 补 4 轮跳过的 VLM 视觉复核），产出测试报告与改进意见
+
+Work Log:
+- 限流确认：LLM 直连探针 244ms OK；VLM 两次多图复核请求全部成功（round-34~39 连续 429 状况解除）
+- round-39 持久化功能真实链路验证（此前只能契约级模拟验证）：
+  - Relationships 自动触发：POST /api/ai/source-relationships 真实 LLM 24.8s/26.3s 双项目 200 → RelationshipAnalysis 行落库 → 完整渲染（60 源上限生效、12/14 连接、4 主题集群）
+  - Review 自动触发：POST /api/ai/review 真实 LLM 9.4s 200 → Review 行落库 → verdict + 5 维分数 + strengths 渲染
+  - 持久性三重验证：reload 后重选项目内容仍在（relStill/revStill true）；且只有 GET 无 POST（有数据不重触发 ✓）；FGT 种子项目双标签直接显示
+  - 项目切换时 Review 工作区随挂载自动触发（workspaceTab 跨项目切换保留）——行为正确且理想
+- 数据卫生：删除 round-39 手工种子 mock 行 ×2，Full Generation Test 换上真实 LLM 分析（review: major-revision 5/10——LLM 独立判断比种子更严格；relationships: 60 源/14 连接/4 主题）；Round-17 Verification 同样持有真实行（minor-revision 6.5/10 + TMC 主题分析）——全部演示数据 authentic
+- VLM 视觉复核（浅色 4 图 + 深色 2 图）+ 几何测量仲裁：
+  - 证实：①工作区标题截断（scrollW 499 > clientW 373，"Round-17 Verifi…"中断，4 图共性）②深色分数卡浮融（实测 border 白 6.5% alpha + 透明底）③verdict 横幅视觉权重轻（浅色 bg 50% alpha）④thematic cluster 卡 padding 10px < 项目规范 16px，标题/描述层级扁平
+  - 驳回（VLM 幻觉）：①分数卡"间距不一致"（实测 6 卡全部 217×52 pad 8px 完全一致）②"正文行高 1.4-1.5"（实测 paragraphs+article 双面 1.625）③深色 verdict"低于 4.5:1"（实测 ≈8.7:1）④"16px 图标"（实测 24×24）⑤Article"戛然而止"（滚动视口正常裁切）
+  - 自主发现（VLM 未提）：activeProjectId 纯 React state 无持久化——reload 永远回到第一个项目，用户丢失当前工作上下文
+- 质量门：今日会话 dev.log 零 500/429/Error（35 条历史计数全为往日 429 残留）；console 仅既知 resizable 基线警告；0 page error；浏览器状态重置（theme=light，已关闭）
+- 本轮零代码改动（纯测试轮）——改进意见清单交用户决策
+
+Stage Summary:
+- round-39 持久化功能在真实 LLM 链路上全绿：双项目双标签自动触发→落库→渲染→reload 持久→不重触发
+- 测试资产：/tmp/r40-shots/（7 截图 + 2 份 VLM 分析 JSON）
+- 确认改进候选（按优先级）：①activeProjectId localStorage 持久化（高，~10 行）②工作区标题两行/放宽 max-w（高）③深色分数卡边界 + verdict 横幅权重（中）④cluster 卡 p-4 + 层级（中）⑤tab 徽标"分析已就绪"提示（中，产品层）⑥relationships 增量刷新（中）⑦唯一未覆盖路径：完整 generate-full 管线末自动落库钩子的实跑验证（本轮只验证了 tab 级触发）
