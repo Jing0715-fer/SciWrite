@@ -67,7 +67,12 @@ export function AnnotationsSection({
             return (
               <div
                 key={a.id}
-                className={`surface-card rounded-md border p-2.5 text-xs shadow-xs ${
+                // round-38: dropped `surface-card` from this element — it is
+                // UNLAYERED CSS, so its background-color beat the ANN_CARD_CLASS
+                // bg tints (bg-emerald-50/50 etc. never rendered; every card
+                // showed plain var(--card)). Border + shadow utilities alone
+                // keep the frame, so the per-type color now actually shows.
+                className={`rounded-md border p-2.5 text-xs shadow-xs ${
                   a.resolved ? "opacity-60" : ""
                 } ${ANN_CARD_CLASS[meta.color] || "border-border bg-muted/30"}`}
               >

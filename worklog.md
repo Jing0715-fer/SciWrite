@@ -2420,3 +2420,27 @@ Stage Summary:
 - 28 处确认 bug 修复：1 输入吞噬+误触危险对话框、1 整页崩溃、2 静默数据回退、1 数据丢失守卫缺失（v1 管线）、1 假成功、1 幽灵项目、2 事务性缺失、2 W1 引用身份、1 确认门漏洞、1 竞态、1 断连浪费、5 localhost 硬编码、其余为导出正确性/SSRF/哨兵/泄漏类
 - 方法论价值：并行 5 域审查 + 主代理逐项触发路径核验，把 ~50 项疑似收敛为 28 项确认修复（其余为不可达/故意设计/既有守卫覆盖）
 - 修改文件：use-keyboard-shortcuts.ts、markdown-citations.tsx、paragraph-card.tsx、writing-workspace.tsx、projects-sidebar.tsx、page.tsx、unified-writing-dialog.tsx、citation-health-dashboard.tsx、article-viewer-tabs.tsx、api/ai/review、api/ai/generate-full（快照+取消+回滚+W1）、api/ai/compose、api/paragraphs/[id]/regenerate+W1、api/paragraphs/[id]/revise、api/projects/[id]+import、api/data-sources/[id]、api/references/[id]、api/projects/[id]/batch-auto-fix-citations、api/export/route.ts、lib/knowledge-verify.ts、lib/ai.ts、lib/llm-cache.ts、lib/api-helpers.ts、lib/writing.ts
+
+---
+Task ID: round-38
+Agent: main (Z.ai Code)
+Task: paragraph 分段框背景改为与 article 框一致；继续提升设计感；继续排查 UI 显示 bug
+
+Work Log:
+- 主需求（纸材统一）：paragraph 卡片原用 var(--card)（浅色纯白/深色 0.217），article 用 canvas-paper（0.995 暖纸/0.198 深纸）→ 切 tab 可见"换了纸"。修复：
+  - globals.css 新增 `.surface-paper-card`（0.995/0.198 底色，保留 surface-card 的 border/shadow 模型，border-color 仍让位 Tailwind）；`.paper-surface` 重定义为与 canvas-paper 完全同色同点阵（含此前缺失的 dark 背景色覆盖与 0.03/0.035 点透明度对齐）
+  - paragraph-card.tsx 根容器 surface-card→surface-paper-card；玻璃 header/footer 条叠在纸色根上整体调和；编辑态内嵌 canvas-paper 稿纸同色仍靠边框+inset 高光分层
+- 潜伏 bug 1（annotation 色彩从未显示）：annotations-section 卡片 `surface-card`+`bg-emerald-50/50` 组合中，unlayered `.surface-card{background-color}` 在级联中击败 utilities 层的 bg-* tint → 所有类型色只剩边框色。实测旧组合背景=var(--card)，新组合（去掉 surface-card，保留 border/shadow-xs 工具类）=emerald tint 生效。项目 sweep 确认全应用仅此一处受害（projects-sidebar 同类组合已用 `!` important 自救）
+- 潜伏 bug 2（hover 抬升静默失效）：同理 `hover:shadow-md` 工具类永远输给 unlayered box-shadow → 卡片悬停无任何反馈。修复：把层级阶梯写进类内 `.surface-paper-card:hover:not(.ring-academic)`（:not 保证编辑态 ring-academic 主权——.cls:hover 特异度高于单类 ring 规则，纯特异度无法保）；移除卡片上已死的 hover:shadow-md 工具类
+- E2E 验证（agent-browser，几何为最终仲裁；VLM 连续第 4 轮 429 跳过）：
+  - 颜色等值：浅色 lab(99.4514 -0.15983 1.89865)、深色 lab(7.18569 -4.07591 1.44404)，paragraph 根/体与 article canvas 逐位相同（match:true 双模式）
+  - 真实鼠标 hover 实测 box-shadow xs→md（0 4px 8px 层）；编辑态+hover 下实测 ring 首层 0 0 0 1px primary/28 胜出（ringWinsOverHover:true）
+  - 溢出扫描 0 违规：paragraphs/article/review/relationships @1440、paragraphs+article @390、article viewer 对话框内
+  - 排查过程中发现并处置 dev server 陈旧 CSS（第二次小编辑未触发重编译，追加注释强制重编译后规则新鲜）——顺带验证 HMR 管线
+  - console 仅既知 resizable 面板基线警告；无 page error
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/162 warning（与 round-37 基线持平，无净新增）
+
+Stage Summary:
+- 纸材统一完成：paragraph 卡与 article 稿纸/查看器画布现为同一连续纸面（双模式逐位等值实测），玻璃工具条叠纸色根上分层自然
+- 2 个 unlayered-CSS-vs-utilities 级联类潜伏 UI bug 修复（annotation 类型色渲染、hover 抬升），并全应用 sweep 确认无同类受害点
+- 修改文件：globals.css（.surface-paper-card 新增、.paper-surface 重定义）、paragraph-card.tsx（根类替换）、paragraph/annotations-section.tsx（去 surface-card）

@@ -300,7 +300,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
 
   return (
     <div
-      className={`surface-card rounded-xl overflow-hidden transition-all duration-200 hover:shadow-md hover:border-primary/30 acad-fade-in${
+      className={`surface-paper-card rounded-xl overflow-hidden transition-all duration-200 hover:border-primary/30 acad-fade-in${
         editing ? " ring-academic" : ""
       }`}
     >
