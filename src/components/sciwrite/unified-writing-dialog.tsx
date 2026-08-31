@@ -285,7 +285,7 @@ function SuccessCard({ title, children }: { title: string; children: React.React
   return (
     <div className="space-y-2 rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 bg-gradient-to-br from-emerald-50/50 to-transparent dark:from-emerald-950/20 p-4">
       <div className="flex items-center gap-2">
-        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+        <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
         <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">{title}</span>
       </div>
       {children}
@@ -478,8 +478,8 @@ function GatherTab({ projectId, topic, field, onInvalidate }: { projectId: strin
           <p className="text-xs text-muted-foreground leading-relaxed">{result.plan}</p>
           {result.addedResults?.length > 0 && (
             <div className="flex items-center gap-2 mt-2">
-              <Database className="h-3.5 w-3.5 text-emerald-600" />
-              <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium">
+              <Database className="h-3.5 w-3.5 text-primary" />
+              <span className="text-[11px] text-primary font-medium">
                 {result.addedResults.length} sources gathered
               </span>
             </div>
@@ -692,10 +692,20 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
   const templates = templateData?.templates || [];
 
   const isBothMode = language === "both";
+  // round-27: the v2 evidence-grounded pipeline ALWAYS writes English first
+  // (its citation-key machinery is English-first by design), so "中文" and
+  // "both" BOTH mean "generate English → translate to 中文" in v2. The old
+  // code hard-forced language="English" for v2 and the Chinese half was
+  // silently dropped — bilingual users never got the translation.
+  const v2Bilingual = pipeline === "v2" && (isBothMode || language === "中文");
+  // Whether THIS run will include a translate stage (drives estimates, the
+  // strategy panel and the step list). v1 only translates in "both" mode;
+  // v2 translates in "both" AND "中文" mode.
+  const willTranslate = pipeline === "v2" ? v2Bilingual : isBothMode;
 
   const STEPS = React.useMemo(() => {
     if (pipeline === "v2") {
-      return [
+      const base = [
         { id: "gather", label: t("oneClick.stepGather"), icon: Database },
         { id: "curate", label: t("oneClick.stepCurate"), icon: Filter },
         { id: "plan", label: t("oneClick.stepPlan"), icon: ListTree },
@@ -705,6 +715,11 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
         { id: "verify", label: t("oneClick.stepVerify") || "Adversarial Verify", icon: ShieldCheck },
         { id: "compose", label: t("oneClick.stepCompose"), icon: FileStack },
       ];
+      // round-27: v2 translates AFTER compose (sections already carry final
+      // global citation numbers), so the translate step comes last.
+      return v2Bilingual
+        ? [...base, { id: "translate", label: t("oneClick.stepTranslate"), icon: Languages }]
+        : base;
     }
     const base = [
       { id: "gather", label: t("oneClick.stepGather"), icon: Database },
@@ -718,7 +733,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
       { id: "compose", label: t("oneClick.stepCompose"), icon: FileStack },
     ];
     return base;
-  }, [t, isBothMode, pipeline]);
+  }, [t, isBothMode, pipeline, v2Bilingual]);
 
   // Auto-scroll the right-side log panel to bottom when new entries arrive
   React.useEffect(() => {
@@ -762,7 +777,12 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
       const data = await streamFn(
         {
           projectId,
-          language: pipeline === "v2" ? "English" : language,
+          // round-27: pass the REAL language choice to v2 too — the backend
+          // now runs a translate stage for "both" (and "中文", which v2 maps
+          // to English-first + translation since its evidence pipeline is
+          // English-only). Previously this was hard-forced to "English" and
+          // the Chinese half of bilingual runs was silently dropped.
+          language,
           targetWords,
           ...(pipeline === "v2"
             ? { maxDbQueries, maxWebSearchQueries, maxTokens }
@@ -788,7 +808,13 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
               const next = [...prev, { event, ...data, ts: Date.now() }];
               return next.length > 500 ? next.slice(-500) : next;
             });
-            setStepProgress((prev) => ({ ...prev, [event]: data.message }));
+            // round-27: key the per-step progress line by data.step (the
+            // step indicator reads stepProgress[step.id]); the old
+            // `[event]` key was always the literal "step" so the live line
+            // under the active step never rendered.
+            if (data.step) {
+              setStepProgress((prev) => ({ ...prev, [data.step]: data.message }));
+            }
           }
           // When the batch citation audit completes, show a toast notification
           // so the user knows the audit ran and what it found/fixed.
@@ -808,9 +834,14 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
               );
             }
           }
-          if (event === "generate" && data.status === "streaming" && data.accumulatedTail) {
+          // round-27: streaming previews arrive as { event: "step", step:
+          // "generate"|"translate", status: "streaming", accumulatedTail } —
+          // the old code tested `event === "generate"` which never matched
+          // (event is always "step"), so the live preview stayed empty for
+          // the whole run. Match on data.step instead.
+          if (data.step === "generate" && data.status === "streaming" && data.accumulatedTail) {
             setLivePreview(data.accumulatedTail);
-          } else if (event === "translate" && data.status === "streaming" && data.accumulatedTail) {
+          } else if (data.step === "translate" && data.status === "streaming" && data.accumulatedTail) {
             setLivePreview(data.accumulatedTail);
           } else if (data.status === "started") {
             setLivePreview("");
@@ -821,7 +852,13 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
       setResult(data);
       setLivePreview("");
       onInvalidate();
-      toast.success(t("toast.oneClickGenerated", { words: data.stats?.articleWordCount || 0, refs: data.stats?.referencesSaved || 0 }));
+      // round-27: v1 sends { stats: { articleWordCount, referencesSaved } },
+      // v2 sends both the stats block (added round-27) and flat
+      // { wordCount, references } — read whichever shape this pipeline
+      // returned so the toast never says "0 words" on success.
+      const doneWords = data?.stats?.articleWordCount || data?.wordCount || 0;
+      const doneRefs = data?.stats?.referencesSaved || data?.references || 0;
+      toast.success(t("toast.oneClickGenerated", { words: doneWords, refs: doneRefs }));
     } catch (e: any) {
       setLivePreview("");
       toast.error(e.message);
@@ -867,7 +904,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
             <div className="flex items-center gap-1.5">
               <ShieldCheck className={`h-3.5 w-3.5 ${pipeline === "v2" ? "text-primary" : "text-muted-foreground"}`} />
               <span className="text-xs font-semibold">{t("oneClick.pipelineV2") || "v2 · Evidence-Grounded"}</span>
-              {pipeline === "v2" && <Badge className="ml-auto h-4 px-1 text-[8px] bg-primary text-primary-foreground">DEFAULT</Badge>}
+              {pipeline === "v2" && <Badge className="ml-auto h-4 px-1 text-[8px] bg-primary">DEFAULT</Badge>}
             </div>
             <p className="mt-1 text-[9px] leading-relaxed text-muted-foreground">
               {t("oneClick.pipelineV2Desc") ||
@@ -896,11 +933,11 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
       </ConfigCard>
 
       {pipeline === "v2" && (
-        <div className="rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-3">
+        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
           <div className="flex items-start gap-2">
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+            <ShieldCheck className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
             <div className="space-y-1">
-              <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold">
+              <p className="text-[10px] text-primary font-semibold">
                 {t("oneClick.v2AccuracyTitle") || "Citation accuracy guarantees (v2)"}
               </p>
               <ul className="text-[10px] text-muted-foreground leading-relaxed list-disc ml-3 space-y-0.5">
@@ -936,11 +973,13 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
         </Select>
       </ConfigCard>
 
-      {/* Bilingual strategy info — only shown when "both" is selected */}
-      {isBothMode && (
+      {/* Bilingual strategy info — shown when the run will produce a Chinese
+          half ("both" in either pipeline, or "中文" in v2 which maps to
+          English-first + translation) */}
+      {willTranslate && (
         <div className="rounded-lg border border-fuchsia-200/60 dark:border-fuchsia-900/40 bg-fuchsia-50/40 dark:bg-fuchsia-950/20 p-3">
           <div className="flex items-start gap-2">
-            <Languages className="h-3.5 w-3.5 text-fuchsia-600 shrink-0 mt-0.5" />
+            <Languages className="h-3.5 w-3.5 text-fuchsia-600 dark:text-fuchsia-400 shrink-0 mt-0.5" />
             <div className="space-y-1">
               <p className="text-[10px] text-fuchsia-700 dark:text-fuchsia-400 font-semibold">
                 {t("oneClick.bothStrategyTitle")}
@@ -950,8 +989,9 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
               </p>
               <ol className="text-[10px] text-muted-foreground leading-relaxed list-decimal ml-3 space-y-0.5">
                 <li>Generate English full article (sections 1→N)</li>
-                <li>Translate each section EN → 中文 (one by one)</li>
-                <li>Compose bilingual article with shared references</li>
+                <li>{pipeline === "v2" ? "Compose + verify the English article with global citation numbers" : "Translate each section EN → 中文 (one by one)"}</li>
+                <li>{pipeline === "v2" ? "Translate every section EN → 中文 (citations [n] preserved verbatim)" : "Compose bilingual article with shared references"}</li>
+                {pipeline === "v2" && <li>Compose bilingual article with shared references</li>}
               </ol>
             </div>
           </div>
@@ -997,7 +1037,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
       {/* Estimated cost & time panel — sky-themed */}
       <div className="rounded-lg border border-sky-200/60 dark:border-sky-900/40 bg-sky-50/40 dark:bg-sky-950/20 p-3 space-y-2">
         <div className="flex items-center gap-1.5">
-          <Clock className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+          <Clock className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
           <p className="text-[10px] uppercase tracking-wider text-sky-700 dark:text-sky-400 font-semibold flex-1">
             {t("oneClick.estimates") || "Estimated cost & duration"}
           </p>
@@ -1010,7 +1050,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
             <p className="text-sm font-bold text-sky-700 dark:text-sky-400">
               {(() => {
                 const genSec = (targetWords / 100) * 1.2 * 1.3 + 60;
-                const transSec = isBothMode ? (targetWords / 100) * 0.6 * 1.3 : 0;
+                const transSec = willTranslate ? (targetWords / 100) * 0.6 * 1.3 : 0;
                 const total = Math.max(2, Math.round((genSec + transSec) / 60));
                 return `${Math.max(1, Math.round(total * 0.7))}–${Math.round(total * 1.4)}m`;
               })()}
@@ -1023,7 +1063,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
             <p className="text-sm font-bold text-violet-700 dark:text-violet-400">
               ~{(() => {
                 const genTok = (targetWords * 1.4) / 1000;
-                const transTok = isBothMode ? (targetWords * 2.0) / 1000 : 0;
+                const transTok = willTranslate ? (targetWords * 2.0) / 1000 : 0;
                 return Math.round((genTok + transTok) * 10) / 10;
               })()}k
             </p>
@@ -1035,7 +1075,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
             <p className="text-sm font-bold text-emerald-700 dark:text-emerald-400">
               ~{(() => {
                 const sections = Math.max(5, Math.ceil(targetWords / 600));
-                return 4 + sections + (isBothMode ? sections : 0);
+                return 4 + sections + (willTranslate ? sections : 0);
               })()}
             </p>
           </div>
@@ -1049,7 +1089,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
             <span className="text-muted-foreground">{t("oneClick.estSections") || "Sections to write"}:</span>
             <span className="font-medium text-foreground/80">~{Math.max(5, Math.ceil(targetWords / 600))}</span>
           </div>
-          {isBothMode && (
+          {willTranslate && (
             <div className="flex items-center justify-between text-[10px]">
               <span className="text-muted-foreground">{t("oneClick.estTranslate") || "Sections to translate"}:</span>
               <span className="font-medium text-fuchsia-700 dark:text-fuchsia-400">~{Math.max(5, Math.ceil(targetWords / 600))} (EN → 中文)</span>
@@ -1304,7 +1344,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
                     isDone ? "bg-emerald-100 dark:bg-emerald-950/40" : isActive ? "bg-primary/10" : "bg-muted/40"
                   }`}>
                     {isDone ? (
-                      <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                      <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
                     ) : isActive ? (
                       <Loader2 className="h-3 w-3 animate-spin text-primary" />
                     ) : (
@@ -1321,7 +1361,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
                       <p className="text-[9px] text-muted-foreground mt-0.5 truncate">{stepProgress[step.id]}</p>
                     )}
                   </div>
-                  {isDone && <span className="text-[9px] text-emerald-600 font-semibold">✓</span>}
+                  {isDone && <span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-semibold">✓</span>}
                 </div>
               );
             })}
@@ -1339,18 +1379,21 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
         <SuccessCard title={t("oneClick.generatedTitle")}>
           <div className="grid grid-cols-3 gap-3 text-center">
             <div className="rounded-md bg-background/40 p-2">
-              <p className="text-lg font-bold text-emerald-700 dark:text-emerald-400">{result.stats?.sourcesGathered || 0}</p>
+              <p className="text-lg font-bold text-primary">{result.stats?.sourcesGathered || result.sourcesGathered || 0}</p>
               <p className="text-[8px] uppercase text-muted-foreground">{t("oneClick.sourcesGathered")}</p>
             </div>
             <div className="rounded-md bg-background/40 p-2">
-              <p className="text-lg font-bold text-primary">{result.stats?.sectionsPlanned || 0}</p>
+              <p className="text-lg font-bold text-primary">{result.stats?.sectionsPlanned || result.sections || 0}</p>
               <p className="text-[8px] uppercase text-muted-foreground">{t("oneClick.sectionsWritten")}</p>
             </div>
             <div className="rounded-md bg-background/40 p-2">
               <p className="text-lg font-bold text-foreground">
+                {/* round-27: v2's complete event now carries the v1-shaped
+                    stats block, but keep flat-field fallbacks so either
+                    pipeline shape renders real numbers instead of 0. */}
                 {result.hasChinese
-                  ? `${result.stats?.articleWordCount || 0} / ${result.stats?.articleWordCountZh || 0}`
-                  : result.stats?.articleWordCount || 0}
+                  ? `${result.stats?.articleWordCount || result.wordCount || 0} / ${result.stats?.articleWordCountZh || result.wordCountZh || 0}`
+                  : result.stats?.articleWordCount || result.wordCount || 0}
               </p>
               <p className="text-[8px] uppercase text-muted-foreground">
                 {result.hasChinese ? "EN words / ZH chars" : t("oneClick.totalWords")}
@@ -1379,7 +1422,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
         <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-base">
-              <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
+              <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
               {t("oneClick.confirmClearTitle") || "Clear existing data?"}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-sm leading-relaxed">
@@ -1392,7 +1435,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
           </AlertDialogHeader>
           <div className="rounded-md border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 p-3 my-2">
             <div className="flex items-start gap-2">
-              <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
               <div className="text-[11px] text-amber-700 dark:text-amber-400 space-y-1">
                 <p className="font-semibold">
                   {t("oneClick.confirmClearWillDelete") || "The following will be deleted:"}
@@ -1474,7 +1517,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
           {livePreview && (
             <div className="shrink-0 border-t border-violet-200/60 dark:border-violet-900/40 bg-violet-50/40 dark:bg-violet-950/20 p-2.5">
               <div className="flex items-center gap-1.5 mb-1">
-                <PenLine className="h-3 w-3 text-violet-600 animate-pulse shrink-0" />
+                <PenLine className="h-3 w-3 text-violet-600 dark:text-violet-400 animate-pulse shrink-0" />
                 <p className="text-[9px] uppercase tracking-wider text-violet-700 dark:text-violet-400 font-semibold flex-1 truncate">
                   {t("oneClick.livePreview") || "Live preview"}
                 </p>

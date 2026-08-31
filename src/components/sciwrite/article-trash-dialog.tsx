@@ -193,7 +193,7 @@ export function ArticleTrashDialog({ open, onOpenChange, projectId }: Props) {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="text-[10px] h-6 gap-1 border-red-300/60 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
+                  className="text-[10px] h-6 gap-1 border-red-300/60 dark:border-red-700/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
                   onClick={() => setBatchDeleteOpen(true)}
                   disabled={batchDeleteMut.isPending}
                 >
@@ -252,7 +252,7 @@ export function ArticleTrashDialog({ open, onOpenChange, projectId }: Props) {
                           {t("trash.deleted") || "Deleted"} {info.daysAgo}d {t("trash.ago") || "ago"}
                         </Badge>
                         {info.daysRemaining > 0 && (
-                          <Badge variant="outline" className="text-[8px] h-3.5 text-amber-600 dark:text-amber-400 border-amber-300/40">
+                          <Badge variant="outline" className="text-[8px] h-3.5 text-amber-600 dark:text-amber-400 border-amber-300/40 dark:border-amber-700/50">
                             {info.daysRemaining}d {t("trash.remaining") || "left"}
                           </Badge>
                         )}
@@ -282,7 +282,7 @@ export function ArticleTrashDialog({ open, onOpenChange, projectId }: Props) {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="text-[10px] h-7 gap-1 border-red-300/60 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
+                      className="text-[10px] h-7 gap-1 border-red-300/60 dark:border-red-700/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
                       onClick={() => setPermanentDeleteId(article.id)}
                     >
                       <Trash2 className="h-3 w-3" />
@@ -315,7 +315,7 @@ export function ArticleTrashDialog({ open, onOpenChange, projectId }: Props) {
         <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-base">
-              <AlertTriangle className="h-5 w-5 text-red-600 shrink-0" />
+              <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0" />
               {t("trash.confirmPermanentTitle") || "Permanently delete this article?"}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-sm leading-relaxed">
@@ -352,7 +352,7 @@ export function ArticleTrashDialog({ open, onOpenChange, projectId }: Props) {
         <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-base">
-              <AlertTriangle className="h-5 w-5 text-red-600 shrink-0" />
+              <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0" />
               {t("trash.confirmBatchTitle") || "Permanently delete selected articles?"}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-sm leading-relaxed">

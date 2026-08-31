@@ -93,7 +93,7 @@ export function EnrichReferencesDialog({ open, onOpenChange, projectId }: Props)
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden rounded-xl">
         <DialogHeader className="px-5 pt-4 pb-3 border-b border-border/60 shrink-0 bg-gradient-to-r from-primary/5 to-transparent">
           <DialogTitle className="flex items-center gap-2 text-sm">
-            <Database className="h-4 w-4 text-cyan-600" />
+            <Database className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
             Enrich References (CrossRef)
           </DialogTitle>
           <DialogDescription className="text-xs">
@@ -108,7 +108,7 @@ export function EnrichReferencesDialog({ open, onOpenChange, projectId }: Props)
             <section>
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-xs font-semibold flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-cyan-600" />
+                  <Sparkles className="h-3.5 w-3.5 text-cyan-600 dark:text-cyan-400" />
                   Batch Enrichment
                 </h3>
                 <Button
@@ -125,7 +125,7 @@ export function EnrichReferencesDialog({ open, onOpenChange, projectId }: Props)
 
               {enrichMut.isPending && (
                 <div className="flex flex-col items-center justify-center py-10 gap-2">
-                  <Loader2 className="h-6 w-6 animate-spin text-cyan-600" />
+                  <Loader2 className="h-6 w-6 animate-spin text-cyan-600 dark:text-cyan-400" />
                   <p className="text-xs text-muted-foreground">
                     Querying CrossRef API…
                   </p>
@@ -155,7 +155,7 @@ export function EnrichReferencesDialog({ open, onOpenChange, projectId }: Props)
                         Enriched
                       </div>
                     </div>
-                    <div className="rounded-lg border border-slate-200/60 dark:border-slate-800/40 p-2 text-center bg-card">
+                    <div className="rounded-lg border border-border/60 p-2 text-center bg-card">
                       <div className="text-lg font-bold text-muted-foreground">
                         {enrichData.skipped}
                       </div>
@@ -195,7 +195,7 @@ export function EnrichReferencesDialog({ open, onOpenChange, projectId }: Props)
                         >
                           <div className="mt-0.5 shrink-0">
                             {d.status === "enriched" ? (
-                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                             ) : d.status === "failed" ? (
                               <XCircle className="h-3.5 w-3.5 text-red-500" />
                             ) : (
@@ -246,7 +246,7 @@ export function EnrichReferencesDialog({ open, onOpenChange, projectId }: Props)
             {/* ── Title search ────────────────────────────────────────────── */}
             <section className="pt-2 border-t border-border/60">
               <h3 className="text-xs font-semibold flex items-center gap-1.5 mb-2.5">
-                <Search className="h-3.5 w-3.5 text-cyan-600" />
+                <Search className="h-3.5 w-3.5 text-cyan-600 dark:text-cyan-400" />
                 Search by Title
               </h3>
               <p className="text-[10px] text-muted-foreground mb-2">
@@ -288,7 +288,7 @@ export function EnrichReferencesDialog({ open, onOpenChange, projectId }: Props)
                     searchData.results.map((r, i) => (
                       <div
                         key={i}
-                        className="rounded-lg border border-border/60 p-2.5 bg-card hover:border-cyan-300/60 transition-colors"
+                        className="rounded-lg border border-border/60 p-2.5 bg-card hover:border-cyan-300/60 dark:hover:border-cyan-700/50 transition-colors"
                       >
                         <div className="flex items-start justify-between gap-2 mb-1">
                           <span className="text-[11px] font-medium flex-1 leading-snug">
@@ -301,14 +301,14 @@ export function EnrichReferencesDialog({ open, onOpenChange, projectId }: Props)
                           ) : r.similarity >= 0.5 ? (
                             <Badge
                               variant="outline"
-                              className="text-[8px] h-4 border-amber-300/60 text-amber-600 shrink-0"
+                              className="text-[8px] h-4 border-amber-300/60 dark:border-amber-700/50 text-amber-600 dark:text-amber-400 shrink-0"
                             >
                               {Math.round(r.similarity * 100)}% match
                             </Badge>
                           ) : (
                             <Badge
                               variant="outline"
-                              className="text-[8px] h-4 border-slate-300/60 text-slate-400 shrink-0"
+                              className="text-[8px] h-4 border-border/60 text-muted-foreground shrink-0"
                             >
                               {Math.round(r.similarity * 100)}%
                             </Badge>

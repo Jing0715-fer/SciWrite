@@ -76,7 +76,7 @@ export function ProgressTracker({
               title={t("progress.setWordGoalTitle")}
             >
               {fmt(totalWords)} / {fmt(wordGoal)}w
-              {goalMet && <span className="ml-1 text-emerald-600">✓</span>}
+              {goalMet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">✓</span>}
             </button>
           </div>
           <Progress
@@ -131,7 +131,7 @@ export function ProgressTracker({
             icon={<PenLine className="h-2.5 w-2.5" />}
             label={t("progress.paragraphsPill")}
             value={totalParagraphs}
-            color="emerald"
+            color="primary"
           />
           <StatPill
             icon={<Quote className="h-2.5 w-2.5" />}
@@ -143,7 +143,7 @@ export function ProgressTracker({
             icon={<Target className="h-2.5 w-2.5" />}
             label={t("progress.coveragePill")}
             value={`${citationCoverage}%`}
-            color="teal"
+            color="primary"
           />
           {(unresolvedAnnotations > 0 || resolvedAnnotations > 0) && (
             <StatPill
@@ -171,8 +171,8 @@ function StatPill({
   color: string;
 }) {
   const colorMap: Record<string, string> = {
+    primary: "text-primary",
     emerald: "text-emerald-600 dark:text-emerald-400",
-    teal: "text-teal-600 dark:text-teal-400",
     amber: "text-amber-600 dark:text-amber-400",
     rose: "text-rose-600 dark:text-rose-400",
   };

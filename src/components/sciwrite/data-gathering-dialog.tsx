@@ -328,7 +328,7 @@ export function DataGatheringDialog({
                     i === stepIndex
                       ? "bg-primary/10 text-primary"
                       : i < stepIndex
-                      ? "text-emerald-600"
+                      ? "text-emerald-600 dark:text-emerald-400"
                       : "text-muted-foreground"
                   }`}
                 >
@@ -460,7 +460,7 @@ export function DataGatheringDialog({
 
                     {critique.gaps?.length > 0 && (
                       <div className="space-y-1.5">
-                        <p className="text-[10px] uppercase tracking-wider text-amber-600 font-semibold flex items-center gap-1">
+                        <p className="text-[10px] uppercase tracking-wider text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1">
                           <AlertTriangle className="h-3 w-3" /> {t("gather.coverageGaps")}
                         </p>
                         {critique.gaps.map((g: string, i: number) => (
@@ -476,7 +476,7 @@ export function DataGatheringDialog({
 
                     {critique.biases?.length > 0 && (
                       <div className="space-y-1.5">
-                        <p className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold flex items-center gap-1">
+                        <p className="text-[10px] uppercase tracking-wider text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1">
                           <AlertTriangle className="h-3 w-3" /> {t("gather.biases")}
                         </p>
                         {critique.biases.map((b: string, i: number) => (

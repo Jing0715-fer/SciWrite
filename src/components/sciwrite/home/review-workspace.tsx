@@ -62,8 +62,8 @@ export function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: 
         {displayData && !reviewMut.isPending && (
           <div className="space-y-3">
             {displayData.verdict && (
-              <div className={`rounded-lg border p-3 ${displayData.verdict === "accept" ? "border-emerald-200/60 bg-emerald-50/50" : "border-amber-200/60 bg-amber-50/50"}`}>
-                <span className={`text-sm font-semibold ${displayData.verdict === "accept" ? "text-emerald-700" : "text-amber-700"}`}>
+              <div className={`rounded-lg border p-3 ${displayData.verdict === "accept" ? "border-emerald-200/60 dark:border-emerald-800/50 bg-emerald-50/50 dark:bg-emerald-950/20" : "border-amber-200/60 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/20"}`}>
+                <span className={`text-sm font-semibold ${displayData.verdict === "accept" ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>
                   {displayData.verdict === "accept" ? t("workspace.acceptVerdict") : `⚠ ${displayData.verdict}`}
                 </span>
               </div>
@@ -86,12 +86,12 @@ export function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: 
             )}
             {displayData.review && (
               <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-md border border-emerald-200/50 bg-emerald-50/30 p-2">
-                  <p className="text-[10px] uppercase font-semibold text-emerald-700 mb-1">{t("workspace.strengths")}</p>
+                <div className="rounded-md border border-emerald-200/50 dark:border-emerald-800/50 bg-emerald-50/30 dark:bg-emerald-950/20 p-2">
+                  <p className="text-[10px] uppercase font-semibold text-emerald-700 dark:text-emerald-300 mb-1">{t("workspace.strengths")}</p>
                   {safeParseArr(displayData.review.strengths).map((s: string, i: number) => <p key={i} className="text-[10px] mb-1">• {s}</p>)}
                 </div>
-                <div className="rounded-md border border-rose-200/50 bg-rose-50/30 p-2">
-                  <p className="text-[10px] uppercase font-semibold text-rose-700 mb-1">{t("workspace.weaknesses")}</p>
+                <div className="rounded-md border border-rose-200/50 dark:border-rose-800/50 bg-rose-50/30 dark:bg-rose-950/20 p-2">
+                  <p className="text-[10px] uppercase font-semibold text-rose-700 dark:text-rose-300 mb-1">{t("workspace.weaknesses")}</p>
                   {safeParseArr(displayData.review.weaknesses).map((w: string, i: number) => <p key={i} className="text-[10px] mb-1">• {w}</p>)}
                 </div>
               </div>

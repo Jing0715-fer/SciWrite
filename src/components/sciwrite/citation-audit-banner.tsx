@@ -197,7 +197,7 @@ export function CitationAuditBanner({ articleId }: { articleId: string }) {
 
   if (state === "error") {
     return (
-      <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-300/50 bg-amber-50/40 dark:bg-amber-950/15 text-[11px] text-amber-700 dark:text-amber-400">
+      <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-300/50 dark:border-amber-700/50 bg-amber-50/40 dark:bg-amber-950/15 text-[11px] text-amber-700 dark:text-amber-400">
         <CircleAlert className="h-3.5 w-3.5 shrink-0" />
         <span>Citation audit unavailable: {error}</span>
         <Button
@@ -220,10 +220,10 @@ export function CitationAuditBanner({ articleId }: { articleId: string }) {
     summary.suspect + summary.unsupported + summary.orphan + summary.duplicate > 0;
 
   const bannerClass = hasBlocking
-    ? "border-red-300/60 bg-red-50/50 dark:bg-red-950/20"
+    ? "border-red-300/60 dark:border-red-700/50 bg-red-50/50 dark:bg-red-950/20"
     : hasWarnings
-    ? "border-amber-300/50 bg-amber-50/40 dark:bg-amber-950/15"
-    : "border-emerald-300/50 bg-emerald-50/40 dark:bg-emerald-950/15";
+    ? "border-amber-300/50 dark:border-amber-700/50 bg-amber-50/40 dark:bg-amber-950/15"
+    : "border-emerald-300/50 dark:border-emerald-700/50 bg-emerald-50/40 dark:bg-emerald-950/15";
 
   const Icon = hasBlocking
     ? ShieldX
@@ -261,7 +261,7 @@ export function CitationAuditBanner({ articleId }: { articleId: string }) {
           {summary.blockingErrors > 0 && (
             <Badge
               variant="outline"
-              className="h-4 px-1 text-[9px] border-red-300/60 text-red-700 dark:text-red-400 bg-red-50/40 dark:bg-red-950/20"
+              className="h-4 px-1 text-[9px] border-red-300/60 dark:border-red-700/50 text-red-700 dark:text-red-400 bg-red-50/40 dark:bg-red-950/20"
             >
               {summary.blockingErrors} blocking
             </Badge>
@@ -269,7 +269,7 @@ export function CitationAuditBanner({ articleId }: { articleId: string }) {
           {summary.missing > 0 && (
             <Badge
               variant="outline"
-              className="h-4 px-1 text-[9px] border-red-300/60 text-red-700 dark:text-red-400"
+              className="h-4 px-1 text-[9px] border-red-300/60 dark:border-red-700/50 text-red-700 dark:text-red-400"
             >
               {summary.missing} missing
             </Badge>
@@ -277,7 +277,7 @@ export function CitationAuditBanner({ articleId }: { articleId: string }) {
           {summary.outOfRange > 0 && (
             <Badge
               variant="outline"
-              className="h-4 px-1 text-[9px] border-red-300/60 text-red-700 dark:text-red-400"
+              className="h-4 px-1 text-[9px] border-red-300/60 dark:border-red-700/50 text-red-700 dark:text-red-400"
             >
               {summary.outOfRange} out-of-range
             </Badge>
@@ -285,7 +285,7 @@ export function CitationAuditBanner({ articleId }: { articleId: string }) {
           {summary.mismatch > 0 && (
             <Badge
               variant="outline"
-              className="h-4 px-1 text-[9px] border-red-300/60 text-red-700 dark:text-red-400"
+              className="h-4 px-1 text-[9px] border-red-300/60 dark:border-red-700/50 text-red-700 dark:text-red-400"
             >
               {summary.mismatch} mismatch
             </Badge>
@@ -293,7 +293,7 @@ export function CitationAuditBanner({ articleId }: { articleId: string }) {
           {summary.unsupported > 0 && (
             <Badge
               variant="outline"
-              className="h-4 px-1 text-[9px] border-amber-300/60 text-amber-700 dark:text-amber-400"
+              className="h-4 px-1 text-[9px] border-amber-300/60 dark:border-amber-700/50 text-amber-700 dark:text-amber-400"
             >
               {summary.unsupported} unsupported
             </Badge>
@@ -301,7 +301,7 @@ export function CitationAuditBanner({ articleId }: { articleId: string }) {
           {summary.suspect > 0 && (
             <Badge
               variant="outline"
-              className="h-4 px-1 text-[9px] border-amber-300/60 text-amber-700 dark:text-amber-400"
+              className="h-4 px-1 text-[9px] border-amber-300/60 dark:border-amber-700/50 text-amber-700 dark:text-amber-400"
             >
               {summary.suspect} suspect
             </Badge>
@@ -309,7 +309,7 @@ export function CitationAuditBanner({ articleId }: { articleId: string }) {
           {summary.orphan > 0 && (
             <Badge
               variant="outline"
-              className="h-4 px-1 text-[9px] border-amber-300/60 text-amber-700 dark:text-amber-400"
+              className="h-4 px-1 text-[9px] border-amber-300/60 dark:border-amber-700/50 text-amber-700 dark:text-amber-400"
             >
               {summary.orphan} orphan
             </Badge>
@@ -317,7 +317,7 @@ export function CitationAuditBanner({ articleId }: { articleId: string }) {
           {summary.duplicate > 0 && (
             <Badge
               variant="outline"
-              className="h-4 px-1 text-[9px] border-amber-300/60 text-amber-700 dark:text-amber-400"
+              className="h-4 px-1 text-[9px] border-amber-300/60 dark:border-amber-700/50 text-amber-700 dark:text-amber-400"
             >
               {summary.duplicate} dup
             </Badge>
@@ -325,7 +325,7 @@ export function CitationAuditBanner({ articleId }: { articleId: string }) {
           {summary.ok > 0 && !hasBlocking && !hasWarnings && (
             <Badge
               variant="outline"
-              className="h-4 px-1 text-[9px] border-emerald-300/60 text-emerald-700 dark:text-emerald-400"
+              className="h-4 px-1 text-[9px] border-emerald-300/60 dark:border-emerald-700/50 text-emerald-700 dark:text-emerald-400"
             >
               {summary.ok} ok
             </Badge>
@@ -339,7 +339,7 @@ export function CitationAuditBanner({ articleId }: { articleId: string }) {
           <Button
             variant="ghost"
             size="sm"
-            className="h-6 px-2 text-[10px] gap-1 text-emerald-700 dark:text-emerald-400 hover:text-emerald-800"
+            className="h-6 px-2 text-[10px] gap-1 text-emerald-700 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-300"
             disabled={advRunning || state === "deep-loading"}
             onClick={() => runAdversarial()}
             title="Hostile-critic review: verify every citation against its reference's own abstract and surgically remove unsupported ones"
@@ -459,7 +459,7 @@ export function CitationAuditBanner({ articleId }: { articleId: string }) {
 
           {/* Adversarial review results (hostile-critic claim-level verification) */}
           {advReport && (
-            <div className="mt-2 rounded border border-emerald-300/50 bg-emerald-50/40 dark:bg-emerald-950/15 p-2.5 space-y-1.5">
+            <div className="mt-2 rounded border border-emerald-300/50 dark:border-emerald-700/50 bg-emerald-50/40 dark:bg-emerald-950/15 p-2.5 space-y-1.5">
               <div className="flex items-center gap-1.5">
                 <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                 <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">

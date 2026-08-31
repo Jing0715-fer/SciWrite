@@ -9,8 +9,8 @@ export function Footer({ onOpenPalette }: { onOpenPalette?: () => void }) {
       <div className="flex items-center gap-2">
         <span className="inline-flex items-center gap-1.5 font-medium">
           <span className="relative inline-flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            <span className="absolute inline-flex h-full w-full rounded-full bg-primary/60 animate-ping" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
           </span>
           {t("footer.aiPowered")}
         </span>

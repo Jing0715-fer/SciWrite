@@ -7,6 +7,7 @@ import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-
 import { queryDatabase } from "@/lib/databases";
 import { countWords, sanitizeSectionContent } from "@/lib/writing";
 import { generateArticleTitle } from "@/lib/article-title";
+import { translateSectionTitles } from "@/lib/section-title-zh";
 import {
   buildAuditReport,
   extractBodyCitations,
@@ -175,11 +176,20 @@ export async function POST(req: NextRequest) {
         const maxDbQueries = Math.max(5, Math.min(50, body.maxDbQueries ?? 18));
         const maxWebSearchQueries = Math.max(3, Math.min(20, body.maxWebSearchQueries ?? 6));
         const promptInstruction = (body.promptInstruction || "").trim();
+        // round-27: the v2 pipeline always WRITES in English (the evidence
+        // bank / citation-key machinery is English-first by design), but
+        // language === "both" now triggers a dedicated post-compose translate
+        // stage (each section EN → 中文, citations preserved) so bilingual
+        // users finally get the Chinese half of the article. Previously the
+        // UI hard-forced language="English" for v2 and the Chinese half was
+        // silently dropped.
+        const requestedLanguage = body.language || "English";
+        const isBothMode = requestedLanguage === "both";
 
         send("step", {
           step: "init",
           status: "done",
-          message: `v2 evidence-grounded pipeline initialized. Target: ${targetWords} words.`,
+          message: `v2 evidence-grounded pipeline initialized. Target: ${targetWords} words${isBothMode ? ". Language: English-first, then translate to 中文" : ""}.`,
           config: {
             pipeline: "v2",
             targetWords,
@@ -187,9 +197,11 @@ export async function POST(req: NextRequest) {
             maxDbQueries,
             maxWebSearchQueries,
             maxTokens,
+            language: requestedLanguage,
+            bothMode: isBothMode,
           },
         });
-        log(`init: targetWords=${targetWords}`);
+        log(`init: language=${requestedLanguage}, bothMode=${isBothMode}, targetWords=${targetWords}`);
 
         // ============ STEP 1: FORCE re-gather data sources ============
         send("step", {
@@ -1272,6 +1284,9 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             topic: project.topic,
             sectionTitles: sections.map((s: any) => s?.title).filter(Boolean),
             excerpt: articleBody.trim().slice(0, 800),
+            // round-27: bilingual runs also want a Chinese title (v1 already
+            // passed wantZh; v2 never did, so titleZh was always null).
+            wantZh: isBothMode,
           });
           articleTitle = titleResult.title;
           articleTitleZh = titleResult.titleZh;
@@ -1354,20 +1369,6 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             },
           },
         });
-        await db.articleVersion.create({
-          data: {
-            articleId: article.id,
-            content: articleContent,
-            title: articleTitle,
-            label: "v2 evidence-grounded (auto-saved)",
-            wordCount: countWords(articleContent),
-          },
-        }).catch((versionErr: any) => {
-          // FIX (silent swallow): a failed auto-save used to vanish with
-          // `.catch(() => {})` — the user's undo/version trail silently broke.
-          // Non-fatal (the article itself is already saved) but now logged.
-          log(`compose: version snapshot FAILED: ${String(versionErr?.message ?? versionErr).slice(0, 120)}`);
-        });
 
         // Final mechanical audit of the composed article (Layer-2 deterministic)
         // ★ FIX: previously called with `[]` which silently SKIPPED the
@@ -1391,14 +1392,335 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
         });
         log(`compose: article saved (${countWords(articleContent)} words, ${globalRefs.length} refs, audit: ${audit.summary.blockingErrors} blocking, ${audit.summary.suspect + audit.summary.unsupported} topicality warnings)`);
 
+        // ============ STEP 9 (both mode only): Translate each section EN → ZH
+        // round-27: the UI used to hard-force language="English" for v2, so
+        // bilingual users never got the Chinese half. Now language === "both"
+        // translates every section AFTER compose — by this point each
+        // paragraph's content carries FINAL GLOBAL citation numbers (compose
+        // renumbered them above), so a translation that preserves [n] markers
+        // verbatim is guaranteed to stay consistent with the article's
+        // reference list. Mirrors the v1 translate stage's prompt contract.
+        let articleContentZh: string | null = null;
+        if (isBothMode) {
+          send("step", {
+            step: "translate",
+            status: "started",
+            message: `Translating ${generatedParagraphs.length} sections from English to Chinese (one by one)...`,
+            detail: "Each section is translated independently to preserve citations and structure",
+          });
+          log(`translate: starting for ${generatedParagraphs.length} sections`);
+
+          // round-28: translate ALL section titles in ONE small batched call
+          // so the composed Chinese article carries Chinese headings (the
+          // English half keeps its own titles). Null entries fall back to the
+          // English title — a heading-translation failure never blocks
+          // generation.
+          const sectionTitles = generatedParagraphs.map(
+            (gp: any, i: number) => gp?.title || sections[i]?.title || "",
+          );
+          let titleZhs: (string | null)[] = [];
+          try {
+            titleZhs = await translateSectionTitles(sectionTitles);
+            const got = titleZhs.filter(Boolean).length;
+            log(`translate: section titles ${got}/${sectionTitles.length} translated`);
+          } catch (titleErr: any) {
+            log(`translate: section-title batch FAILED (keeping English headings): ${titleErr?.message?.slice(0, 80) || "unknown"}`);
+          }
+
+          const translatedContents: string[] = [];
+          for (let i = 0; i < generatedParagraphs.length; i++) {
+            const p = generatedParagraphs[i];
+            const sectionNum = i + 1;
+            const trStart = Date.now();
+            try {
+              const para = await db.paragraph.findUnique({ where: { id: p.id } });
+              if (!para) {
+                translatedContents.push("");
+                continue;
+              }
+              // Content is already global-numbered; strip any trailing
+              // "### Citations" bookkeeping block before translating.
+              const enContent = para.content;
+              const citIdx = enContent.indexOf("### Citations");
+              const cleanEn = citIdx >= 0 ? enContent.slice(0, citIdx).trim() : enContent.trim();
+
+              send("step", {
+                step: "translate",
+                status: "started",
+                section: sectionNum,
+                total: generatedParagraphs.length,
+                title: para.title,
+                message: `Translating section ${sectionNum}/${generatedParagraphs.length}: ${para.title} (${para.wordCount} EN words → 中文)`,
+              });
+
+              const translateSystem =
+                "You are a professional scientific translator. Translate English academic text into formal, " +
+                "precise Chinese (中文) academic prose. Preserve ALL inline citations [n] EXACTLY as they appear " +
+                "(do NOT renumber, do NOT remove). Preserve ALL markdown formatting. Do NOT add any preamble, " +
+                "commentary, or section headers — output ONLY the translated Chinese text.";
+
+              const translatePrompt = `Translate the following English scientific section into formal Chinese academic prose.
+
+REQUIREMENTS:
+1. Preserve ALL inline citations [n] EXACTLY (e.g. [1], [2,3], [4-6] — keep the numbers unchanged).
+2. Preserve ALL markdown formatting (## headings, **bold**, *italic*, lists, etc.).
+3. Use formal, precise academic Chinese (书面语，第三人称，结果/方法部分使用过去时).
+4. Use domain-correct terminology. Translate technical terms using standard Chinese scientific equivalents.
+5. Do NOT add any preamble like "以下是翻译" or "翻译如下". Output ONLY the translated text.
+6. Do NOT translate citation numbers, DOIs, URLs, or [SOURCE:ID] markers.
+7. Maintain the same paragraph structure and flow.
+
+ENGLISH SECTION (section ${sectionNum} of ${generatedParagraphs.length}):
+
+${cleanEn}`;
+
+              let zhContent = "";
+              let lastZhStream = 0;
+              try {
+                // chatWithSessionStream keeps session context across sections
+                // so terminology stays consistent (once "mechanotransduction"
+                // is rendered as "机械转导", later sections reuse it).
+                zhContent = await chatWithSessionStream(
+                  projectId,
+                  translatePrompt,
+                  {
+                    system: translateSystem,
+                    temperature: 0.3, // lower temp for faithful translation
+                    thinking: false,
+                    taskType: "translate",
+                    maxTokens,
+                    metadata: {
+                      step: "translate",
+                      section: sectionNum,
+                      sectionTitle: para.title,
+                      sourceChars: cleanEn.length,
+                    },
+                  },
+                  (delta, accumulated) => {
+                    const now = Date.now();
+                    if (now - lastZhStream > 100) {
+                      lastZhStream = now;
+                      send("step", {
+                        step: "translate",
+                        status: "streaming",
+                        section: sectionNum,
+                        total: generatedParagraphs.length,
+                        delta: delta.slice(-200),
+                        accumulatedLength: accumulated.length,
+                        accumulatedTail: accumulated.slice(-300),
+                        message: `Section ${sectionNum} translating... (${accumulated.length} chars)`,
+                      });
+                    }
+                  },
+                );
+              } catch (err: any) {
+                send("step", {
+                  step: "translate",
+                  status: "progress",
+                  section: sectionNum,
+                  total: generatedParagraphs.length,
+                  message: `Streaming failed, falling back: ${err?.message?.slice(0, 80) || ""}`,
+                });
+                zhContent = await chatWithSession(projectId, translatePrompt, {
+                  system: translateSystem,
+                  temperature: 0.3,
+                  taskType: "translate",
+                  maxTokens,
+                  metadata: { step: "translate", section: sectionNum, fallback: true },
+                });
+              }
+
+              // Sanitize: strip any preamble the LLM may have added despite
+              // the prompt, then apply the general section sanitizer.
+              zhContent = zhContent
+                .replace(/^(以下是|翻译如下|中文翻译：?|译文：?|Translation:?)\s*\n*/i, "")
+                .trim();
+              zhContent = sanitizeSectionContent(zhContent);
+
+              // Citation-integrity check (cheap, deterministic): the Chinese
+              // section must cite EXACTLY the same global numbers as the
+              // English one — otherwise the bilingual halves disagree.
+              const numsOf = (s: string) => {
+                const set = new Set<number>();
+                const re = /\[(\d+(?:[,\-–]\s*\d+)*)\]/g;
+                let m;
+                while ((m = re.exec(s)) !== null) {
+                  for (const part of m[1].split(/[,;]\s*/)) {
+                    const rm = part.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+                    if (rm) {
+                      for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) set.add(n);
+                    } else {
+                      const n = parseInt(part);
+                      if (!isNaN(n)) set.add(n);
+                    }
+                  }
+                }
+                return set;
+              };
+              const enNums = numsOf(cleanEn);
+              const zhNums = numsOf(zhContent);
+              let citationDrift = false;
+              for (const n of enNums) {
+                if (!zhNums.has(n)) citationDrift = true;
+              }
+              if (citationDrift) {
+                log(`translate: section ${sectionNum} citation drift detected (EN ${enNums.size} vs ZH ${zhNums.size} unique cites) — keeping translation as-is, drift is non-fatal`);
+              }
+
+              const zhWordCount = countWords(zhContent);
+              await db.paragraph.update({
+                where: { id: para.id },
+                data: {
+                  contentZh: zhContent,
+                  wordCountZh: zhWordCount,
+                  ...(titleZhs[i] ? { titleZh: titleZhs[i] as string } : {}),
+                },
+              });
+
+              translatedContents.push(zhContent);
+
+              send("step", {
+                step: "translate",
+                status: "done",
+                section: sectionNum,
+                total: generatedParagraphs.length,
+                title: para.title,
+                wordCount: zhWordCount,
+                message: `Section ${sectionNum} translated: ${zhWordCount} Chinese chars (${Date.now() - trStart}ms)`,
+                ms: Date.now() - trStart,
+              });
+              log(`translate: section ${sectionNum} DONE in ${Date.now() - trStart}ms (${zhContent.length} chars${citationDrift ? ", citation drift" : ""})`);
+
+              // Rate limit between sections
+              await new Promise((r) => setTimeout(r, 1500));
+            } catch (trErr: any) {
+              // Translation of this section failed — skip and continue
+              log(`translate: section ${sectionNum} FAILED: ${trErr?.message?.slice(0, 120) || "unknown"}`);
+              translatedContents.push("");
+              send("step", {
+                step: "translate",
+                status: "progress",
+                section: sectionNum,
+                total: generatedParagraphs.length,
+                title: p.title,
+                message: `Translation of section ${sectionNum} FAILED (skipped): ${trErr?.message?.slice(0, 80) || "LLM error"}. You can retranslate later.`,
+                failed: true,
+              });
+              await new Promise((r) => setTimeout(r, 3000));
+            }
+          }
+
+          // Guard: if EVERY section translation failed, translatedContents is
+          // all empty strings — composing would produce a headers-only shell.
+          // Skip attaching contentZh (the EN article stands alone; the user
+          // can batch-retranslate from the article viewer).
+          const translatedCount = translatedContents.filter((c) => c.trim().length > 0).length;
+          if (translatedCount === 0) {
+            send("step", {
+              step: "translate",
+              status: "done",
+              message: `Chinese translation FAILED for all ${generatedParagraphs.length} sections — the English article was saved without a Chinese half. You can batch-retranslate from the article viewer.`,
+              failed: true,
+            });
+            log(`translate: all ${generatedParagraphs.length} sections failed — skipping zh compose`);
+          } else {
+          send("step", {
+            step: "translate",
+            status: "progress",
+            message: `Composing Chinese full article from ${translatedCount}/${translatedContents.length} translated sections...`,
+          });
+
+          const zhBody = translatedContents
+            .map((c, i) => `## ${titleZhs[i] || generatedParagraphs[i]?.title || sections[i]?.title || `Section ${i + 1}`}\n\n${c}`)
+            .join("\n\n");
+
+          let cleanZhBody = zhBody.trim();
+          cleanZhBody = cleanZhBody.replace(/^#{1}\s+.+\n*/m, "").trim();
+          // Strip any AI-generated 参考文献 section (we append the real one)
+          const zhRefRe = /^#{0,6}\s*\*{0,2}(参考文献|References|REFERENCES)\*{0,2}\s*:?\s*$/m;
+          const zhRefMatch = cleanZhBody.match(zhRefRe);
+          if (zhRefMatch && zhRefMatch.index !== undefined) {
+            cleanZhBody = cleanZhBody.slice(0, zhRefMatch.index).trim();
+          }
+
+          // Same global references list (citations unchanged), Chinese header
+          const zhRefList = globalRefs
+            .map((r: any, i: number) => {
+              let auth = (r.authors || "").trim();
+              if (!auth || /^(https?:\/\/)?(www\.)?[a-z0-9.-]+\.(gov|org|com|edu|net)$/i.test(auth)) {
+                auth = "Anonymous";
+              }
+              const yr = r.year ? ` (${r.year})` : "";
+              const jour = r.journal ? `, ${r.journal}` : "";
+              const url = r.url ? ` — ${r.url}` : "";
+              return `[${i + 1}] ${auth}${yr}${jour}. ${r.title || "Untitled"}.${url}`;
+            })
+            .join("\n");
+
+          articleContentZh = cleanZhBody + "\n\n## 参考文献\n\n" + zhRefList;
+
+          // Attach the Chinese half to the saved article (the EN half was
+          // already persisted above; this UPDATE adds contentZh).
+          await db.article.update({
+            where: { id: article.id },
+            data: { contentZh: articleContentZh },
+          });
+
+          send("step", {
+            step: "translate",
+            status: "done",
+            message: `Chinese translation complete: ${countWords(articleContentZh)} chars across ${translatedCount}/${translatedContents.length} sections.`,
+            articleWordCountZh: countWords(articleContentZh),
+          });
+          log(`translate: compose done — zh article ${articleContentZh.length} chars (${translatedCount}/${translatedContents.length} sections)`);
+          }
+        }
+
+        await db.articleVersion.create({
+          data: {
+            articleId: article.id,
+            content: articleContent,
+            ...(articleContentZh ? { contentZh: articleContentZh } : {}),
+            title: articleTitle,
+            label: "v2 evidence-grounded (auto-saved)",
+            wordCount: countWords(articleContent),
+          },
+        }).catch((versionErr: any) => {
+          // FIX (silent swallow): a failed auto-save used to vanish with
+          // `.catch(() => {})` — the user's undo/version trail silently broke.
+          // Non-fatal (the article itself is already saved) but now logged.
+          log(`compose: version snapshot FAILED: ${String(versionErr?.message ?? versionErr).slice(0, 120)}`);
+        });
+
         const totalMs = Date.now() - t0;
+        const articleWordCount = countWords(articleContent);
         send("complete", {
           articleId: article.id,
-          wordCount: countWords(articleContent),
+          wordCount: articleWordCount,
           references: globalRefs.length,
           sections: generatedParagraphs.length,
           totalMs,
           pipeline: "v2",
+          hasChinese: !!articleContentZh,
+          // round-27: V1-shaped stats block — the UI's completion toast and
+          // result card read data.stats.articleWordCount / referencesSaved,
+          // which never existed in the v2 payload, so every v2 run showed
+          // "0 words". Also keep the flat fields above for older clients.
+          stats: {
+            sourcesGathered: savedDataSources.length,
+            referencesSaved: savedReferences.length,
+            curatedReferences: curatedRefs.length,
+            sectionsPlanned: sections.length,
+            paragraphsGenerated: generatedParagraphs.length,
+            totalWords: generatedParagraphs.reduce((s, p) => s + (p.wordCount || 0), 0),
+            articleWordCount,
+            ...(articleContentZh ? { articleWordCountZh: countWords(articleContentZh) } : {}),
+            globalReferenceCount: globalRefs.length,
+            pipelineDurationMs: totalMs,
+            pipelineDurationSec: Math.round(totalMs / 1000),
+            targetWords,
+            achievementRate: Math.round((articleWordCount / targetWords) * 100),
+          },
           accuracy: {
             droppedKeys: stats.droppedKeys,
             strippedNumeric: stats.strippedNumeric,
@@ -1417,7 +1739,7 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             auditTopicalityWarnings: audit.summary.suspect + audit.summary.unsupported,
             auditOrphans: audit.summary.orphan,
           },
-          message: `v2 pipeline complete: ${countWords(articleContent)} words, ${globalRefs.length} references, ${stats.citationsChecked} citations adversarially verified (${stats.citationsRemoved} removed).`,
+          message: `v2 pipeline complete: ${articleWordCount} words${articleContentZh ? ` + ${countWords(articleContentZh)} Chinese chars` : ""}, ${globalRefs.length} references, ${stats.citationsChecked} citations adversarially verified (${stats.citationsRemoved} removed).`,
         });
         safeClose();
       } catch (err: any) {

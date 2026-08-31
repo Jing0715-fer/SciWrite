@@ -428,7 +428,7 @@ export function CitationHealthDashboard({
           <Button
             variant="outline"
             size="sm"
-            className="h-6 px-2 text-[10px] gap-1 border-amber-300/60 text-amber-700 dark:text-amber-400 hover:bg-amber-50/60 dark:hover:bg-amber-950/30 hover:shadow-sm transition-all"
+            className="h-6 px-2 text-[10px] gap-1 border-amber-300/60 dark:border-amber-700/50 text-amber-700 dark:text-amber-400 hover:bg-amber-50/60 dark:hover:bg-amber-950/30 hover:shadow-sm transition-all"
             disabled={fixing}
             onClick={runBatchAutoFix}
             title={t("citationHealth.autoFixAllTitle")}

@@ -141,7 +141,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                 <div className="grid grid-cols-2 gap-2.5">
                   <div className="rounded-lg border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/20 p-3">
                     <div className="flex items-center gap-1.5 mb-1">
-                      <MessageSquare className="h-3.5 w-3.5 text-amber-600" />
+                      <MessageSquare className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
                       <span className="text-[10px] uppercase tracking-wide font-semibold text-amber-700 dark:text-amber-400">
                         {t("insights.unresolved")}
                       </span>
@@ -153,7 +153,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                   </div>
                   <div className="rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-3">
                     <div className="flex items-center gap-1.5 mb-1">
-                      <MessageSquare className="h-3.5 w-3.5 text-emerald-600" />
+                      <MessageSquare className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                       <span className="text-[10px] uppercase tracking-wide font-semibold text-emerald-700 dark:text-emerald-400">
                         {t("insights.resolved")}
                       </span>
@@ -235,7 +235,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
                           </span>
                           <span
                             className={`h-2 w-2 rounded-full ${
-                              STATUS_COLOR[item.status] || "bg-slate-400"
+                              STATUS_COLOR[item.status] || "bg-muted-foreground/60"
                             }`}
                           />
                           <span className="text-[11px] font-medium truncate flex-1">
@@ -295,7 +295,7 @@ export function InsightsDialog({ open, onOpenChange, projectId }: Props) {
             className="gap-1.5 text-xs"
             onClick={() => setBatchValidateOpen(true)}
           >
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+            <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
             {t("insights.auditAll")}
           </Button>
         </div>
@@ -368,7 +368,7 @@ function DistributionChart({
         {entries.map(([key, val]) => (
           <div
             key={key}
-            className={colorMap[key] || "bg-slate-400"}
+            className={colorMap[key] || "bg-muted-foreground/60"}
             style={{ width: `${(val / total) * 100}%` }}
             title={`${key}: ${val}`}
           />
@@ -379,7 +379,7 @@ function DistributionChart({
         {entries.map(([key, val]) => (
           <div key={key} className="flex items-center gap-1.5 text-[10px]">
             <span
-              className={`h-2 w-2 rounded-full ${colorMap[key] || "bg-slate-400"}`}
+              className={`h-2 w-2 rounded-full ${colorMap[key] || "bg-muted-foreground/60"}`}
             />
             <span className="capitalize flex-1">{key}</span>
             <span className="font-mono text-muted-foreground">{val}</span>

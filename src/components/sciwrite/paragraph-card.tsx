@@ -534,7 +534,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 text-[11px] gap-1.5 text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950/30"
+              className="h-7 text-[11px] gap-1.5 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/30"
               onClick={() => setDiffOpen(true)}
               title={t("para.compareTitle")}
             >
@@ -544,7 +544,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 text-[11px] gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+              className="h-7 text-[11px] gap-1.5 text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30"
               onClick={() => undoReviseMut.mutate()}
               disabled={undoReviseMut.isPending}
               title={t("para.undoTitle")}

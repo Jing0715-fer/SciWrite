@@ -92,7 +92,7 @@ export function KnowledgePanel({
             </Badge>
           )}
           {references.length > 0 && (
-            <Badge variant="outline" className="text-[9px] h-4 px-1.5 gap-0.5 text-emerald-700 border-emerald-300/40 bg-emerald-500/5">
+            <Badge variant="outline" className="text-[9px] h-4 px-1.5 gap-0.5 text-primary border-primary/40 bg-primary/5">
               {references.length} refs
             </Badge>
           )}
@@ -453,7 +453,7 @@ function SourceCard({
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+              className="h-6 w-6 text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30"
               onClick={() => onAnalyzeStructure(d.id, d.externalId!)}
               disabled={analyzeStructurePending}
               title={t("knowledge.analyzeStructureTitle")}
@@ -527,7 +527,7 @@ function SourceCard({
               </span>
             )}
             {extra.hasPublication && (
-              <span className="text-[8px] text-emerald-600 font-medium">
+              <span className="text-[8px] text-emerald-600 dark:text-emerald-400 font-medium">
                 {t("knowledge.linkedPublication")}
               </span>
             )}
@@ -613,7 +613,7 @@ function SourceCard({
         </div>
       )}
       {d.pinned && (
-        <span className="inline-flex items-center gap-0.5 text-[8px] text-amber-600 font-medium">
+        <span className="inline-flex items-center gap-0.5 text-[8px] text-amber-600 dark:text-amber-400 font-medium">
           <Pin className="h-2 w-2" /> {t("knowledge.pinned")}
         </span>
       )}

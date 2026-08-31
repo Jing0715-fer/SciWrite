@@ -68,9 +68,9 @@ export function CitationValidationDialog({
             {isLoading ? (
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
             ) : allValid ? (
-              <ShieldCheck className="h-4 w-4 text-emerald-600" />
+              <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
             ) : data ? (
-              <ShieldAlert className="h-4 w-4 text-amber-600" />
+              <ShieldAlert className="h-4 w-4 text-amber-600 dark:text-amber-400" />
             ) : (
               <ShieldCheck className="h-4 w-4 text-primary" />
             )}
@@ -101,9 +101,9 @@ export function CitationValidationDialog({
                 >
                   <div className="flex items-center gap-2 mb-1">
                     {allValid ? (
-                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                     ) : (
-                      <AlertTriangle className="h-4 w-4 text-amber-600" />
+                      <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
                     )}
                     <span
                       className={`text-sm font-semibold ${
@@ -158,7 +158,7 @@ export function CitationValidationDialog({
                 {/* Missing citations */}
                 {data.results.some((r: any) => r.status === "missing") && (
                   <div className="space-y-1.5">
-                    <p className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold flex items-center gap-1">
+                    <p className="text-[10px] uppercase tracking-wider text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1">
                       <XCircle className="h-3 w-3" />
                       {t("validation.missingCountLabel", { n: data.missingCount })}
                     </p>
@@ -193,7 +193,7 @@ export function CitationValidationDialog({
                 {/* Orphaned references */}
                 {data.orphaned.length > 0 && (
                   <div className="space-y-1.5">
-                    <p className="text-[10px] uppercase tracking-wider text-amber-600 font-semibold flex items-center gap-1">
+                    <p className="text-[10px] uppercase tracking-wider text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1">
                       <BookX className="h-3 w-3" />
                       {t("validation.orphanedCountLabel", { n: data.orphaned.length })}
                     </p>
@@ -222,7 +222,7 @@ export function CitationValidationDialog({
                 {/* Valid citations (collapsed) */}
                 {data.validCount > 0 && (
                   <div className="space-y-1.5">
-                    <p className="text-[10px] uppercase tracking-wider text-emerald-600 font-semibold flex items-center gap-1">
+                    <p className="text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
                       <CheckCircle2 className="h-3 w-3" />
                       {t("validation.validCountLabel", { n: data.validCount })}
                     </p>
@@ -299,7 +299,7 @@ function StatBox({
     amber:
       "border-amber-200/60 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400",
     slate:
-      "border-slate-200/60 dark:border-slate-800/40 bg-slate-50/40 dark:bg-slate-950/20 text-slate-700 dark:text-slate-400",
+      "border-border/60 bg-muted/40 text-foreground",
   };
   return (
     <div className={`rounded-md border p-2 ${colorMap[color]}`}>

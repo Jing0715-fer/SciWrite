@@ -80,7 +80,7 @@ export function AnnotationsSection({
                     {sev.label}
                   </span>
                   {a.resolved && (
-                    <span className="text-[9px] text-emerald-600 flex items-center gap-0.5">
+                    <span className="text-[9px] text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
                       <CheckCircle2 className="h-2.5 w-2.5" /> {t("para.resolved")}
                     </span>
                   )}

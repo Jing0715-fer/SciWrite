@@ -125,7 +125,7 @@ export function ShareDialog({ open, onOpenChange, projectId, projectTitle }: Pro
                 <Button
                   variant="outline"
                   size="sm"
-                  className="text-[10px] h-7 gap-1 border-red-300/60 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
+                  className="text-[10px] h-7 gap-1 border-red-300/60 dark:border-red-700/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
                   onClick={() => shareMut.mutate("revoke")}
                   disabled={shareMut.isPending}
                 >

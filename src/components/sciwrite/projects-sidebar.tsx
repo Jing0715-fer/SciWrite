@@ -319,7 +319,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
                                     {sections} §
                                   </span>
                                 )}
-                                <span className="inline-flex items-center px-1 rounded bg-teal-500/10 text-teal-700 dark:text-teal-300 font-semibold tabular-nums">
+                                <span className="inline-flex items-center px-1 rounded bg-primary/10 text-primary font-semibold tabular-nums">
                                   {Math.round(enLen / 6).toLocaleString()}w EN
                                 </span>
                               </div>
@@ -487,7 +487,7 @@ function ProjectItem({
               off-screen. */}
           <div className="flex items-center gap-1 mt-2 pr-1">
             {project._count?.paragraphs !== undefined && (
-              <span className="inline-flex items-center gap-0.5 px-1 py-px rounded bg-teal-500/10 text-teal-700 dark:text-teal-300 text-[9px] font-semibold tabular-nums">
+              <span className="inline-flex items-center gap-0.5 px-1 py-px rounded bg-primary/10 text-primary text-[9px] font-semibold tabular-nums">
                 <FileText className="h-2 w-2" />
                 {project._count.paragraphs}
               </span>
@@ -499,7 +499,7 @@ function ProjectItem({
               </span>
             )}
             {project._count?.dataSources !== undefined && project._count.dataSources > 0 && (
-              <span className="inline-flex items-center gap-0.5 px-1 py-px rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-[9px] font-semibold tabular-nums">
+              <span className="inline-flex items-center gap-0.5 px-1 py-px rounded bg-primary/10 text-primary text-[9px] font-semibold tabular-nums">
                 <Database className="h-2 w-2" />
                 {project._count.dataSources}
               </span>

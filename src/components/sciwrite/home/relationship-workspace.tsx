@@ -143,11 +143,11 @@ export function RelationshipWorkspace({ projectId }: { projectId: string }) {
             )}
             {relData.contradictions?.length > 0 && (
               <div className="space-y-1.5">
-                <p className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold">{t("workspace.contradictions")}</p>
+                <p className="text-[10px] uppercase tracking-wider text-rose-600 dark:text-rose-400 font-semibold">{t("workspace.contradictions")}</p>
                 {relData.contradictions.map((c: any, i: number) => (
-                  <div key={i} className="rounded-md border border-rose-200/50 bg-rose-50/30 p-2">
+                  <div key={i} className="rounded-md border border-rose-200/50 dark:border-rose-800/50 bg-rose-50/30 dark:bg-rose-950/20 p-2">
                     <div className="flex items-center gap-1.5 mb-0.5">
-                      <AlertTriangle className="h-3 w-3 text-rose-600" />
+                      <AlertTriangle className="h-3 w-3 text-rose-600 dark:text-rose-400" />
                       <Badge variant="outline" className="text-[8px] h-3.5">{c.sourceLabels?.join(" vs ") || ""}</Badge>
                     </div>
                     <p className="text-[10px] text-muted-foreground">{c.description}</p>

@@ -518,7 +518,7 @@ function renderSegment(
           {/* When refs resolved but flagged by the audit (suspect/unsupported),
               append the audit reason to the hover card so the user sees WHY. */}
           {auditFlag && auditReason && refs.length > 0 && (
-            <div className="mt-1.5 pt-1.5 border-t border-amber-300/40 text-[9px] text-amber-700 dark:text-amber-400 leading-snug">
+            <div className="mt-1.5 pt-1.5 border-t border-amber-300/40 dark:border-amber-700/50 text-[9px] text-amber-700 dark:text-amber-400 leading-snug">
               <span className="font-semibold">Audit:</span> {auditReason}
             </div>
           )}

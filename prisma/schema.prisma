@@ -36,6 +36,7 @@ model Paragraph {
   projectId        String
   project          Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
   title            String
+  titleZh          String?             // Chinese translation of the section title (parallel to contentZh); null when untranslated
   content          String              // markdown content with inline citations like [PMID:123] (primary — English when "both" mode)
   contentZh        String?             // Chinese translation when language is "both"; null otherwise
   format           String              @default("background") // background, intro, methods, results, discussion, conclusion, abstract

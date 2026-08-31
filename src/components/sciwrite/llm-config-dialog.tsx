@@ -307,10 +307,10 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
         <div className="flex-1 min-h-0 overflow-y-auto scroll-academic">
           <div className="px-6 py-4 space-y-5">
             {/* Currently selected default provider + model override */}
-            <div className="rounded-lg border border-emerald-200/60 dark:border-emerald-900/40 bg-emerald-50/40 dark:bg-emerald-950/20 p-3 space-y-2">
+            <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
               <div className="flex items-center gap-2 mb-1">
-                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                <CheckCircle2 className="h-4 w-4 text-primary" />
+                <span className="text-sm font-semibold text-primary">
                   {t("llmConfig.default")} {selectedLabel}
                 </span>
                 <Badge variant="outline" className="text-[8px] h-3.5 uppercase ml-auto">
@@ -348,8 +348,8 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
                 </Button>
               </div>
               {selectedIsCodebuddy && (
-                <div className="flex items-start gap-1.5 rounded-md border border-amber-300/50 bg-amber-50/60 dark:bg-amber-950/20 px-2 py-1.5">
-                  <AlertCircle className="h-3 w-3 text-amber-600 shrink-0 mt-0.5" />
+                <div className="flex items-start gap-1.5 rounded-md border border-amber-300/50 dark:border-amber-700/50 bg-amber-50/60 dark:bg-amber-950/20 px-2 py-1.5">
+                  <AlertCircle className="h-3 w-3 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                   <p className="text-[10px] leading-relaxed text-amber-800 dark:text-amber-300">
                     {t("llmConfig.codebuddyHint")}
                   </p>
@@ -403,7 +403,7 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
                   )}
                 >
                   <div className="flex items-center gap-2">
-                    <CheckCircle2 className={cn("h-3.5 w-3.5 shrink-0", isSelected ? "text-primary" : "text-emerald-600")} />
+                    <CheckCircle2 className={cn("h-3.5 w-3.5 shrink-0", isSelected ? "text-primary" : "text-emerald-600 dark:text-emerald-400")} />
                     <span className="text-xs font-semibold">{cli.label}</span>
                     <Badge variant="outline" className="text-[8px] h-3.5 uppercase">
                       {isApiRow ? cli.name.slice(4) : cli.name}
@@ -500,12 +500,12 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
                   {Object.entries(config.envKeys).map(([key, has]: [string, any]) => (
                     <div key={key} className="flex items-center gap-2 text-[10px] rounded-md border border-border/50 p-1.5">
                       {has ? (
-                        <CheckCircle2 className="h-3 w-3 text-emerald-600 shrink-0" />
+                        <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
                       ) : (
                         <XCircle className="h-3 w-3 text-muted-foreground shrink-0" />
                       )}
                       <span className="font-mono">{key}</span>
-                      <span className={cn("ml-auto", has ? "text-emerald-600" : "text-muted-foreground")}>
+                      <span className={cn("ml-auto", has ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
                         {has ? t("llmConfig.keySet") : t("llmConfig.keyNotSet")}
                       </span>
                     </div>
@@ -1075,7 +1075,7 @@ function ConfiguredApiProviderRow({
               variant="ghost"
               onClick={handleDelete}
               disabled={deleting}
-              className="h-6 text-[10px] text-red-600 hover:text-red-700 hover:bg-red-500/10 gap-1"
+              className="h-6 text-[10px] text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-500/10 gap-1"
             >
               {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
               {t("llmConfig.delete")}
@@ -1163,7 +1163,7 @@ export function LLMCacheStatsPanel() {
           <p className="text-[8px] uppercase text-muted-foreground">entries</p>
         </div>
         <div className="rounded-md bg-background/50 p-1.5 text-center">
-          <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">{stats.hits}</p>
+          <p className="text-sm font-bold text-primary tabular-nums">{stats.hits}</p>
           <p className="text-[8px] uppercase text-muted-foreground">hits</p>
         </div>
         <div className="rounded-md bg-background/50 p-1.5 text-center">

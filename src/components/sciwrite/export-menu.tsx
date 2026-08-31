@@ -64,13 +64,13 @@ const FORMAT_META: {
   langs?: ExportLang[]; // undefined = all langs available
   desc: string; // v102-3: short description shown in menu
 }[] = [
-  { format: "docx", icon: FileType2, color: "text-blue-600", key: "export.word", ext: "docx", desc: "Microsoft Word" },
-  { format: "pdf", icon: FileText, color: "text-rose-600", key: "export.pdf", ext: "pdf", desc: "Portable Document" },
-  { format: "endnote", icon: Library, color: "text-teal-600", key: "export.endnote", ext: "enw", langs: ["en"], desc: "EndNote library import" },
-  { format: "markdown", icon: FileCode2, color: "text-emerald-600", key: "export.markdown", ext: "md", desc: "Plain text .md" },
-  { format: "latex", icon: FileTerminal, color: "text-amber-700", key: "export.latex", ext: "tex", desc: "LaTeX source" },
-  { format: "epub", icon: BookOpen, color: "text-indigo-600", key: "export.epub", ext: "epub", langs: ["en"], desc: "E-book" },
-  { format: "graph-report", icon: Network, color: "text-fuchsia-600", key: "export.graphReport", ext: "html", langs: ["en"], desc: "Citation graph" },
+  { format: "docx", icon: FileType2, color: "text-blue-600 dark:text-blue-400", key: "export.word", ext: "docx", desc: "Microsoft Word" },
+  { format: "pdf", icon: FileText, color: "text-rose-600 dark:text-rose-400", key: "export.pdf", ext: "pdf", desc: "Portable Document" },
+  { format: "endnote", icon: Library, color: "text-teal-600 dark:text-teal-400", key: "export.endnote", ext: "enw", langs: ["en"], desc: "EndNote library import" },
+  { format: "markdown", icon: FileCode2, color: "text-emerald-600 dark:text-emerald-400", key: "export.markdown", ext: "md", desc: "Plain text .md" },
+  { format: "latex", icon: FileTerminal, color: "text-amber-700 dark:text-amber-300", key: "export.latex", ext: "tex", desc: "LaTeX source" },
+  { format: "epub", icon: BookOpen, color: "text-indigo-600 dark:text-indigo-400", key: "export.epub", ext: "epub", langs: ["en"], desc: "E-book" },
+  { format: "graph-report", icon: Network, color: "text-fuchsia-600 dark:text-fuchsia-400", key: "export.graphReport", ext: "html", langs: ["en"], desc: "Citation graph" },
 ];
 
 const LANG_META: Record<ExportLang, { label: string; short: string; suffix: string }> = {
@@ -260,7 +260,7 @@ export function ExportMenu({
             <span className="font-normal text-[9px]">{LANG_META.both.label}</span>
           </DropdownMenuLabel>
           {FORMAT_META.filter((f) => !f.langs).map((f) =>
-            renderFormatItem(f.format, "both", f.icon, "text-fuchsia-600", t(f.key as any), f.desc),
+            renderFormatItem(f.format, "both", f.icon, "text-fuchsia-600 dark:text-fuchsia-400", t(f.key as any), f.desc),
           )}
         </DropdownMenuGroup>
 

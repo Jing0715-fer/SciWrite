@@ -325,7 +325,24 @@ export function summarizeDataSource(items: DatabaseResultItem[]): string {
 }
 
 export function countWords(text: string): number {
-  return text.trim().split(/\s+/).filter(Boolean).length;
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  // round-27: CJK-aware counting. Chinese/Japanese academic prose has no
+  // whitespace between words, so the old whitespace-split counted an entire
+  // Chinese paragraph as ~1 "word" (a 2,732-char bilingual article reported
+  // "456 chars"). Each CJK char now counts as one unit; non-CJK runs still
+  // count as whitespace-separated words. Pure-English text is unaffected
+  // (identical to the old split-based count).
+  const cjkRe = /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uf900-\ufaff]/g;
+  const cjkCount = (trimmed.match(cjkRe) || []).length;
+  if (cjkCount === 0) {
+    return trimmed.split(/\s+/).filter(Boolean).length;
+  }
+  const nonCjkWords = trimmed
+    .replace(cjkRe, " ")
+    .split(/\s+/)
+    .filter(Boolean).length;
+  return cjkCount + nonCjkWords;
 }
 
 /**

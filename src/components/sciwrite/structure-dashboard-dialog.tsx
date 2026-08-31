@@ -145,7 +145,7 @@ export function StructureDashboardDialog({ open, onOpenChange, projectId }: Prop
         <DialogContent className="max-w-5xl max-h-[92vh] flex flex-col p-0 gap-0">
           <DialogHeader className="px-6 pt-6 pb-3 border-b">
             <DialogTitle className="flex items-center gap-2 text-lg">
-              <Layers className="h-5 w-5 text-amber-600" />
+              <Layers className="h-5 w-5 text-amber-600 dark:text-amber-400" />
               {t("structure.dashboardTitle")}
               {entries.length > 0 && (
                 <Badge variant="secondary" className="ml-1">
@@ -163,22 +163,22 @@ export function StructureDashboardDialog({ open, onOpenChange, projectId }: Prop
             {entries.length > 0 && (
               <div className="flex gap-4 text-[11px]">
                 <div className="flex items-center gap-1">
-                  <Box className="h-3.5 w-3.5 text-amber-600" />
+                  <Box className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
                   <span className="font-semibold">{entries.length}</span>
                   <span className="text-muted-foreground">structures</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <Layers className="h-3.5 w-3.5 text-sky-600" />
+                  <Layers className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
                   <span className="font-semibold">{totalChains}</span>
                   <span className="text-muted-foreground">chains</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <Activity className="h-3.5 w-3.5 text-emerald-600" />
+                  <Activity className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                   <span className="font-semibold">{totalResidues}</span>
                   <span className="text-muted-foreground">residues</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <Box className="h-3.5 w-3.5 text-violet-600" />
+                  <Box className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
                   <span className="font-semibold">{totalLigands}</span>
                   <span className="text-muted-foreground">ligands</span>
                 </div>
@@ -189,7 +189,7 @@ export function StructureDashboardDialog({ open, onOpenChange, projectId }: Prop
               variant="outline"
               onClick={runBatch}
               disabled={batchRunning}
-              className="ml-auto h-7 text-[10px] gap-1 border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400"
+              className="ml-auto h-7 text-[10px] gap-1 border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/30"
             >
               {batchRunning ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -229,7 +229,7 @@ export function StructureDashboardDialog({ open, onOpenChange, projectId }: Prop
             <div className="px-6 py-4">
               {loading ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-3">
-                  <Loader2 className="h-8 w-8 animate-spin text-amber-600" />
+                  <Loader2 className="h-8 w-8 animate-spin text-amber-600 dark:text-amber-400" />
                   <p className="text-sm text-muted-foreground">Loading…</p>
                 </div>
               ) : entries.length === 0 ? (
@@ -276,7 +276,7 @@ export function StructureDashboardDialog({ open, onOpenChange, projectId }: Prop
                     return (
                       <div
                         key={e.pdbId}
-                        className="rounded-lg border border-border/60 bg-card p-3 space-y-2 hover:border-amber-300 hover:shadow-sm transition-all cursor-pointer"
+                        className="rounded-lg border border-border/60 bg-card p-3 space-y-2 hover:border-amber-300 dark:hover:border-amber-700/50 hover:shadow-sm transition-all cursor-pointer"
                         onClick={() => setDetailDialog({ open: true, pdbId: e.pdbId })}
                       >
                         {/* Header */}
@@ -316,34 +316,34 @@ export function StructureDashboardDialog({ open, onOpenChange, projectId }: Prop
                               {method.trim().slice(0, 20)}
                             </span>
                           )}
-                          {resolution && <span className="text-amber-600 font-medium">{resolution.trim()}</span>}
+                          {resolution && <span className="text-amber-600 dark:text-amber-400 font-medium">{resolution.trim()}</span>}
                         </div>
 
                         {/* Quality + electrostatics row */}
                         <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px]">
                           {ramaFav && (
                             <span className="flex items-center gap-0.5" title="Ramachandran favoured">
-                              <ShieldCheck className="h-2.5 w-2.5 text-emerald-600" />
+                              <ShieldCheck className="h-2.5 w-2.5 text-emerald-600 dark:text-emerald-400" />
                               <span className="font-semibold">{ramaFav}%</span>
                               <span className="text-muted-foreground">Ramach</span>
                             </span>
                           )}
                           {bfMean && (
                             <span className="flex items-center gap-0.5" title="B-factor mean">
-                              <Thermometer className="h-2.5 w-2.5 text-amber-600" />
+                              <Thermometer className="h-2.5 w-2.5 text-amber-600 dark:text-amber-400" />
                               <span className="font-semibold">B̄={Math.round(parseFloat(bfMean))}</span>
                             </span>
                           )}
                           {sasaExp && (
                             <span className="flex items-center gap-0.5" title="SASA exposed %">
-                              <Droplets className="h-2.5 w-2.5 text-sky-600" />
+                              <Droplets className="h-2.5 w-2.5 text-sky-600 dark:text-sky-400" />
                               <span className="font-semibold">{sasaExp}%</span>
                               <span className="text-muted-foreground">exp</span>
                             </span>
                           )}
                           {hbonds && (
                             <span className="flex items-center gap-0.5" title="Hydrogen bonds">
-                              <Activity className="h-2.5 w-2.5 text-emerald-600" />
+                              <Activity className="h-2.5 w-2.5 text-emerald-600 dark:text-emerald-400" />
                               <span className="font-semibold">{hbonds}</span>
                               <span className="text-muted-foreground">H-bond</span>
                             </span>
@@ -354,7 +354,7 @@ export function StructureDashboardDialog({ open, onOpenChange, projectId }: Prop
                         <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px]">
                           {netCharge && (
                             <span className="flex items-center gap-0.5" title="Net charge at pH 7">
-                              <Zap className="h-2.5 w-2.5 text-violet-600" />
+                              <Zap className="h-2.5 w-2.5 text-violet-600 dark:text-violet-400" />
                               <span className="font-semibold">
                                 q={parseFloat(netCharge) > 0 ? "+" : ""}{Math.round(parseFloat(netCharge))}
                               </span>
@@ -366,7 +366,7 @@ export function StructureDashboardDialog({ open, onOpenChange, projectId }: Prop
                             </span>
                           )}
                           {ramaOut && parseFloat(ramaOut) > 5 && (
-                            <span className="text-rose-600 font-medium" title="Ramachandran outliers">
+                            <span className="text-rose-600 dark:text-rose-400 font-medium" title="Ramachandran outliers">
                               ⚠ {ramaOut}% outliers
                             </span>
                           )}
@@ -611,7 +611,7 @@ function ComparisonMatrixTab({
       {/* Matrix heatmap */}
       {matrixLoading ? (
         <div className="flex flex-col items-center justify-center py-12 gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-amber-600" />
+          <Loader2 className="h-8 w-8 animate-spin text-amber-600 dark:text-amber-400" />
           <p className="text-sm text-muted-foreground">Computing pairwise comparisons…</p>
           <p className="text-[10px] text-muted-foreground/70">
             Running Kabsch superposition + sequence alignment for all {n > 0 ? (n * (n - 1)) / 2 : "?"} pairs.

@@ -118,14 +118,14 @@ export function ProjectImportExport({
             onClick={() => exportMut.mutate()}
             disabled={exportMut.isPending || !projectId}
           >
-            <Download className="h-3.5 w-3.5 text-emerald-600" />
+            <Download className="h-3.5 w-3.5 text-primary" />
             <span className="text-xs">{t("backup.exportJson")}</span>
             {exportMut.isPending && (
               <Loader2 className="h-3 w-3 animate-spin ml-auto" />
             )}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
-            <Upload className="h-3.5 w-3.5 text-sky-600" />
+            <Upload className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
             <span className="text-xs">{t("backup.importJson")}</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
@@ -149,7 +149,7 @@ export function ProjectImportExport({
           <div className="bg-card rounded-xl border border-border shadow-xl max-w-md w-full p-5 space-y-3">
             <div className="flex items-center gap-2">
               <div className="h-8 w-8 rounded-lg bg-sky-100 dark:bg-sky-950/40 flex items-center justify-center">
-                <Upload className="h-4 w-4 text-sky-600" />
+                <Upload className="h-4 w-4 text-sky-600 dark:text-sky-400" />
               </div>
               <div>
                 <h3 className="text-sm font-semibold">{t("backup.importTitle")}</h3>
