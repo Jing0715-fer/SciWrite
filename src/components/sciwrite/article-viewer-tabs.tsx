@@ -108,6 +108,15 @@ import { useKeyboardShortcuts, formatShortcut } from "@/hooks/use-keyboard-short
 import { ArticleInsights, ReadingProgressIndicator } from "./article-insights";
 import type { ViewLang } from "./article-insights";
 
+/* round-31: main-tab styling aligned to the `.tab-pill` language in
+   globals.css — active = filled primary-tint pill with hairline ring;
+   inactive = quiet muted + hover tint. Shared by all 5 viewer tabs. */
+const TAB_TRIGGER_CLS =
+  "h-7 gap-1.5 px-3 text-[11px] font-medium rounded-md transition-all " +
+  "text-muted-foreground data-[state=inactive]:hover:text-foreground data-[state=inactive]:hover:bg-muted/60 " +
+  "data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:font-semibold " +
+  "data-[state=active]:ring-1 data-[state=active]:ring-primary/30 data-[state=active]:shadow-xs " +
+  "dark:data-[state=active]:bg-primary/20 dark:data-[state=active]:text-primary";
 
 interface Props {
   article: {
@@ -645,48 +654,48 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
               />
             </div>
             {hasZh && (
-              <div className="flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 p-0.5 shrink-0">
+              <div className="flex items-center gap-0.5 rounded-lg bg-muted/40 p-0.5 shrink-0">
                 <button
                   type="button"
                   onClick={() => setViewLang("en")}
-                  className={`px-2 py-1 rounded text-[10px] font-semibold transition-colors flex items-center gap-1 ${
+                  className={`px-2 py-1 rounded-md text-[10px] font-semibold transition-all flex items-center gap-1 ${
                     viewLang === "en"
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
+                      ? "bg-primary/10 dark:bg-primary/20 text-primary ring-1 ring-primary/30"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                   }`}
                   title={`English only (${formatShortcut({ key: "1", mod: "none" })})`}
                 >
                   EN
                   <kbd className={`hidden sm:inline-flex items-center px-1 py-0 text-[7px] font-mono rounded leading-none h-3 ${
                     viewLang === "en"
-                      ? "border border-primary-foreground/30 bg-primary-foreground/10"
+                      ? "border border-primary/30 bg-primary/10"
                       : "border border-border/40 bg-muted/40"
                   }`}>1</kbd>
                 </button>
                 <button
                   type="button"
                   onClick={() => setViewLang("zh")}
-                  className={`px-2 py-1 rounded text-[10px] font-semibold transition-colors flex items-center gap-1 ${
+                  className={`px-2 py-1 rounded-md text-[10px] font-semibold transition-all flex items-center gap-1 ${
                     viewLang === "zh"
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
+                      ? "bg-primary/10 dark:bg-primary/20 text-primary ring-1 ring-primary/30"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                   }`}
                   title={`仅中文 (${formatShortcut({ key: "2", mod: "none" })})`}
                 >
                   中文
                   <kbd className={`hidden sm:inline-flex items-center px-1 py-0 text-[7px] font-mono rounded leading-none h-3 ${
                     viewLang === "zh"
-                      ? "border border-primary-foreground/30 bg-primary-foreground/10"
+                      ? "border border-primary/30 bg-primary/10"
                       : "border border-border/40 bg-muted/40"
                   }`}>2</kbd>
                 </button>
                 <button
                   type="button"
                   onClick={() => setViewLang("parallel")}
-                  className={`px-2 py-1 rounded text-[10px] font-semibold transition-colors flex items-center gap-1 ${
+                  className={`px-2 py-1 rounded-md text-[10px] font-semibold transition-all flex items-center gap-1 ${
                     viewLang === "parallel"
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
+                      ? "bg-primary/10 dark:bg-primary/20 text-primary ring-1 ring-primary/30"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                   }`}
                   title={`Side-by-side / 并排对照 (${formatShortcut({ key: "3", mod: "none" })})`}
                 >
@@ -694,7 +703,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                   对比
                   <kbd className={`hidden sm:inline-flex items-center px-1 py-0 text-[7px] font-mono rounded leading-none h-3 ${
                     viewLang === "parallel"
-                      ? "border border-primary-foreground/30 bg-primary-foreground/10"
+                      ? "border border-primary/30 bg-primary/10"
                       : "border border-border/40 bg-muted/40"
                   }`}>3</kbd>
                 </button>
@@ -705,31 +714,33 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
 
         <Tabs defaultValue="composed" className="flex-1 min-h-0 flex flex-col">
           <div className="px-6 py-2 border-b border-border/60 shrink-0 flex items-center gap-2 flex-wrap bg-gradient-to-r from-muted/20 to-transparent">
-            <TabsList className="h-9 gap-0.5 min-w-0 max-w-full overflow-x-auto">
-              <TabsTrigger value="sections" className="text-xs gap-1 px-3 rounded-md transition-all">
-                <FileText className="h-3.5 w-3.5" />
+            <TabsList className="h-9 gap-1 min-w-0 max-w-full overflow-x-auto bg-transparent p-0.5">
+              <TabsTrigger value="sections" className={TAB_TRIGGER_CLS}>
+                <FileText className="size-3" />
                 {t("articleViewer.sections")}
               </TabsTrigger>
-              <TabsTrigger value="composed" className="text-xs gap-1 px-3 rounded-md transition-all">
-                <Layers className="h-3.5 w-3.5" />
+              <TabsTrigger value="composed" className={TAB_TRIGGER_CLS}>
+                <Layers className="size-3" />
                 {t("articleViewer.composed")}
               </TabsTrigger>
-              <TabsTrigger value="review" className="text-xs gap-1 px-3 rounded-md transition-all">
-                <Gavel className="h-3.5 w-3.5" />
+              <TabsTrigger value="review" className={TAB_TRIGGER_CLS}>
+                <Gavel className="size-3" />
                 {t("articleViewer.review")}
               </TabsTrigger>
-              <TabsTrigger value="relationships" className="text-xs gap-1 px-3 rounded-md transition-all">
-                <Network className="h-3.5 w-3.5" />
+              <TabsTrigger value="relationships" className={TAB_TRIGGER_CLS}>
+                <Network className="size-3" />
                 {t("articleViewer.relationships")}
               </TabsTrigger>
-              <TabsTrigger value="insights" className="text-xs gap-1 px-3 rounded-md transition-all">
-                <Sparkles className="h-3.5 w-3.5" />
+              <TabsTrigger value="insights" className={TAB_TRIGGER_CLS}>
+                <Sparkles className="size-3" />
                 {t("articleViewer.insights") || "Analysis"}
               </TabsTrigger>
             </TabsList>
             {/* v116 compact action cluster — secondary tools live in the
-                "More" dropdown so the toolbar never overflows the dialog. */}
-            <div className="flex items-center gap-1.5 ml-auto flex-wrap justify-end">
+                "More" dropdown so the toolbar never overflows the dialog.
+                round-31: actions live in their own tight right-aligned group,
+                separated from the tabs by a hairline. */}
+            <div className="ml-auto flex items-center gap-1.5 pl-2.5 border-l border-border/60 flex-wrap justify-end">
               {/* Batch translate progress indicator */}
               {batchProgress && (
                 <div className="flex items-center gap-2 text-[10px] text-fuchsia-700 dark:text-fuchsia-400 px-2 py-1 rounded-md border border-fuchsia-200/60 dark:border-fuchsia-800/50 bg-fuchsia-50/50 dark:bg-fuchsia-950/20">
@@ -810,7 +821,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                     Import
                   </DropdownMenuItem>
                   <DropdownMenuItem className="gap-2 text-xs py-1.5" onClick={() => setSubmissionOpen(true)}>
-                    <ClipboardCheck className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                    <ClipboardCheck className="h-3.5 w-3.5 text-primary" />
                     Check
                   </DropdownMenuItem>
                   {/* Translation helpers — only relevant in parallel mode with
@@ -878,15 +889,19 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
           {/* Sections tab - individual paragraphs */}
           <TabsContent value="sections" className="flex-1 mt-0 min-h-0 overflow-hidden">
             <ScrollArea className="h-full w-full scroll-academic">
-              <div className={`px-8 py-5 mx-auto space-y-4 ${
+              {/* round-31: reading surface — one canvas-paper sheet with generous
+                  margins; sections separated by hairlines instead of bordered
+                  cards so the tab reads as a document, not a dashboard. */}
+              <div className={`px-6 sm:px-10 py-6 mx-auto ${
                 viewLang === "parallel" ? "max-w-5xl" : "max-w-3xl"
               }`}>
+                <div className="canvas-paper rounded-xl p-6 sm:p-8 space-y-6">
                 {paragraphsQ.isLoading && paragraphs.length === 0 && (
                   <>
                     {[1, 2, 3].map((i) => (
                       <div
                         key={`skel-${i}`}
-                        className="rounded-lg border border-border/60 p-4 space-y-3"
+                        className="rounded-lg p-4 space-y-3"
                       >
                         <div className="flex items-center gap-2">
                           <Skeleton className="h-3 w-8" />
@@ -941,26 +956,26 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                   return (
                     <div
                       key={p.id}
-                      className={`rounded-lg border border-border/60 p-4 ${
-                        isParallel ? "grid grid-cols-1 lg:grid-cols-2 gap-4" : ""
+                      className={`${i > 0 ? "pt-6 border-t border-border/50" : ""} ${
+                        isParallel ? "grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6" : ""
                       }`}
                     >
                       {/* Header row */}
                       <div className={`flex items-center gap-2 mb-2 ${isParallel ? "lg:col-span-2" : ""}`}>
-                        <span className="text-[10px] font-mono text-muted-foreground">
+                        <span className="text-[10px] font-mono text-muted-foreground/70">
                           §{String(i + 1).padStart(2, "0")}
                         </span>
-                        <Badge variant="outline" className="text-[8px] h-3.5 uppercase">
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-semibold uppercase tracking-wide bg-muted/70 text-muted-foreground border border-border/50">
                           {p.format}
-                        </Badge>
+                        </span>
                         <span className="text-[9px] text-muted-foreground">
                           {p.wordCount}w EN
                           {p.contentZh && ` · ${p.wordCountZh || 0}字 ZH`}
                         </span>
                         {viewLang === "zh" && !p.contentZh && (
-                          <Badge variant="outline" className="text-[8px] h-3.5 uppercase border-amber-300/60 dark:border-amber-700/50 text-amber-700 dark:text-amber-400">
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-semibold uppercase tracking-wide border border-amber-300/60 dark:border-amber-700/50 bg-amber-50/60 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400">
                             EN fallback
-                          </Badge>
+                          </span>
                         )}
                         {/* Per-section re-translate button — only in parallel mode */}
                         {isParallel && (
@@ -1000,9 +1015,9 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                         <>
                           <div className="space-y-1.5">
                             <div className="flex items-center gap-1.5 sticky top-0">
-                              <Badge variant="outline" className="text-[8px] h-3.5 border-blue-300/60 dark:border-blue-700/50 text-blue-700 dark:text-blue-400 uppercase">
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-semibold uppercase tracking-wide border-blue-300/60 dark:border-blue-700/50 bg-blue-50/60 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400">
                                 EN
-                              </Badge>
+                              </span>
                               <span className="text-[9px] text-muted-foreground">{p.wordCount}w</span>
                             </div>
                             <MarkdownCitations
@@ -1014,9 +1029,9 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                           </div>
                           <div className="space-y-1.5">
                             <div className="flex items-center gap-1.5">
-                              <Badge variant="outline" className="text-[8px] h-3.5 border-fuchsia-300/60 dark:border-fuchsia-700/50 text-fuchsia-700 dark:text-fuchsia-400 uppercase">
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-semibold uppercase tracking-wide border-fuchsia-300/60 dark:border-fuchsia-700/50 bg-fuchsia-50/60 dark:bg-fuchsia-950/30 text-fuchsia-700 dark:text-fuchsia-400">
                                 中文
-                              </Badge>
+                              </span>
                               <span className="text-[9px] text-muted-foreground">{p.wordCountZh || 0}字</span>
                             </div>
                             {p.titleZh && (
@@ -1040,6 +1055,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                     </div>
                   );
                 })}
+                </div>
               </div>
             </ScrollArea>
           </TabsContent>
@@ -1066,21 +1082,22 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                 <ReadingProgressIndicator contentRef={composedContentRef} />
                 {viewLang === "parallel" && hasZh ? (
                   <ScrollArea className="flex-1 min-h-0 w-full scroll-academic">
-                    <div ref={composedContentRef} className="px-6 py-5 max-w-5xl mx-auto">
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div className="space-y-2">
+                    <div ref={composedContentRef} className="px-6 py-6 max-w-5xl mx-auto">
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                        {/* round-31: each language column is its own paper sheet. */}
+                        <div className="canvas-paper rounded-xl p-5 sm:p-6 space-y-2">
                           <div className="sticky top-0 bg-background/80 backdrop-blur-sm py-1 z-10">
-                            <Badge variant="outline" className="text-[9px] gap-1 border-blue-300/60 dark:border-blue-700/50 text-blue-700 dark:text-blue-400">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold uppercase tracking-wide border-blue-300/60 dark:border-blue-700/50 bg-blue-50/60 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400">
                               EN — English
-                            </Badge>
+                            </span>
                           </div>
                           <VirtualizedArticle content={cleanArticleContent(article.content)} className="text-[12.5px] leading-relaxed" />
                         </div>
-                        <div className="space-y-2 lg:border-l lg:border-border/40 lg:pl-6">
+                        <div className="canvas-paper rounded-xl p-5 sm:p-6 space-y-2">
                           <div className="sticky top-0 bg-background/80 backdrop-blur-sm py-1 z-10">
-                            <Badge variant="outline" className="text-[9px] gap-1 border-fuchsia-300/60 dark:border-fuchsia-700/50 text-fuchsia-700 dark:text-fuchsia-400">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold uppercase tracking-wide border-fuchsia-300/60 dark:border-fuchsia-700/50 bg-fuchsia-50/60 dark:bg-fuchsia-950/30 text-fuchsia-700 dark:text-fuchsia-400">
                               中文 — Chinese
-                            </Badge>
+                            </span>
                           </div>
                           <VirtualizedArticle content={cleanArticleContent(article.contentZh || "")} className="text-[12.5px] leading-relaxed" />
                         </div>
@@ -1089,7 +1106,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                   </ScrollArea>
                 ) : (
                   <ScrollArea className="flex-1 min-h-0 w-full scroll-academic">
-                    <div ref={composedContentRef} className="px-8 py-5 max-w-3xl mx-auto overflow-hidden">
+                    <div ref={composedContentRef} className="px-6 sm:px-10 py-6 max-w-3xl mx-auto overflow-hidden">
                       {/* Adversarial citation-audit banner (Layer 3). Runs a
                           deterministic audit on mount and offers an optional
                           LLM deep-audit. Non-dismissable when blocking errors. */}
@@ -1098,9 +1115,17 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
                           <CitationAuditBanner articleId={article.id} />
                         </div>
                       )}
-                      <VirtualizedArticle content={cleanArticleContent(displayContent)} className="text-[13.5px]" contentRef={composedContentRef} />
+                      {/* round-31: document sheet — the article reads as a warm
+                          paper page with generous margins, not raw text on
+                          chrome. Title leads the sheet in serif. */}
+                      <div className="canvas-paper rounded-xl px-6 py-6 sm:px-8 sm:py-8">
+                        <h1 className="font-serif-text text-xl font-semibold tracking-tight leading-snug mb-5 pb-4 border-b border-border/50">
+                          {displayTitle}
+                        </h1>
+                        <VirtualizedArticle content={cleanArticleContent(displayContent)} className="text-[13.5px]" contentRef={composedContentRef} />
+                      </div>
                       {/* Comments panel — threaded comments at the bottom of the article */}
-                      <div className="mt-6 pt-4 border-t border-border/40">
+                      <div className="mt-5">
                         <CommentsPanel articleId={article.id} />
                       </div>
                     </div>
@@ -1483,7 +1508,7 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
       <div className="px-8 py-5 max-w-2xl mx-auto">
         {!reviewData && !reviewMut.isPending && (
           <div className="text-center py-12">
-            <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
+            <div className="h-14 w-14 mx-auto rounded-2xl bg-primary/10 ring-1 ring-primary/15 flex items-center justify-center mb-4">
               <Gavel className="h-7 w-7 text-primary" />
             </div>
             <h3 className="text-sm font-semibold">{t("articleViewer.aiPeerReview")}</h3>
@@ -1524,9 +1549,9 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
             {reviewData.scores && (
               <div className="grid grid-cols-3 gap-2">
                 {Object.entries(reviewData.scores).map(([key, val]: [string, any]) => (
-                  <div key={key} className="rounded-md border border-border/50 p-2 text-center">
-                    <p className="text-sm font-bold">{val}/10</p>
-                    <p className="text-[9px] uppercase text-muted-foreground">{key}</p>
+                  <div key={key} className="surface-card rounded-lg p-2.5 text-center">
+                    <p className="text-sm font-bold tabular-nums">{val}/10</p>
+                    <p className="eyebrow mt-1">{key}</p>
                   </div>
                 ))}
               </div>
@@ -1534,8 +1559,8 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
 
             {/* Summary */}
             {reviewData.review?.summary && (
-              <div className="rounded-md border border-border/50 p-2.5">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">{t("articleViewer.summary")}</p>
+              <div className="rounded-lg border border-border/60 p-3">
+                <p className="eyebrow mb-1.5">{t("articleViewer.summary")}</p>
                 <p className="text-xs leading-relaxed">{reviewData.review.summary}</p>
               </div>
             )}
@@ -1543,14 +1568,14 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
             {/* Strengths & Weaknesses */}
             {reviewData.review && (
               <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-md border border-emerald-200/50 dark:border-emerald-800/50 bg-emerald-50/30 dark:bg-emerald-950/20 p-2">
-                  <p className="text-[10px] uppercase font-semibold text-emerald-700 dark:text-emerald-300 mb-1">{t("articleViewer.strengths")}</p>
+                <div className="rounded-lg border border-emerald-200/50 dark:border-emerald-800/50 bg-emerald-50/30 dark:bg-emerald-950/20 p-2.5">
+                  <p className="text-[10px] uppercase tracking-wider font-semibold text-emerald-700 dark:text-emerald-300 mb-1">{t("articleViewer.strengths")}</p>
                   {safeParse(reviewData.review.strengths).map((s: string, i: number) => (
                     <p key={i} className="text-[10px] mb-1">• {s}</p>
                   ))}
                 </div>
-                <div className="rounded-md border border-rose-200/50 dark:border-rose-800/50 bg-rose-50/30 dark:bg-rose-950/20 p-2">
-                  <p className="text-[10px] uppercase font-semibold text-rose-700 dark:text-rose-300 mb-1">{t("articleViewer.weaknesses")}</p>
+                <div className="rounded-lg border border-rose-200/50 dark:border-rose-800/50 bg-rose-50/30 dark:bg-rose-950/20 p-2.5">
+                  <p className="text-[10px] uppercase tracking-wider font-semibold text-rose-700 dark:text-rose-300 mb-1">{t("articleViewer.weaknesses")}</p>
                   {safeParse(reviewData.review.weaknesses).map((w: string, i: number) => (
                     <p key={i} className="text-[10px] mb-1">• {w}</p>
                   ))}
@@ -1613,7 +1638,9 @@ function RelationshipView({
   if (!data || data.error) {
     return (
       <div className="text-center py-12">
-        <Network className="h-10 w-10 mx-auto opacity-40 mb-3" />
+        <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-primary/10 ring-1 ring-primary/15 flex items-center justify-center">
+          <Network className="h-7 w-7 text-primary/70" />
+        </div>
         <p className="text-xs text-muted-foreground">
           {data?.error || noDataMessage}
         </p>
@@ -1640,7 +1667,7 @@ function RelationshipView({
         {/* Summary */}
         {data.summary && (
           <div className="rounded-lg border border-primary/20 bg-primary/[0.03] p-3">
-            <p className="text-[10px] uppercase tracking-wider text-primary font-semibold mb-1">
+            <p className="text-[10px] uppercase tracking-wider text-primary font-semibold mb-1.5">
               {summaryLabel}
             </p>
             <p className="text-xs leading-relaxed">{data.summary}</p>
@@ -1649,32 +1676,30 @@ function RelationshipView({
 
         {/* Nodes count */}
         <div className="grid grid-cols-3 gap-2">
-          <div className="rounded-md border border-border/50 p-2 text-center">
-            <p className="text-lg font-bold">{data.nodes?.length || dataSources.length}</p>
-            <p className="text-[9px] uppercase text-muted-foreground">{sectionsLabel}</p>
+          <div className="surface-card rounded-lg p-2.5 text-center">
+            <p className="text-lg font-bold tabular-nums">{data.nodes?.length || dataSources.length}</p>
+            <p className="eyebrow mt-0.5">{sectionsLabel}</p>
           </div>
-          <div className="rounded-md border border-border/50 p-2 text-center">
-            <p className="text-lg font-bold">{data.edges?.length || 0}</p>
-            <p className="text-[9px] uppercase text-muted-foreground">{connectionsLabel}</p>
+          <div className="surface-card rounded-lg p-2.5 text-center">
+            <p className="text-lg font-bold tabular-nums">{data.edges?.length || 0}</p>
+            <p className="eyebrow mt-0.5">{connectionsLabel}</p>
           </div>
-          <div className="rounded-md border border-border/50 p-2 text-center">
-            <p className="text-lg font-bold">{data.themes?.length || 0}</p>
-            <p className="text-[9px] uppercase text-muted-foreground">{themesLabel}</p>
+          <div className="surface-card rounded-lg p-2.5 text-center">
+            <p className="text-lg font-bold tabular-nums">{data.themes?.length || 0}</p>
+            <p className="eyebrow mt-0.5">{themesLabel}</p>
           </div>
         </div>
 
         {/* Themes */}
         {data.themes?.length > 0 && (
           <div className="space-y-2">
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-              {thematicClustersLabel}
-            </p>
+            <p className="eyebrow">{thematicClustersLabel}</p>
             {data.themes.map((t: any, i: number) => (
-              <div key={i} className="rounded-md border border-border/50 p-2.5">
+              <div key={i} className="rounded-lg border border-border/60 p-3">
                 <div className="flex items-center gap-1.5 mb-1">
-                  <Badge variant="outline" className="text-[8px] h-3.5">
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-semibold uppercase tracking-wide bg-muted/70 text-muted-foreground border border-border/50">
                     {t.sourceLabels?.join(", ") || t.sourceIds?.length || "?"}
-                  </Badge>
+                  </span>
                   <span className="text-xs font-semibold">{t.name}</span>
                 </div>
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
@@ -1710,9 +1735,9 @@ function RelationshipView({
               <div key={i} className="rounded-md border border-rose-200/50 dark:border-rose-800/50 bg-rose-50/30 dark:bg-rose-950/20 p-2">
                 <div className="flex items-center gap-1.5 mb-0.5">
                   <AlertTriangle className="h-3 w-3 text-rose-600 dark:text-rose-400" />
-                  <Badge variant="outline" className="text-[8px] h-3.5">
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-semibold uppercase tracking-wide bg-muted/70 text-muted-foreground border border-border/50">
                     {c.sourceLabels?.join(" vs ") || c.sourceIds?.join(" vs ")}
-                  </Badge>
+                  </span>
                 </div>
                 <p className="text-[10px] text-muted-foreground">{c.description}</p>
               </div>
@@ -1723,17 +1748,17 @@ function RelationshipView({
         {/* Edges */}
         {data.edges?.length > 0 && (
           <div className="space-y-1.5">
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+            <p className="eyebrow">
               {sourceConnectionsLabel.replace("{n}", String(data.edges.length))}
             </p>
             {data.edges.slice(0, 20).map((e: any, i: number) => (
-              <div key={i} className="flex items-center gap-2 text-[10px] rounded-md bg-muted/20 px-2 py-1">
+              <div key={i} className="flex items-center gap-2 text-[10px] rounded-md bg-muted/30 px-2.5 py-1.5">
                 <span className="font-mono text-muted-foreground">{e.from}</span>
                 <span className="text-primary">→</span>
                 <span className="font-mono text-muted-foreground">{e.to}</span>
-                <Badge variant="outline" className="text-[7px] h-3 uppercase">
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-semibold uppercase tracking-wide bg-muted/70 text-muted-foreground border border-border/50">
                   {e.type}
-                </Badge>
+                </span>
                 <span className="text-muted-foreground truncate flex-1">{e.label}</span>
               </div>
             ))}
@@ -1814,43 +1839,39 @@ function ArticleStatsPanel({
   }, [readingTimeMin]);
 
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
-      <StatChip
+    <div className="mt-3 inline-flex flex-wrap items-center gap-x-1 gap-y-1 sm:gap-x-0 sm:gap-y-0 sm:divide-x sm:divide-border/60 rounded-lg surface-card text-[10px]">
+      <StatCell
         icon={FileText}
         label="EN"
         value={formatNum(enWordCount)}
-        color="text-blue-700 dark:text-blue-400"
         title="English word count"
       />
       {hasZh && (
-        <StatChip
+        <StatCell
           icon={FileText}
           label="中"
           value={formatNum(zhCharCount)}
-          color="text-fuchsia-700 dark:text-fuchsia-400"
           title="中文字符数 / Chinese character count"
         />
       )}
-      <StatChip
+      <StatCell
         icon={Layers}
         label={t("articleViewer.sections") || "§"}
         value={formatNum(sectionCount)}
-        color="text-violet-700 dark:text-violet-400"
         title="Number of sections"
       />
-      <StatChip
+      <StatCell
         icon={Quote}
         label={t("articleViewer.refs") || "refs"}
         value={formatNum(refCount)}
-        color="text-emerald-700 dark:text-emerald-400"
         title="Cited references"
       />
       {hasZh && (
-        <StatChip
+        <StatCell
           icon={TrendingUp}
           label={t("articleViewer.coverage") || "ZH"}
           value={`${translationCoverage}%`}
-          color={
+          valueClass={
             translationCoverage === 100
               ? "text-emerald-700 dark:text-emerald-400"
               : translationCoverage >= 50
@@ -1861,18 +1882,17 @@ function ArticleStatsPanel({
         />
       )}
       {/* Reading time estimate */}
-      <StatChip
+      <StatCell
         icon={BookOpen}
         label={t("articleViewer.readTime") || "read"}
         value={readingTimeLabel}
-        color="text-sky-700 dark:text-sky-400"
         title={`Estimated reading time: ${readingTimeMin} min (EN ~200 wpm${hasZh ? ", ZH ~400 cpm" : ""})`}
       />
       {relTime && (
-        <StatChip
+        <StatCell
           icon={Clock}
           value={relTime}
-          color="text-muted-foreground"
+          valueClass="text-muted-foreground"
           title="Last updated"
         />
       )}
@@ -1880,27 +1900,35 @@ function ArticleStatsPanel({
   );
 }
 
-function StatChip({
+/* round-31: one cell of the quiet header stats strip — muted icon +
+   tabular-nums value + tiny muted label, separated by divide-x hairlines. */
+function StatCell({
   icon: Icon,
   label,
   value,
-  color,
+  valueClass,
   title,
 }: {
   icon: any;
   label?: string;
   value: string;
-  color: string;
+  valueClass?: string;
   title?: string;
 }) {
   return (
     <span
       title={title}
-      className={`inline-flex items-center gap-0.5 rounded-md border border-border/40 bg-muted/30 px-1.5 py-0.5 font-mono ${color}`}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 whitespace-nowrap"
     >
-      <Icon className="h-2.5 w-2.5 shrink-0" />
-      {label && <span className="text-[9px] uppercase opacity-70">{label}</span>}
-      <span className="font-semibold">{value}</span>
+      <Icon className="size-3 shrink-0 text-muted-foreground/70" />
+      <span className={`font-semibold tabular-nums tracking-tight ${valueClass || ""}`}>
+        {value}
+      </span>
+      {label && (
+        <span className="text-[9px] uppercase tracking-wide text-muted-foreground/80">
+          {label}
+        </span>
+      )}
     </span>
   );
 }
@@ -2056,7 +2084,7 @@ function ArticleTOCSidebar({
       <div className="px-3 py-2.5 border-b border-border/40 shrink-0">
         <div className="flex items-center gap-1.5">
           <ListTree className="h-3 w-3 text-muted-foreground" />
-          <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+          <span className="eyebrow">
             {t("articleViewer.toc") || "Contents"}
           </span>
           <span className="text-[9px] text-muted-foreground/60 ml-1">{sections.length}</span>
@@ -2117,12 +2145,12 @@ function ArticleTOCSidebar({
                         {s.title}
                       </p>
                       <div className="flex items-center gap-1 mt-0.5">
-                        <span className="text-[8px] text-muted-foreground/60 font-mono">
+                        <span className="text-[9px] text-muted-foreground/60 font-mono">
                           {s.wordCount}w
                         </span>
                         {s.hasZh && (
                           <span
-                            className="text-[8px] text-fuchsia-600 dark:text-fuchsia-400"
+                            className="text-[9px] text-fuchsia-600 dark:text-fuchsia-400"
                             title="Has Chinese translation"
                           >
                             •中
@@ -2164,7 +2192,7 @@ function ArticleTOCSidebar({
       </ScrollArea>
       {/* Footer hint */}
       <div className="px-3 py-1.5 border-t border-border/40 shrink-0">
-        <p className="text-[8px] text-muted-foreground/50 italic">
+        <p className="text-[9px] text-muted-foreground/50 italic">
           {t("articleViewer.tocHint") || "Click to jump · scroll to track"}
         </p>
       </div>
@@ -2394,7 +2422,7 @@ function ArticleSearchBar({
           onChange={(e) => onQueryChange(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={t("articleViewer.searchPlaceholder") || "Find in article… (Esc to close)"}
-          className="w-full h-8 pl-8 pr-20 text-xs rounded-md border border-border/60 bg-background focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40"
+          className="w-full h-8 pl-8 pr-20 text-xs rounded-lg border border-border/60 bg-card shadow-xs transition-shadow focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40"
         />
         {/* Match count badge */}
         {query.trim() && (
@@ -2490,24 +2518,24 @@ function AnalysisTab({
       <div className="shrink-0 flex items-center gap-1 px-4 py-1.5 border-b border-border/40 bg-muted/20">
         <button
           onClick={() => setSubTab("insights")}
-          className={`text-[10px] px-2.5 py-1 rounded-md font-medium transition-colors ${
+          className={`inline-flex items-center gap-1.5 h-7 px-3 text-[11px] rounded-md font-medium transition-all ${
             subTab === "insights"
-              ? "bg-card shadow-sm text-primary"
-              : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+              ? "bg-primary/10 dark:bg-primary/20 text-primary ring-1 ring-primary/30 font-semibold"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
           }`}
         >
-          <Sparkles className="h-2.5 w-2.5 inline mr-1" />
+          <Sparkles className="size-3" />
           Metrics
         </button>
         <button
           onClick={() => setSubTab("audit")}
-          className={`text-[10px] px-2.5 py-1 rounded-md font-medium transition-colors ${
+          className={`inline-flex items-center gap-1.5 h-7 px-3 text-[11px] rounded-md font-medium transition-all ${
             subTab === "audit"
-              ? "bg-card shadow-sm text-primary"
-              : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+              ? "bg-primary/10 dark:bg-primary/20 text-primary ring-1 ring-primary/30 font-semibold"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
           }`}
         >
-          <ScanSearch className="h-2.5 w-2.5 inline mr-1" />
+          <ScanSearch className="size-3" />
           Audit Trail
         </button>
       </div>

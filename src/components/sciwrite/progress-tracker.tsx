@@ -66,13 +66,13 @@ export function ProgressTracker({
         {/* Word count goal tracker */}
         <div className="flex-1 min-w-[200px]">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
+            <span className="eyebrow flex items-center gap-1">
               <Type className="h-3 w-3" />
               {t("progress.writingProgress")}
             </span>
             <button
               onClick={() => setShowGoalSelector((v) => !v)}
-              className="text-[10px] font-mono text-muted-foreground hover:text-primary transition-colors tabular-nums"
+              className="text-[10px] font-mono text-muted-foreground hover:text-primary transition-colors tabular-nums hover:underline underline-offset-2"
               title={t("progress.setWordGoalTitle")}
             >
               {fmt(totalWords)} / {fmt(wordGoal)}w
@@ -81,7 +81,7 @@ export function ProgressTracker({
           </div>
           <Progress
             value={wordProgress}
-            className={`h-1.5 ${goalMet ? "[&>div]:bg-emerald-500" : ""}`}
+            className={`h-1.5 bg-primary/15 progress-glow${goalMet ? " progress-done" : ""}`}
           />
           {showGoalSelector && (
             <div className="flex items-center gap-1 mt-1.5 flex-wrap">
@@ -125,29 +125,29 @@ export function ProgressTracker({
           )}
         </div>
 
-        {/* Stat pills */}
-        <div className="flex items-center gap-2.5 text-[10px]">
+        {/* Stat strip — one calm chip row instead of competing pills */}
+        <div className="surface-card rounded-lg flex items-center divide-x divide-border/60 text-[10px] shrink-0">
           <StatPill
-            icon={<PenLine className="h-2.5 w-2.5" />}
+            icon={<PenLine className="h-3 w-3" />}
             label={t("progress.paragraphsPill")}
             value={totalParagraphs}
             color="primary"
           />
           <StatPill
-            icon={<Quote className="h-2.5 w-2.5" />}
+            icon={<Quote className="h-3 w-3" />}
             label={t("progress.citationsPill")}
             value={totalCitations}
             color="amber"
           />
           <StatPill
-            icon={<Target className="h-2.5 w-2.5" />}
+            icon={<Target className="h-3 w-3" />}
             label={t("progress.coveragePill")}
             value={`${citationCoverage}%`}
             color="primary"
           />
           {(unresolvedAnnotations > 0 || resolvedAnnotations > 0) && (
             <StatPill
-              icon={<MessageSquare className="h-2.5 w-2.5" />}
+              icon={<MessageSquare className="h-3 w-3" />}
               label={t("progress.annotationsPill")}
               value={`${unresolvedAnnotations}!/${resolvedAnnotations}✓`}
               color={unresolvedAnnotations > 0 ? "rose" : "emerald"}
@@ -180,12 +180,10 @@ function StatPill({
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className="surface-card flex items-center gap-1 px-1.5 py-0.5 rounded-md cursor-help transition-all hover:shadow-sm hover:border-primary/30">
-            <span className={colorMap[color] || "text-muted-foreground"}>{icon}</span>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 cursor-help">
+            <span className={`shrink-0 ${colorMap[color] || "text-muted-foreground"}`}>{icon}</span>
+            <span className="font-semibold tabular-nums text-foreground">{value}</span>
             <span className="text-muted-foreground hidden sm:inline">{label}</span>
-            <span className={`font-semibold tabular-nums ${colorMap[color] || "text-foreground"}`}>
-              {value}
-            </span>
           </div>
         </TooltipTrigger>
         <TooltipContent side="bottom" className="text-[10px]">

@@ -149,7 +149,7 @@ function SortableParagraph({
         type="button"
         {...attributes}
         {...listeners}
-        className="absolute -left-6 top-4 h-8 w-5 flex items-center justify-center cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity text-muted-foreground hover:text-primary touch-none"
+        className="absolute -left-6 top-4 h-8 w-5 flex items-center justify-center cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity text-muted-foreground hover:text-primary touch-none"
         aria-label={t("sortable.dragReorder")}
         title={t("sortable.dragReorder")}
       >

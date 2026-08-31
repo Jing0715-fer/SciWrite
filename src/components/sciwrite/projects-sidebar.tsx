@@ -140,7 +140,10 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
           <div className="brand-tile h-6 w-6 rounded-md flex items-center justify-center shrink-0">
             <FlaskConical className="h-3.5 w-3.5 text-primary-foreground" />
           </div>
-          <span className="text-xs font-semibold tracking-tight truncate font-serif-text">{t("projects.title")}</span>
+          <span className="eyebrow flex items-center gap-1.5 truncate">
+            {t("projects.title")}
+            <span className="tabular-nums opacity-60">{projects.length}</span>
+          </span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <ProjectImportExport
@@ -179,21 +182,21 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
       {projects.length > 0 && (
         <div className="px-3 py-2 border-b hairline shrink-0">
           <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/80 pointer-events-none" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search projects…"
-              className="h-7 pl-7 pr-7 text-[11px] bg-card/60 border-border/70 focus-visible:border-primary/50 transition-colors"
+              className="h-9 rounded-lg pl-8 pr-8 text-[11px] bg-card border-border/70 focus-visible:border-primary/50 focus-visible:ring-primary/30"
             />
             {search && (
               <button
                 type="button"
                 onClick={() => setSearch("")}
                 aria-label="Clear search"
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 h-4 w-4 rounded-sm flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 h-5 w-5 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60"
               >
-                <X className="h-2.5 w-2.5" />
+                <X className="h-3 w-3" />
               </button>
             )}
           </div>
@@ -218,7 +221,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
             {/* v109-1: Match article list padding (px-3) so project cards
                 have the same width as article cards. Previously px-2 made
                 project cards narrower than article cards. */}
-            <div className="px-3 py-2 space-y-1.5 min-w-0">
+            <div className="px-3 py-2.5 space-y-2 min-w-0">
               {projects.length === 0 && (
                 <div className="text-center py-6 px-3 text-muted-foreground acad-fade-in">
                   <div className="h-12 w-12 mx-auto rounded-xl bg-primary/10 flex items-center justify-center mb-2 ring-academic">
@@ -267,18 +270,18 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
         {articles.length > 0 && (
           <ResizablePanel defaultSize={projects.length <= 2 ? 55 : 40} minSize={25}>
             <div className="flex flex-col h-full">
-              <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5 shrink-0 border-t hairline">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1">
+              <div className="flex items-center justify-between px-3 pt-2.5 pb-2 shrink-0 border-t hairline">
+                <span className="eyebrow flex items-center gap-1.5">
                   <FileStack className="h-3 w-3" />
                   {t("workspace.articleTab") || "Articles"}
-                  <span className="text-[9px] opacity-70 tabular-nums">{articles.length}</span>
+                  <span className="tabular-nums opacity-60">{articles.length}</span>
                 </span>
                 {/* Trash button — opens the article trash dialog where users can
                     restore soft-deleted articles or permanently delete them. */}
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-5 px-1.5 text-[9px] gap-1 text-muted-foreground hover:text-foreground"
+                  className="h-6 px-1.5 text-[9px] gap-1 text-muted-foreground hover:text-foreground hover:bg-muted/60"
                   onClick={() => setTrashOpen(true)}
                   title={t("trash.title") || "Trash — Deleted Articles"}
                 >
@@ -298,7 +301,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
                       <button
                         key={a.id}
                         onClick={() => onOpenArticle?.(a)}
-                        className="w-full block group text-left surface-card rounded-lg hover:shadow-md hover:border-primary/40 hover:-translate-y-px transition-all p-2 space-y-1 overflow-hidden"
+                        className="w-full block group text-left surface-card rounded-xl p-2.5 space-y-1 overflow-hidden transition-all duration-200 hover:border-primary/30 hover:shadow-sm! hover:bg-muted/60!"
                         title="Open full article in viewer"
                       >
                         <div className="flex items-start gap-1.5">
@@ -311,22 +314,25 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
                                 22% panel width the previous flex-wrap row would push
                                 badges past the scroll viewport's right edge. Vertical
                                 stacking keeps every badge fully visible regardless of
-                                which language metadata the article carries. */}
+                                which language metadata the article carries. Chips use
+                                the same muted-bg/icon-tint language as project stats. */}
                             <div className="mt-1 space-y-0.5">
                               <div className="flex items-center gap-1 text-[9px] text-muted-foreground flex-wrap">
                                 {sections > 0 && (
-                                  <span className="inline-flex items-center gap-0.5 px-1 rounded bg-violet-500/10 text-violet-700 dark:text-violet-300 font-semibold tabular-nums">
+                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground text-[9px] font-semibold tabular-nums">
+                                    <Layers className="h-2 w-2 text-violet-700 dark:text-violet-300" />
                                     {sections} §
                                   </span>
                                 )}
-                                <span className="inline-flex items-center px-1 rounded bg-primary/10 text-primary font-semibold tabular-nums">
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground text-[9px] font-semibold tabular-nums">
+                                  <FileText className="h-2 w-2 text-primary" />
                                   {Math.round(enLen / 6).toLocaleString()}w EN
                                 </span>
                               </div>
                               {hasZh && (
                                 <div className="flex items-center gap-1 text-[9px] text-muted-foreground">
-                                  <span className="inline-flex items-center gap-0.5 px-1 rounded bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 font-semibold tabular-nums">
-                                    <Languages className="h-2 w-2" />
+                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground text-[9px] font-semibold tabular-nums">
+                                    <Languages className="h-2 w-2 text-fuchsia-700 dark:text-fuchsia-300" />
                                     {Math.round(zhLen / 2).toLocaleString()}字
                                   </span>
                                 </div>
@@ -384,13 +390,18 @@ function ProjectItem({
 
   return (
     <div
-      className={`group surface-card rounded-lg p-2.5 transition-all cursor-pointer overflow-hidden ${
+      className={`group relative surface-card rounded-xl p-3 transition-all duration-200 cursor-pointer overflow-hidden ${
         active
-          ? "border-primary/40 bg-primary/[0.06] ring-academic"
-          : "hover:border-primary/40 hover:shadow-md hover:-translate-y-px"
+          ? "border-primary/40 bg-primary/[0.06]! ring-academic"
+          : "hover:border-primary/30 hover:shadow-sm!"
       }`}
       onClick={onSelect}
     >
+      {/* Active indicator — 2.5px primary bar inset on the left edge so the
+          selected project reads instantly, even at a glance. */}
+      {active && (
+        <span aria-hidden="true" className="absolute left-0 top-2 bottom-2 w-[2.5px] rounded-full bg-primary" />
+      )}
       {editing ? (
         <div className="space-y-1.5" onClick={(e) => e.stopPropagation()}>
           <Input
@@ -433,17 +444,31 @@ function ProjectItem({
         </div>
       ) : (
         <>
-          {/* Title row: FlaskConical icon as visual anchor + truncate title +
-              hover-only edit/delete actions. Title is bold (was just medium)
-              and uses the foreground color so it stands out from the muted
-              topic line. */}
-          <div className="flex items-start gap-1.5">
-            <FlaskConical className="h-3.5 w-3.5 text-primary/70 shrink-0 mt-0.5" />
+          {/* Title row: FlaskConical icon in a tiny primary-tinted tile as visual
+              anchor (mirrors the header lockup) + truncate title + hover-only
+              edit/delete actions. Title is bold and uses the foreground color
+              so it stands out from the muted topic line. */}
+          <div className="flex items-start gap-2">
+            <span
+              className={`inline-flex items-center justify-center h-5 w-5 rounded-md shrink-0 mt-0.5 ${
+                active ? "bg-primary/15" : "bg-primary/10"
+              }`}
+            >
+              <FlaskConical className="h-3 w-3 text-primary" />
+            </span>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold leading-tight truncate text-foreground">
+              {/* Native title tooltips mirror the (possibly truncated) title +
+                  topic so the full text stays reachable in the narrow rail. */}
+              <p
+                className="text-xs font-semibold leading-tight truncate text-foreground"
+                title={project.title}
+              >
                 {project.title}
               </p>
-              <p className="text-[10px] text-muted-foreground line-clamp-2 mt-1 leading-snug">
+              <p
+                className="text-[10px] text-muted-foreground line-clamp-2 mt-1 leading-snug"
+                title={project.topic}
+              >
                 {project.topic}
               </p>
             </div>
@@ -477,35 +502,33 @@ function ProjectItem({
               </Button>
             </div>
           </div>
-          {/* Stat row: color-coded count badges with icons so the meaning
-              survives at 9px, plus an uppercase field chip pushed to the
-              right. Each count badge carries a tiny icon (¶ for paragraphs,
-              Layers for articles, Database for data sources) and uses a
-              distinct background tint — the previous all-grey "badge-slate"
-              made all three counts look identical. The field chip clamps to
-              60px so long field names ellipsize instead of pushing counts
-              off-screen. */}
-          <div className="flex items-center gap-1 mt-2 pr-1">
+          {/* Stat row: unified muted chips — same shape/size/type language as
+              the article meta chips — with only the icon tinted by category
+              (primary = paragraphs/data, violet = articles) so the counts stay
+              quiet while the category survives at 9px. The field chip is an
+              eyebrow-style uppercase label clamped to 60px so long field names
+              ellipsize instead of pushing counts off-screen. */}
+          <div className="flex items-center gap-1 mt-2.5 pr-1">
             {project._count?.paragraphs !== undefined && (
-              <span className="inline-flex items-center gap-0.5 px-1 py-px rounded bg-primary/10 text-primary text-[9px] font-semibold tabular-nums">
-                <FileText className="h-2 w-2" />
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground text-[9px] font-semibold tabular-nums">
+                <FileText className="h-2 w-2 text-primary" />
                 {project._count.paragraphs}
               </span>
             )}
             {project._count?.articles !== undefined && (
-              <span className="inline-flex items-center gap-0.5 px-1 py-px rounded bg-violet-500/10 text-violet-700 dark:text-violet-300 text-[9px] font-semibold tabular-nums">
-                <Layers className="h-2 w-2" />
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground text-[9px] font-semibold tabular-nums">
+                <Layers className="h-2 w-2 text-violet-700 dark:text-violet-300" />
                 {project._count.articles}
               </span>
             )}
             {project._count?.dataSources !== undefined && project._count.dataSources > 0 && (
-              <span className="inline-flex items-center gap-0.5 px-1 py-px rounded bg-primary/10 text-primary text-[9px] font-semibold tabular-nums">
-                <Database className="h-2 w-2" />
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground text-[9px] font-semibold tabular-nums">
+                <Database className="h-2 w-2 text-primary" />
                 {project._count.dataSources}
               </span>
             )}
             {project.field && (
-              <span className="ml-auto text-[9px] uppercase tracking-wider font-medium text-muted-foreground truncate max-w-[70px] pr-1.5">
+              <span className="eyebrow ml-auto truncate max-w-[70px] pr-1.5">
                 {project.field.replace(/-/g, " ")}
               </span>
             )}

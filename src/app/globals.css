@@ -57,9 +57,10 @@
 :root {
   --radius: 0.75rem;
 
-  /* Paper neutrals — slightly warmer, with a faint cream tint that
-     reads as "scholarly paper" rather than flat white. */
-  --background: oklch(0.985 0.006 95);
+  /* Paper neutrals — the app chrome sits on a warm parchment grey so
+     pure-white cards and the writing canvas visibly LIFT off the page
+     (the single biggest cure for the "flatland" look). */
+  --background: oklch(0.966 0.007 95);
   --foreground: oklch(0.22 0.018 150);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.22 0.018 150);
@@ -70,17 +71,17 @@
      premium feel, while staying within accessible contrast. */
   --primary: oklch(0.48 0.14 164);
   --primary-foreground: oklch(0.99 0.012 150);
-  --secondary: oklch(0.965 0.012 150);
+  --secondary: oklch(0.955 0.012 150);
   --secondary-foreground: oklch(0.32 0.045 162);
-  --muted: oklch(0.965 0.008 95);
-  --muted-foreground: oklch(0.5 0.022 150);
+  --muted: oklch(0.952 0.008 95);
+  --muted-foreground: oklch(0.49 0.024 150);
 
   /* Teal accent — slightly cooler for a complementary highlight. */
   --accent: oklch(0.94 0.038 178);
   --accent-foreground: oklch(0.3 0.065 178);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.905 0.012 150);
-  --input: oklch(0.92 0.012 150);
+  --border: oklch(0.888 0.012 150);
+  --input: oklch(0.908 0.012 150);
   --ring: oklch(0.48 0.14 164);
 
   /* Layered soft shadow system — the single biggest perceived-quality
@@ -105,7 +106,9 @@
   --chart-3: oklch(0.7 0.14 85);
   --chart-4: oklch(0.58 0.18 30);
   --chart-5: oklch(0.55 0.16 300);
-  --sidebar: oklch(0.975 0.007 150);
+  /* Sidebar sits one step deeper than the canvas zone — a quiet
+     "bookshelf" behind the white workspace. */
+  --sidebar: oklch(0.954 0.008 150);
   --sidebar-foreground: oklch(0.22 0.018 150);
   --sidebar-primary: oklch(0.48 0.14 164);
   --sidebar-primary-foreground: oklch(0.99 0.012 150);
@@ -206,40 +209,42 @@
   --chart-1: oklch(0.66 0.18 300);
 }
 
-/* Dark mode — deeper, less flat. The background gets a subtle
-   emerald undertone so dark mode feels like the same product,
-   not a zebra inversion. */
+/* Dark mode — a native night studio, not an inverted light mode.
+   Key moves: near-black base with a cool emerald undertone, cards
+   two full steps brighter than the chrome so elevation reads,
+   text lifted to ~0.98 for AA contrast on long reading sessions,
+   and borders reinforced from 10% to 13% so hairlines survive. */
 .dark {
-  --background: oklch(0.165 0.014 162);
-  --foreground: oklch(0.965 0.006 150);
-  --card: oklch(0.205 0.016 162);
-  --card-foreground: oklch(0.965 0.006 150);
-  --popover: oklch(0.215 0.016 162);
-  --popover-foreground: oklch(0.965 0.006 150);
+  --background: oklch(0.146 0.014 162);
+  --foreground: oklch(0.978 0.006 150);
+  --card: oklch(0.217 0.016 162);
+  --card-foreground: oklch(0.978 0.006 150);
+  --popover: oklch(0.228 0.016 162);
+  --popover-foreground: oklch(0.978 0.006 150);
   --primary: oklch(0.72 0.14 164);
   --primary-foreground: oklch(0.16 0.02 162);
-  --secondary: oklch(0.255 0.018 162);
+  --secondary: oklch(0.262 0.018 162);
   --secondary-foreground: oklch(0.94 0.01 150);
-  --muted: oklch(0.245 0.015 162);
-  --muted-foreground: oklch(0.71 0.015 150);
+  --muted: oklch(0.252 0.015 162);
+  --muted-foreground: oklch(0.766 0.016 150);
   --accent: oklch(0.3 0.05 178);
   --accent-foreground: oklch(0.92 0.03 178);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 14%);
+  --destructive: oklch(0.68 0.2 22);
+  --border: oklch(1 0 0 / 13%);
+  --input: oklch(1 0 0 / 16%);
   --ring: oklch(0.72 0.14 164);
   --chart-1: oklch(0.72 0.15 162);
   --chart-2: oklch(0.72 0.12 185);
   --chart-3: oklch(0.75 0.14 85);
   --chart-4: oklch(0.65 0.18 30);
   --chart-5: oklch(0.6 0.16 300);
-  --sidebar: oklch(0.195 0.014 162);
-  --sidebar-foreground: oklch(0.965 0.006 150);
+  --sidebar: oklch(0.176 0.014 162);
+  --sidebar-foreground: oklch(0.978 0.006 150);
   --sidebar-primary: oklch(0.72 0.14 164);
   --sidebar-primary-foreground: oklch(0.16 0.02 162);
   --sidebar-accent: oklch(0.3 0.05 178);
   --sidebar-accent-foreground: oklch(0.92 0.03 178);
-  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-border: oklch(1 0 0 / 12%);
   --sidebar-ring: oklch(0.72 0.14 164);
 
   --shadow-2xs: 0 1px 1px oklch(0 0 0 / 0.2);
@@ -336,14 +341,14 @@ h1, h2, h3, h4, h5, h6 {
 /* Frosted-glass toolbar — for the top header and bottom footer.
    Sits over the body's radial wash with a blur + subtle tint. */
 .glass-toolbar {
-  background-color: oklch(1 0 0 / 0.72);
+  background-color: oklch(1 0 0 / 0.78);
   backdrop-filter: blur(14px) saturate(1.4);
   -webkit-backdrop-filter: blur(14px) saturate(1.4);
-  box-shadow: inset 0 -1px 0 oklch(0.905 0.012 150 / 0.8), 0 1px 3px oklch(0.28 0.05 162 / 0.05);
+  box-shadow: inset 0 -1px 0 oklch(0.888 0.012 150 / 0.9), 0 1px 3px oklch(0.28 0.05 162 / 0.06);
 }
 .dark .glass-toolbar {
-  background-color: oklch(0.205 0.016 162 / 0.7);
-  box-shadow: inset 0 -1px 0 oklch(1 0 0 / 0.08), 0 1px 3px oklch(0 0 0 / 0.2);
+  background-color: oklch(0.217 0.016 162 / 0.75);
+  box-shadow: inset 0 -1px 0 oklch(1 0 0 / 0.1), 0 1px 3px oklch(0 0 0 / 0.24);
 }
 /* Footer variant — mirror of .glass-toolbar: the hairline sits on the TOP
    edge (separating the footer from the content above it) instead of the
@@ -358,12 +363,95 @@ h1, h2, h3, h4, h5, h6 {
 /* A lighter glass variant for sub-panels (workspace header, panel
    headers) where the full-strength toolbar would feel heavy. */
 .glass-subtle {
-  background-color: oklch(1 0 0 / 0.55);
+  background-color: oklch(1 0 0 / 0.62);
   backdrop-filter: blur(8px) saturate(1.25);
   -webkit-backdrop-filter: blur(8px) saturate(1.25);
 }
 .dark .glass-subtle {
-  background-color: oklch(0.205 0.016 162 / 0.5);
+  background-color: oklch(0.217 0.016 162 / 0.55);
+}
+
+/* Eyebrow — the micro-label above titled sections ("WRITING PROGRESS",
+   "PARAGRAPHS", "SCIENTIFIC DATABASES"). One consistent voice replaces
+   the dozens of ad-hoc text-[10px] uppercase spans. */
+.eyebrow {
+  font-size: 0.625rem;
+  line-height: 1;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in oklch, var(--muted-foreground) 88%, var(--foreground));
+}
+
+/* Gradient progress fill — the word-goal bar gets a living gradient +
+   glow derived from the live primary, plus a moving sheen while active.
+   Apply `.progress-glow` on the shadcn <Progress> root. */
+.progress-glow [data-slot="progress-indicator"] {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--primary) 72%, black 8%),
+    var(--primary) 55%,
+    color-mix(in oklch, var(--primary), white 18%)
+  );
+  box-shadow: 0 0 8px color-mix(in oklch, var(--primary) 38%, transparent);
+}
+.progress-glow [data-slot="progress-indicator"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    oklch(1 0 0 / 0.28) 50%,
+    transparent 80%
+  );
+  transform: translateX(-100%);
+  animation: progress-sheen 2.6s var(--ease-snap) infinite;
+}
+@keyframes progress-sheen {
+  to { transform: translateX(100%); }
+}
+.dark .progress-glow [data-slot="progress-indicator"] {
+  box-shadow: 0 0 10px color-mix(in oklch, var(--primary) 45%, transparent);
+}
+.dark .progress-glow [data-slot="progress-indicator"]::after {
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    oklch(1 0 0 / 0.16) 50%,
+    transparent 80%
+  );
+}
+/* Completed state — no sheen, calm success. */
+.progress-glow.progress-done [data-slot="progress-indicator"]::after {
+  animation: none;
+  opacity: 0;
+}
+
+/* Canvas paper — the long-form reading/writing surface. Slightly warmer
+   than card white with the faint dot texture and a top inset hairline,
+   so the document reads as its own "sheet" laid on the desk. */
+.canvas-paper {
+  background-color: oklch(0.995 0.005 95);
+  background-image: radial-gradient(
+      circle at 1px 1px,
+      oklch(0.5 0.02 150 / 0.03) 1px,
+      transparent 0
+    );
+  background-size: 22px 22px;
+  box-shadow: inset 0 1px 0 oklch(1 0 0), var(--shadow-sm);
+  border-width: 1px;
+  border-style: solid;
+  border-color: var(--border);
+}
+.dark .canvas-paper {
+  background-color: oklch(0.198 0.014 162);
+  background-image: radial-gradient(
+      circle at 1px 1px,
+      oklch(0.9 0.02 150 / 0.035) 1px,
+      transparent 0
+    );
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.04), var(--shadow-sm);
 }
 
 /* Elevated card surface — used by content cards. Sets border-width/style
@@ -384,10 +472,10 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Hairline divider — softer than border-border. */
 .hairline {
-  border-color: oklch(0.905 0.012 150 / 0.7);
+  border-color: oklch(0.888 0.012 150 / 0.75);
 }
 .dark .hairline {
-  border-color: oklch(1 0 0 / 0.08);
+  border-color: oklch(1 0 0 / 0.09);
 }
 
 
@@ -413,32 +501,32 @@ h1, h2, h3, h4, h5, h6 {
   transform: translateY(0.5px);
 }
 
-/* Refined tab indicator — pill background + soft shadow.
-   Note: border-width/style are declared per-property (not via the `border`
-   shorthand) so layered Tailwind utilities like `border-primary/40` can
-   still override the border-color at the usage site (per Cascade Layers
-   spec, an unlayered `border` shorthand would always win). */
+/* Refined tab indicator — filled primary-tinted pill so the active tab
+   reads instantly at any theme; inactive tabs stay quiet and gain a
+   gentle hover tint. Border set per-property so layered Tailwind
+   utilities like `border-primary/40` can still override the color. */
 .tab-pill {
-  background-color: var(--card);
-  box-shadow: var(--shadow-xs);
-  border-width: 1px;
-  border-style: solid;
-  border-color: oklch(0.905 0.012 150 / 0.9);
+  background-color: color-mix(in oklch, var(--primary) 12%, var(--card));
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 26%, transparent),
+    var(--shadow-xs);
   color: var(--primary);
+  font-weight: 600;
 }
 .dark .tab-pill {
-  border-color: oklch(1 0 0 / 0.1);
+  background-color: color-mix(in oklch, var(--primary) 20%, var(--card));
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 34%, transparent),
+    var(--shadow-xs);
 }
 .tab-pill-inactive {
   color: var(--muted-foreground);
-  transition: color 0.15s var(--ease-out), background-color 0.15s var(--ease-out);
+  transition: color 0.15s var(--ease-out), background-color 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out);
 }
 .tab-pill-inactive:hover {
   color: var(--foreground);
-  background-color: oklch(0.905 0.012 150 / 0.4);
+  background-color: color-mix(in oklch, var(--foreground) 5%, transparent);
 }
 .dark .tab-pill-inactive:hover {
-  background-color: oklch(1 0 0 / 0.05);
+  background-color: oklch(1 0 0 / 0.06);
 }
 
 /* ============================================================

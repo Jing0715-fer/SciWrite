@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
+import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -132,22 +133,23 @@ export function UnifiedWritingDialog({
           // (The Dialog component no longer carries a default sm:max-w-lg
           // that would override these — see ui/dialog.tsx.)
           isFullArticleRunning ? "max-w-7xl" : "max-w-5xl",
-          // h-[92vh] (not just max-h-[92vh]) gives the dialog a concrete
-          // height so the flex-col layout's flex-1 content area has a real
-          // height to fill. Without this, the content area collapses when
-          // its children are absolutely positioned (FullArticleTab root uses
-          // absolute inset-0 to fill the area exactly).
-          "h-[92vh] max-h-[92vh] flex flex-col gap-0 p-0 overflow-hidden border-border/60 shadow-xl",
+          // Only the Full Article tab gets a concrete h-[92vh]: its root is
+          // absolutely positioned (absolute inset-0) and needs a real height
+          // to fill. Every other tab lets its content define the dialog height
+          // (capped by max-h-[92vh]) so short forms don't leave a tall empty
+          // void below the primary action — the dialog hugs its content.
+          activeTab === "full" ? "h-[92vh]" : "",
+          "max-h-[92vh] flex flex-col gap-0 p-0 overflow-hidden rounded-xl border-border/60 shadow-xl",
         ].join(" ")}
       >
         {/* Header — clean single primary accent */}
-        <div className="relative px-6 pt-5 pb-4 border-b border-border/60 shrink-0 bg-gradient-to-br from-primary/[0.06] via-transparent to-transparent">
+        <div className="relative px-5 sm:px-6 pt-5 pb-4 border-b border-border/60 shrink-0 bg-gradient-to-br from-primary/[0.06] via-transparent to-transparent">
           <div className="flex items-start gap-3">
-            <div className="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+            <div className="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0 ring-academic">
               <Sparkles className="h-5 w-5 text-primary" />
             </div>
             <div className="flex-1 min-w-0">
-              <DialogTitle className="flex items-center gap-2 text-base font-semibold tracking-tight">
+              <DialogTitle className="flex items-center gap-2 font-serif-text text-lg font-semibold leading-snug tracking-tight">
                 {t("unifiedWrite.title")}
               </DialogTitle>
               <DialogDescription className="text-xs mt-0.5 leading-relaxed">
@@ -157,10 +159,12 @@ export function UnifiedWritingDialog({
           </div>
         </div>
 
-        {/* Tab bar — unified primary color scheme */}
-        <div className="px-6 pt-3 pb-2 border-b border-border/40 shrink-0 bg-muted/20">
+        {/* Tab bar — segmented strip of filled primary-tint pills (the
+            .tab-pill language from globals.css) so the active tab reads
+            instantly instead of relying on a subtle underline tint. */}
+        <div className="px-5 sm:px-6 pt-3 pb-3 border-b border-border/40 shrink-0 bg-muted/20">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as WriteTab)}>
-            <TabsList className="grid grid-cols-5 h-10 w-full bg-background/60">
+            <TabsList className="flex w-full h-auto items-center gap-1 bg-muted/40 rounded-lg p-1">
               {TAB_CONFIG.map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.id;
@@ -168,9 +172,11 @@ export function UnifiedWritingDialog({
                   <TabsTrigger
                     key={tab.id}
                     value={tab.id}
-                    className="text-[11px] gap-1.5 transition-all relative data-[state=active]:bg-primary/10 data-[state=active]:text-primary"
+                    className={`h-8 flex-1 px-3 text-[11px] rounded-md gap-1.5 transition-all ${
+                      isActive ? "tab-pill" : "tab-pill-inactive"
+                    }`}
                   >
-                    <Icon className="h-3.5 w-3.5" />
+                    <Icon className="size-3.5" />
                     <span className="hidden sm:inline">{t(`unifiedWrite.tab_${tab.id}`)}</span>
                   </TabsTrigger>
                 );
@@ -182,7 +188,9 @@ export function UnifiedWritingDialog({
         {/* Content area — flex-1 so it fills remaining dialog height after the
             header + tab bar. min-h-0 is critical: without it the flex child
             would grow to fit its content instead of being constrained by the
-            dialog's h-[92vh], and overflow-y-auto wouldn't trigger.
+            dialog's height (h-[92vh] on the Full Article tab, content-driven
+            with a max-h-[92vh] cap everywhere else), and overflow-y-auto
+            wouldn't trigger.
             For the Full Article tab we use `relative` (no overflow-y-auto)
             because FullArticleTab positions itself with `absolute inset-0`
             and manages its own internal scrolling (main column + log panel
@@ -222,10 +230,10 @@ export function UnifiedWritingDialog({
 function ConfigCard({ label, children, icon: Icon, hint }: { label: string; children: React.ReactNode; icon?: any; hint?: string }) {
   return (
     <div className="space-y-1.5">
-      <Label className="text-xs flex items-center gap-1.5 font-medium text-foreground/80">
+      <Label className="eyebrow flex items-center gap-1.5">
         {Icon && <Icon className="h-3 w-3 text-muted-foreground" />}
         {label}
-        {hint && <span className="text-[9px] text-muted-foreground/70 font-normal ml-1">{hint}</span>}
+        {hint && <span className="text-[9px] font-normal normal-case tracking-normal text-muted-foreground/70 ml-1">{hint}</span>}
       </Label>
       {children}
     </div>
@@ -248,7 +256,7 @@ function ActionButton({
   return (
     <Button
       size="sm"
-      className="gap-1.5 text-xs w-full h-9 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm transition-all"
+      className="btn-gradient-primary gap-1.5 text-[13px] w-full h-10 text-primary-foreground transition-all"
       onClick={onClick}
       disabled={disabled}
     >
@@ -314,7 +322,7 @@ function TaskProgress({
         </div>
       )}
       {/* Progress bar (indeterminate animation) */}
-      <div className="h-1.5 rounded-full bg-muted overflow-hidden relative">
+      <div className="h-1.5 rounded-full bg-primary/10 overflow-hidden relative">
         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/40 to-transparent animate-shimmer" style={{
           backgroundSize: "200% 100%",
           animation: "shimmer 1.5s infinite linear",
@@ -402,14 +410,14 @@ function OutlineTab({ projectId, topic, field, onInvalidate }: { projectId: stri
   };
 
   return (
-    <div className="px-6 py-5 space-y-4">
+    <div className="px-5 sm:px-6 py-5 space-y-4">
       <InfoBanner icon={Sparkles} text={t("unifiedWrite.outlineDesc")} />
       <ConfigCard label={t("outline.purpose")} icon={ArrowRight}>
         <textarea
           value={purpose}
           onChange={(e) => setPurpose(e.target.value)}
           placeholder="e.g. Focus on structural mechanisms and therapeutic implications..."
-          className="text-xs min-h-[72px] w-full rounded-md border border-input bg-background px-3 py-2.5 focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none"
+          className="min-h-[100px] w-full rounded-lg border border-border bg-background p-3 text-sm leading-relaxed placeholder:text-muted-foreground/70 transition-all resize-none focus-visible:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/25"
         />
       </ConfigCard>
 
@@ -421,7 +429,7 @@ function OutlineTab({ projectId, topic, field, onInvalidate }: { projectId: stri
           {result.outline?.map((item: any, i: number) => (
             <div key={i} className="rounded-md border border-border/50 bg-background/60 p-2.5 text-[11px] hover:border-primary/30 transition-colors">
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[10px] text-muted-foreground bg-muted/40 rounded px-1.5 py-0.5">§{i + 1}</span>
+                <span className="font-mono text-[10px] tabular-nums text-muted-foreground bg-muted rounded-md px-1.5 py-0.5">§{i + 1}</span>
                 <Badge variant="outline" className="text-[8px] h-3.5 uppercase">{item.format}</Badge>
                 <span className="font-medium flex-1 truncate">{item.title}</span>
               </div>
@@ -460,13 +468,13 @@ function GatherTab({ projectId, topic, field, onInvalidate }: { projectId: strin
   };
 
   return (
-    <div className="px-6 py-5 space-y-4">
+    <div className="px-5 sm:px-6 py-5 space-y-4">
       <InfoBanner icon={Radar} text={t("unifiedWrite.gatherDesc")} />
 
       <div className="rounded-lg bg-primary/[0.04] border border-primary/15 p-4">
         <div className="flex items-center gap-1.5 mb-1">
           <FileText className="h-3 w-3 text-primary" />
-          <p className="text-[10px] uppercase tracking-wider text-primary font-semibold">{t("gather.researchTopic")}</p>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">{t("gather.researchTopic")}</p>
         </div>
         <p className="text-sm font-medium leading-snug">{topic}</p>
       </div>
@@ -477,11 +485,9 @@ function GatherTab({ projectId, topic, field, onInvalidate }: { projectId: strin
         <SuccessCard title={`${t("gather.organize")} ✓`}>
           <p className="text-xs text-muted-foreground leading-relaxed">{result.plan}</p>
           {result.addedResults?.length > 0 && (
-            <div className="flex items-center gap-2 mt-2">
-              <Database className="h-3.5 w-3.5 text-primary" />
-              <span className="text-[11px] text-primary font-medium">
-                {result.addedResults.length} sources gathered
-              </span>
+            <div className="mt-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-primary/10 dark:bg-primary/20 text-primary text-[9px] font-semibold uppercase tracking-wide tabular-nums">
+              <Database className="h-3 w-3 shrink-0" />
+              {result.addedResults.length} sources gathered
             </div>
           )}
         </SuccessCard>
@@ -521,13 +527,13 @@ function ParagraphTab({ projectId, topic, field, onInvalidate }: { projectId: st
   };
 
   return (
-    <div className="px-6 py-5 space-y-4">
+    <div className="px-5 sm:px-6 py-5 space-y-4">
       <InfoBanner icon={PenLine} text={t("unifiedWrite.paragraphDesc")} />
 
       <div className="grid grid-cols-2 gap-3">
         <ConfigCard label={t("topic.formatLabel")} icon={Layers}>
           <Select value={format} onValueChange={setFormat}>
-            <SelectTrigger className="text-xs h-9"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="text-xs h-9 rounded-lg border-border bg-background focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:border-primary/40"><SelectValue /></SelectTrigger>
             <SelectContent>
               {PARAGRAPH_FORMATS.map((f) => <SelectItem key={f.id} value={f.id} className="text-xs">{f.label}</SelectItem>)}
             </SelectContent>
@@ -535,7 +541,7 @@ function ParagraphTab({ projectId, topic, field, onInvalidate }: { projectId: st
         </ConfigCard>
         <ConfigCard label={t("topic.scenarioLabel")} icon={Network}>
           <Select value={scenario} onValueChange={setScenario}>
-            <SelectTrigger className="text-xs h-9"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="text-xs h-9 rounded-lg border-border bg-background focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:border-primary/40"><SelectValue /></SelectTrigger>
             <SelectContent>
               {PARAGRAPH_SCENARIOS.map((s) => <SelectItem key={s.id} value={s.id} className="text-xs">{s.label}</SelectItem>)}
             </SelectContent>
@@ -548,13 +554,13 @@ function ParagraphTab({ projectId, topic, field, onInvalidate }: { projectId: st
           value={focus}
           onChange={(e) => setFocus(e.target.value)}
           placeholder="e.g. focus on PAM-dependent unwinding mechanism"
-          className="text-xs h-9 w-full rounded-md border border-input bg-background px-3 focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+          className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm placeholder:text-muted-foreground/70 transition-all focus-visible:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/25"
         />
       </ConfigCard>
 
       <ConfigCard label={t("topic.languageLabel")}>
         <Select value={language} onValueChange={setLanguage}>
-          <SelectTrigger className="text-xs h-9"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="text-xs h-9 rounded-lg border-border bg-background focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:border-primary/40"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="English" className="text-xs">{t("topic.langEnglish")}</SelectItem>
             <SelectItem value="中文" className="text-xs">{t("topic.langChinese")}</SelectItem>
@@ -599,14 +605,14 @@ function ComposeTab({ projectId, topic, paragraphCount, onInvalidate }: { projec
   };
 
   return (
-    <div className="px-6 py-5 space-y-4">
+    <div className="px-5 sm:px-6 py-5 space-y-4">
       <InfoBanner icon={Layers} text={t("unifiedWrite.composeDesc")} />
 
       <ConfigCard label={t("compose.articleTitle")} icon={FileText}>
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          className="text-xs h-9 w-full rounded-md border border-input bg-background px-3 focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+          className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm transition-all focus-visible:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/25"
         />
       </ConfigCard>
 
@@ -623,10 +629,8 @@ function ComposeTab({ projectId, topic, paragraphCount, onInvalidate }: { projec
               <button
                 key={d}
                 onClick={() => setDepth(d)}
-                className={`text-[10px] px-2 py-2.5 rounded-md border transition-all ${
-                  isActive
-                    ? "border-primary bg-primary/10 text-primary font-medium ring-1 ring-primary/20"
-                    : "border-border hover:bg-muted/40 text-muted-foreground hover:border-primary/30"
+                className={`h-9 w-full text-[11px] rounded-md transition-all ${
+                  isActive ? "tab-pill" : "tab-pill-inactive"
                 }`}
               >
                 {labels[d]}
@@ -636,9 +640,9 @@ function ComposeTab({ projectId, topic, paragraphCount, onInvalidate }: { projec
         </div>
       </ConfigCard>
 
-      <div className="flex items-center gap-2 text-[11px] text-muted-foreground rounded-md bg-muted/30 p-2.5">
+      <div className="flex items-center gap-2 text-[11px] text-muted-foreground rounded-lg bg-muted/40 px-3 py-2.5">
         <Layers className="h-3.5 w-3.5 text-primary/70" />
-        <span className="font-medium">{paragraphCount}</span>
+        <span className="font-semibold tabular-nums text-foreground">{paragraphCount}</span>
         <span>{t("compose.paragraphOrder")}</span>
       </div>
 
@@ -886,7 +890,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
           appears/disappears. min-w-0 + overflow-y-auto ensure the
           column scrolls internally when its content exceeds the available
           height, instead of overflowing the dialog bounds. */}
-      <div className="flex-1 min-w-0 overflow-y-auto scroll-academic px-6 py-5 space-y-4">
+      <div className="flex-1 min-w-0 overflow-y-auto scroll-academic px-5 sm:px-6 py-5 flex flex-col gap-4">
       <InfoBanner icon={Zap} text={t("unifiedWrite.fullDesc")} />
 
       {/* Pipeline selector — v2 evidence-grounded (default) vs v1 legacy */}
@@ -895,10 +899,10 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
           <button
             type="button"
             onClick={() => setPipeline("v2")}
-            className={`rounded-lg border p-2.5 text-left transition-colors ${
+            className={`rounded-lg border p-2.5 text-left transition-all ${
               pipeline === "v2"
-                ? "border-primary/60 bg-primary/[0.06]"
-                : "border-border hover:border-primary/30"
+                ? "border-primary/60 bg-primary/[0.06] ring-academic"
+                : "border-border hover:border-primary/30 hover:bg-muted/40"
             }`}
           >
             <div className="flex items-center gap-1.5">
@@ -914,10 +918,10 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
           <button
             type="button"
             onClick={() => setPipeline("v1")}
-            className={`rounded-lg border p-2.5 text-left transition-colors ${
+            className={`rounded-lg border p-2.5 text-left transition-all ${
               pipeline === "v1"
-                ? "border-primary/60 bg-primary/[0.06]"
-                : "border-border hover:border-primary/30"
+                ? "border-primary/60 bg-primary/[0.06] ring-academic"
+                : "border-border hover:border-primary/30 hover:bg-muted/40"
             }`}
           >
             <div className="flex items-center gap-1.5">
@@ -937,7 +941,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
           <div className="flex items-start gap-2">
             <ShieldCheck className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
             <div className="space-y-1">
-              <p className="text-[10px] text-primary font-semibold">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
                 {t("oneClick.v2AccuracyTitle") || "Citation accuracy guarantees (v2)"}
               </p>
               <ul className="text-[10px] text-muted-foreground leading-relaxed list-disc ml-3 space-y-0.5">
@@ -950,21 +954,21 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
         </div>
       )}
 
-      {/* Feature chips — unified primary */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className="flex items-center gap-1.5 rounded-md border border-primary/20 bg-primary/[0.04] p-2">
-          <Database className="h-3 w-3 text-primary shrink-0" />
-          <span className="text-[9px] font-medium text-primary/80">{t("oneClick.forceRegather")}</span>
+      {/* Feature chips — unified brand-tint chip language */}
+      <div className="flex flex-wrap gap-1.5">
+        <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-primary/10 dark:bg-primary/20 text-primary text-[9px] font-semibold uppercase tracking-wide">
+          <Database className="h-3 w-3 shrink-0" />
+          {t("oneClick.forceRegather")}
         </div>
-        <div className="flex items-center gap-1.5 rounded-md border border-primary/20 bg-primary/[0.04] p-2">
-          <PenLine className="h-3 w-3 text-primary shrink-0" />
-          <span className="text-[9px] font-medium text-primary/80">{t("oneClick.chunkedGen")}</span>
+        <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-primary/10 dark:bg-primary/20 text-primary text-[9px] font-semibold uppercase tracking-wide">
+          <PenLine className="h-3 w-3 shrink-0" />
+          {t("oneClick.chunkedGen")}
         </div>
       </div>
 
       <ConfigCard label={t("oneClick.outputLanguage")}>
         <Select value={language} onValueChange={setLanguage}>
-          <SelectTrigger className="text-xs h-9"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="text-xs h-9 rounded-lg border-border bg-background focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:border-primary/40"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="English" className="text-xs">{t("topic.langEnglish")}</SelectItem>
             <SelectItem value="中文" className="text-xs">{t("topic.langChinese")}</SelectItem>
@@ -981,7 +985,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
           <div className="flex items-start gap-2">
             <Languages className="h-3.5 w-3.5 text-fuchsia-600 dark:text-fuchsia-400 shrink-0 mt-0.5" />
             <div className="space-y-1">
-              <p className="text-[10px] text-fuchsia-700 dark:text-fuchsia-400 font-semibold">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-fuchsia-700 dark:text-fuchsia-400">
                 {t("oneClick.bothStrategyTitle")}
               </p>
               <p className="text-[10px] text-muted-foreground leading-relaxed">
@@ -1001,7 +1005,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
       {/* Word count slider with visual feedback */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <Label className="text-xs flex items-center gap-1.5 font-medium text-foreground/80">
+          <Label className="eyebrow flex items-center gap-1.5">
             <PenLine className="h-3 w-3 text-muted-foreground" />
             {t("oneClick.targetWordCount", { n: formatWords(targetWords) })}
           </Label>
@@ -1017,9 +1021,9 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
             className="w-full"
           />
         </div>
-        <div className="flex justify-between text-[9px] text-muted-foreground">
+        <div className="flex justify-between text-[9px] text-muted-foreground tabular-nums">
           <span>2,000</span>
-          <span className="font-medium text-primary">{formatWords(targetWords)} words</span>
+          <span className="font-semibold text-primary">{formatWords(targetWords)} words</span>
           <span>50,000</span>
         </div>
         {/* Word tier indicator — unified primary */}
@@ -1038,7 +1042,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
       <div className="rounded-lg border border-sky-200/60 dark:border-sky-900/40 bg-sky-50/40 dark:bg-sky-950/20 p-3 space-y-2">
         <div className="flex items-center gap-1.5">
           <Clock className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
-          <p className="text-[10px] uppercase tracking-wider text-sky-700 dark:text-sky-400 font-semibold flex-1">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-700 dark:text-sky-400 flex-1">
             {t("oneClick.estimates") || "Estimated cost & duration"}
           </p>
         </div>
@@ -1047,7 +1051,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">
               {t("oneClick.estTime") || "Time"}
             </p>
-            <p className="text-sm font-bold text-sky-700 dark:text-sky-400">
+            <p className="text-sm font-bold tabular-nums text-sky-700 dark:text-sky-400">
               {(() => {
                 const genSec = (targetWords / 100) * 1.2 * 1.3 + 60;
                 const transSec = willTranslate ? (targetWords / 100) * 0.6 * 1.3 : 0;
@@ -1060,7 +1064,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">
               {t("oneClick.estTokens") || "Tokens"}
             </p>
-            <p className="text-sm font-bold text-violet-700 dark:text-violet-400">
+            <p className="text-sm font-bold tabular-nums text-violet-700 dark:text-violet-400">
               ~{(() => {
                 const genTok = (targetWords * 1.4) / 1000;
                 const transTok = willTranslate ? (targetWords * 2.0) / 1000 : 0;
@@ -1072,7 +1076,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">
               {t("oneClick.estCalls") || "LLM calls"}
             </p>
-            <p className="text-sm font-bold text-emerald-700 dark:text-emerald-400">
+            <p className="text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
               ~{(() => {
                 const sections = Math.max(5, Math.ceil(targetWords / 600));
                 return 4 + sections + (willTranslate ? sections : 0);
@@ -1083,16 +1087,16 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
         <div className="space-y-1 pt-1 border-t border-sky-200/30 dark:border-sky-900/30">
           <div className="flex items-center justify-between text-[10px]">
             <span className="text-muted-foreground">{t("oneClick.estSources") || "Sources to gather"}:</span>
-            <span className="font-medium text-foreground/80">~{Math.min(50, Math.max(15, Math.floor(targetWords / 150)))}</span>
+            <span className="font-medium tabular-nums text-foreground/80">~{Math.min(50, Math.max(15, Math.floor(targetWords / 150)))}</span>
           </div>
           <div className="flex items-center justify-between text-[10px]">
             <span className="text-muted-foreground">{t("oneClick.estSections") || "Sections to write"}:</span>
-            <span className="font-medium text-foreground/80">~{Math.max(5, Math.ceil(targetWords / 600))}</span>
+            <span className="font-medium tabular-nums text-foreground/80">~{Math.max(5, Math.ceil(targetWords / 600))}</span>
           </div>
           {willTranslate && (
             <div className="flex items-center justify-between text-[10px]">
               <span className="text-muted-foreground">{t("oneClick.estTranslate") || "Sections to translate"}:</span>
-              <span className="font-medium text-fuchsia-700 dark:text-fuchsia-400">~{Math.max(5, Math.ceil(targetWords / 600))} (EN → 中文)</span>
+              <span className="font-medium tabular-nums text-fuchsia-700 dark:text-fuchsia-400">~{Math.max(5, Math.ceil(targetWords / 600))} (EN → 中文)</span>
             </div>
           )}
         </div>
@@ -1146,7 +1150,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
                 const isUnlimited = props.value === 0;
                 return (
                   <div className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground flex items-center justify-between">
+                    <Label className="eyebrow flex items-center justify-between">
                       <span>{props.label}</span>
                       {isUnlimited && (
                         <span className="text-[9px] font-mono font-semibold text-fuchsia-600 dark:text-fuchsia-400">∞ unlimited</span>
@@ -1162,7 +1166,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
                         const v = e.target.value === "" ? 0 : Number(e.target.value);
                         if (!isNaN(v)) props.onChange(v);
                       }}
-                      className="w-full h-8 rounded-md border border-input bg-background px-2.5 text-[11px] font-mono tabular-nums focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                      className="w-full h-8 rounded-lg border border-border bg-background px-2.5 text-[11px] font-mono tabular-nums transition-all focus-visible:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/25"
                     />
                     <p className="text-[8px] text-muted-foreground/60">{props.hint}</p>
                   </div>
@@ -1172,7 +1176,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
                 <>
                   {/* Gathering section */}
                   <div className="space-y-2">
-                    <p className="text-[10px] font-semibold text-foreground/70 uppercase tracking-wide">
+                    <p className="eyebrow">
                       {t("oneClick.advGathering") || "Data gathering"}
                     </p>
                     <div className="grid grid-cols-2 gap-3">
@@ -1193,7 +1197,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
 
                   {/* Reference filtering section */}
                   <div className="space-y-2">
-                    <p className="text-[10px] font-semibold text-foreground/70 uppercase tracking-wide">
+                    <p className="eyebrow">
                       {t("oneClick.advRefFiltering") || "Per-section reference filtering"}
                     </p>
                     <div className="grid grid-cols-2 gap-3">
@@ -1214,11 +1218,11 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
 
                   {/* LLM section — maxTokens does NOT support 0 (hard floor 4096) */}
                   <div className="space-y-2">
-                    <p className="text-[10px] font-semibold text-foreground/70 uppercase tracking-wide">
+                    <p className="eyebrow">
                       {t("oneClick.advLlm") || "LLM output"}
                     </p>
                     <div className="space-y-1">
-                      <Label className="text-[10px] text-muted-foreground">
+                      <Label className="eyebrow">
                         {t("oneClick.advMaxTokens") || "Max output tokens"}
                       </Label>
                       <input
@@ -1228,7 +1232,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
                           const v = Number(e.target.value);
                           if (!isNaN(v) && v >= 4096) setMaxTokens(v);
                         }}
-                        className="w-full h-8 rounded-md border border-input bg-background px-2.5 text-[11px] font-mono tabular-nums focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                        className="w-full h-8 rounded-lg border border-border bg-background px-2.5 text-[11px] font-mono tabular-nums transition-all focus-visible:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/25"
                       />
                       <p className="text-[8px] text-muted-foreground/60">{t("oneClick.advMaxTokensHint") || "Higher allows longer sections but uses more tokens. Minimum 4096."}</p>
                     </div>
@@ -1240,12 +1244,12 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
             {/* Prompt template selector — lets the user pick a saved template
                 whose instruction is appended to section-generation prompts. */}
             <div className="space-y-2">
-              <p className="text-[10px] font-semibold text-foreground/70 uppercase tracking-wide">
+              <p className="eyebrow">
                 {t("template.sectionLabel") || "Prompt Template"}
               </p>
               <div className="flex items-center gap-2">
                 <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
-                  <SelectTrigger className="text-xs h-8 flex-1">
+                  <SelectTrigger className="text-xs h-8 flex-1 rounded-lg border-border bg-background focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:border-primary/40">
                     <SelectValue placeholder={t("template.selectPlaceholder") || "Default (no custom template)"} />
                   </SelectTrigger>
                   <SelectContent>
@@ -1306,21 +1310,19 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
           {/* Overall progress bar */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-primary">
+              <span className="text-[11px] font-semibold tabular-nums text-primary">
                 {currentStep >= 0 && currentStep < STEPS.length
                   ? `Step ${currentStep + 1}/${STEPS.length}: ${STEPS[currentStep].label}`
                   : "Processing..."}
               </span>
-              <span className="text-[10px] text-muted-foreground">
+              <span className="text-[10px] text-muted-foreground tabular-nums">
                 {Math.round(((currentStep + 1) / STEPS.length) * 100)}%
               </span>
             </div>
-            <div className="h-2 rounded-full bg-muted overflow-hidden">
-              <div
-                className="h-full bg-primary transition-all duration-500 ease-out"
-                style={{ width: `${((currentStep + 1) / STEPS.length) * 100}%` }}
-              />
-            </div>
+            <Progress
+              value={((currentStep + 1) / STEPS.length) * 100}
+              className="h-2 progress-glow"
+            />
           </div>
 
           {/* Step timeline */}
@@ -1378,16 +1380,16 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
       {result && (
         <SuccessCard title={t("oneClick.generatedTitle")}>
           <div className="grid grid-cols-3 gap-3 text-center">
-            <div className="rounded-md bg-background/40 p-2">
-              <p className="text-lg font-bold text-primary">{result.stats?.sourcesGathered || result.sourcesGathered || 0}</p>
+            <div className="rounded-md bg-background/60 p-2">
+              <p className="text-lg font-bold tabular-nums text-primary">{result.stats?.sourcesGathered || result.sourcesGathered || 0}</p>
               <p className="text-[8px] uppercase text-muted-foreground">{t("oneClick.sourcesGathered")}</p>
             </div>
-            <div className="rounded-md bg-background/40 p-2">
-              <p className="text-lg font-bold text-primary">{result.stats?.sectionsPlanned || result.sections || 0}</p>
+            <div className="rounded-md bg-background/60 p-2">
+              <p className="text-lg font-bold tabular-nums text-primary">{result.stats?.sectionsPlanned || result.sections || 0}</p>
               <p className="text-[8px] uppercase text-muted-foreground">{t("oneClick.sectionsWritten")}</p>
             </div>
-            <div className="rounded-md bg-background/40 p-2">
-              <p className="text-lg font-bold text-foreground">
+            <div className="rounded-md bg-background/60 p-2">
+              <p className="text-lg font-bold tabular-nums text-foreground">
                 {/* round-27: v2's complete event now carries the v1-shaped
                     stats block, but keep flat-field fallbacks so either
                     pipeline shape renders real numbers instead of 0. */}
@@ -1409,9 +1411,16 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
         </SuccessCard>
       )}
 
-      <ActionButton onClick={run} disabled={isRunning} loading={isRunning} icon={Zap}>
-        {t("oneClick.generateBtn")}
-      </ActionButton>
+      {/* mt-auto anchors the primary action to the bottom of the tall
+          full-article column so the layout reads as a complete action bar
+          instead of trailing off into empty space on tall screens. The
+          hairline top border gives the action bar a deliberate footer
+          weight whether the column is scrolled or anchored. */}
+      <div className="mt-auto pt-3 border-t border-border/60">
+        <ActionButton onClick={run} disabled={isRunning} loading={isRunning} icon={Zap}>
+          {t("oneClick.generateBtn")}
+        </ActionButton>
+      </div>
 
       {/* Prompt template manager — create/edit/delete templates */}
       <PromptTemplateManager open={templateManagerOpen} onOpenChange={setTemplateManagerOpen} />
@@ -1419,7 +1428,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
       {/* Confirmation dialog — shown when the project already has paragraphs/articles.
           The generation pipeline clears ALL existing data before re-generating. */}
       <AlertDialog open={confirmClearOpen} onOpenChange={setConfirmClearOpen}>
-        <AlertDialogContent className="max-w-md">
+        <AlertDialogContent className="max-w-md rounded-xl">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-base">
               <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
@@ -1515,17 +1524,21 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
           {/* Live preview — sticky at the bottom of the log panel so the
               currently-streaming text is always visible without scrolling */}
           {livePreview && (
-            <div className="shrink-0 border-t border-violet-200/60 dark:border-violet-900/40 bg-violet-50/40 dark:bg-violet-950/20 p-2.5">
-              <div className="flex items-center gap-1.5 mb-1">
-                <PenLine className="h-3 w-3 text-violet-600 dark:text-violet-400 animate-pulse shrink-0" />
-                <p className="text-[9px] uppercase tracking-wider text-violet-700 dark:text-violet-400 font-semibold flex-1 truncate">
-                  {t("oneClick.livePreview") || "Live preview"}
+            <div className="shrink-0 border-t border-border/40 p-2.5">
+              {/* Streaming text sits on a canvas-paper sheet — the
+                  "document being born" surface. */}
+              <div className="canvas-paper rounded-lg p-3">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <PenLine className="h-3 w-3 text-violet-600 dark:text-violet-400 animate-pulse shrink-0" />
+                  <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-violet-700 dark:text-violet-400 flex-1 truncate">
+                    {t("oneClick.livePreview") || "Live preview"}
+                  </p>
+                </div>
+                <p className="text-[10px] text-foreground/80 font-mono leading-relaxed max-h-28 overflow-y-auto scroll-academic whitespace-pre-wrap break-words">
+                  {livePreview}
+                  <span className="inline-block w-1.5 h-3 bg-violet-500 animate-pulse ml-0.5 align-middle" />
                 </p>
               </div>
-              <p className="text-[10px] text-foreground/80 font-mono leading-relaxed max-h-28 overflow-y-auto whitespace-pre-wrap break-words">
-                {livePreview}
-                <span className="inline-block w-1.5 h-3 bg-violet-500 animate-pulse ml-0.5 align-middle" />
-              </p>
             </div>
           )}
         </aside>

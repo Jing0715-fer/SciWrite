@@ -10,7 +10,6 @@ import {
   Cpu,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/components/sciwrite/theme-toggle";
 import { LanguageToggle } from "@/components/sciwrite/language-toggle";
 import { ThemeSwitcher } from "@/components/sciwrite/theme-switcher";
@@ -41,18 +40,18 @@ export function Header({
 }) {
   const { t } = useI18n();
   return (
-    <header className="glass-toolbar shrink-0 px-4 py-2.5 flex items-center gap-3 relative z-30">
-      <div className="flex items-center gap-2.5">
-        <div className="brand-tile h-9 w-9 rounded-xl flex items-center justify-center">
+    <header className="glass-toolbar shrink-0 px-4 py-3 flex items-center gap-3 relative z-30">
+      <div className="flex items-center gap-2.5 min-w-0">
+        <div className="brand-tile h-9 w-9 rounded-xl flex items-center justify-center shrink-0">
           <FlaskConical className="h-4.5 w-4.5 text-primary-foreground" />
         </div>
-        <div className="leading-none">
-          <h1 className="text-sm font-bold tracking-tight flex items-baseline gap-1.5">
-            <span className="font-serif-text">{t("app.title")}</span>
-            <span className="text-primary/50 text-xs">·</span>
-            <span className="text-muted-foreground font-normal text-xs">{t("app.subtitle")}</span>
+        <div className="leading-none min-w-0">
+          <h1 className="flex items-baseline gap-1.5 min-w-0">
+            <span className="font-serif-text text-[15px] font-bold tracking-tight truncate">{t("app.title")}</span>
+            <span className="text-primary/50 text-[10px] shrink-0">·</span>
+            <span className="text-[11px] text-muted-foreground font-medium tracking-tight truncate">{t("app.subtitle")}</span>
           </h1>
-          <p className="text-[10px] text-muted-foreground mt-1 tracking-wide">
+          <p className="text-[10px] text-muted-foreground/70 mt-1 tracking-wide truncate">
             {t("app.tagline")}
           </p>
         </div>
@@ -66,9 +65,10 @@ export function Header({
             <span className="inline-flex items-center justify-center h-6 w-6 rounded-md bg-primary/10 text-primary shrink-0">
               <BookOpenText className="h-3.5 w-3.5" />
             </span>
-            <span className="text-xs font-semibold truncate">{project.title}</span>
-            <span className="text-[10px] text-muted-foreground/80 truncate hidden md:inline">
-              — {project.topic}
+            <span className="text-[13px] font-medium truncate text-foreground">{project.title}</span>
+            <span className="text-muted-foreground/30 shrink-0 hidden md:inline">·</span>
+            <span className="text-[10px] text-muted-foreground truncate hidden md:inline">
+              {project.topic}
             </span>
           </div>
         ) : (
@@ -79,14 +79,19 @@ export function Header({
       <div className="flex items-center gap-1.5">
         {project && (
           <>
-            <Badge variant="outline" className="text-[9px] h-5 gap-1 bg-card/60 border-border/70 font-medium tabular-nums">
-              <PenLine className="h-2.5 w-2.5 text-primary" />
-              {paragraphCount}
-            </Badge>
-            <Badge variant="outline" className="text-[9px] h-5 gap-1 bg-card/60 border-border/70 font-medium tabular-nums">
-              <Layers className="h-2.5 w-2.5 text-primary" />
-              {articleCount}
-            </Badge>
+            {/* Unified count group — one quiet surface-card pill with a hairline
+                divider replaces the previous two separate outline badges. */}
+            <div className="flex items-center h-7 rounded-lg surface-card border-border/60">
+              <span className="inline-flex items-center gap-1 px-2 text-[10px] font-semibold text-muted-foreground tabular-nums">
+                <PenLine className="h-3 w-3 text-primary" />
+                {paragraphCount}
+              </span>
+              <span className="h-3 w-px bg-border/70" />
+              <span className="inline-flex items-center gap-1 px-2 text-[10px] font-semibold text-muted-foreground tabular-nums">
+                <Layers className="h-3 w-3 text-primary" />
+                {articleCount}
+              </span>
+            </div>
             <div className="h-5 w-px bg-border/60 mx-0.5 hidden lg:block" />
             <Button
               variant="ghost"

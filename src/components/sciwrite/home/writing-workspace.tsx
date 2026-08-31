@@ -120,7 +120,7 @@ export function WritingWorkspace({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 mb-1">
-              <h2 className="text-lg font-semibold tracking-tight truncate font-serif-text leading-tight">
+              <h2 className="text-base sm:text-xl font-semibold tracking-tight truncate font-serif-text leading-tight">
                 {project.title}
               </h2>
               {project.field && (
@@ -164,8 +164,9 @@ export function WritingWorkspace({
         <CitationHealthDashboard projectId={activeProjectId} onJumpParagraph={jumpToParagraph} />
       )}
 
-      {/* Workspace tabs */}
-      <div className="flex items-center gap-1 px-5 py-2 border-b border-border/60 shrink-0 bg-muted/15 overflow-x-auto">
+      {/* Workspace tabs — transparent strip; the filled tab pills carry
+          the activation state, so no background band is needed. */}
+      <div className="flex items-center gap-1.5 px-5 py-2 border-b hairline shrink-0 overflow-x-auto">
         <button onClick={() => setWorkspaceTab("paragraphs")} className={`text-[11px] px-3 py-1 rounded-md font-medium transition-all whitespace-nowrap flex items-center gap-1 ${workspaceTab === "paragraphs" ? "tab-pill" : "tab-pill-inactive"}`}>
           <PenLine className="h-3 w-3" />{t("workspace.paragraphsTabLabel", { n: paragraphs.length })}
         </button>
@@ -188,13 +189,13 @@ export function WritingWorkspace({
       {/* Paragraphs tab */}
       {workspaceTab === "paragraphs" && (
         <ScrollArea className="flex-1 min-h-0 scroll-academic">
-          <div className="px-5 py-4 max-w-3xl mx-auto space-y-3">
+          <div className="px-5 py-4 max-w-3xl mx-auto">
             {paragraphs.length === 0 ? (
               <div className="text-center py-16 acad-fade-in">
-                <div className="h-16 w-16 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3 ring-academic">
-                  <Lightbulb className="h-8 w-8 text-primary" />
+                <div className="h-18 w-18 mx-auto rounded-[1.25rem] bg-primary/10 flex items-center justify-center mb-4 ring-academic">
+                  <Lightbulb className="h-9 w-9 text-primary" />
                 </div>
-                <h3 className="text-sm font-semibold font-serif-text">{t("workspace.startWriting")}</h3>
+                <h3 className="text-base font-semibold font-serif-text">{t("workspace.startWriting")}</h3>
                 <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto leading-relaxed">
                   {t("workspace.startHint")}
                 </p>
@@ -206,9 +207,11 @@ export function WritingWorkspace({
               </div>
             ) : (
               <>
-                <div className="divider-academic mb-1">
+                <div className="divider-academic mb-3">
                   <Library className="h-3 w-3" />
-                  {t("workspace.paragraphs")} ({paragraphs.length})
+                  <span className="eyebrow">
+                    {t("workspace.paragraphs")} ({paragraphs.length})
+                  </span>
                   <span className="text-[9px] text-muted-foreground/70 normal-case tracking-normal ml-2">{t("workspace.dragReorder")}</span>
                   {/* Paragraph trash button — opens the paragraph trash dialog */}
                   <button
@@ -219,8 +222,12 @@ export function WritingWorkspace({
                     <Trash2 className="h-3 w-3" />
                   </button>
                 </div>
-                <SortableParagraphs paragraphs={paragraphs} projectId={activeProjectId} articleContent={articles[0]?.content} />
-                <div className="pt-2">
+                {/* The document sheet — paragraphs read as a stack of cards
+                    laid on a warm paper surface. */}
+                <div className="canvas-paper rounded-xl p-5 sm:p-6">
+                  <SortableParagraphs paragraphs={paragraphs} projectId={activeProjectId} articleContent={articles[0]?.content} />
+                </div>
+                <div className="pt-3">
                   <Button variant="outline" size="sm" className="w-full h-9 text-xs gap-1.5 border-dashed hover:border-primary/50 hover:bg-primary/[0.03] hover:text-primary transition-all" onClick={onOpenWrite}>
                     <Sparkles className="h-3.5 w-3.5" />
                     {t("workspace.draftAnother")}
@@ -237,9 +244,9 @@ export function WritingWorkspace({
         <ScrollArea className="flex-1 min-h-0 scroll-academic">
           <div className="px-5 py-4 max-w-3xl mx-auto">
             {latestArticle ? (
-              <div>
+              <div className="canvas-paper rounded-xl p-5 sm:p-6">
                 <div className="flex items-center gap-2 mb-3">
-                  <h3 className="text-sm font-semibold font-serif-text flex-1 min-w-0 truncate">{latestArticle.title}</h3>
+                  <h3 className="text-base font-semibold font-serif-text flex-1 min-w-0 truncate">{latestArticle.title}</h3>
                   {/* EN/ZH toggle for main workspace article view */}
                   {latestArticle.contentZh && (
                     <div className="flex items-center gap-0.5 rounded-md border border-border/60 bg-muted/30 p-0.5 shrink-0">
@@ -289,10 +296,10 @@ export function WritingWorkspace({
               </div>
             ) : (
               <div className="text-center py-16 acad-fade-in">
-                <div className="h-16 w-16 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-3 ring-academic">
-                  <Layers className="h-8 w-8 text-primary" />
+                <div className="h-18 w-18 mx-auto rounded-[1.25rem] bg-primary/10 flex items-center justify-center mb-4 ring-academic">
+                  <Layers className="h-9 w-9 text-primary" />
                 </div>
-                <h3 className="text-sm font-semibold font-serif-text">{t("workspace.noArticleTitle")}</h3>
+                <h3 className="text-base font-semibold font-serif-text">{t("workspace.noArticleTitle")}</h3>
                 <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto mb-4 leading-relaxed">
                   {t("workspace.noArticleDesc")}
                 </p>

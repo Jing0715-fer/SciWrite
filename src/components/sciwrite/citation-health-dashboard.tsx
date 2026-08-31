@@ -374,17 +374,17 @@ export function CitationHealthDashboard({
       {/* Quick stats — surface-card tiles with hover lift + tabular-nums */}
       <StatTiles agg={agg} />
 
-      {/* Clean progress — refined label typography */}
+      {/* Clean progress — flat semantic fill (no muddy dark gradients) */}
       <div className="flex items-center gap-2 min-w-[160px] flex-1 max-w-[280px]">
         <Progress
           value={cleanPct}
           className={cn(
-            "h-2 flex-1 transition-all",
+            "h-2 flex-1 transition-all bg-muted",
             cleanPct === 100
-              ? "[&>div]:bg-gradient-to-r [&>div]:from-emerald-400 [&>div]:to-emerald-600"
+              ? "[&>div]:bg-emerald-500 dark:[&>div]:bg-emerald-400"
               : cleanPct >= 60
-              ? "[&>div]:bg-gradient-to-r [&>div]:from-amber-400 [&>div]:to-amber-600"
-              : "[&>div]:bg-gradient-to-r [&>div]:from-red-400 [&>div]:to-red-600"
+              ? "[&>div]:bg-amber-500 dark:[&>div]:bg-amber-400"
+              : "[&>div]:bg-red-500 dark:[&>div]:bg-red-400"
           )}
         />
         <span className="text-[9px] text-muted-foreground font-serif-text tabular-nums shrink-0 font-medium tracking-tight">
@@ -399,7 +399,7 @@ export function CitationHealthDashboard({
       {(report.worstOffenders.length > 0 || report.articles.length > 0) && (
         <Collapsible open={open} onOpenChange={setOpen} className="ml-auto">
           <CollapsibleTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] gap-1 glass-subtle rounded-md hover:shadow-sm transition-all">
+            <Button variant="ghost" size="sm" className="h-7 px-2.5 text-[10px] gap-1 glass-subtle rounded-md hover:shadow-sm transition-all">
               {open ? (
                 <ChevronDown className="h-3 w-3" />
               ) : (
@@ -428,7 +428,7 @@ export function CitationHealthDashboard({
           <Button
             variant="outline"
             size="sm"
-            className="h-6 px-2 text-[10px] gap-1 border-amber-300/60 dark:border-amber-700/50 text-amber-700 dark:text-amber-400 hover:bg-amber-50/60 dark:hover:bg-amber-950/30 hover:shadow-sm transition-all"
+            className="h-7 px-2.5 text-[10px] gap-1 border-amber-300/60 dark:border-amber-700/50 text-amber-700 dark:text-amber-400 hover:bg-amber-50/60 dark:hover:bg-amber-950/30 hover:shadow-sm transition-all"
             disabled={fixing}
             onClick={runBatchAutoFix}
             title={t("citationHealth.autoFixAllTitle")}
@@ -492,9 +492,9 @@ export function CitationHealthDashboard({
       {(agg.totalBlocking > 0 || agg.totalWarnings > 0) && (
         <div className="flex items-center gap-1.5">
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
-            className="h-6 px-2 text-[10px] gap-1 border-primary/40 text-primary hover:bg-primary/10 hover:shadow-sm transition-all"
+            className="h-7 px-2.5 text-[10px] gap-1 text-muted-foreground hover:text-primary hover:bg-primary/10 hover:shadow-sm transition-all"
             disabled={fixing || regenProgress !== null}
             onClick={() => setConfirmRegen(true)}
             title={t("citationHealth.regenAllTitle")}
@@ -555,7 +555,7 @@ export function CitationHealthDashboard({
         <Button
           variant="ghost"
           size="sm"
-          className="h-6 px-2 text-[10px] gap-1 text-orange-600 dark:text-orange-400 hover:bg-orange-100/60 dark:hover:bg-orange-950/40 hover:shadow-sm transition-all"
+          className="h-7 px-2.5 text-[10px] gap-1 text-amber-700 dark:text-amber-400 hover:bg-amber-100/60 dark:hover:bg-amber-950/40 hover:shadow-sm transition-all"
           onClick={() => {
             // Trigger a custom event that the article viewer can listen for
             // to switch to the Analysis → Audit Trail sub-tab.
@@ -572,7 +572,7 @@ export function CitationHealthDashboard({
       <Button
         variant="ghost"
         size="sm"
-        className="h-6 w-6 p-0 glass-subtle rounded-md hover:shadow-sm transition-all"
+        className="h-7 w-7 p-0 glass-subtle rounded-md hover:shadow-sm transition-all"
         onClick={fetchHealth}
         title={t("citationHealth.refreshTitle")}
       >

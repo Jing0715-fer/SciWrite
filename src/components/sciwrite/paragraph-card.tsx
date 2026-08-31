@@ -291,7 +291,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
 
   return (
     <div
-      className={`surface-card rounded-xl overflow-hidden transition-all hover:shadow-md hover:border-primary/30 acad-fade-in${
+      className={`surface-card rounded-xl overflow-hidden transition-all duration-200 hover:shadow-md hover:border-primary/30 acad-fade-in${
         editing ? " ring-academic" : ""
       }`}
     >
@@ -316,7 +316,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
           )}
           <div className="flex flex-wrap items-center gap-1 mt-1.5">
             <span
-              className={`badge-${status.color} inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide shadow-xs`}
+              className={`badge-${status.color} inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold uppercase tracking-wide`}
             >
               <Icon name={status.icon} className="h-2.5 w-2.5" />
               {status.label}
@@ -325,7 +325,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
               {formatMeta?.label || paragraph.format}
             </span>
             <span className="text-[9px] text-muted-foreground">·</span>
-            <span className="text-[9px] text-muted-foreground">
+            <span className="text-[9px] text-muted-foreground tabular-nums">
               {viewLang === "zh" && hasZh
                 ? `${(paragraph as any).wordCountZh || 0}字`
                 : t("para.wordsCount", { n: paragraph.wordCount })}
@@ -335,7 +335,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
               const citCount = (displayContent?.match(/\[\d+(?:[,\-–\s]\d+)*\]/g) || []).length;
               if (citCount > 0) {
                 return (
-                  <span className="badge-amber inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold shadow-xs">
+                  <span className="badge-amber inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold uppercase tracking-wide">
                     <Quote className="h-2.5 w-2.5" />
                     {citCount} cit
                   </span>
@@ -349,7 +349,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
               </span>
             )}
             {unresolvedCount > 0 && (
-              <span className="inline-flex items-center gap-0.5 text-[9px] text-amber-600 dark:text-amber-400 font-medium">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400">
                 <MessageSquare className="h-2.5 w-2.5" />
                 {unresolvedCount}
               </span>
@@ -440,15 +440,20 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
         </DropdownMenu>
       </div>
 
-      {/* Body */}
-      <div className="px-4 py-3 relative paper-surface prose-academic" ref={bodyRef} onMouseUp={handleMouseUp}>
+      {/* Body — the reading surface gets an extra notch of vertical air
+          for comfortable academic line spacing. */}
+      <div className="px-4 py-4 relative paper-surface prose-academic" ref={bodyRef} onMouseUp={handleMouseUp}>
         {editing ? (
           <div className="space-y-2">
-            <Textarea
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              className="font-serif-text text-sm min-h-[160px] leading-relaxed"
-            />
+            {/* Editing canvas — a dedicated paper sheet rather than a flat
+                form field. */}
+            <div className="canvas-paper rounded-lg">
+              <Textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                className="font-serif-text text-sm min-h-[180px] leading-[1.85] border-0 bg-transparent dark:bg-transparent shadow-none rounded-lg px-4 py-3.5"
+              />
+            </div>
             <div className="flex items-center gap-2 flex-wrap">
               <Button
                 size="sm"
@@ -534,7 +539,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 text-[11px] gap-1.5 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/30"
+              className="h-7 text-[11px] gap-1 text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/30"
               onClick={() => setDiffOpen(true)}
               title={t("para.compareTitle")}
             >
@@ -544,7 +549,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 text-[11px] gap-1.5 text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+              className="h-7 text-[11px] gap-1 text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30"
               onClick={() => undoReviseMut.mutate()}
               disabled={undoReviseMut.isPending}
               title={t("para.undoTitle")}
@@ -567,7 +572,7 @@ export function ParagraphCard({ paragraph, projectId, index, articleContent }: P
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 text-[11px] gap-1.5 ml-auto"
+          className="h-7 text-[11px] gap-1 ml-auto"
           onClick={() => setEditing((v) => !v)}
         >
           <PenLine className="h-3 w-3" />

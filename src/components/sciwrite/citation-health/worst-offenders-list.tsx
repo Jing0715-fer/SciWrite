@@ -31,13 +31,13 @@ export function WorstOffendersList({
 }) {
   const { t } = useI18n();
   return (
-    <div className="space-y-1.5">
-      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1 font-serif-text glass-subtle rounded-md px-2 py-1">
+    <div className="space-y-2">
+      <p className="eyebrow glass-subtle rounded-md px-2 py-1 flex items-center gap-1.5">
         <TrendingUp className="h-3 w-3 text-primary" />
         {t("citationHealth.worstOffenders")}
       </p>
       {offenders.length === 0 ? (
-        <div className="surface-card rounded-md py-2 px-2 flex items-center gap-2">
+        <div className="surface-card rounded-lg py-2 px-2 flex items-center gap-2">
           <div className="h-5 w-5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 flex items-center justify-center ring-academic">
             <CheckCircle2 className="h-3 w-3" />
           </div>
@@ -46,7 +46,7 @@ export function WorstOffendersList({
           </p>
         </div>
       ) : (
-        <div className="space-y-1 max-h-44 overflow-y-auto scroll-academic">
+        <div className="space-y-1.5 max-h-48 overflow-y-auto scroll-academic pr-0.5">
           {offenders.map((p) => {
             const isFixingThis = fixingParagraphId === p.paragraphId;
             const isRegenerating = regeneratingParagraphId === p.paragraphId;
@@ -54,7 +54,7 @@ export function WorstOffendersList({
               <div
                 key={p.paragraphId}
                 className={cn(
-                  "rounded-md border px-2 py-1.5 text-[11px] cursor-pointer transition-all shadow-xs hover:shadow-md",
+                  "rounded-lg border px-2.5 py-2 text-[11px] cursor-pointer transition-all shadow-xs hover:shadow-md",
                   isFixingThis
                     ? "border-amber-400/70 bg-amber-50/60 dark:bg-amber-950/25 ring-1 ring-amber-300/40 dark:ring-amber-700/50"
                     : isRegenerating
@@ -145,11 +145,11 @@ export function WorstOffendersList({
                   )}
                 </div>
                 {p.topFindings.length > 0 && (
-                  <div className="space-y-0.5">
+                  <div className="space-y-1">
                     {p.topFindings.map((f, i) => (
                       <div
                         key={i}
-                        className="text-[10px] text-muted-foreground leading-snug flex gap-1"
+                        className="text-[10px] text-muted-foreground leading-relaxed flex gap-1.5"
                       >
                         <span
                           className={cn(
@@ -162,7 +162,7 @@ export function WorstOffendersList({
                         >
                           [{f.n}]
                         </span>
-                        <span className="truncate">{f.reason}</span>
+                        <span className="line-clamp-2">{f.reason}</span>
                       </div>
                     ))}
                   </div>

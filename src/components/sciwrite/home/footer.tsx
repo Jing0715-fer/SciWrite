@@ -5,7 +5,7 @@ import { useI18n } from "@/lib/i18n";
 export function Footer({ onOpenPalette }: { onOpenPalette?: () => void }) {
   const { t } = useI18n();
   return (
-    <footer className="glass-toolbar glass-footer shrink-0 px-4 py-1.5 flex items-center justify-between text-[10px] text-foreground/70 relative z-20">
+    <footer className="glass-toolbar glass-footer shrink-0 px-4 py-2 flex items-center justify-between text-[10px] text-foreground/75 relative z-20">
       <div className="flex items-center gap-2">
         <span className="inline-flex items-center gap-1.5 font-medium">
           <span className="relative inline-flex h-2 w-2">
@@ -23,10 +23,10 @@ export function Footer({ onOpenPalette }: { onOpenPalette?: () => void }) {
         {onOpenPalette && (
           <button
             onClick={onOpenPalette}
-            className="hidden md:inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 bg-card/40 hover:bg-muted/60 hover:border-border transition-colors"
+            className="hidden md:inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-md border border-border/60 bg-card/50 hover:bg-muted/60 hover:border-border transition-colors"
             title={t("footer.openPaletteTitle")}
           >
-            <kbd className="font-mono text-[9px] font-semibold text-foreground/80">⌘K</kbd>
+            <kbd className="font-mono text-[9px] font-semibold text-foreground/80 bg-muted rounded px-1 py-px leading-none">⌘K</kbd>
             <span className="text-muted-foreground">{t("footer.commands")}</span>
           </button>
         )}

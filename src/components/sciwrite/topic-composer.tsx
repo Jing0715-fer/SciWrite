@@ -226,7 +226,7 @@ export function TopicComposer({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[88vh] flex flex-col gap-0 p-0 rounded-xl overflow-hidden">
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border/60 bg-gradient-to-r from-primary/5 to-transparent">
-          <DialogTitle className="flex items-center gap-2 text-base">
+          <DialogTitle className="flex items-center gap-2 text-base font-serif-text">
             <Sparkles className="h-4 w-4 text-primary" />
             {t("topic.title")}
           </DialogTitle>
@@ -236,15 +236,17 @@ export function TopicComposer({
         </DialogHeader>
 
         <div className="flex-1 min-h-0 overflow-y-auto scroll-academic">
-          <div className="px-6 py-4 space-y-4">
-            {/* Generation mode selector — v86-1: Enhanced with gradient + icons */}
+          <div className="px-6 py-5 space-y-5">
+            {/* Generation mode selector — v86-1: Enhanced with gradient + icons.
+                round-31: segmented control aligned to the .tab-pill language
+                (active = filled primary tint, inactive = quiet hover). */}
             <div className="flex gap-1 p-1 rounded-lg bg-muted/50 border border-border/30">
               <button
                 onClick={() => setGenMode("single")}
                 className={`flex-1 text-xs py-2 rounded-md transition-all flex items-center justify-center gap-1.5 ${
                   genMode === "single"
-                    ? "bg-card shadow-sm font-medium text-primary border border-primary/20"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                    ? "tab-pill"
+                    : "tab-pill-inactive"
                 }`}
               >
                 <PenLine className="h-3.5 w-3.5" />
@@ -254,8 +256,8 @@ export function TopicComposer({
                 onClick={() => setGenMode("full")}
                 className={`flex-1 text-xs py-2 rounded-md transition-all flex items-center justify-center gap-1.5 ${
                   genMode === "full"
-                    ? "bg-gradient-to-r from-primary to-primary/80 shadow-md font-medium text-primary-foreground border border-primary/30"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                    ? "tab-pill"
+                    : "tab-pill-inactive"
                 }`}
               >
                 <Zap className="h-3.5 w-3.5" />
@@ -266,7 +268,7 @@ export function TopicComposer({
             {/* Full article mode: show target words + journal template */}
             {/* v86-1: Enhanced with card-style container + gradient range track */}
             {genMode === "full" && (
-              <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-muted/20 border border-border/30">
+              <div className="grid grid-cols-2 gap-3 p-4 rounded-lg bg-muted/20 border border-border/30">
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium flex items-center gap-1">
                     <span>{t("topic.targetWords")}:</span>
@@ -290,10 +292,10 @@ export function TopicComposer({
                       <button
                         key={preset}
                         onClick={() => setTargetWords(preset)}
-                        className={`text-[9px] px-1.5 py-0.5 rounded transition-all ${
+                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold uppercase tracking-wide transition-all ${
                           targetWords === preset
-                            ? "bg-primary/10 text-primary font-semibold ring-1 ring-primary/20"
-                            : "bg-muted/60 text-muted-foreground hover:bg-muted hover:scale-105"
+                            ? "bg-primary/10 dark:bg-primary/20 text-primary ring-1 ring-primary/25"
+                            : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
                         }`}
                       >
                         {preset}
@@ -321,7 +323,7 @@ export function TopicComposer({
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
                 placeholder={t("topic.topicPlaceholder")}
-                className="text-sm min-h-[60px]"
+                className="text-sm min-h-[60px] rounded-lg focus-visible:ring-primary/30 focus-visible:border-primary/40"
               />
             </div>
             <div className="space-y-1.5">
@@ -330,7 +332,7 @@ export function TopicComposer({
                 value={focus}
                 onChange={(e) => setFocus(e.target.value)}
                 placeholder={t("topic.focusPlaceholder")}
-                className="text-sm"
+                className="text-sm rounded-lg focus-visible:ring-primary/30 focus-visible:border-primary/40"
               />
             </div>
 
@@ -388,7 +390,7 @@ export function TopicComposer({
                 <Label className="text-xs flex items-center gap-1.5">
                   <DatabaseIcon className="h-3 w-3" /> {t("topic.dataSourcesLabel")} ({selectedSources.length})
                 </Label>
-                <div className="rounded-md border border-border/60 max-h-32 overflow-y-auto scroll-academic divide-y divide-border/40">
+                <div className="rounded-lg border border-border/60 max-h-32 overflow-y-auto scroll-academic divide-y divide-border/40">
                   {dataSources.length === 0 && (
                     <p className="text-[10px] text-muted-foreground p-2">
                       {t("topic.noSources")}
@@ -422,7 +424,7 @@ export function TopicComposer({
                 <Label className="text-xs flex items-center gap-1.5">
                   <BookOpen className="h-3 w-3" /> {t("topic.refsLabel")} ({selectedRefs.length})
                 </Label>
-                <div className="rounded-md border border-border/60 max-h-32 overflow-y-auto scroll-academic divide-y divide-border/40">
+                <div className="rounded-lg border border-border/60 max-h-32 overflow-y-auto scroll-academic divide-y divide-border/40">
                   {references.length === 0 && (
                     <p className="text-[10px] text-muted-foreground p-2">
                       {t("topic.noRefs")}
@@ -463,7 +465,7 @@ export function TopicComposer({
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}
                 placeholder={t("topic.searchPlaceholder")}
-                className="text-xs min-h-[48px] font-mono"
+                className="text-xs min-h-[48px] font-mono rounded-lg focus-visible:ring-primary/30 focus-visible:border-primary/40"
               />
             </div>
 
@@ -569,7 +571,7 @@ export function TopicComposer({
                   ) : quotaQ.data.coolDownActive ? (
                     <Badge
                       variant="secondary"
-                      className="text-[9px] px-2 py-0 h-5 gap-0.5 bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
+                      className="text-[9px] px-2 py-0 h-5 gap-0.5 bg-amber-500/15 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
                     >
                       <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
                       COOL-DOWN
@@ -577,7 +579,7 @@ export function TopicComposer({
                   ) : (
                     <Badge
                       variant="secondary"
-                      className="text-[9px] px-2 py-0 h-5 gap-0.5 bg-emerald-100 text-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-300"
+                      className="text-[9px] px-2 py-0 h-5 gap-0.5 bg-emerald-500/15 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
                     >
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                       ACTIVE
@@ -608,7 +610,7 @@ export function TopicComposer({
               <Button
                 onClick={() => writeMut.mutate()}
                 disabled={writeMut.isPending || !topic.trim() || (quotaQ.data?.aborted ?? false)}
-                className={`gap-2 transition-all ${genMode === "full" ? "bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 shadow-md" : ""}`}
+                className="gap-2 btn-gradient-primary"
               >
                 {writeMut.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -636,7 +638,7 @@ export function TopicComposer({
               <Button
                 onClick={() => saveMut.mutate()}
                 disabled={saveMut.isPending}
-                className="gap-2"
+                className="gap-2 btn-gradient-primary"
               >
                 {saveMut.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
