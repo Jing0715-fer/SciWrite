@@ -728,6 +728,37 @@ h1, h2, h3, h4, h5, h6 {
   background-clip: padding-box;
 }
 
+/* round-34: Radix ScrollArea wraps viewport content in a
+   display:table / min-width:100% div. Tables shrink-wrap to their
+   content's min-content width, so a single unbreakable token (deep-read
+   summary URL, long ID) widens the table past the viewport and the
+   source card's right border gets clipped off-screen. Note: a plain
+   max-width:100% does NOT clamp a display:table box (measured), so we
+   override the display itself — block keeps the min-width:100% stretch
+   behavior for short content while never growing past the viewport;
+   long tokens are wrapped at the text level via break-words. */
+.source-scroll [data-radix-scroll-area-viewport] > div {
+  display: block !important;
+}
+
+/* round-34: thin horizontal scrollbar for overflow-x rows (type tab
+   bars). Previously referenced by className but never defined — the
+   browser default 15px bar was rendered instead. */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: oklch(0.82 0.02 150);
+  border-radius: 999px;
+}
+.dark .scrollbar-thin::-webkit-scrollbar-thumb {
+  background: oklch(0.35 0.02 150);
+}
+
 /* Subtle fade-in for generated content */
 @keyframes acad-fade-in {
   from {
@@ -820,4 +851,6 @@ h1, h2, h3, h4, h5, h6 {
     transparent
   );
 }
+
+
 

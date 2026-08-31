@@ -217,7 +217,11 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
           {/* v109-2: Use plain overflow-y-auto instead of ScrollArea to match
               the article panel's behavior. ScrollArea's custom scrollbar
               was clipping the right border of project cards. */}
-          <div className="h-full overflow-y-auto scroll-academic">
+          {/* round-34: [scrollbar-gutter:stable] on BOTH list containers so
+              the 10px classic scrollbar space is always reserved — project
+              cards and article cards now keep identical widths whether or
+              not either list is currently scrolling. */}
+          <div className="h-full overflow-y-auto scroll-academic [scrollbar-gutter:stable]">
             {/* v109-1: Match article list padding (px-3) so project cards
                 have the same width as article cards. Previously px-2 made
                 project cards narrower than article cards. */}
@@ -288,10 +292,15 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
                   <Trash2 className="h-3 w-3" />
                 </Button>
               </div>
+              {/* round-34: same scroll-container pattern as the projects
+                  panel above (plain overflow-y-auto + stable gutter + inner
+                  px-3 div) so both lists lay out cards at exactly the same
+                  width. */}
               <div
-                className="flex-1 min-h-0 overflow-y-auto scroll-academic px-3 pb-2 pt-1 space-y-1.5"
+                className="flex-1 min-h-0 overflow-y-auto scroll-academic [scrollbar-gutter:stable]"
                 data-slot="article-scroll"
               >
+                <div className="px-3 pb-2 pt-1 space-y-1.5 min-w-0">
                   {articles.map((a: any) => {
                     const hasZh = !!a.contentZh;
                     const enLen = a.content?.length || 0;
@@ -345,6 +354,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect, articles = [], o
                   })}
                 </div>
               </div>
+            </div>
           </ResizablePanel>
         )}
       </ResizablePanelGroup>

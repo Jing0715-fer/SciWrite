@@ -358,8 +358,12 @@ function SourcesList({
           </div>
         </div>
       </div>
-      {/* Source cards for the active type */}
-      <ScrollArea className="flex-1 min-h-0 scroll-academic">
+      {/* Source cards for the active type.
+          source-scroll clamps the Radix viewport's display:table wrapper to
+          the panel width — without it, long unbreakable tokens (deep-read
+          summaries, URLs) widen the table past the viewport and the card's
+          right border gets clipped off-screen (round-34). */}
+      <ScrollArea className="source-scroll flex-1 min-h-0 scroll-academic">
         <div className="px-3 py-2 space-y-2">
           {filteredItems.length === 0 ? (
             <div className="text-center py-6 text-[10px] text-muted-foreground">
@@ -505,7 +509,7 @@ function SourceCard({
           </Button>
         </div>
       </div>
-      <p className="text-[11px] font-medium leading-snug line-clamp-2">
+      <p className="text-[11px] font-medium leading-snug line-clamp-2 break-words">
         {d.title || d.query}
       </p>
       {/* Show PDB structure association for RCSB sources */}
@@ -568,7 +572,7 @@ function SourceCard({
         </div>
       )}
       {(d.authors || d.journal || d.year) && (
-        <p className="text-[9px] text-muted-foreground">
+        <p className="text-[9px] text-muted-foreground break-words">
           {d.authors && <span>{d.authors}</span>}
           {d.authors && d.year && <span>, </span>}
           {d.year && <span>{d.year}</span>}
@@ -589,7 +593,7 @@ function SourceCard({
             <BookCheck className="h-2.5 w-2.5" /> LLM suggestion · unverified (not citable)
           </div>
           {extraObj.llmReason && (
-            <p className="text-[8px] text-muted-foreground leading-snug">
+            <p className="text-[8px] text-muted-foreground leading-snug break-words">
               {String(extraObj.llmReason).slice(0, 140)}
             </p>
           )}
@@ -603,7 +607,7 @@ function SourceCard({
           href={d.url}
           target="_blank"
           rel="noreferrer"
-          className="text-[9px] text-primary hover:underline inline-flex items-center gap-0.5"
+          className="text-[9px] text-primary hover:underline inline-flex items-center gap-0.5 min-w-0"
         >
           <ExternalLink className="h-2.5 w-2.5" /> {d.url.replace(/^https?:\/\//, "").slice(0, 40)}
         </a>
@@ -626,8 +630,11 @@ function SourceCard({
               <ChevronDown className="h-2.5 w-2.5" />
             )}
           </button>
+          {/* break-words so long unbreakable tokens inside the deep-read
+              text (URLs, sequence strings) wrap instead of widening the
+              card past the panel edge (round-34). */}
           {expandedSource === d.id && (
-            <div className="mt-1 rounded-md bg-primary/5 dark:bg-primary/10 border border-primary/20 dark:border-primary/20 p-2 text-[10px] leading-relaxed whitespace-pre-wrap font-sans">
+            <div className="mt-1 rounded-md bg-primary/5 dark:bg-primary/10 border border-primary/20 dark:border-primary/20 p-2 text-[10px] leading-relaxed whitespace-pre-wrap break-words font-sans">
               {d.summary}
             </div>
           )}

@@ -4,6 +4,7 @@ import {
   verifySourcesWithKnowledge,
   verifyMissingViaPubMed,
   applyKnowledgeCompletions,
+  normalizeTitle,
   type KVSourceInput,
 } from "@/lib/knowledge-verify";
 import {
@@ -601,8 +602,28 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
               log(`knowledge: save verified "${String(v.item.title).slice(0, 50)}" failed: ${String(err?.message ?? err).slice(0, 100)}`);
             }
           }
+          // round-34 hardening (mirrors the gather verify route):
+          //  - dedup against ALL existing project source titles via
+          //    normalizeTitle, so regenerating into a project can't pile up
+          //    re-worded unverified suggestions;
+          //  - LLM DOIs are not stored in externalId/doi/url (plausible-but-
+          //    wrong per round-33); the raw suggestion stays in rawJson and
+          //    extra.llmDoi preserves the claim for human review.
+          const projectTitleRows = await db.dataSource.findMany({
+            where: { projectId },
+            select: { title: true },
+          });
+          const existingTitleKeys = new Set(
+            projectTitleRows.map((row: any) => normalizeTitle(row.title || "")).filter(Boolean)
+          );
           for (const s of unverified) {
             try {
+              const key = normalizeTitle(s.title || "");
+              if (key && existingTitleKeys.has(key)) {
+                log(`knowledge: unverified "${String(s.title).slice(0, 50)}" already saved — skipped`);
+                continue;
+              }
+              if (key) existingTitleKeys.add(key);
               await db.dataSource.create({
                 data: {
                   projectId,
@@ -610,17 +631,18 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
                   query: "llm-knowledge cross-check (unverified)",
                   rawJson: JSON.stringify({ items: [s] }),
                   title: s.title,
-                  externalId: s.doi || null,
-                  url: s.doi ? `https://doi.org/${s.doi}` : null,
+                  externalId: null,
+                  url: null,
                   authors: s.authors || null,
                   journal: s.journal || null,
                   year: s.year || null,
-                  doi: s.doi || null,
+                  doi: null,
                   abstract: null,
                   extra: JSON.stringify({
                     unverified: true,
                     llmKind: s.kind,
                     llmReason: s.reason,
+                    ...(s.doi ? { llmDoi: s.doi } : {}),
                     note: "Proposed by LLM knowledge; not confirmed in PubMed — review before citing.",
                   }),
                   pinned: false,

@@ -2298,3 +2298,28 @@ Stage Summary:
 - 补全策略分级信任：缺失元数据（authors/year/journal）fill-gaps-only 补全 + extra.llmFilled 溯源；缺失文献必须 PubMed 标题核实（≥0.72 相似度+PMID 认领去重）才可引用，未核实建议保存供人工审阅但结构性挡在引用池外
 - E2E 驱动的两处幻觉防线：DOI 不可 LLM 填充（实测有张冠李戴）+ 同 PMID 双建议去重
 - 用户可见效果：收集后自动补全元数据缺口、补上领域关键文献（带 PubMed 核实徽章）、知识面板琥珀色"未核实建议"徽章提示人工复核
+
+---
+Task ID: round-34
+Agent: main (Z.ai Code orchestrator)
+Task: 用户反馈「继续测试和打磨数据源收集和校验能力。修复UI问题：数据源的框没有显示完整，内容太多时右侧边框在页面外；左侧project和article列表的卡片宽度不一致」
+
+Work Log:
+- 问题1定位（数据源卡片右边框出界）：agent-browser 实测复现——Radix ScrollArea Viewport 用 display:table/min-width:100% 包裹内容（table 收缩包裹内容 min-content 宽度），SourceCard 的 deep-read summary 用 whitespace-pre-wrap 时长不可断 token（URL）把 table 撑宽到 857px（视口 546px）→ overflow-x:hidden 裁切 → 卡片右边框出界 299px（注入实验精确复现）
+- 问题1修复（三层防线）：①knowledge-panel SourceCard 全部长文本字段加 break-words（title/authors/llmReason/pre-wrap summary/URL anchor min-w-0）②globals.css 新增 .source-scroll [data-radix-scroll-area-viewport]>div{display:block!important} 直接消灭 table 收缩行为（实测 max-width:100% 无法钳制 display:table——表格按内容 min-content 撑宽，此路径证伪后改用 display 覆盖；!important 压过内联 display:table，保留内联 min-width:100% 的短内容拉伸语义）③DatabaseQueryPanel 结果列表同样隐患（展开的 abstract 无 clamp 无断词）一并加固（source-scroll + title/authors/abstract break-words）
+- 问题2定位（左侧卡片宽度不一致）：.scroll-academic 的 10px 经典滚动条只在列表滚动时占位——14 个项目必滚动、文章少不滚 → 项目卡比文章卡窄 10px；真实浏览器可见（无头浏览器滚动条不占位故几何相同，代码分析确认真实浏览器差异）
+- 问题2修复：两列表统一为相同 DOM 模式（滚动容器 + 内层 px-3 div，articles 原来是 px-3 直接挂滚动容器上）+ 双容器 [scrollbar-gutter:stable] 始终保留滚动条空间 → 实测两列卡片 366px=366px 恒等（light+dark）
+- 顺手修：.scrollbar-thin 类被 knowledge-panel tab 栏引用但从未定义（浏览器渲染默认 15px 粗条）→ globals.css 补全 5px 细滚动条定义（light+dark）
+- 数据收集能力打磨（继续测试发现真实缺陷）：
+  ①deep-read 全链路修复：实测 PMC 页面 deep-read 必 422——z-ai page_reader 返回 html（234KB）但没有 text 字段，readPage 只取 data?.text 永远为空 → lib/ai.ts 新增 htmlToText（无依赖正则提取器：剥 script/style/head、块级标签转行、解码实体）+ trimLeadingBoilerplate（PMC 前 130 行是政府声明样板，扫描首个 ≥160 字符小写占比 ≥0.5 的散文行并回溯包含标题行，deep-read 8000 字截断不再喂导航垃圾）+ description 兜底 → readPage 对 PMC 返回 55k 字符正文、浏览器实测 deep-read 200（原 422）、summary 1019 字符入库
+  ②unverified 建议跨次堆积修复：LLM 每轮建议措辞略异，原精确标题去重失效 → gather verify 路由 + generate-full-v2 路由统一改用 normalizeTitle（knowledge-verify 导出）对全部项目源去重
+  ③unverified 源 LLM 幻觉 DOI 治理：原保存把 LLM DOI 写进 externalId/doi/url（卡片顶部展示假 DOI 当 ID、deep-read 点了必 422）→ 两路由统一置空三字段，DOI 移入 extra.llmDoi 供人工复核（rawJson 保留原始建议）；DB 存量 8 条污染行已清洗
+- verify 三连跑幂等性验证：跑2（修复前）sourcesAdded=3/unverifiedCount=4；跑3（修复后）fieldsCompleted=0/sourcesAdded=0/unverifiedCount=0、llm 源恒 12 条零堆积、无重复 externalId
+- E2E 几何验证（agent-browser 1920×1080）：真实 deep-read summary 展开后卡片 right 1895 ≤ 视口 1907、内容折行、无横滚；注入 120+ 字符不可断 URL token 的破坏性测试卡片仍完整在界内；390×844 移动端 Data tab 117 卡无横向溢出；深色模式 tableDisplay=block/卡片界内/366=366 全同
+- VLM 复核不可用说明：本轮三次真实 verify 运行 + deep-read 消耗 LLM 配额，VLM 接口持续 429（等待重试 3 次共 ~15 分钟），按 round-30/31/32 既定方法论以 DOM 几何测量为最终仲裁标准（全部通过）
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）；dev.log 无应用错误（429 为管线优雅处理的 API 限流）；console 仅既有 resizable 面板 warning；0 page error；浏览器状态已重置（theme=light）
+
+Stage Summary:
+- UI 双修：数据源/数据库查询卡片永不撑出面板（display:table 收缩行为根除 + 全字段断词），左侧项目/文章卡片宽度恒等（统一滚动容器结构 + scrollbar-gutter:stable）
+- 数据收集能力三处实质修复：deep-read 从必 422 到可用（page_reader 无 text 字段 → htmlToText + 样板裁剪）、unverified 建议零堆积（normalizeTitle 跨次去重）、幻觉 DOI 不再进结构化字段（gather + v2 两路由同步 + 存量清洗）
+- 修改文件：knowledge-panel.tsx、database-query-panel.tsx、projects-sidebar.tsx、globals.css、lib/ai.ts、api/ai/gather/route.ts、api/ai/generate-full-v2/route.ts（227+/25-，其中 ai.ts +114 为提取器）

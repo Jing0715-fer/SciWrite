@@ -450,6 +450,102 @@ export interface PageReadResult {
   publishedTime?: string;
 }
 
+/**
+ * round-34: the hosted page_reader returns raw `html` (no `text` field) for
+ * many pages — e.g. PMC's reader layout — which made readPage() hand back an
+ * empty text and every deep-read ended in 422 "no meaningful content". This
+ * extractor turns the HTML into readable plain text so deep-read works on
+ * those pages. It is deliberately dependency-free (regex-based) since the
+ * result is capped at ~8k chars downstream anyway.
+ */
+export function htmlToText(html: string): string {
+  if (!html) return "";
+  let s = html;
+  // Drop non-rendered blocks entirely (content included).
+  s = s.replace(/<!--[\s\S]*?-->/g, " ");
+  s = s.replace(
+    /<(script|style|noscript|svg|template|head|iframe|canvas)\b[\s\S]*?<\/\1>/gi,
+    " ",
+  );
+  // Standalone void elements that never render text.
+  s = s.replace(/<(link|meta|base|area|col|source|track|wbr)\b[^>]*\/?>/gi, " ");
+  // Block-level boundaries become line breaks so paragraphs survive.
+  s = s.replace(/<\/(p|div|section|article|li|tr|h[1-6]|blockquote|pre|figcaption)>/gi, "\n");
+  s = s.replace(/<(br|hr)\b[^>]*\/?>/gi, "\n");
+  s = s.replace(/<(p|div|section|article|li|h[1-6]|blockquote|pre)\b[^>]*>/gi, "\n");
+  // Table cells get a soft separator.
+  s = s.replace(/<\/(td|th)>/gi, " ");
+  // Strip all remaining tags.
+  s = s.replace(/<[^>]+>/g, " ");
+  // Decode entities (common named + numeric).
+  s = s
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;|&rsquo;/gi, "'")
+    .replace(/&mdash;|&8212;/gi, "—")
+    .replace(/&ndash;/gi, "–")
+    .replace(/&hellip;/gi, "…")
+    .replace(/&#(\d+);/g, (_, d: string) => {
+      const code = Number(d);
+      return code > 31 && code < 0x10ffff ? String.fromCodePoint(code) : " ";
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => {
+      const code = Number.parseInt(h, 16);
+      return code > 31 && code < 0x10ffff ? String.fromCodePoint(code) : " ";
+    });
+  // Collapse whitespace.
+  s = s.replace(/[ \t\f\v]+/g, " ");
+  s = s.replace(/\n[ \t]+/g, "\n");
+  s = s.replace(/[ \t]+\n/g, "\n");
+  s = s.replace(/\n{3,}/g, "\n\n");
+  return s.trim();
+}
+
+/**
+ * round-34: html-extracted text starts with site chrome (nav, notices,
+ * cookie banners) — on PMC the first ~130 lines are government disclaimers
+ * while the abstract starts at "Abstract". Deep-read caps the text at 8k
+ * chars, so without this trim the LLM would summarize the chrome. Heuristic:
+ * scan forward to the first long lowercase-heavy prose line, and pull in the
+ * short heading line right above it (e.g. "Abstract").
+ */
+export function trimLeadingBoilerplate(text: string): string {
+  if (!text) return "";
+  const lines = text.split("\n");
+  const isProse = (l: string) => {
+    const t = l.trim();
+    if (t.length < 160) return false;
+    const lower = (t.match(/[a-z]/g) || []).length;
+    // Real prose is lowercase-heavy; nav/menus are short or shouty.
+    return lower / t.length >= 0.5;
+  };
+  let proseIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (isProse(lines[i])) {
+      proseIdx = i;
+      break;
+    }
+  }
+  if (proseIdx === -1) return text;
+  // Include a section heading immediately above the first prose line
+  // (e.g. "Abstract") when it is a short standalone line.
+  let start = proseIdx;
+  for (let j = proseIdx - 1; j >= Math.max(0, proseIdx - 3); j--) {
+    const t = lines[j].trim();
+    if (!t) continue;
+    if (t.length <= 40) {
+      start = j;
+      break;
+    }
+    break;
+  }
+  if (start === 0) return text;
+  return lines.slice(start).join("\n").trim();
+}
+
 export async function readPage(url: string): Promise<PageReadResult> {
   // Page reading is a z-ai-sdk hosted tool. Non-zai providers don't ship it;
   // return empty rather than throwing "z-ai-config not found".
@@ -461,9 +557,25 @@ export async function readPage(url: string): Promise<PageReadResult> {
     const zai = await getAI();
     const result: any = await zai.functions.invoke("page_reader", { url });
     const data = result?.data ?? result;
+    // round-34: hosted page_reader often returns html without text (PMC,
+    // many journal pages). Fall back to extracting text from the html (with
+    // leading site-chrome trimmed), and as a last resort to the meta
+    // description, so deep-read keeps working.
+    const rawText: string | undefined = data?.text;
+    const htmlText = rawText
+      ? undefined
+      : trimLeadingBoilerplate(htmlToText(String(data?.html || "")));
+    const fallbackText =
+      rawText && rawText.trim().length >= 50
+        ? rawText
+        : htmlText && htmlText.trim().length >= 50
+          ? htmlText
+          : typeof data?.description === "string" && data.description.trim().length >= 50
+            ? data.description
+            : rawText || htmlText || "";
     return {
       title: data?.title,
-      text: data?.text,
+      text: fallbackText,
       html: data?.html,
       url: data?.url ?? url,
       publishedTime: data?.publishedTime ?? data?.publish_time,

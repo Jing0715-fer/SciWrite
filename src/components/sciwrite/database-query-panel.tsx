@@ -235,7 +235,10 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
         )}
       </div>
 
-      <ScrollArea className="flex-1 min-h-0 scroll-academic">
+      {/* source-scroll (round-34): kills the Radix display:table wrapper
+          so long unbreakable tokens in expanded abstracts cannot push the
+          result card's right border off-screen. */}
+      <ScrollArea className="source-scroll flex-1 min-h-0 scroll-academic">
         <div className="px-4 py-3 space-y-2.5">
           {error && (
             <div className="text-xs text-destructive bg-destructive/5 border border-destructive/20 rounded-md p-2.5">
@@ -342,7 +345,7 @@ function ResultCard({
               rel="noreferrer"
               className="text-xs font-medium leading-snug hover:text-primary inline-flex items-start gap-1"
             >
-              <span className="line-clamp-2">{item.title}</span>
+              <span className="line-clamp-2 break-words">{item.title}</span>
               <ExternalLink className="h-3 w-3 shrink-0 mt-0.5 opacity-60" />
             </a>
           </div>
@@ -364,13 +367,13 @@ function ResultCard({
           )}
         </div>
         {item.authors && (
-          <p className="text-[10px] text-muted-foreground pl-6 line-clamp-1">
+          <p className="text-[10px] text-muted-foreground pl-6 line-clamp-1 break-words">
             {item.authors}
           </p>
         )}
         {item.abstract && (
           <p
-            className={`text-[11px] text-foreground/80 pl-6 leading-relaxed ${
+            className={`text-[11px] text-foreground/80 pl-6 leading-relaxed break-words ${
               expanded ? "" : "line-clamp-2"
             }`}
           >
