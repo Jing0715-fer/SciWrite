@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { chatWithSession } from "@/lib/llm-session";
 import { createSSEStream, SSE_HEADERS } from "@/lib/sse";
 import { queryDatabase } from "@/lib/databases";
+import { db } from "@/lib/db";
+import {
+  verifySourcesWithKnowledge,
+  verifyMissingViaPubMed,
+  applyKnowledgeCompletions,
+  type KVSourceInput,
+} from "@/lib/knowledge-verify";
 import type { DatabaseSource } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -14,7 +21,7 @@ interface GatherQuery {
 }
 
 interface GatherBody {
-  mode: "clarify" | "organize" | "critique";
+  mode: "clarify" | "organize" | "critique" | "verify";
   topic: string;
   field?: string;
   purpose?: string;
@@ -61,6 +68,12 @@ export async function POST(req: NextRequest) {
         send("step", { status: "started", message: "Starting adversarial critique..." });
         const result = await runCritique(body, sendLog);
         send("step", { status: "done", message: "Critique complete." });
+        send("complete", result);
+        complete();
+      } else if (body.mode === "verify") {
+        send("step", { status: "started", message: "Starting LLM knowledge cross-check..." });
+        const result = await runVerify(body, sendLog);
+        send("step", { status: "done", message: `Knowledge cross-check complete: ${result.fieldsCompleted} fields completed, ${result.sourcesAdded} sources added.` });
         send("complete", result);
         complete();
       } else {
@@ -230,6 +243,173 @@ Output JSON only. 'index' in remove suggestions is 1-based into the gathered sou
     verdict: String(parsed.verdict || "needs-improvement"),
     confidence: Number(parsed.confidence || 0.5),
     addedResults,
+  };
+}
+
+/* ---------------- Knowledge cross-check (round-33) ---------------- */
+/**
+ * Standalone knowledge-verify mode: runs the LLM-knowledge cross-check on
+ * the project's ALREADY-SAVED data sources (no regeneration, no clearing).
+ *   A. fills missing metadata (fill-gaps-only) on saved data sources and
+ *      their reference twins;
+ *   B. adds LLM-suggested missing sources — PubMed-confirmed ones become
+ *      citable references; unconfirmed ones are saved as flagged,
+ *      non-citable suggestions.
+ */
+async function runVerify(body: GatherBody, sendLog: (msg: string) => void) {
+  const projectId = body.projectId;
+  if (!projectId) throw new Error("mode 'verify' requires projectId.");
+  const project = await db.project.findUnique({
+    where: { id: projectId },
+    select: { topic: true, field: true },
+  });
+  if (!project) throw new Error("Project not found.");
+
+  const dataSources = await db.dataSource.findMany({
+    where: { projectId },
+    orderBy: { createdAt: "desc" },
+  });
+  const references = await db.reference.findMany({ where: { projectId } });
+  sendLog(`Loaded ${dataSources.length} saved sources (${references.length} references).`);
+
+  const kvInputs: KVSourceInput[] = dataSources.map((ds: any) => ({
+    id: ds.id,
+    source: ds.source,
+    externalId: ds.externalId,
+    title: ds.title || "",
+    authors: ds.authors,
+    year: ds.year,
+    journal: ds.journal,
+    doi: ds.doi,
+    abstract: ds.abstract,
+  }));
+
+  const kv = await verifySourcesWithKnowledge(
+    projectId, kvInputs, body.topic || project.topic, body.field || project.field || "life sciences",
+    { onLog: sendLog }
+  );
+  sendLog(`LLM knowledge pass: ${kv.completions.length} sources assessed, ${kv.missing.length} gap suggestions.`);
+
+  const applied = await applyKnowledgeCompletions(
+    projectId, dataSources as any, references as any, kv.completions, db,
+    { onLog: sendLog }
+  );
+
+  const { verified, unverified } = await verifyMissingViaPubMed(kv.missing, { onLog: sendLog });
+
+  const existingExtIds = new Set(dataSources.map((ds: any) => ds.externalId).filter(Boolean));
+  const addedSources: any[] = [];
+  for (const v of verified) {
+    if (existingExtIds.has(v.item.externalId)) continue;
+    try {
+      await db.dataSource.create({
+        data: {
+          projectId,
+          source: v.item.source,
+          query: "llm-knowledge cross-check",
+          rawJson: JSON.stringify({ items: [v.item] }),
+          title: v.item.title,
+          externalId: v.item.externalId,
+          url: v.item.url,
+          authors: v.item.authors || null,
+          journal: v.item.journal || null,
+          year: v.item.year || null,
+          doi: v.item.doi || null,
+          abstract: v.item.abstract || null,
+          extra: JSON.stringify(v.item.extra),
+          pinned: true,
+        },
+      });
+      // Claim the PMID so a later duplicate suggestion can't re-save it
+      existingExtIds.add(v.item.externalId);
+      // Mirror as a citable reference (PubMed-verified = real metadata + PMID)
+      try {
+        await db.reference.create({
+          data: {
+            type: "pubmed",
+            externalId: v.item.externalId,
+            title: v.item.title,
+            authors: v.item.authors || null,
+            journal: v.item.journal || null,
+            year: v.item.year || null,
+            url: v.item.url || null,
+            doi: v.item.doi || null,
+            abstract: v.item.abstract || null,
+            projectId,
+          },
+        });
+      } catch (refErr: any) {
+        sendLog(`Reference create failed: ${String(refErr?.message ?? refErr).slice(0, 100)}`);
+      }
+      addedSources.push({
+        title: v.item.title,
+        journal: v.item.journal,
+        year: v.item.year,
+        externalId: v.item.externalId,
+        verified: true,
+        reason: v.item.reason,
+      });
+    } catch (err: any) {
+      sendLog(`Save verified source failed: ${String(err?.message ?? err).slice(0, 100)}`);
+    }
+  }
+
+  // Unconfirmed suggestions are saved as NON-citable flagged data sources
+  // (source='llm', extra.unverified=true) for the user to review.
+  const unverifiedSuggestions: any[] = [];
+  for (const s of unverified) {
+    try {
+      const dup = await db.dataSource.findFirst({
+        where: { projectId, title: s.title },
+        select: { id: true },
+      });
+      if (dup) continue;
+      await db.dataSource.create({
+        data: {
+          projectId,
+          source: "llm",
+          query: "llm-knowledge cross-check (unverified)",
+          rawJson: JSON.stringify({ items: [s] }),
+          title: s.title,
+          externalId: s.doi || null,
+          url: s.doi ? `https://doi.org/${s.doi}` : null,
+          authors: s.authors || null,
+          journal: s.journal || null,
+          year: s.year || null,
+          doi: s.doi || null,
+          abstract: null,
+          extra: JSON.stringify({
+            unverified: true,
+            llmKind: s.kind,
+            llmReason: s.reason,
+            note: "Proposed by LLM knowledge; not confirmed in PubMed — review before citing.",
+          }),
+          pinned: false,
+        },
+      });
+      unverifiedSuggestions.push({
+        title: s.title,
+        authors: s.authors,
+        year: s.year,
+        journal: s.journal,
+        doi: s.doi,
+        reason: s.reason,
+        kind: s.kind,
+      });
+    } catch (err: any) {
+      sendLog(`Save unverified suggestion failed: ${String(err?.message ?? err).slice(0, 100)}`);
+    }
+  }
+
+  return {
+    mode: "verify",
+    fieldsCompleted: applied.fieldsCompleted,
+    sourcesCompleted: applied.sourcesCompleted,
+    byField: applied.byField,
+    sourcesAdded: addedSources.length,
+    addedSources,
+    unverifiedCount: unverifiedSuggestions.length,
+    unverifiedSuggestions,
   };
 }
 

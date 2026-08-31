@@ -206,6 +206,13 @@ export const translations = {
     "gather.reviewFilter": "Review and filter the gathered sources. Selected items will be saved as data sources & references.",
     "gather.selected": "selected",
     "gather.noSources": "No sources gathered. Go back and run the organize step.",
+    "gather.verifyBtn": "Cross-check with LLM knowledge",
+    "gather.verifyDesc": "Confirm the gathered sources against the LLM's own domain knowledge: fill missing metadata (authors/year/journal) and add important missing works — PubMed-verified before they become citable.",
+    "gather.verifyResultTitle": "Knowledge cross-check ✓",
+    "gather.fieldsCompleted": "missing fields completed",
+    "gather.gapSourcesAdded": "gap sources verified & added",
+    "gather.unverifiedSuggestions": "unverified suggestions (saved for review, not citable)",
+    "toast.verifyCompleted": "Knowledge cross-check done: {fields} fields completed, {added} sources added",
 
     // Review dialog
     "review.title": "AI Peer Review",
@@ -925,6 +932,7 @@ export const translations = {
     "oneClick.generating": "Generating…",
     "oneClick.doneBtn": "Done",
     "oneClick.stepCurate": "Curating sources",
+    "oneClick.stepKnowledge": "Knowledge cross-check",
     "oneClick.curatedRefs": "Curated references",
     "oneClick.maxWords": "Max 50,000 words",
     "oneClick.noFormatSelect": "No format selection needed — AI plans the outline automatically",
@@ -1528,6 +1536,13 @@ export const translations = {
     "gather.reviewFilter": "查看并筛选已收集的数据源。所选项目将保存为数据源和引用。",
     "gather.selected": "已选",
     "gather.noSources": "未收集到数据源。请返回运行组织步骤。",
+    "gather.verifyBtn": "结合 LLM 知识校验补全",
+    "gather.verifyDesc": "用 LLM 自身的专业知识校验已收集的数据源：补全缺失的元数据（作者/年份/期刊），并补上搜索遗漏的重要文献——经 PubMed 核实后方可被引用。",
+    "gather.verifyResultTitle": "知识交叉校验 ✓",
+    "gather.fieldsCompleted": "个缺失字段已补全",
+    "gather.gapSourcesAdded": "篇遗漏文献已核实并加入",
+    "gather.unverifiedSuggestions": "条未核实建议（已保存供人工审阅，不可引用）",
+    "toast.verifyCompleted": "知识校验完成：补全 {fields} 个字段，新增 {added} 个数据源",
 
     // Review dialog
     "review.title": "AI 同行评审",
@@ -2247,6 +2262,7 @@ export const translations = {
     "oneClick.generating": "正在生成…",
     "oneClick.doneBtn": "完成",
     "oneClick.stepCurate": "正在精选数据源",
+    "oneClick.stepKnowledge": "知识交叉校验",
     "oneClick.curatedRefs": "已精选引用",
     "oneClick.maxWords": "最多 50,000 字",
     "oneClick.noFormatSelect": "无需选择段落格式 — AI 自动规划大纲",

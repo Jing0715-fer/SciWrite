@@ -28,6 +28,7 @@ import {
   Microscope,
   Target,
   ShieldCheck,
+  BookCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -451,7 +452,10 @@ function OutlineTab({ projectId, topic, field, onInvalidate }: { projectId: stri
 function GatherTab({ projectId, topic, field, onInvalidate }: { projectId: string; topic: string; field?: string; onInvalidate: () => void }) {
   const { t } = useI18n();
   const [result, setResult] = React.useState<any>(null);
+  // round-33: result of the standalone LLM-knowledge cross-check
+  const [verifyResult, setVerifyResult] = React.useState<any>(null);
   const { loading, logs, currentMessage, startTask } = useStreamingTask();
+  const { loading: verifyLoading, logs: verifyLogs, currentMessage: verifyMessage, startTask: startVerifyTask } = useStreamingTask();
 
   const run = async () => {
     setResult(null);
@@ -462,6 +466,26 @@ function GatherTab({ projectId, topic, field, onInvalidate }: { projectId: strin
           setResult(data);
           onInvalidate();
           toast.success(t("toast.sourcesGathered", { n: data.addedResults?.length || 0 }));
+        },
+        (err) => toast.error(err.message)
+      );
+    } catch {}
+  };
+
+  // round-33: cross-check the SAVED sources with the LLM's own knowledge —
+  // fills missing metadata and adds PubMed-verified gap sources (unverified
+  // suggestions are saved flagged + non-citable).
+  const runVerify = async () => {
+    setVerifyResult(null);
+    try {
+      await startVerifyTask(
+        (onEvent) => api.aiGatherStream({ projectId, topic, field, mode: "verify" }, onEvent),
+        (data) => {
+          setVerifyResult(data);
+          onInvalidate();
+          toast.success(
+            t("toast.verifyCompleted", { fields: data.fieldsCompleted ?? 0, added: data.sourcesAdded ?? 0 })
+          );
         },
         (err) => toast.error(err.message)
       );
@@ -490,6 +514,81 @@ function GatherTab({ projectId, topic, field, onInvalidate }: { projectId: strin
               <Database className="h-3 w-3 shrink-0" />
               {result.addedResults.length} sources gathered
             </div>
+          )}
+        </SuccessCard>
+      )}
+
+      {/* round-33: LLM-knowledge cross-check — runs on the SAVED sources,
+          complements the gather step (fills gaps the searches left behind). */}
+      <div className="rounded-lg bg-violet-500/[0.05] border border-violet-500/20 p-4">
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <BookCheck className="h-3 w-3 text-violet-600 dark:text-violet-400" />
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-600 dark:text-violet-400">LLM Knowledge</p>
+        </div>
+        <p className="text-[11px] text-muted-foreground leading-relaxed">{t("gather.verifyDesc")}</p>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={verifyLoading}
+          onClick={runVerify}
+          className="mt-3 h-8 gap-1.5 text-xs border-violet-500/30 text-violet-600 dark:text-violet-400 hover:bg-violet-500/10 hover:border-violet-500/50"
+        >
+          {verifyLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BookCheck className="h-3.5 w-3.5" />}
+          {t("gather.verifyBtn")}
+        </Button>
+      </div>
+
+      {verifyLoading && <TaskProgress logs={verifyLogs} currentMessage={verifyMessage} />}
+
+      {verifyResult && (
+        <SuccessCard title={t("gather.verifyResultTitle")}>
+          <div className="flex flex-wrap gap-1.5">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-primary/10 dark:bg-primary/20 text-primary text-[9px] font-semibold uppercase tracking-wide tabular-nums">
+              <CheckCircle2 className="h-3 w-3 shrink-0" />
+              {verifyResult.fieldsCompleted ?? 0} {t("gather.fieldsCompleted")}
+            </span>
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/10 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[9px] font-semibold uppercase tracking-wide tabular-nums">
+              <Database className="h-3 w-3 shrink-0" />
+              {verifyResult.sourcesAdded ?? 0} {t("gather.gapSourcesAdded")}
+            </span>
+            {verifyResult.unverifiedCount > 0 && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/10 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 text-[9px] font-semibold uppercase tracking-wide tabular-nums">
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+                {verifyResult.unverifiedCount} {t("gather.unverifiedSuggestions")}
+              </span>
+            )}
+          </div>
+          {verifyResult.addedSources?.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {verifyResult.addedSources.slice(0, 8).map((s: any, i: number) => (
+                <li key={i} className="text-[11px] leading-relaxed text-muted-foreground flex items-start gap-1.5">
+                  <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  <span>
+                    {s.title?.slice(0, 90)}
+                    {s.journal && <span className="text-foreground/70"> — {String(s.journal).slice(0, 40)}{s.year ? `, ${s.year}` : ""}</span>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {verifyResult.unverifiedSuggestions?.length > 0 && (
+            <details className="mt-2 group">
+              <summary className="text-[10px] text-amber-600 dark:text-amber-400 cursor-pointer list-none flex items-center gap-1 select-none">
+                <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+                {t("gather.unverifiedSuggestions")}
+              </summary>
+              <ul className="mt-1.5 space-y-1 pl-4">
+                {verifyResult.unverifiedSuggestions.slice(0, 8).map((s: any, i: number) => (
+                  <li key={i} className="text-[11px] leading-relaxed text-muted-foreground flex items-start gap-1.5">
+                    <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0 text-amber-500/70" />
+                    <span>
+                      {s.title?.slice(0, 90)}
+                      {s.reason && <span className="block text-[10px] text-muted-foreground/70 mt-0.5">{String(s.reason).slice(0, 140)}</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
         </SuccessCard>
       )}
@@ -712,6 +811,9 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, onInvalidate,
     if (pipeline === "v2") {
       const base = [
         { id: "gather", label: t("oneClick.stepGather"), icon: Database },
+        // round-33: LLM-knowledge cross-check runs between gather and curate
+        // (fills missing metadata + adds PubMed-verified gap sources).
+        { id: "knowledge", label: t("oneClick.stepKnowledge") || "Knowledge cross-check", icon: BookCheck },
         { id: "curate", label: t("oneClick.stepCurate"), icon: Filter },
         { id: "plan", label: t("oneClick.stepPlan"), icon: ListTree },
         { id: "analyze", label: t("oneClick.stepAnalyze") || "Analyze Evidence", icon: Microscope },

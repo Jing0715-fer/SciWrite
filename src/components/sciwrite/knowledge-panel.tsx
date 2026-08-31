@@ -25,6 +25,7 @@ import {
   Globe,
   PenLine,
   Package,
+  BookCheck,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -573,6 +574,26 @@ function SourceCard({
           {d.year && <span>{d.year}</span>}
           {d.journal && <span> · <em>{d.journal}</em></span>}
         </p>
+      )}
+      {/* round-33: provenance badges from the LLM-knowledge cross-check.
+          PubMed-verified gap fills are citable (emerald); unconfirmed LLM
+          suggestions are flagged amber and never enter the reference pool. */}
+      {extraObj?.llmSuggested && !extraObj?.unverified && (
+        <span className="inline-flex items-center gap-1 text-[8px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+          <BookCheck className="h-2.5 w-2.5" /> LLM knowledge gap-fill · PubMed-verified
+        </span>
+      )}
+      {extraObj?.unverified && (
+        <div className="mt-0.5 rounded-md bg-amber-50/60 dark:bg-amber-950/25 border border-amber-200/50 dark:border-amber-900/40 px-1.5 py-1 space-y-0.5">
+          <div className="flex items-center gap-1 text-[8px] font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider">
+            <BookCheck className="h-2.5 w-2.5" /> LLM suggestion · unverified (not citable)
+          </div>
+          {extraObj.llmReason && (
+            <p className="text-[8px] text-muted-foreground leading-snug">
+              {String(extraObj.llmReason).slice(0, 140)}
+            </p>
+          )}
+        </div>
       )}
       <p className="text-[9px] text-muted-foreground font-mono truncate">
         {t("knowledge.queryLabel")} {d.query}

@@ -1,6 +1,13 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { VERIFY_BATCH_SIZE, VERIFY_REMOVE_CONFIDENCE, maxCitableRefsFor } from "@/lib/v2-config";
+import {
+  verifySourcesWithKnowledge,
+  verifyMissingViaPubMed,
+  applyKnowledgeCompletions,
+  type KVSourceInput,
+} from "@/lib/knowledge-verify";
+import {
+  VERIFY_BATCH_SIZE, VERIFY_REMOVE_CONFIDENCE, maxCitableRefsFor } from "@/lib/v2-config";
 import { logger } from "@/lib/logger";
 import { webSearch } from "@/lib/ai";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
@@ -52,6 +59,12 @@ export const maxDuration = 1800; // 30 minutes — streaming keeps connection al
  * write, with a validation gate between every stage):
  *
  *   1. gather      — fresh multi-database + web retrieval (same as v1)
+ *   1.5 knowledge  — ★ round-33: cross-check gathered sources against the
+ *                    LLM's own knowledge: fill MISSING metadata (authors/
+ *                    year/journal/doi, fill-gaps-only) and close coverage
+ *                    gaps with LLM-suggested sources (PubMed-verified
+ *                    before they can be cited; unverified ones saved as
+ *                    flagged, non-citable suggestions)
  *   2. curate      — LLM selects the most relevant citable subset
  *   3. plan        — LLM designs the section outline
  *   4. analyze     — ★ NEW: extract a structured EVIDENCE BANK (claims
@@ -147,6 +160,10 @@ export async function POST(req: NextRequest) {
         coverageBackfills: [] as { signal: string; addedTitle: string; replacedTitle: string | null }[],
         // round-16: mechanical cross-section dedup telemetry
         crossSectionDuplicatesRemoved: [] as { section: number; matchedSection: number; snippet: string }[],
+        // round-33: knowledge cross-check telemetry
+        knowledgeFieldsCompleted: 0,
+        knowledgeSourcesAdded: 0,
+        knowledgeUnverified: 0,
       };
 
       // Hoisted for the catch block's failure-recovery logic (try-block
@@ -488,6 +505,154 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           send("error", { error: "No citable references could be gathered." });
           safeClose();
           return;
+        }
+
+        // ============ STEP 1.5: Knowledge cross-check (round-33) ============
+        // The user observed two classes of gather gaps: (a) sources saved
+        // with missing metadata, (b) important works the searches never
+        // surfaced. This stage closes both with the LLM's own knowledge:
+        //   A. fill MISSING fields (authors/year/journal/doi) — fill-gaps-
+        //      only, real DB data is never overwritten;
+        //   B. LLM-suggested missing sources are looked up in PubMed BY
+        //      TITLE — only confirmed matches enter the citable pool with
+        //      real PubMed metadata; unmatched suggestions are saved as
+        //      flagged data sources (extra.unverified) for review but are
+        //      NOT citable, protecting the article from hallucinated refs.
+        send("step", {
+          step: "knowledge",
+          status: "started",
+          message: "Cross-checking gathered sources with LLM knowledge...",
+        });
+        {
+          const kvInputs: KVSourceInput[] = savedDataSources.map((ds: any) => ({
+            id: ds.id,
+            source: ds.source,
+            externalId: ds.externalId,
+            title: ds.title || "",
+            authors: ds.authors,
+            year: ds.year,
+            journal: ds.journal,
+            doi: ds.doi,
+            abstract: ds.abstract,
+          }));
+          const kvResult = await verifySourcesWithKnowledge(
+            projectId, kvInputs, project.topic, project.field || "life sciences",
+            { maxTokens, onLog: (m) => log(m) }
+          );
+          send("step", {
+            step: "knowledge",
+            status: "progress",
+            message: `LLM knowledge pass done: ${kvResult.completions.length} sources assessed, ${kvResult.missing.length} gap suggestions.`,
+          });
+
+          // A. apply metadata completions (fills only)
+          const applied = await applyKnowledgeCompletions(
+            projectId, savedDataSources, savedReferences, kvResult.completions, db,
+            { onLog: (m) => log(m) }
+          );
+
+          // B. confirm suggested missing sources in PubMed, then save
+          const { verified, unverified } = await verifyMissingViaPubMed(
+            kvResult.missing, { onLog: (m) => log(m) }
+          );
+          const existingExtIds = new Set(
+            savedDataSources.map((ds: any) => ds.externalId).filter(Boolean)
+          );
+          for (const v of verified) {
+            if (existingExtIds.has(v.item.externalId)) continue; // already gathered
+            try {
+              const ds = await db.dataSource.create({
+                data: {
+                  projectId,
+                  source: v.item.source,
+                  query: "llm-knowledge cross-check",
+                  rawJson: JSON.stringify({ items: [v.item] }),
+                  title: v.item.title,
+                  externalId: v.item.externalId,
+                  url: v.item.url,
+                  authors: v.item.authors || null,
+                  journal: v.item.journal || null,
+                  year: v.item.year || null,
+                  doi: v.item.doi || null,
+                  abstract: v.item.abstract || null,
+                  extra: JSON.stringify(v.item.extra),
+                  pinned: true,
+                },
+              });
+              savedDataSources.push(ds);
+              // Claim the PMID so a later duplicate suggestion can't re-save it
+              existingExtIds.add(v.item.externalId);
+              const ref = await db.reference.create({
+                data: {
+                  type: "pubmed",
+                  externalId: v.item.externalId,
+                  title: v.item.title,
+                  authors: v.item.authors || null,
+                  journal: v.item.journal || null,
+                  year: v.item.year || null,
+                  url: v.item.url || null,
+                  doi: v.item.doi || null,
+                  abstract: v.item.abstract || null,
+                  projectId,
+                },
+              });
+              savedReferences.push(ref);
+            } catch (err: any) {
+              log(`knowledge: save verified "${String(v.item.title).slice(0, 50)}" failed: ${String(err?.message ?? err).slice(0, 100)}`);
+            }
+          }
+          for (const s of unverified) {
+            try {
+              await db.dataSource.create({
+                data: {
+                  projectId,
+                  source: "llm",
+                  query: "llm-knowledge cross-check (unverified)",
+                  rawJson: JSON.stringify({ items: [s] }),
+                  title: s.title,
+                  externalId: s.doi || null,
+                  url: s.doi ? `https://doi.org/${s.doi}` : null,
+                  authors: s.authors || null,
+                  journal: s.journal || null,
+                  year: s.year || null,
+                  doi: s.doi || null,
+                  abstract: null,
+                  extra: JSON.stringify({
+                    unverified: true,
+                    llmKind: s.kind,
+                    llmReason: s.reason,
+                    note: "Proposed by LLM knowledge; not confirmed in PubMed — review before citing.",
+                  }),
+                  pinned: false,
+                },
+              });
+            } catch (err: any) {
+              log(`knowledge: save unverified "${String(s.title).slice(0, 50)}" failed: ${String(err?.message ?? err).slice(0, 100)}`);
+            }
+          }
+
+          stats.knowledgeFieldsCompleted = applied.fieldsCompleted;
+          stats.knowledgeSourcesAdded = verified.length;
+          stats.knowledgeUnverified = unverified.length;
+          send("step", {
+            step: "knowledge",
+            status: "done",
+            fieldsCompleted: applied.fieldsCompleted,
+            sourcesAdded: verified.length,
+            unverified: unverified.length,
+            message:
+              `Knowledge cross-check: ${applied.fieldsCompleted} missing fields completed` +
+              ` (${applied.sourcesCompleted} sources), ${verified.length} gap sources verified & added` +
+              `${unverified.length ? `, ${unverified.length} unverified suggestions saved for review` : ""}.`,
+            detail: verified
+              .slice(0, 6)
+              .map((v) => `+ ${String(v.item.title).slice(0, 60)}${v.item.journal ? ` (${String(v.item.journal).slice(0, 24)}, ${v.item.year || "n.d."})` : ""}`)
+              .join(" | "),
+          });
+          log(
+            `knowledge: ${applied.fieldsCompleted} fields filled on ${applied.sourcesCompleted} sources; ` +
+              `${verified.length} verified gap sources added; ${unverified.length} unverified suggestions saved`
+          );
         }
 
         // ============ STEP 2: Curate ============

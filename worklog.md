@@ -2271,3 +2271,30 @@ Stage Summary:
 - 文章显示区宽度全部解封：viewer 96vw 铺满 + 阅读纸面填满面板宽度（Sections 1761px / Composed 文本列 1471px，均约为原来的 2.2 倍）；中栏 workspace 三 tab（paragraphs/article/review/relationships）去掉 768/672px cap 随拖拽栏宽自适应
 - AI Hub 仅在全文生成运行态放宽到 96vw（流式文章 + 日志面板并排获得全部屏宽），配置表单态保持 5xl 不变
 - 验证三通道齐备：tsc/lint 基线、1920px 实测 DOM 几何、VLM 双评（含一次误报仲裁）
+
+---
+Task ID: round-33
+Agent: main (Z.ai Code orchestrator)
+Task: 用户反馈「数据收集好像会存在遗漏，收集到的数据源还需要结合LLM本身的知识进行确认和评估，尽量补全缺失的信息，完成后push到github」
+
+Work Log:
+- 定位数据收集主链路：generate-full-v2 STEP1 gather（数据库+web 检索→dedup→保存）与 /api/ai/gather（clarify/organize/critique 三模式）；确认两类缺口：①已收集源元数据残缺（实测 MscL/MscS 项目 110 源中 68 个缺 authors/year/journal）②搜索遗漏的重要文献（critique 只建议新查询，不用 LLM 知识补源）
+- 新建 src/lib/knowledge-verify.ts（三阶段）：
+  Stage A verifySourcesWithKnowledge — 分批(12/批)把已收集源+MISSING 标记喂给 LLM，只填缺失字段（fill-gaps-only：DB 已有真实值绝不覆盖），known/confidence 逐源返回；同时让 LLM 指认该主题下缺失的重要文献（landmark/review/method/database/contradicting 五类，kind 交错去重取 top8）
+  Stage B verifyMissingViaPubMed — 每条 LLM 建议按标题查 PubMed，标题归一化 token 相似度 ≥0.72 才算核实；核实的带真实 PMID+PubMed 元数据入库并可引用，未核实的存 source=llm + extra.unverified 标记（不可引用，防幻觉引用进入文章——呼应历史 INVALID CITATION 教训）
+  Stage C applyKnowledgeCompletions — 补丁只写 null 字段，同步镜像到对应 reference 记录；extra.llmFilled 记录来源字段清单（provenance）
+- generate-full-v2 插入 STEP 1.5 "knowledge"（gather done → curate 前）：SSE 发 step:knowledge started/progress/done（fieldsCompleted/sourcesAdded/unverified + detail 前6条新增源），stats 扩展 3 个遥测字段；核实的补源 push 进 savedReferences 参与后续 curate
+- /api/ai/gather 新增 mode=verify：对项目已存数据源跑同一管线（不清空、不重生成），返回 fieldsCompleted/byField/addedSources/unverifiedSuggestions
+- 完整性硬约束（E2E 发现的坑逐个修）：
+  ① PMID 重复 — 两条不同建议标题可模糊匹配同一 PubMed 记录（实测 "Bacterial Mechanosensitive Channels" 双建议都解析到 PMID 29464558）→ verifyMissingViaPubMed 加 claimedExtIds 去重 + 两处保存循环 existingExtIds.add 运行时认领
+  ② DOI 幻觉 — 实测 LLM 填的 DOI 看似合理但张冠李戴（FEBS Lett 2002 论文配 Annual Reviews DOI、Nature 结构论文配 Science DOI）→ DOI 从 FILLABLE_FIELDS 移除（错误 DOI 比没有更糟，真 DOI 走数据库收集/enrich 流程），prompt 同步去掉 doi 填充；对测试项目已污染的 58 个 LLM 填充 DOI 用 rawJson 原始 item 做溯源回滚（dataSource 58 + reference 43 复位为 null）
+- 前端：unified-writing-dialog v2 STEPS 插入 knowledge 步（BookCheck 图标，8→9 步）；GatherTab 新增 violet 边框 "LLM Knowledge" 卡片 + "结合 LLM 知识校验补全" outline 按钮（独立 useStreamingTask），结果卡显示 fieldsCompleted/gapSourcesAdded/unverified 三 chip + 已核实文献列表 + 可折叠未核实建议；knowledge-panel SourceCard 加两类 provenance 徽章（emerald "LLM knowledge gap-fill · PubMed-verified" / amber "LLM suggestion · unverified (not citable)" + reason）；i18n EN/ZH 13 个新 key
+- E2E（真实 LLM 调用）：对 MscL/MscS 项目跑 mode=verify — 110 源 10 批 LLM + PubMed 核实，完成 130 个缺失字段（journal 39/year 33... 58 源受益），核实补源 5 条（真实 PMID 11852077/29464558/11509350/12198539…），未核实建议 3 条入库标记；随后发现并修复 PMID 重复+DOI 幻觉两坑（见上）并清理测试数据
+- 浏览器验证：AI Hub GatherTab LLM Knowledge 卡片渲染（violet 0.05 bg + 按钮）；Full Article throwaway 项目实跑生成 — 时间轴渲染 9 步含 "Knowledge cross-check"（Step 1/9: Gathering data sources 头部确认步数映射正确），验证后杀进程清理 throwaway 项目；knowledge panel llm 过滤 chip + 3 条 unverified 徽章 + 4 条 gap-fill 徽章实测存在；VLM 评 Gather tab「卡片与设计系统连贯、主次按钮层级清晰、无布局缺陷」
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）；console 仅既有 warning；dev.log 无新错误（dev server 曾宕机已重启）；浏览器状态重置
+
+Stage Summary:
+- 数据收集遗漏闭环：每个 v2 全文生成流程自动多跑一步「知识交叉校验」（gather 与 curate 之间），Gather tab 也可对已存源手动触发
+- 补全策略分级信任：缺失元数据（authors/year/journal）fill-gaps-only 补全 + extra.llmFilled 溯源；缺失文献必须 PubMed 标题核实（≥0.72 相似度+PMID 认领去重）才可引用，未核实建议保存供人工审阅但结构性挡在引用池外
+- E2E 驱动的两处幻觉防线：DOI 不可 LLM 填充（实测有张冠李戴）+ 同 PMID 双建议去重
+- 用户可见效果：收集后自动补全元数据缺口、补上领域关键文献（带 PubMed 核实徽章）、知识面板琥珀色"未核实建议"徽章提示人工复核
