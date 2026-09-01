@@ -236,6 +236,29 @@ export function CitationGraph({ data, dataSources, themesLabel, connectionsLabel
     return { nodes: nodeList, edges: edgeList, themeColors: themeMap };
   }, [data, dataSources]);
 
+  // Zoom via Ctrl+wheel — hooks declared BEFORE the early return below
+  // (rules-of-hooks: hooks must not sit behind a conditional return).
+  // round-44: wheel-zoom now requires Ctrl (the standard map-style
+  // convention) and binds a NATIVE non-passive listener so the Ctrl+wheel
+  // preventDefault actually works. Previously every plain wheel tick over
+  // the graph zoomed it — React's onWheel is passive (React 17+ root
+  // delegation), so the preventDefault() call inside it was a no-op that
+  // logged console errors, and plain scrolling over the graph fought the
+  // user's intent to scroll the page/panel.
+  const wheelHostRef = React.useRef<SVGSVGElement | null>(null);
+  React.useEffect(() => {
+    const host = wheelHostRef.current ?? svgRef.current;
+    if (!host) return;
+    const onWheelNative = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return; // plain wheel → normal scrolling
+      e.preventDefault(); // stop the browser's page-zoom on ctrl+wheel
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      setScale((s) => Math.max(0.5, Math.min(3, s * delta)));
+    };
+    host.addEventListener("wheel", onWheelNative, { passive: false });
+    return () => host.removeEventListener("wheel", onWheelNative);
+  }, []);
+
   if (nodes.length === 0) return null;
 
   const highlightedNodes = new Set<string>();
@@ -250,12 +273,6 @@ export function CitationGraph({ data, dataSources, themesLabel, connectionsLabel
   const isNodeActive = (id: string) => !hoveredNode || highlightedNodes.has(id);
   const isEdgeActive = (e: GraphEdge) => !hoveredNode || e.source === hoveredNode || e.target === hoveredNode;
 
-  // Zoom handlers
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    setScale((s) => Math.max(0.5, Math.min(3, s * delta)));
-  };
   // Pan handlers
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.target === svgRef.current || (e.target as Element).tagName === "rect") {
@@ -383,11 +400,13 @@ export function CitationGraph({ data, dataSources, themesLabel, connectionsLabel
       </div>
 
       <svg
-        ref={svgRef}
+        ref={(el) => {
+          svgRef.current = el;
+          wheelHostRef.current = el;
+        }}
         viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
         className="w-full h-auto border border-border/30 rounded bg-background/40"
         style={{ maxHeight: "280px", cursor: isDragging ? "grabbing" : "grab" }}
-        onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}

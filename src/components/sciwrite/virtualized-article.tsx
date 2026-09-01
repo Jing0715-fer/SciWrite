@@ -28,6 +28,61 @@ import type { Annotation } from "@/lib/types";
 const VIRTUALIZE_THRESHOLD = 15000; // ~3000 words — below this, render normally
 const ROOT_MARGIN = "1500px 0px"; // pre-mount sections within 1500px of viewport
 
+/**
+ * round-44: how the virtualizer used to break scrolling (both symptoms the
+ * user reported — "section jump gets stuck" + "mouse wheel feels blocked"):
+ *
+ * 1. PLACEHOLDER GHOST CONTENT: an unmounted section rendered its FULL
+ *    MarkdownCitations output wrapped in `opacity-0` — zero DOM savings, and
+ *    the opacity-0 subtree still hit-tested (hover chips inside invisible
+ *    sections could swallow pointer events).
+ * 2. HEIGHT ESTIMATE DRIFT: the placeholder minHeight used a fixed heuristic
+ *    (~80 chars/line) that over-estimates real rendered height by ~40% for
+ *    English on the wide round-32 sheets. Every mount event collapsed the
+ *    section by ~100px → viewport scrollHeight changed MID-SCROLL → the
+ *    browser dragged the viewport down (wheel feels "blocked") and every
+ *    jumpToSection offset computed from the old layout missed its target
+ *    ("jump gets stuck").
+ *
+ * The fix, in two parts:
+ *   A. MEASURED-HEIGHT CACHE: the first frame after a section mounts, its
+ *      real height is recorded (per resize/width). When the section unmounts,
+ *      the placeholder uses the RECORDED height instead of the estimate, so
+ *      scrollHeight stays constant after the first pass — no mid-scroll
+ *      jumps, and jump offsets stay valid.
+ *   B. TWO-PHASE JUMP: callers jump via [data-h2-idx] markers which exist on
+ *      BOTH mounted and placeholder section shells (see jumpToSection in
+ *      article-viewer-tabs.tsx): instant-scroll near the target (the
+ *      IntersectionObserver mounts it), then after two rAFs re-measure and
+ *      smooth-scroll to the exact heading position.
+ */
+
+/**
+ * Estimate the rendered height of a section based on its character mix.
+ * CJK-aware (round-44): CJK glyphs are ~full-width, latin ~0.45 of that.
+ * This is only the FIRST-PASS approximation — the measured-height cache
+ * takes over as soon as a section has been mounted once, so a ~15% error
+ * here only affects the very first scroll pass over each section.
+ */
+function estimateSectionHeight(charCount: number, cjkCount: number): number {
+  // Effective "full-width units": CJK chars count 1, latin ~0.45.
+  const units = cjkCount + (charCount - cjkCount) * 0.45;
+  // On a ~1500px sheet at 13.5px font: ~100 full-width units per line.
+  // 22px line height (13.5 × 1.625 leading-relaxed) + 32px section spacing.
+  const lines = Math.ceil(units / 100);
+  return Math.max(60, lines * 22 + 32);
+}
+
+function countCjk(text: string): number {
+  let n = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if ((c >= 0x4e00 && c <= 0x9fff) || (c >= 0x3400 && c <= 0x4dbf) ||
+        (c >= 0x3000 && c <= 0x303f) || (c >= 0xff00 && c <= 0xffef)) n++;
+  }
+  return n;
+}
+
 interface Props {
   content: string;
   className?: string;
@@ -42,6 +97,7 @@ interface Section {
   heading: string; // "## Title" including the ## prefix
   body: string;    // content after the heading (may include sub-headings ###)
   charCount: number;
+  cjkCount: number; // round-44: CJK-aware height estimation
 }
 
 /**
@@ -65,6 +121,7 @@ function splitIntoSections(content: string): Section[] {
           heading: currentHeading,
           body,
           charCount: currentHeading.length + body.length,
+          cjkCount: countCjk(currentHeading + body),
         });
       }
       currentHeading = line;
@@ -80,22 +137,13 @@ function splitIntoSections(content: string): Section[] {
       heading: currentHeading,
       body,
       charCount: currentHeading.length + body.length,
+      cjkCount: countCjk(currentHeading + body),
     });
   }
   return sections;
 }
 
-/**
- * Estimate the rendered height of a section based on its character count.
- * Rough heuristic: ~0.6px per character at 13.5px font size with
- * leading-relaxed, plus padding. This is used for the placeholder div
- * so the scrollbar stays accurate when the section is not mounted.
- */
-function estimateSectionHeight(charCount: number): number {
-  // Average: 80 chars per line, 22px per line, plus 32px section padding
-  const lines = Math.ceil(charCount / 80);
-  return Math.max(60, lines * 22 + 32);
-}
+
 
 export function VirtualizedArticle({
   content,
@@ -173,6 +221,19 @@ export function VirtualizedArticle({
 /**
  * VirtualizedSections — the actual IntersectionObserver-driven virtualizer.
  * Each section is a <VirtualSection> that mounts/unmounts based on visibility.
+ *
+ * round-44 changes:
+ * - The placeholder for an unmounted section is now an EMPTY div (no
+ *   MarkdownCitations render at opacity-0 — that rendered the full DOM
+ *   anyway and ghost subtrees still hit-tested). Real DOM savings now.
+ * - Measured-height cache: one frame after a section mounts, its actual
+ *   height is recorded and reused as the placeholder height when it
+ *   unmounts — scrollHeight no longer jumps mid-scroll.
+ * - Every section shell (mounted or not) carries data-section-idx, and
+ *   shells whose content starts with a ## heading also carry data-h2-idx
+ *   (the ordinal of that heading among all h2 headings). Jump logic in
+ *   article-viewer-tabs.tsx targets [data-h2-idx] so targets ALWAYS exist
+ *   in the DOM, mounted or not.
  */
 function VirtualizedSections({
   sections,
@@ -190,6 +251,11 @@ function VirtualizedSections({
   const [visibleSet, setVisibleSet] = React.useState<Set<number>>(new Set());
   const observerRef = React.useRef<IntersectionObserver | null>(null);
   const sectionRefs = React.useRef<Map<number, HTMLDivElement>>(new Map());
+  // round-44: measured real heights per section idx — STATE (not a ref) so
+  // the render below can read it legally (React compiler rule: no ref
+  // access during render). Written one frame after a section mounts via
+  // MeasureOnMount; read when the section unmounts (placeholder height).
+  const [measuredHeights, setMeasuredHeights] = React.useState<Map<number, number>>(new Map());
 
   React.useEffect(() => {
     // Create an IntersectionObserver that tracks which sections are within
@@ -199,15 +265,16 @@ function VirtualizedSections({
       (entries) => {
         setVisibleSet((prev) => {
           const next = new Set(prev);
+          let changed = false;
           for (const entry of entries) {
             const idx = Number(entry.target.getAttribute("data-section-idx"));
             if (entry.isIntersecting) {
-              next.add(idx);
+              if (!next.has(idx)) { next.add(idx); changed = true; }
             } else {
-              next.delete(idx);
+              if (next.has(idx)) { next.delete(idx); changed = true; }
             }
           }
-          return next;
+          return changed ? next : prev;
         });
       },
       { rootMargin: ROOT_MARGIN },
@@ -222,11 +289,51 @@ function VirtualizedSections({
     };
   }, [sections.length]);
 
+  // Invalidate the measured-height cache when the layout width changes —
+  // recorded heights are only valid for the width they were measured at.
+  React.useEffect(() => {
+    const onResize = () => setMeasuredHeights(new Map());
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Callback for MeasureOnMount — records a section's real height.
+  const handleMeasured = React.useCallback((idx: number, h: number) => {
+    setMeasuredHeights((prev) => {
+      if (prev.get(idx) === h) return prev;
+      const next = new Map(prev);
+      next.set(idx, h);
+      return next;
+    });
+  }, []);
+
+  // h2 ordinal (only sections that START with a ## heading get one — matches
+  // the querySelectorAll("h2") ordering the jump/TOC code relies on).
+  // Computed inside useMemo — reassigning a render-scope variable in the
+  // map callback trips the React compiler's reassign-after-render rule.
+  const h2IdxBySection = React.useMemo(() => {
+    const map: number[] = [];
+    let counter = -1;
+    for (const s of sections) {
+      if (s.heading && /^##\s+/.test(s.heading)) {
+        counter += 1;
+        map.push(counter);
+      } else {
+        map.push(-1);
+      }
+    }
+    return map;
+  }, [sections]);
+
   return (
     <>
       {sections.map((section, idx) => {
         const isVisible = visibleSet.has(idx);
-        const estimatedHeight = estimateSectionHeight(section.charCount);
+        const measured = measuredHeights.get(idx);
+        const estimated = estimateSectionHeight(section.charCount, section.cjkCount);
+        // Real measured height wins once available — the estimate only
+        // covers the never-scrolled first pass.
+        const placeholderH = measured ?? estimated;
         const sectionContent = section.heading
           ? `${section.heading}\n\n${section.body}`
           : section.body;
@@ -238,35 +345,73 @@ function VirtualizedSections({
         const isReferencesSection = section.heading &&
           /^##\s+(References|REFERENCES|Citations|Bibliography|文献|参考文献)/.test(section.heading);
 
+        const h2Idx = h2IdxBySection[idx];
+
         return (
           <div
             key={idx}
             data-section-idx={idx}
+            {...(h2Idx >= 0 ? { "data-h2-idx": h2Idx } : {})}
             ref={(el) => {
               if (el) sectionRefs.current.set(idx, el);
               else sectionRefs.current.delete(idx);
             }}
-            style={{ minHeight: isVisible ? undefined : estimatedHeight }}
+            style={{ minHeight: isVisible ? undefined : placeholderH }}
           >
             {isVisible ? (
-              <MarkdownCitations
-                content={sectionContent}
-                annotations={annotations}
-                references={references}
-                onCitationClick={onCitationClick}
-                onAnnotationClick={onAnnotationClick}
-                suppressRefList={!isReferencesSection && references.length > 0}
-              />
+              <>
+                <MarkdownCitations
+                  content={sectionContent}
+                  annotations={annotations}
+                  references={references}
+                  onCitationClick={onCitationClick}
+                  onAnnotationClick={onAnnotationClick}
+                  suppressRefList={!isReferencesSection && references.length > 0}
+                />
+                {/* round-44: record the real height one frame after mount so
+                    the placeholder can reuse it on unmount (stable
+                    scrollHeight). */}
+                <MeasureOnMount idx={idx} elRef={sectionRefs} onMeasured={handleMeasured} />
+              </>
             ) : (
-              // Placeholder — keeps scroll height stable. The minHeight on
-              // the parent div ensures the scrollbar doesn't jump.
-              <div className="opacity-0" aria-hidden="true">
-                <MarkdownCitations content={sectionContent} />
-              </div>
+              // Placeholder — an EMPTY div at the recorded/estimated height.
+              // (round-44: previously this rendered the full section content
+              // at opacity-0, which saved no DOM and ghost-hit-tested.)
+              <div aria-hidden="true" style={{ height: placeholderH }} />
             )}
           </div>
         );
       })}
     </>
   );
+}
+
+/**
+ * MeasureOnMount — invisible helper rendered inside a MOUNTED section:
+ * measures the section shell's real height SYNCHRONOUSLY in the same commit
+ * (useLayoutEffect — before paint, so the recorded height is the layout's
+ * final value for that frame) and reports it through onMeasured. React
+ * batches the setState calls from all sections mounting in the same commit
+ * into ONE re-render, so the placeholder-height updates land in a single
+ * layout pass instead of a drawn-out feedback loop (the rAF-based version
+ * produced serial re-render waves that kept shifting the layout for >2s —
+ * every mid-flight jump offset kept going stale).
+ */
+function MeasureOnMount({
+  idx,
+  elRef,
+  onMeasured,
+}: {
+  idx: number;
+  elRef: React.RefObject<Map<number, HTMLDivElement>>;
+  onMeasured: (idx: number, h: number) => void;
+}) {
+  React.useLayoutEffect(() => {
+    const el = elRef.current?.get(idx);
+    if (el && el.isConnected) {
+      const h = el.getBoundingClientRect().height;
+      if (h > 0) onMeasured(idx, h);
+    }
+  }, [idx, elRef, onMeasured]);
+  return null;
 }

@@ -133,6 +133,100 @@ interface Props {
   onClose: () => void;
 }
 
+/* round-44 — scroll-jump helpers shared by the viewer and its TOC rail.
+ *
+ * The article body is virtualized (VirtualizedArticle): a section far from
+ * the viewport is an EMPTY placeholder shell whose height is the last
+ * MEASURED height (or an estimate on the very first pass). Jumping to a
+ * heading used to be a single smooth scrollTo computed from the layout at
+ * click time — but as the viewport traveled, sections along the way mounted
+ * (collapsing/expanding by up to ~100px each), so scrollHeight changed
+ * MID-FLIGHT and the jump landed short or appeared to "get stuck".
+ *
+ * twoPhaseScrollTo fixes that: jump INSTANTLY to the target's current
+ * position (landing within the IntersectionObserver's rootMargin mounts
+ * the target section immediately), wait two frames for the mount commit +
+ * layout, then smooth-scroll the remaining delta to the exact position. */
+
+/** Nearest scrollable ancestor (overflowY auto/scroll and actually
+ *  overflowing). Walks up from any element — works for both the Composed
+ *  sheet and the TOC rail. */
+function findScrollableAncestor(el: HTMLElement | null): HTMLElement | null {
+  let node = el;
+  while (node && node.parentElement) {
+    node = node.parentElement;
+    const style = window.getComputedStyle(node);
+    if (
+      (style.overflowY === "auto" || style.overflowY === "scroll") &&
+      node.scrollHeight > node.clientHeight
+    ) {
+      return node;
+    }
+  }
+  return null;
+}
+
+/** Resolve the jump target for h2 ordinal `idx` inside `root`:
+ *  virtualized bodies mark every section shell with data-h2-idx (present
+ *  even when the section is an empty placeholder); non-virtualized bodies
+ *  fall back to the actual h2 elements. */
+function resolveSectionTarget(root: HTMLElement | null, idx: number): HTMLElement | null {
+  if (!root) return null;
+  const shells = root.querySelectorAll("[data-h2-idx]");
+  if (shells.length > 0) {
+    return idx >= 0 && idx < shells.length ? (shells[idx] as HTMLElement) : null;
+  }
+  const h2s = root.querySelectorAll("h2");
+  return idx >= 0 && idx < h2s.length ? (h2s[idx] as HTMLElement) : null;
+}
+
+/** Two-phase jump: instant near-jump (mounts the target section — and the
+ *  sections along the way — via the IntersectionObserver rootMargin), then
+ *  a supervised lock-on: the first ~20 frames are an observation window
+ *  (the virtualizer's mount waves + scroll-anchoring compensation settle),
+ *  and from frame 20 to 120 (~2s) every frame re-aligns the viewport to
+ *  the target's CURRENT offset with instant scrolls. Mount waves keep
+ *  shifting the target (each first-pass mount swaps an estimated height
+ *  for the real one), so a one-shot correction — even gated on a
+ *  "stability" heuristic — always got beaten by the next wave (observed:
+ *  corrections landing, then the target drifting another ~450px). Frame-
+ *  by-frame re-alignment tracks the target until the layout reaches its
+ *  final state (the measured-height cache makes all later passes stable). */
+function twoPhaseScrollTo(scrollEl: HTMLElement, targetEl: HTMLElement, offsetAdjust = 12) {
+  const computeOffset = () =>
+    targetEl.getBoundingClientRect().top -
+    scrollEl.getBoundingClientRect().top +
+    scrollEl.scrollTop -
+    offsetAdjust;
+  // Phase 1 — instant jump near the target. The shell exists even while
+  // unmounted, and this lands well inside the observer's rootMargin so the
+  // real content (and the sections between here and there) mounts next.
+  scrollEl.scrollTo({ top: Math.max(0, computeOffset()), behavior: "instant" });
+  // Phase 2 — supervised lock-on.
+  let total = 0;
+  const step = () => {
+    requestAnimationFrame(() => {
+      if (!targetEl.isConnected || !scrollEl.isConnected) return;
+      total++;
+      // Frames 0-19: observation only — the mount waves are still rolling
+      // (each mount swaps a placeholder height for the real one and shifts
+      // everything below it; scroll anchoring compensates along the way).
+      if (total >= 20) {
+        const cur = computeOffset();
+        if (Math.abs(cur - scrollEl.scrollTop) > 4) {
+          scrollEl.scrollTo({ top: Math.max(0, cur), behavior: "instant" });
+        }
+      }
+      // Supervise up to ~4s (frame 240). The measured-height cache updates
+      // land in batched single-frame re-renders now, but the very first pass
+      // over a long article can still take a couple of waves; this window
+      // guarantees the jump tracks the target until the layout is final.
+      if (total < 240) step();
+    });
+  };
+  step();
+}
+
 export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
   const { t } = useI18n();
   const [reviewOpen, setReviewOpen] = React.useState(false);
@@ -198,33 +292,26 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
   }, [hasZh, viewLang]);
 
   // Jump to a section by index — scrolls the composed content area to the
-  // section's h2 heading. Works by querying the DOM directly (headings are
-  // only rendered when the Composed tab is active). Index is clamped to
-  // [0, headings.length-1], so passing 999 jumps to the last section.
+  // section's h2 heading. Virtualized bodies expose [data-h2-idx] shells
+  // that exist even while the section is an empty placeholder (round-44 —
+  // the old querySelectorAll("h2") missed unmounted sections);
+  // non-virtualized bodies use the h2s directly. Index is clamped to
+  // [0, total-1], so passing 999 jumps to the last section.
+  // Two-phase scroll (round-44): see twoPhaseScrollTo above — the single
+  // smooth scrollTo used to miss mid-flight when virtualized sections
+  // mounted along the way and changed the scrollHeight.
   const jumpToSectionIdx = React.useCallback((idx: number) => {
     if (!composedContentRef.current) return;
-    const headings = composedContentRef.current.querySelectorAll("h2");
-    if (headings.length === 0) return;
-    // Clamp idx to valid range
-    const clampedIdx = Math.max(0, Math.min(idx, headings.length - 1));
-    const target = headings[clampedIdx] as HTMLElement;
-    let scrollEl: HTMLElement | null = composedContentRef.current;
-    while (scrollEl && scrollEl.parentElement) {
-      scrollEl = scrollEl.parentElement;
-      const style = window.getComputedStyle(scrollEl);
-      if (
-        (style.overflowY === "auto" || style.overflowY === "scroll") &&
-        scrollEl.scrollHeight > scrollEl.clientHeight
-      ) {
-        break;
-      }
-    }
-    if (scrollEl && target) {
-      const scrollRect = scrollEl.getBoundingClientRect();
-      const targetRect = target.getBoundingClientRect();
-      const offset = targetRect.top - scrollRect.top + scrollEl.scrollTop - 12;
-      scrollEl.scrollTo({ top: Math.max(0, offset), behavior: "smooth" });
-    }
+    const root = composedContentRef.current;
+    const shells = root.querySelectorAll("[data-h2-idx]");
+    const h2s = root.querySelectorAll("h2");
+    const total = shells.length > 0 ? shells.length : h2s.length;
+    if (total === 0) return;
+    const clampedIdx = Math.max(0, Math.min(idx, total - 1));
+    const target = resolveSectionTarget(root, clampedIdx);
+    if (!target) return;
+    const scrollEl = findScrollableAncestor(target);
+    if (scrollEl) twoPhaseScrollTo(scrollEl, target);
   }, [composedContentRef]);
 
   // Jump to the next section that's missing a Chinese translation.
@@ -238,26 +325,19 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
     const pars = paragraphsRef.current;
     if (!pars.length) return false;
     // Find first untranslated section AFTER the current scroll position.
-    // We detect "current position" by checking which h2 is at the top.
-    const headings = composedContentRef.current?.querySelectorAll("h2");
+    // We detect "current position" by checking which section shell is at
+    // the top — [data-h2-idx] shells exist even while virtualized away
+    // (round-44; the old h2-only query missed unmounted sections).
+    const root = composedContentRef.current;
+    const shells = root ? root.querySelectorAll("[data-h2-idx]") : [];
     let currentIdx = 0;
-    if (headings && headings.length > 0) {
-      let scrollEl: HTMLElement | null = composedContentRef.current;
-      while (scrollEl && scrollEl.parentElement) {
-        scrollEl = scrollEl.parentElement;
-        const style = window.getComputedStyle(scrollEl);
-        if (
-          (style.overflowY === "auto" || style.overflowY === "scroll") &&
-          scrollEl.scrollHeight > scrollEl.clientHeight
-        ) {
-          break;
-        }
-      }
+    if (shells.length > 0) {
+      const scrollEl = findScrollableAncestor(root);
       if (scrollEl) {
         const threshold = 80;
-        headings.forEach((h, i) => {
-          const rect = h.getBoundingClientRect();
-          const scrollRect = scrollEl!.getBoundingClientRect();
+        shells.forEach((sh, i) => {
+          const rect = sh.getBoundingClientRect();
+          const scrollRect = scrollEl.getBoundingClientRect();
           if (rect.top - scrollRect.top <= threshold) {
             currentIdx = i;
           }
@@ -1990,9 +2070,15 @@ function ArticleTOCSidebar({
     if (!scrollEl) return;
 
     const handleScroll = () => {
-      // Find all h2 headings inside contentRef
-      const headings = contentRef.current?.querySelectorAll("h2");
-      if (!headings || headings.length === 0) return;
+      // Find section markers inside contentRef — [data-h2-idx] shells are
+      // present for EVERY section (mounted or placeholder, round-44), so
+      // the spy works across the whole article; non-virtualized bodies
+      // fall back to real h2 elements.
+      const root = contentRef.current;
+      if (!root) return;
+      const markers = root.querySelectorAll("[data-h2-idx]");
+      const headings = markers.length > 0 ? markers : root.querySelectorAll("h2");
+      if (headings.length === 0) return;
       // Pick the last heading whose top is <= scrollEl's top + threshold
       const threshold = 80;
       let currentIdx = 0;
@@ -2028,20 +2114,19 @@ function ArticleTOCSidebar({
     return scrollEl;
   };
 
-  // Jump to a section by scrolling the closest scrollable ancestor
+  // Jump to a section by scrolling the closest scrollable ancestor.
+  // round-44: targets [data-h2-idx] shells (present even while the section
+  // is a virtualized placeholder) and uses the two-phase scroll — the old
+  // single smooth scrollTo missed when sections mounted mid-flight.
   const jumpToSection = (idx: number) => {
     if (!contentRef.current) return;
-    const headings = contentRef.current.querySelectorAll("h2");
-    if (idx >= 0 && idx < headings.length) {
-      const target = headings[idx] as HTMLElement;
-      const scrollEl = findScrollEl();
-      if (scrollEl && target) {
-        const scrollRect = scrollEl.getBoundingClientRect();
-        const targetRect = target.getBoundingClientRect();
-        const offset = targetRect.top - scrollRect.top + scrollEl.scrollTop - 12;
-        scrollEl.scrollTo({ top: offset, behavior: "smooth" });
-        setActiveIdx(idx);
-      }
+    const root = contentRef.current;
+    const target = resolveSectionTarget(root, idx);
+    if (!target) return;
+    const scrollEl = findScrollableAncestor(target);
+    if (scrollEl) {
+      twoPhaseScrollTo(scrollEl, target);
+      setActiveIdx(idx);
     }
   };
 

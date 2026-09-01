@@ -2613,3 +2613,32 @@ Stage Summary:
 - 移动端运行态从「主列 38px 细条」缺陷修为「主列全宽 + 底部日志条」标准响应式布局
 - 修改文件：仅 src/components/sciwrite/unified-writing-dialog.tsx（1 文件，纯 className/注释级修改，零逻辑改动）
 - 文章阅读区（viewer 96vw）不动——那是 round-32 用户明确要求且仍然想要的行为
+
+---
+Task ID: round-44
+Agent: main (Z.ai Code)
+Task: 用户反馈「article弹窗中，点击章节跳转有时会卡住，滚轮上下移动有时也会受阻」——viewer 章节跳转卡顿 + 滚轮滚动受阻
+
+Work Log:
+- 复现与根因定位（agent-browser 几何实测，最终以数值探针破案）：
+  - 滚轮受阻根因：VirtualizedArticle 是「假虚拟化」——不可见 section 的占位符是 opacity-0 包裹的完整 MarkdownCitations 渲染（DOM 零节省+幽灵子树仍 hit-test），且占位 minHeight 用 80 chars/行 的固定启发式（对宽幅 sheet 英文系统性高估 ~40%）：实测 section 2 占位 384px vs 挂载真实 274px。每次快速滚动经过未测量 section，挂载瞬间高度塌缩 ~100px → scrollHeight 中途突变 → 浏览器把视口往下拖（滚轮「受阻」手感）
+  - 跳转卡住根因：jumpToSection 单段 smooth scrollTo 的目标 offset 按点击时布局计算；滚动途中沿途 section 陆续挂载（高度塌缩/膨胀连环）→ scrollHeight 持续变 → 目标位置漂移（实测首过偏 411-490px）→ 跳转「卡在半路」
+  - 诊断坑记录：①agent-browser 的 mouse wheel 命令在本无头环境不产生原生滚动（工具因素，非应用 bug——sidebar 对照实测证实）；②viewer chunk 懒加载，搜索 script 验证新代码时必须先打开 viewer；③dev server 模块缓存疑似陈旧时用 dev-daemon 重启排除；④TOC 按钮 i（段落序）与 data-h2-idx 差 1 的测量口径错误曾造成连环误判——最终以数值探针（cur/scrollTop 同打）破案
+- 修复（三文件）：
+  ① virtualized-article.tsx — 真·占位+实测高度缓存：占位改纯空 div（删 opacity-0 完整渲染，真虚拟化生效）；挂载后 useLayoutEffect 同帧测量真实高度（React 批处理把同 commit 的多个 setState 合并为一次 re-render——rAF 版会产生串行 re-render 波、布局漂移 >2s，同帧版 20-40 帧内收敛）；卸载时占位用实测高度 → 往返零跳变（实测：挂载 274 → 卸载占位 274）；测量缓存 state 化（React 编译器禁止 render 期读 ref）；resize 清空缓存；估算公式 CJK 感知（CJK=1 全角单位、latin=0.45、~100 单位/行、22px 行高——首过误差从 ~110px 降至 ~64px，之后实测接管归零）；每个 section shell 挂 data-section-idx + data-h2-idx（占位/挂载恒存在，跳转目标永远可寻）
+  ② article-viewer-tabs.tsx — 两段式跳转 + 全链路 data-h2-idx 化：twoPhaseScrollTo（phase1 instant 近跳落在 IO rootMargin 内触发挂载 → phase2 监督锁帧：前 20 帧观察期让挂载波先跑，20-240 帧每帧把视口对齐目标当前 offset（instant），~4s 后信任实测缓存永久稳定——稳定性启发式（双 rAF/稳定 6 帧）均被多波挂载的间隙骗过，帧帧对齐是唯一可靠策略）；jumpToSectionIdx（viewer 级）/jumpToSection（TOC）/jumpToNextUntranslated/TOC scroll spy 全部改 querySelectorAll("[data-h2-idx]")（占位也命中）+ 非 15k 字以下文章的 h2 fallback；findScrollableAncestor 抽共享函数
+  ③ citation-graph.tsx — 滚轮缩放改 Ctrl+wheel：原 onWheel 的 preventDefault 在 React passive 委托下是无效 no-op（还打 console 错误），且普通滚轮悬图上即缩放、与滚动意图打架；改原生 addEventListener({passive:false})：无 Ctrl 时直接放行（正常滚动面板），Ctrl/Cmd+wheel 才缩放并 preventDefault（阻止浏览器页缩放）；hooks 移到 early return 之前（rules-of-hooks）
+- E2E 验证（agent-browser 数值实测，真实文章 MscL 2612w 虚拟化中）：
+  - TOC 跳转精度：05→目标 delta 12px ✓、03→12px ✓、07→12px ✓（offsetAdjust=12 精确生效；探针版与干净版一致）
+  - 高度稳定性：section 挂载 274px → 卸载占位 274px（往返零跳变）✓；scrollHeight 3008→3006（±2px）
+  - 收敛速度：useLayoutEffect 批处理后布局 20-40 帧内永久稳定（driftLog 帧 40-240 全程 cur=scrollTop）
+  - 占位结构：空 div（placeholderChildNodes=0、无 ghost 内容）✓ data-h2-idx 8/8 存在 ✓ References section 跳转后挂载 ✓
+  - 滚轮受阻根因消除：mid-scroll scrollHeight 突变（实测 -101px）不再发生（实测缓存）+ 首过估算误差减半 + 收敛从 >2s 缩到 ~40 帧
+  - console 仅 Fast Refresh/HMR/DevTools 常规日志；0 page errors
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）
+- 中间迭代教训（均已修复）：JSX 属性区 // 注释非法（编译错）；hooks 在 early return 后（lint error）；render 期读 ref（React 编译器 error）→ 全部按规则修正
+
+Stage Summary:
+- 双症状同根因：假虚拟化的估算高度漂移让 scrollHeight 在滚动/跳转途中持续突变——滚轮被视口拖拽感「受阻」、跳转 offset 失效「卡住」；修复后高度在首次经过后永久稳定，跳转 12px 精确锁定
+- 修改文件：virtualized-article.tsx（真占位+实测缓存+同帧测量+CJK 估算）、article-viewer-tabs.tsx（两段式跳转+监督锁帧+全链 data-h2-idx）、citation-graph.tsx（Ctrl+wheel 缩放+普通滚轮放行）
+- 顺带收益：真虚拟化 DOM 节省兑现（占位从全渲染变空 div）；viewer 懒加载 chunk 的验证方法论入档（先打开再搜）；agent-browser mouse wheel 命令在本环境无效的工具限制入档
