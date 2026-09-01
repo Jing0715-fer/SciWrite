@@ -133,30 +133,23 @@ interface Props {
   onClose: () => void;
 }
 
-/* round-44/45 — scroll-jump helpers shared by the viewer and its TOC rail.
+/* round-44/45/46 — scroll-jump helpers shared by the viewer and its TOC rail.
  *
  * The article body is virtualized (VirtualizedArticle): a section far from
  * the viewport is an EMPTY placeholder shell whose height is the last
- * MEASURED height (or an estimate on the very first pass). Jumping to a
- * heading used to be a single smooth scrollTo computed from the layout at
- * click time — but as the viewport traveled, sections along the way mounted
- * (collapsing/expanding by up to ~100px each), so scrollHeight changed
- * MID-FLIGHT and the jump landed short or appeared to "get stuck".
+ * MEASURED height (or an estimate on the very first pass). A single
+ * un-supervised smooth scrollTo misses because sections mount as the
+ * viewport travels (placeholder height → measured height swaps change the
+ * scrollHeight MID-FLIGHT), so the goal drifts and the jump lands short.
  *
- * twoPhaseScrollTo (round-45 refinement of the round-44 lock-on):
- *   Phase 1 — jumps longer than ~1 viewport TELEPORT instantly to ~0.85
- *   viewport from the target (well inside the IntersectionObserver's
- *   1500px rootMargin, so the target section mounts immediately and the
- *   destination heading is visible near the viewport edge right away).
- *   Shorter jumps skip the teleport and animate the whole distance.
- *   Phase 2 — an ANIMATED pursuit: a smooth scrollTo glides to the target,
- *   and a supervisor re-targets it whenever a mount wave moves the goal
- *   (placeholder height → measured height swap). The supervisor YIELDS to
- *   the user instantly — the first wheel / touch / scrollbar drag /
- *   scroll-key during the approach cancels all further correction. (The
- *   round-44 version re-aligned with INSTANT scrolls for up to ~4s, which
- *   read as "locked: can't scroll for a moment", and its all-instant
- *   phases erased the jump animation entirely.) */
+ * animatedScrollTo (round-46, per user request): ONE smooth glide from the
+ * current position all the way to the target heading — no teleport, no
+ * instant phase. A supervisor re-targets the glide (always smoothly)
+ * whenever a mount wave moves the goal, and YIELDS to the user instantly:
+ * the first wheel / touch / scrollbar drag / scroll-key during the
+ * approach cancels all further correction. (round-44's per-frame instant
+ * lock-on read as "locked, can't scroll"; the round-45 teleport started
+ * far jumps with a hard cut — both are gone.) */
 
 /** Nearest scrollable ancestor (overflowY auto/scroll and actually
  *  overflowing). Walks up from any element — works for both the Composed
@@ -206,11 +199,12 @@ function cancelJumpSupervision() {
   jumpSupervision++;
 }
 
-/** Shared supervised glide: issues a SMOOTH scroll toward getGoalTop() and
- *  keeps re-targeting it while the virtualizer's mount waves settle the
- *  layout. Exits when the user scrolls (their intent wins), when a newer
- *  jump takes over, when the position settles on mounted content, or after
- *  a 4s deadline. Corrections are always smooth — never an instant snap. */
+/** Shared supervised glide: issues a SMOOTH scroll toward getGoalTop()
+ *  immediately (the click response is instant) and keeps re-targeting it
+ *  while the virtualizer's mount waves settle the layout. Exits when the
+ *  user scrolls (their intent wins), when a newer jump takes over, when
+ *  the position settles on mounted content, or after a 4s backstop.
+ *  Corrections are always smooth — never an instant snap. */
 function superviseGlide(
   scrollEl: HTMLElement,
   getGoalTop: () => number | null,
@@ -235,16 +229,21 @@ function superviseGlide(
     document.removeEventListener("keydown", onUserInput, opts);
   };
 
+  // First glide — issued synchronously so the jump starts the moment the
+  // user clicks (no warm-up delay; the supervisor corrects drift later).
+  const goal0 = getGoalTop();
+  if (goal0 === null) {
+    detach();
+    return;
+  }
+  let lastIssued: number = goal0;
+  scrollEl.scrollTo({ top: Math.max(0, goal0), behavior: "smooth" });
+
   const start = performance.now();
   let lastNow = start;
   let lastTop = scrollEl.scrollTop;
-  let lastIssued: number | null = null;
   let lastProgressAt = start;
   let settledMs = 0;
-  // Two warm-up frames: after a teleport the target section's mount commit
-  // (and its placeholder→measured height swap) needs a frame or two —
-  // gliding to the pre-swap offset would just re-target immediately.
-  let warmup = 2;
 
   const step = () => {
     requestAnimationFrame(() => {
@@ -271,15 +270,13 @@ function superviseGlide(
       lastTop = scrollEl.scrollTop;
       if (moving || delta <= 4) lastProgressAt = now;
 
-      if (warmup > 0) {
-        warmup -= 1;
-      } else if (delta > 4) {
+      if (delta > 4) {
         // Re-issue only when the goal actually moved (a mount wave swapped
         // a placeholder height) or when the glide stalled (its animation
         // was cancelled without user input) — re-issuing every frame would
         // restart the easing and stutter.
-        const goalMoved = lastIssued === null || Math.abs(goal - lastIssued) > 8;
-        const stalled = lastIssued !== null && now - lastProgressAt > 200;
+        const goalMoved = Math.abs(goal - lastIssued) > 8;
+        const stalled = now - lastProgressAt > 200;
         if (goalMoved || stalled) {
           lastIssued = goal;
           lastProgressAt = now;
@@ -307,26 +304,14 @@ function superviseGlide(
   step();
 }
 
-/** Two-phase jump: teleport for long distances, then an animated,
- *  user-intent-aware glide that tracks the target's CURRENT offset until
- *  the layout converges (see the block comment above). */
-function twoPhaseScrollTo(scrollEl: HTMLElement, targetEl: HTMLElement, offsetAdjust = 12) {
+/** Animated jump: a single supervised smooth glide from the CURRENT
+ *  position to the target heading (see the block comment above). */
+function animatedScrollTo(scrollEl: HTMLElement, targetEl: HTMLElement, offsetAdjust = 12) {
   const computeGoal = () =>
     targetEl.getBoundingClientRect().top -
     scrollEl.getBoundingClientRect().top +
     scrollEl.scrollTop -
     offsetAdjust;
-  const goal = computeGoal();
-  const vh = scrollEl.clientHeight || 600;
-  const dist = goal - scrollEl.scrollTop;
-  if (Math.abs(dist) > vh * 1.2) {
-    // Phase 1 — land ~0.85 viewport from the goal: inside the observer's
-    // 1500px rootMargin (the target mounts at once) and close enough that
-    // the final approach is a short, predictable glide.
-    const landing = dist > 0 ? Math.max(0, goal - vh * 0.85) : goal + vh * 0.85;
-    scrollEl.scrollTo({ top: Math.max(0, landing), behavior: "instant" });
-  }
-  // Phase 2 — animated pursuit under supervision.
   superviseGlide(scrollEl, computeGoal, targetEl);
 }
 
@@ -400,10 +385,11 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
   // the old querySelectorAll("h2") missed unmounted sections);
   // non-virtualized bodies use the h2s directly. Index is clamped to
   // [0, total-1], so passing 999 jumps to the last section.
-  // Two-phase scroll: see twoPhaseScrollTo above — the single smooth
-  // scrollTo used to miss mid-flight when virtualized sections mounted
-  // along the way and changed the scrollHeight. round-45: the approach is
-  // animated (teleport + glide) and yields to user input instantly.
+  // Supervised smooth scroll: see animatedScrollTo above — the single
+  // smooth scrollTo used to miss mid-flight when virtualized sections
+  // mounted along the way and changed the scrollHeight. round-46: one
+  // animated glide from the current position, and it yields to user
+  // input instantly.
   const jumpToSectionIdx = React.useCallback((idx: number) => {
     if (!composedContentRef.current) return;
     const root = composedContentRef.current;
@@ -415,7 +401,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
     const target = resolveSectionTarget(root, clampedIdx);
     if (!target) return;
     const scrollEl = findScrollableAncestor(target);
-    if (scrollEl) twoPhaseScrollTo(scrollEl, target);
+    if (scrollEl) animatedScrollTo(scrollEl, target);
   }, [composedContentRef]);
 
   // Jump to the next section that's missing a Chinese translation.
@@ -2220,9 +2206,9 @@ function ArticleTOCSidebar({
 
   // Jump to a section by scrolling the closest scrollable ancestor.
   // Targets [data-h2-idx] shells (present even while the section is a
-  // virtualized placeholder, round-44) and uses the two-phase scroll:
-  // teleport + animated, user-intent-aware glide (round-45) — the old
-  // single smooth scrollTo missed when sections mounted mid-flight.
+  // virtualized placeholder, round-44) and uses the supervised smooth
+  // scroll (round-46): one animated glide from the current position,
+  // re-targeted when mount waves move the goal, yielded on user input.
   const jumpToSection = (idx: number) => {
     if (!contentRef.current) return;
     const root = contentRef.current;
@@ -2230,7 +2216,7 @@ function ArticleTOCSidebar({
     if (!target) return;
     const scrollEl = findScrollableAncestor(target);
     if (scrollEl) {
-      twoPhaseScrollTo(scrollEl, target);
+      animatedScrollTo(scrollEl, target);
       setActiveIdx(idx);
     }
   };

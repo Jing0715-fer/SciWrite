@@ -2671,3 +2671,27 @@ Stage Summary:
 - round-44 的「精确但暴力」锁定循环换为「动画+谦让」：纠偏只 smooth、用户输入即刻全撤、收敛即退——三个症状（无动画/锁定/过会才能滚）同源同修
 - 修改文件：article-viewer-tabs.tsx（twoPhaseScrollTo 重写+superviseGlide/cancelJumpSupervision+jumpToBottom 监督+搜索滚动让位）、virtualized-article.tsx（头注释 B 部分同步）
 - 方法论入档：合成 WheelEvent 可验证监督器弃权（listener 层）但不能取消原生动画（位置层）——两层要分开断言；rAF 帧计数阈值在 120Hz 下减半，毫秒阈值速率无关
+
+---
+Task ID: round-46
+Agent: main (Z.ai Code)
+Task: 用户要求「动画去掉远跳（teleport），直接平滑移动到指定位置」——round-45 的 teleport 瞬移改为纯 smooth 滑行
+
+Work Log:
+- 改动（article-viewer-tabs.tsx）：
+  - twoPhaseScrollTo 删除 phase1 teleport（>1.2 视口距离的 instant 近跳）并改名 animatedScrollTo——现在所有跳转（不论距离）都是一条从当前位置直达目标的 smooth 滑行
+  - superviseGlide 首滑改为同步发出（点击瞬间即起动画，删掉 2 帧预热）；监督纠偏机制保持：挂载波移动目标 >8px 或滑行熄火 >200ms 才重发 smooth（永无 instant 硬拉）、用户输入（wheel/touch/mousedown/滚动键）即刻弃权、目标内容挂载且静止 ≥400ms 早退、4s 兜底
+  - 调用点同步：jumpToSectionIdx / TOC jumpToSection 改调 animatedScrollTo；头注释与 virtualized-article.tsx 的 B 部分注释重写（no teleport 表述）
+  - jumpToBottom（监督滑行）/cancelJumpSupervision（搜索滚动让位）/SCROLL_KEYS 不变
+- E2E 验证（agent-browser，MscL 文章，探针层叠 3 层致日志三重复——真实调用数 = 日志条目 ÷3，已用堆栈定位证实）：
+  - 纯 smooth 断言：远跳（1064→0 与 168→1502，均 >1.2 视口、旧码必 teleport）anyInstant=false；真实调用 = 1 次同步首滑（具名栈 jumpToSection→animatedScrollTo→superviseGlide）+ 4 次 smooth 重定向（挂载波）；样本轨迹连续单调爬升 ~650ms，无硬切 ✓
+  - 落点精度：TOC0/TOC6/TOC4 targetDelta 均 12px（offsetAdjust 精确）✓
+  - 弃权保持：滑行中注入 wheel → 之后零真实调用（callsAfterWheel=[]）✓
+  - 底部监督滑行：接近中 maxScroll 从 2031 塌缩至 1575（挂载波），7 次 smooth 追踪后精确落 1575——无监督一次性 smooth 此场景会偏 456px ✓
+  - 短跳（~500px）：2 次真实调用（首滑+1 重定向），纯动画，12px 落位 ✓
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）；dev.log 无新错误；0 page error，console 仅 4 条既有基线警告
+- 诊断方法入档：多层 scrollTo 探针 patch 会叠加（旧会话 patch 残留在同一 DOM 元素上）——判读日志先数重复模式、用 Error().stack 具名帧定位真实调用方；V8 对 eval 包裹模块的 rAF 回调闭包会丢函数名（匿名 eval 帧）
+
+Stage Summary:
+- 跳转动画最终形态：点击 → 同步起 smooth 滑行 → 挂载波期间 smooth 重定向追踪 → 精确落位后 0.4s 静止即撤；用户任何输入立即让位；全程零 instant 零 teleport
+- 修改文件：article-viewer-tabs.tsx（animatedScrollTo 重命名+teleport 删除+首滑同步化）、virtualized-article.tsx（注释同步）
