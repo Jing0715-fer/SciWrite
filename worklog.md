@@ -2501,3 +2501,42 @@ Stage Summary:
 - round-39 持久化功能在真实 LLM 链路上全绿：双项目双标签自动触发→落库→渲染→reload 持久→不重触发
 - 测试资产：/tmp/r40-shots/（7 截图 + 2 份 VLM 分析 JSON）
 - 确认改进候选（按优先级）：①activeProjectId localStorage 持久化（高，~10 行）②工作区标题两行/放宽 max-w（高）③深色分数卡边界 + verdict 横幅权重（中）④cluster 卡 p-4 + 层级（中）⑤tab 徽标"分析已就绪"提示（中，产品层）⑥relationships 增量刷新（中）⑦唯一未覆盖路径：完整 generate-full 管线末自动落库钩子的实跑验证（本轮只验证了 tab 级触发）
+
+---
+Task ID: round-41
+Agent: main (Z.ai Code)
+Task: 用户指令「检查远程仓库是否有丢失的 commit，感觉之前一些修改丢失了。另外将运行时获取数据源的 4 项参数都默认设置为无限，output token 默认设置为 20480，上限 81920」
+
+Work Log:
+- 丢失 commit 排查（结论：远程无丢失，本地被回滚）：
+  - 现象：本地 main 停在 round-26（a7d26fc），origin/main 在 round-40（3fee7b2），本地 0 独有 commit、落后 18 个；reflog/worklog/工作区全部停在 round-26 —— 沙箱文件系统在 round-40 会话结束后被回滚到旧快照（进程也在同一时刻 01:09 被重启）
+  - 恢复：git fetch 后 git reset --hard origin/main —— round-27~40 全部代码修改完整恢复；依赖无变化（package.json r26→r40 零 diff）；遗留 stash（仅旧 db 快照二进制）不动
+  - 虚惊澄清：sed/rg 输出中 `const [maxTokens` 显示为 `const axTokens`——显示管道把字面 `[m` 当 ANSI 转义吞掉，od -c 证实文件字节无损，代码零损坏
+- 回滚衍生地雷 ×4（逐一排除）：
+  ①陈旧 Prisma client：回滚写回的 node_modules/.prisma/client 是 round-27 时代（有 Article.titleZh 无 Paragraph.titleZh）→ tsc 7 错误 + 潜在运行时炸点 → bunx prisma generate 后 tsc 归零
+  ②DB readonly（SQLite 1032）：dev server（01:09 回滚重启的实例）持有 git reset 替换前的已删除 inode（/proc/fd 实证 custom.db (deleted)×2）——读旧数据、写报 readonly → 用 .zscripts/dev-daemon.py（双 fork 守护，正是为此设计）重启 dev server，Prisma 重新打开当前 inode，POST 创建项目 200 恢复
+  ③两次普通 nohup/setsid 后台启动均被工具 shell 回收（sandbox 进程收割）——dev-daemon.py 是唯一可靠路径，教训记入
+  ④round-40 的种子删除也被回滚吞掉 → 重删 r39-test-000/r39-rev-0001 两行（恢复 round-40 结束态）
+- 4 项数据源参数默认无限（maxDbQueries/maxWebSearchQueries/sectionRefTopN/sectionDsTopN）：
+  - 前端：dialog 默认 25/8/20/15 → 0/0/0/0（NumField 已内建 0=∞ unlimited 徽标与 min=0）；Reset 按钮同步改 0×4
+  - v1 后端：clampOrUnlimited fallback 25/8/20/15 → 0（省略=无限，与显式 0 同语义）；isDbUnlimited prompt 分支、slice(0,9999)、generateWebSearchQueries 9999 分支全部既有就绪
+  - v2 后端：原解析 0 会被钳到下限 5/3 —— 补 0→9999 映射（省略同样默认无限）；gather prompt 补 unlimited 分支（原 ${maxDbQueries-4}-${maxDbQueries} 在 9999 下会生成"9995-9999 queries"荒谬文案）
+  - 接口文档注释同步（0=unlimited、round-41 标记）
+- output token 默认 20480 上限 81920：
+  - 前端：默认 16384→20480；input max 32768→81920 + onChange 加 v<=81920 上界守卫
+  - v1/v2 后端：clamp Math.min(32768→81920)、fallback 16384→20480
+  - lib/ai.ts 全局 max_tokens fallback 16384→20480 ×2（非流式+流式）+ 注释；llm.ts 外部 provider 路径的 32768 钳制保留（Anthropic/OpenAI 真实 API 上限，81920 会 400）
+  - i18n：5 个 hint 键 ×2 语言更新（"0 = no limit/keep all"×4 + "Range 4096–81920, default 20480"）
+- E2E 验证（agent-browser + 一次性项目 SSE 探针）：
+  - dialog 实测：4 输入 value=["0","0","0","0"]、4×∞ UNLIMITED 徽标、token=20480（min 4096/max 81920）、新 hint 文案全部渲染；token 输入 99999 键入被守卫拒绝（值保持 20480）
+  - v2 init 回显实弹（临时项目+init 事件后立即 abort+清理）：config {maxDbQueries:9999, maxWebSearchQueries:9999, maxTokens:20480} ✓
+  - v1 init 回显实弹（同法）：advanced {9999×4, maxTokens:81920} ✓（上限可达性验证）
+  - 「Sources to gather ~33」预估只依赖 targetWords 公式（不受上限影响）——确认无需改
+  - 测试残留：两临时项目已删除（DELETE 200）；dev.log 中外键噪声来自已删项目与后台管线竞态，非真错误
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）；浏览器 errors 零
+
+Stage Summary:
+- 远程仓库零丢失；本地回滚已完全恢复（代码+DB 状态+运行环境四层），并消灭 4 个回滚衍生地雷（陈旧 client/readonly inode/进程收割/种子复活）
+- 参数语义变更：4 项数据源上限默认无限（UI 0+∞、后端 9999 哨兵、v2 prompt 无限分支）；output token 默认 20480、上限 81920（UI+双管线+ai.ts 全链一致；外部 provider 保护性 32768 钳制有意保留）
+- 修改文件：unified-writing-dialog.tsx、api/ai/generate-full/route.ts、api/ai/generate-full-v2/route.ts、lib/ai.ts、lib/i18n.tsx
+- 运维教训入档：后台进程必须用 .zscripts/dev-daemon.py 启动；显示管道吞 [m 字面量的坑（od -c 仲裁）

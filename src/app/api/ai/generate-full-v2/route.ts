@@ -195,9 +195,14 @@ export async function POST(req: NextRequest) {
 
         const targetWords = Math.min(body.targetWords || 5000, 50000);
         const journalTemplate = body.journalTemplate || "generic";
-        const maxTokens = Math.max(4096, Math.min(32768, body.maxTokens ?? 16384));
-        const maxDbQueries = Math.max(5, Math.min(50, body.maxDbQueries ?? 18));
-        const maxWebSearchQueries = Math.max(3, Math.min(20, body.maxWebSearchQueries ?? 6));
+        // round-41: 0 = unlimited for the two query caps (same 9999-sentinel
+        // contract as v1); omitted params also default to unlimited. maxTokens
+        // default 20480, upper bound 81920 (was 16384/32768).
+        const rawDbQ = body.maxDbQueries ?? 0;
+        const rawWebQ = body.maxWebSearchQueries ?? 0;
+        const maxTokens = Math.max(4096, Math.min(81920, body.maxTokens ?? 20480));
+        const maxDbQueries = rawDbQ === 0 ? 9999 : Math.max(5, Math.min(50, rawDbQ));
+        const maxWebSearchQueries = rawWebQ === 0 ? 9999 : Math.max(3, Math.min(20, rawWebQ));
         const promptInstruction = (body.promptInstruction || "").trim();
         // round-27: the v2 pipeline always WRITES in English (the evidence
         // bank / citation-key machinery is English-first by design), but
@@ -282,7 +287,10 @@ export async function POST(req: NextRequest) {
 FIELD: ${project.field || "life sciences"}
 PURPOSE: Write a comprehensive review article (~${targetWords} words).
 
-Design a focused search plan with ${Math.max(5, maxDbQueries - 4)}-${maxDbQueries} well-chosen queries (NOT more — too many causes JSON truncation).
+Design ${maxDbQueries >= 9999
+          ? "a comprehensive multi-database search plan with as many well-chosen queries as the topic needs for MAXIMUM coverage (no fixed limit — but keep the JSON under 4000 characters to avoid output truncation)"
+          : `a focused search plan with ${Math.max(5, maxDbQueries - 4)}-${maxDbQueries} well-chosen queries (NOT more — too many causes JSON truncation)`
+        }.
 Distribute across databases: mostly PubMed (reviews, mechanisms, diseases, methods), a few RCSB structure searches, a few UniProt gene-name searches, 1-2 NCBI gene searches.
 
 Respond as STRICT JSON (keep it under 4000 characters):

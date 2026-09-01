@@ -21,7 +21,7 @@ export interface ChatOptions {
   system?: string;
   temperature?: number;
   thinking?: boolean;
-  /** Override the default max_tokens (16384). Useful when the caller knows
+  /** Override the default max_tokens (20480). Useful when the caller knows
    *  it needs more (e.g. very long section generation) or less (short JSON
    *  responses to save tokens). */
   maxTokens?: number;
@@ -166,9 +166,10 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
           ...(selectedModel ? { model: selectedModel } : {}),
           // Explicit max_tokens — without this, the SDK may apply a low default
           // (e.g. 4096) that truncates long outputs like gather's JSON query
-          // plan (which can legitimately need 8K+ tokens). Default 16384 is a
-          // safe upper bound; callers can override via opts.maxTokens.
-          max_tokens: opts.maxTokens ?? 16384,
+          // plan (which can legitimately need 8K+ tokens). Default 20480
+          // (round-41, was 16384); callers can override via opts.maxTokens,
+          // pipeline routes clamp to 4096–81920.
+          max_tokens: opts.maxTokens ?? 20480,
         } as Parameters<typeof zai.chat.completions.create>[0]);
         // Capture rate-limit headers from the underlying response.
         try {
@@ -310,9 +311,9 @@ export async function chatStream(
         thinking: { type: opts.thinking ? "enabled" : "disabled" },
         temperature: opts.temperature ?? 0.6,
         // Explicit max_tokens for streaming too — section generation can produce
-        // 1000+ word sections that need 8K+ output tokens. Default 16384; callers
-        // can override via opts.maxTokens.
-        max_tokens: opts.maxTokens ?? 16384,
+        // 1000+ word sections that need 8K+ output tokens. Default 20480
+        // (round-41, was 16384); callers can override via opts.maxTokens.
+        max_tokens: opts.maxTokens ?? 20480,
       } as Parameters<typeof zai.chat.completions.create>[0]);
       try {
         const hdrs = (r as any)?._response?.headers ?? (r as any)?.headers;

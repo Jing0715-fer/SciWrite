@@ -63,24 +63,28 @@ interface GenerateFullBody {
    * without editing code.
    */
   /** Max number of database (PubMed/RCSB/UniProt/NCBI/BLAST) queries the
-   *  LLM is told to design in the gather step. Default 25. */
+   *  LLM is told to design in the gather step. 0 = unlimited; omitted also
+   *  defaults to unlimited (round-41, was 25). */
   maxDbQueries?: number;
-  /** Max number of supplementary web-search queries. Default 8. */
+  /** Max number of supplementary web-search queries. 0 = unlimited; omitted
+   *  also defaults to unlimited (round-41, was 8). */
   maxWebSearchQueries?: number;
   /** Character budget the gather prompt tells the LLM to stay under for the
    *  JSON response. Default 4000. */
   gatherJsonCharLimit?: number;
   /** Per-section reference filtering: how many top-scoring refs to keep
-   *  (by keyword overlap with the section title+focus). Default 20. */
+   *  (by keyword overlap with the section title+focus). 0 = unlimited; omitted
+   *  also defaults to unlimited (round-41, was 20). */
   sectionRefTopN?: number;
   /** Per-section reference filtering: minimum refs to keep (topped up from
    *  the global list if fewer match). Default 8. */
   sectionRefMinN?: number;
-  /** Per-section data-source filtering: top N to keep. Default 15. */
+  /** Per-section data-source filtering: top N to keep. 0 = unlimited; omitted
+   *  also defaults to unlimited (round-41, was 15). */
   sectionDsTopN?: number;
   /** Per-section data-source filtering: minimum to keep. Default 5. */
   sectionDsMinN?: number;
-  /** max_tokens for LLM calls. Default 16384. */
+  /** max_tokens for LLM calls. Default 20480, clamped to 4096–81920. */
   maxTokens?: number;
   /** Custom instruction from a selected prompt template — appended to the
    *  section-generation prompt to customize LLM behavior (e.g. "Focus on
@@ -214,14 +218,18 @@ export async function POST(req: NextRequest) {
           if (raw === 0) return 9999; // 0 = no limit
           return Math.max(lo, Math.min(hi, raw));
         };
-        const maxDbQueries = clampOrUnlimited(body.maxDbQueries, 25, 5, 50);
-        const maxWebSearchQueries = clampOrUnlimited(body.maxWebSearchQueries, 8, 3, 20);
+        // round-41: the four data-source caps now DEFAULT to unlimited
+        // (0), matching the dialog's new defaults — omitted params behave
+        // identically to explicit 0s.
+        const maxDbQueries = clampOrUnlimited(body.maxDbQueries, 0, 5, 50);
+        const maxWebSearchQueries = clampOrUnlimited(body.maxWebSearchQueries, 0, 3, 20);
         const gatherJsonCharLimit = Math.max(2000, Math.min(10000, body.gatherJsonCharLimit ?? 4000));
-        const sectionRefTopN = clampOrUnlimited(body.sectionRefTopN, 20, 5, 40);
+        const sectionRefTopN = clampOrUnlimited(body.sectionRefTopN, 0, 5, 40);
         const sectionRefMinN = Math.max(3, Math.min(Math.min(sectionRefTopN, 40), body.sectionRefMinN ?? 8));
-        const sectionDsTopN = clampOrUnlimited(body.sectionDsTopN, 15, 3, 30);
+        const sectionDsTopN = clampOrUnlimited(body.sectionDsTopN, 0, 3, 30);
         const sectionDsMinN = Math.max(2, Math.min(Math.min(sectionDsTopN, 30), body.sectionDsMinN ?? 5));
-        const maxTokens = Math.max(4096, Math.min(32768, body.maxTokens ?? 16384));
+        // round-41: default raised to 20480, upper bound to 81920 (was 16384/32768).
+        const maxTokens = Math.max(4096, Math.min(81920, body.maxTokens ?? 20480));
         // Custom prompt instruction from a selected template — appended to
         // the section-generation prompt. Empty string = no customization.
         const promptInstruction = (body.promptInstruction || "").trim();

@@ -803,13 +803,15 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
   const [livePreview, setLivePreview] = React.useState<string>("");
   const [confirmClearOpen, setConfirmClearOpen] = React.useState(false);
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
-  // Advanced tuning parameters — defaults match the backend's defaults so
-  // leaving the panel collapsed produces identical behavior to before.
-  const [maxDbQueries, setMaxDbQueries] = React.useState(25);
-  const [maxWebSearchQueries, setMaxWebSearchQueries] = React.useState(8);
-  const [sectionRefTopN, setSectionRefTopN] = React.useState(20);
-  const [sectionDsTopN, setSectionDsTopN] = React.useState(15);
-  const [maxTokens, setMaxTokens] = React.useState(16384);
+  // Advanced tuning parameters — the four data-source caps default to 0 =
+  // unlimited (backend maps 0 to a 9999 sentinel; v1 prompts and
+  // generateWebSearchQueries have dedicated unlimited branches). maxTokens
+  // defaults to 20480 with a hard range of 4096–81920.
+  const [maxDbQueries, setMaxDbQueries] = React.useState(0);
+  const [maxWebSearchQueries, setMaxWebSearchQueries] = React.useState(0);
+  const [sectionRefTopN, setSectionRefTopN] = React.useState(0);
+  const [sectionDsTopN, setSectionDsTopN] = React.useState(0);
+  const [maxTokens, setMaxTokens] = React.useState(20480);
   // Prompt template selection — lets the user pick a saved template whose
   // instruction is appended to the section-generation prompt.
   const [selectedTemplateId, setSelectedTemplateId] = React.useState<string>("");
@@ -1377,11 +1379,11 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
                         {t("oneClick.advMaxTokens") || "Max output tokens"}
                       </Label>
                       <input
-                        type="number" min={4096} max={32768} step={2048}
+                        type="number" min={4096} max={81920} step={2048}
                         value={maxTokens}
                         onChange={(e) => {
                           const v = Number(e.target.value);
-                          if (!isNaN(v) && v >= 4096) setMaxTokens(v);
+                          if (!isNaN(v) && v >= 4096 && v <= 81920) setMaxTokens(v);
                         }}
                         className="w-full h-8 rounded-lg border border-border bg-background px-2.5 text-[11px] font-mono tabular-nums transition-all focus-visible:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/25"
                       />
@@ -1441,11 +1443,11 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
                 size="sm"
                 className="text-[10px] h-6 px-2 text-muted-foreground"
                 onClick={() => {
-                  setMaxDbQueries(25);
-                  setMaxWebSearchQueries(8);
-                  setSectionRefTopN(20);
-                  setSectionDsTopN(15);
-                  setMaxTokens(16384);
+                  setMaxDbQueries(0);
+                  setMaxWebSearchQueries(0);
+                  setSectionRefTopN(0);
+                  setSectionDsTopN(0);
+                  setMaxTokens(20480);
                 }}
               >
                 {t("oneClick.advReset") || "Reset to defaults"}
