@@ -133,7 +133,7 @@ interface Props {
   onClose: () => void;
 }
 
-/* round-44 — scroll-jump helpers shared by the viewer and its TOC rail.
+/* round-44/45 — scroll-jump helpers shared by the viewer and its TOC rail.
  *
  * The article body is virtualized (VirtualizedArticle): a section far from
  * the viewport is an EMPTY placeholder shell whose height is the last
@@ -143,10 +143,20 @@ interface Props {
  * (collapsing/expanding by up to ~100px each), so scrollHeight changed
  * MID-FLIGHT and the jump landed short or appeared to "get stuck".
  *
- * twoPhaseScrollTo fixes that: jump INSTANTLY to the target's current
- * position (landing within the IntersectionObserver's rootMargin mounts
- * the target section immediately), wait two frames for the mount commit +
- * layout, then smooth-scroll the remaining delta to the exact position. */
+ * twoPhaseScrollTo (round-45 refinement of the round-44 lock-on):
+ *   Phase 1 — jumps longer than ~1 viewport TELEPORT instantly to ~0.85
+ *   viewport from the target (well inside the IntersectionObserver's
+ *   1500px rootMargin, so the target section mounts immediately and the
+ *   destination heading is visible near the viewport edge right away).
+ *   Shorter jumps skip the teleport and animate the whole distance.
+ *   Phase 2 — an ANIMATED pursuit: a smooth scrollTo glides to the target,
+ *   and a supervisor re-targets it whenever a mount wave moves the goal
+ *   (placeholder height → measured height swap). The supervisor YIELDS to
+ *   the user instantly — the first wheel / touch / scrollbar drag /
+ *   scroll-key during the approach cancels all further correction. (The
+ *   round-44 version re-aligned with INSTANT scrolls for up to ~4s, which
+ *   read as "locked: can't scroll for a moment", and its all-instant
+ *   phases erased the jump animation entirely.) */
 
 /** Nearest scrollable ancestor (overflowY auto/scroll and actually
  *  overflowing). Walks up from any element — works for both the Composed
@@ -180,51 +190,144 @@ function resolveSectionTarget(root: HTMLElement | null, idx: number): HTMLElemen
   return idx >= 0 && idx < h2s.length ? (h2s[idx] as HTMLElement) : null;
 }
 
-/** Two-phase jump: instant near-jump (mounts the target section — and the
- *  sections along the way — via the IntersectionObserver rootMargin), then
- *  a supervised lock-on: the first ~20 frames are an observation window
- *  (the virtualizer's mount waves + scroll-anchoring compensation settle),
- *  and from frame 20 to 120 (~2s) every frame re-aligns the viewport to
- *  the target's CURRENT offset with instant scrolls. Mount waves keep
- *  shifting the target (each first-pass mount swaps an estimated height
- *  for the real one), so a one-shot correction — even gated on a
- *  "stability" heuristic — always got beaten by the next wave (observed:
- *  corrections landing, then the target drifting another ~450px). Frame-
- *  by-frame re-alignment tracks the target until the layout reaches its
- *  final state (the measured-height cache makes all later passes stable). */
+/** Keys that signal the user is trying to scroll the viewport. */
+const SCROLL_KEYS = new Set([
+  "ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ",
+]);
+
+/** Supervision token: starting a new glide cancels any supervisor loop
+ *  still running from the previous jump (two loops would fight over the
+ *  viewport). Module-level — every jump path shares the invariant. */
+let jumpSupervision = 0;
+
+/** Cancel the active supervised glide (for scroll paths that issue their
+ *  own programmatic scrolls, e.g. search-match navigation). */
+function cancelJumpSupervision() {
+  jumpSupervision++;
+}
+
+/** Shared supervised glide: issues a SMOOTH scroll toward getGoalTop() and
+ *  keeps re-targeting it while the virtualizer's mount waves settle the
+ *  layout. Exits when the user scrolls (their intent wins), when a newer
+ *  jump takes over, when the position settles on mounted content, or after
+ *  a 4s deadline. Corrections are always smooth — never an instant snap. */
+function superviseGlide(
+  scrollEl: HTMLElement,
+  getGoalTop: () => number | null,
+  targetEl?: HTMLElement | null,
+) {
+  const my = ++jumpSupervision;
+  let userTookOver = false;
+  const onUserInput = (e: Event) => {
+    if (e.type === "keydown" && !SCROLL_KEYS.has((e as KeyboardEvent).key)) return;
+    userTookOver = true;
+  };
+  // wheel/touch/mousedown on the scroll container (capture) + keydown on
+  // document (focus may sit on the dialog root, not inside the container).
+  const localEvents: ("wheel" | "touchstart" | "mousedown")[] = [
+    "wheel", "touchstart", "mousedown",
+  ];
+  const opts: AddEventListenerOptions = { capture: true, passive: true };
+  for (const t of localEvents) scrollEl.addEventListener(t, onUserInput, opts);
+  document.addEventListener("keydown", onUserInput, opts);
+  const detach = () => {
+    for (const t of localEvents) scrollEl.removeEventListener(t, onUserInput, opts);
+    document.removeEventListener("keydown", onUserInput, opts);
+  };
+
+  const start = performance.now();
+  let lastNow = start;
+  let lastTop = scrollEl.scrollTop;
+  let lastIssued: number | null = null;
+  let lastProgressAt = start;
+  let settledMs = 0;
+  // Two warm-up frames: after a teleport the target section's mount commit
+  // (and its placeholder→measured height swap) needs a frame or two —
+  // gliding to the pre-swap offset would just re-target immediately.
+  let warmup = 2;
+
+  const step = () => {
+    requestAnimationFrame(() => {
+      const now = performance.now();
+      const dt = Math.max(0, now - lastNow);
+      lastNow = now;
+      if (
+        userTookOver ||
+        my !== jumpSupervision ||
+        !scrollEl.isConnected ||
+        (targetEl ? !targetEl.isConnected : false) ||
+        now - start > 4000
+      ) {
+        detach();
+        return;
+      }
+      const goal = getGoalTop();
+      if (goal === null) {
+        detach();
+        return;
+      }
+      const delta = Math.abs(goal - scrollEl.scrollTop);
+      const moving = Math.abs(scrollEl.scrollTop - lastTop) >= 0.5;
+      lastTop = scrollEl.scrollTop;
+      if (moving || delta <= 4) lastProgressAt = now;
+
+      if (warmup > 0) {
+        warmup -= 1;
+      } else if (delta > 4) {
+        // Re-issue only when the goal actually moved (a mount wave swapped
+        // a placeholder height) or when the glide stalled (its animation
+        // was cancelled without user input) — re-issuing every frame would
+        // restart the easing and stutter.
+        const goalMoved = lastIssued === null || Math.abs(goal - lastIssued) > 8;
+        const stalled = lastIssued !== null && now - lastProgressAt > 200;
+        if (goalMoved || stalled) {
+          lastIssued = goal;
+          lastProgressAt = now;
+          scrollEl.scrollTo({ top: Math.max(0, goal), behavior: "smooth" });
+        }
+        settledMs = 0;
+      } else {
+        // Settled — but only count it once the target's CONTENT is mounted
+        // (virtualized placeholders are empty shells; a mounted section
+        // contains its h2), and only after ~0.4s of stillness.
+        const mounted = !targetEl || targetEl.tagName === "H2" || targetEl.querySelector("h2") !== null;
+        if (mounted) {
+          settledMs += dt;
+          if (settledMs >= 400) {
+            detach();
+            return;
+          }
+        } else {
+          settledMs = 0;
+        }
+      }
+      step();
+    });
+  };
+  step();
+}
+
+/** Two-phase jump: teleport for long distances, then an animated,
+ *  user-intent-aware glide that tracks the target's CURRENT offset until
+ *  the layout converges (see the block comment above). */
 function twoPhaseScrollTo(scrollEl: HTMLElement, targetEl: HTMLElement, offsetAdjust = 12) {
-  const computeOffset = () =>
+  const computeGoal = () =>
     targetEl.getBoundingClientRect().top -
     scrollEl.getBoundingClientRect().top +
     scrollEl.scrollTop -
     offsetAdjust;
-  // Phase 1 — instant jump near the target. The shell exists even while
-  // unmounted, and this lands well inside the observer's rootMargin so the
-  // real content (and the sections between here and there) mounts next.
-  scrollEl.scrollTo({ top: Math.max(0, computeOffset()), behavior: "instant" });
-  // Phase 2 — supervised lock-on.
-  let total = 0;
-  const step = () => {
-    requestAnimationFrame(() => {
-      if (!targetEl.isConnected || !scrollEl.isConnected) return;
-      total++;
-      // Frames 0-19: observation only — the mount waves are still rolling
-      // (each mount swaps a placeholder height for the real one and shifts
-      // everything below it; scroll anchoring compensates along the way).
-      if (total >= 20) {
-        const cur = computeOffset();
-        if (Math.abs(cur - scrollEl.scrollTop) > 4) {
-          scrollEl.scrollTo({ top: Math.max(0, cur), behavior: "instant" });
-        }
-      }
-      // Supervise up to ~4s (frame 240). The measured-height cache updates
-      // land in batched single-frame re-renders now, but the very first pass
-      // over a long article can still take a couple of waves; this window
-      // guarantees the jump tracks the target until the layout is final.
-      if (total < 240) step();
-    });
-  };
-  step();
+  const goal = computeGoal();
+  const vh = scrollEl.clientHeight || 600;
+  const dist = goal - scrollEl.scrollTop;
+  if (Math.abs(dist) > vh * 1.2) {
+    // Phase 1 — land ~0.85 viewport from the goal: inside the observer's
+    // 1500px rootMargin (the target mounts at once) and close enough that
+    // the final approach is a short, predictable glide.
+    const landing = dist > 0 ? Math.max(0, goal - vh * 0.85) : goal + vh * 0.85;
+    scrollEl.scrollTo({ top: Math.max(0, landing), behavior: "instant" });
+  }
+  // Phase 2 — animated pursuit under supervision.
+  superviseGlide(scrollEl, computeGoal, targetEl);
 }
 
 export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
@@ -297,9 +400,10 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
   // the old querySelectorAll("h2") missed unmounted sections);
   // non-virtualized bodies use the h2s directly. Index is clamped to
   // [0, total-1], so passing 999 jumps to the last section.
-  // Two-phase scroll (round-44): see twoPhaseScrollTo above — the single
-  // smooth scrollTo used to miss mid-flight when virtualized sections
-  // mounted along the way and changed the scrollHeight.
+  // Two-phase scroll: see twoPhaseScrollTo above — the single smooth
+  // scrollTo used to miss mid-flight when virtualized sections mounted
+  // along the way and changed the scrollHeight. round-45: the approach is
+  // animated (teleport + glide) and yields to user input instantly.
   const jumpToSectionIdx = React.useCallback((idx: number) => {
     if (!composedContentRef.current) return;
     const root = composedContentRef.current;
@@ -2115,8 +2219,9 @@ function ArticleTOCSidebar({
   };
 
   // Jump to a section by scrolling the closest scrollable ancestor.
-  // round-44: targets [data-h2-idx] shells (present even while the section
-  // is a virtualized placeholder) and uses the two-phase scroll — the old
+  // Targets [data-h2-idx] shells (present even while the section is a
+  // virtualized placeholder, round-44) and uses the two-phase scroll:
+  // teleport + animated, user-intent-aware glide (round-45) — the old
   // single smooth scrollTo missed when sections mounted mid-flight.
   const jumpToSection = (idx: number) => {
     if (!contentRef.current) return;
@@ -2137,11 +2242,14 @@ function ArticleTOCSidebar({
     setActiveIdx(0);
   };
 
-  // Jump to the very bottom of the article
+  // Jump to the very bottom of the article. round-45: the bottom is not a
+  // fixed point while sections mount on approach (scrollHeight keeps
+  // shifting), so a one-shot smooth scrollTo lands short — the supervised
+  // glide keeps re-targeting the live maxScroll until it settles.
   const jumpToBottom = () => {
     const scrollEl = findScrollEl();
     if (scrollEl) {
-      scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: "smooth" });
+      superviseGlide(scrollEl, () => scrollEl.scrollHeight - scrollEl.clientHeight);
       setActiveIdx(sections.length - 1);
     }
   };
@@ -2435,6 +2543,9 @@ function ArticleSearchBar({
         const scrollRect = scrollEl.getBoundingClientRect();
         const elRect = found[0].getBoundingClientRect();
         const offset = elRect.top - scrollRect.top + scrollEl.scrollTop - scrollEl.clientHeight / 3;
+        // round-45: take over from any active jump supervision first —
+        // otherwise the two smooth scrolls fight over the viewport.
+        cancelJumpSupervision();
         scrollEl.scrollTo({ top: Math.max(0, offset), behavior: "smooth" });
       }
       // Highlight first match more strongly
@@ -2472,6 +2583,9 @@ function ArticleSearchBar({
       const scrollRect = scrollEl.getBoundingClientRect();
       const elRect = el.getBoundingClientRect();
       const offset = elRect.top - scrollRect.top + scrollEl.scrollTop - scrollEl.clientHeight / 3;
+      // round-45: take over from any active jump supervision first —
+      // otherwise the two smooth scrolls fight over the viewport.
+      cancelJumpSupervision();
       scrollEl.scrollTo({ top: Math.max(0, offset), behavior: "smooth" });
     }
     // Highlight current match more strongly

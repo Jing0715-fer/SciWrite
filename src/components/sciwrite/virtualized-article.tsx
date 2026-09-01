@@ -52,9 +52,11 @@ const ROOT_MARGIN = "1500px 0px"; // pre-mount sections within 1500px of viewpor
  *      jumps, and jump offsets stay valid.
  *   B. TWO-PHASE JUMP: callers jump via [data-h2-idx] markers which exist on
  *      BOTH mounted and placeholder section shells (see jumpToSection in
- *      article-viewer-tabs.tsx): instant-scroll near the target (the
- *      IntersectionObserver mounts it), then after two rAFs re-measure and
- *      smooth-scroll to the exact heading position.
+ *      article-viewer-tabs.tsx): long jumps teleport to within ~1 viewport
+ *      of the target (the IntersectionObserver mounts it at once), then an
+ *      animated, user-intent-aware glide tracks the heading until the
+ *      layout converges (round-45 — smooth re-targets only, and the first
+ *      user input cancels them; never an instant snap-back).
  */
 
 /**

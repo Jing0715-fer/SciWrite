@@ -2642,3 +2642,32 @@ Stage Summary:
 - 双症状同根因：假虚拟化的估算高度漂移让 scrollHeight 在滚动/跳转途中持续突变——滚轮被视口拖拽感「受阻」、跳转 offset 失效「卡住」；修复后高度在首次经过后永久稳定，跳转 12px 精确锁定
 - 修改文件：virtualized-article.tsx（真占位+实测缓存+同帧测量+CJK 估算）、article-viewer-tabs.tsx（两段式跳转+监督锁帧+全链 data-h2-idx）、citation-graph.tsx（Ctrl+wheel 缩放+普通滚轮放行）
 - 顺带收益：真虚拟化 DOM 节省兑现（占位从全渲染变空 div）；viewer 懒加载 chunk 的验证方法论入档（先打开再搜）；agent-browser mouse wheel 命令在本环境无效的工具限制入档
+
+---
+Task ID: round-45
+Agent: main (Z.ai Code)
+Task: 用户报障 round-44 修复的副作用——「现在缺少了跳转动画了，并且跳转虽然没有问题，但是跳过去后会锁住一段时间无法滚动，过一会之后才能滚动」
+
+Work Log:
+- 根因定位（无需复现，代码直读即破案）：
+  - 动画缺失根因：round-44 的 twoPhaseScrollTo phase1 instant 近跳 + phase2 逐帧 `behavior:"instant"` 纠偏——跳转全程零 smooth 调用，观感为硬切
+  - 锁定根因：phase2 监督循环帧 20–240（~4s 窗口）每帧把视口 instant 拉回目标当前 offset——用户任何滚轮滚动被立刻抹掉 =「跳过去后锁住一段时间」；4s 窗口结束（或收敛）后才恢复 =「过一会才能滚动」
+- 修复（article-viewer-tabs.tsx 为主，重写 phase2 为「动画追踪 + 用户即弃权」）：
+  - twoPhaseScrollTo phase1 改条件 teleport：仅距离 >1.2 视口时瞬移到目标前 0.85 视口处（稳落 IO 1500px rootMargin 内→目标即刻挂载且目的章节标题立刻出现在视口边缘）；≤1.2 视口的短跳全程动画不瞬移
+  - phase2 新 superviseGlide：首次（2 帧预热后）发 smooth 滑行，之后仅当目标真移动（挂载波高度互换 >8px）或滑行熄火（>200ms 无进度）才重发 smooth（逐帧重发会重启缓动造成顿挫）；纠偏永远 smooth 永不 instant 硬拉
+  - 用户即弃权：scrollEl 上 capture+passive 监听 wheel/touchstart/mousedown + document 上监听滚动键（ArrowUp/Down/PageUp/Down/Home/End/Space）——滑行途中首个用户输入立即拆除一切纠偏（旧代码的锁即此消除）；keydown 挂 document 因焦点常在 dialog 根而非滚动容器内，scrollEl 捕获不到
+  - 模块级 supervision token：新跳转令旧监督循环作废（防双循环互搏）；cancelJumpSupervision() 供搜索匹配滚动（首匹配+scrollToMatch 两处）接管视口前显式让位
+  - 收敛早退：目标内容已挂载（shell 内含 h2；空占位不含）且静止 ≥400ms 即退出监督（帧计数全部换 performance.now() 毫秒阈值，60/120Hz 显示器速率无关）；硬上限 4s
+  - jumpToBottom 从一次性 smooth 改 superviseGlide 追踪实时 maxScroll（底部非定点：接近时挂载波令 scrollHeight 持续变，一次性 smooth 必落短）
+- E2E 验证（agent-browser 数值探针，MscL 2612w 真文章、8 section 壳、804px 视口）：
+  - 跳转动画存在性：TOC6 远跳 log=[instant(teleport)→1076, smooth→2113/1975/1783/1614/1502]——teleport+5 次 smooth 追踪，scrollTop 帧样本呈 ~700ms 连续滑行轨迹 ✓
+  - 落点精度：一跳/二跳 targetDelta 均 12px（offsetAdjust 精确生效）✓
+  - 用户中断弃权（核心）：滑行中注入 WheelEvent → wheel 后 callsAfterWheel=[] 监督器零纠偏 ✓（旧代码此处会逐帧 instant 拉回=锁）；终位 93px 偏差系合成 wheel 不取消原生动画（真实滚轮连动画一起取消），语义正确
+  - 静默期锁测试：无跳转进行时手动 +300 → 800ms 内 callsDuringQuiet=[]（程序零干预；-61px 漂移为浏览器 scroll-anchoring 对首过估算落差的本地补偿，视觉位置稳定）✓
+  - 收敛早退：落位后日志静默、样本长期平线 ✓；jumpToBottom 落 maxScroll=1575 精确（scrollHeight 2566→2379 实时追踪）✓；短跳（531px）零 teleport 纯 smooth 两调用、12px 落位 ✓
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）；dev.log 无新错误；0 page error，console 仅 4 条既有基线警告（resizable×3 + DialogContent aria）
+
+Stage Summary:
+- round-44 的「精确但暴力」锁定循环换为「动画+谦让」：纠偏只 smooth、用户输入即刻全撤、收敛即退——三个症状（无动画/锁定/过会才能滚）同源同修
+- 修改文件：article-viewer-tabs.tsx（twoPhaseScrollTo 重写+superviseGlide/cancelJumpSupervision+jumpToBottom 监督+搜索滚动让位）、virtualized-article.tsx（头注释 B 部分同步）
+- 方法论入档：合成 WheelEvent 可验证监督器弃权（listener 层）但不能取消原生动画（位置层）——两层要分开断言；rAF 帧计数阈值在 120Hz 下减半，毫秒阈值速率无关
