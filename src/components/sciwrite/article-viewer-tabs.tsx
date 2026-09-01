@@ -87,7 +87,7 @@ import { ExportMenu } from "./export-menu";
 import { ReviewDialog } from "./review-dialog";
 import { MarkdownCitations, parseCitationsBlock } from "./markdown-citations";
 import { CitationGraph } from "./citation-graph";
-import { VirtualizedArticle } from "./virtualized-article";
+import { VirtualizedArticle, requestSectionMounts } from "./virtualized-article";
 import { VersionHistoryDialog } from "./version-history-dialog";
 import { CitationVerifyDialog } from "./citation-verify-dialog";
 import { CommentsPanel } from "./comments-panel";
@@ -133,23 +133,25 @@ interface Props {
   onClose: () => void;
 }
 
-/* round-44/45/46 — scroll-jump helpers shared by the viewer and its TOC rail.
+/* round-44..47 — scroll-jump helpers shared by the viewer and its TOC rail.
  *
  * The article body is virtualized (VirtualizedArticle): a section far from
  * the viewport is an EMPTY placeholder shell whose height is the last
- * MEASURED height (or an estimate on the very first pass). A single
- * un-supervised smooth scrollTo misses because sections mount as the
- * viewport travels (placeholder height → measured height swaps change the
- * scrollHeight MID-FLIGHT), so the goal drifts and the jump lands short.
+ * MEASURED height (or an ESTIMATE on the very first pass). Animating a
+ * jump through unmeasured territory used to overshoot: the glide was
+ * launched at a goal computed from estimates, then the mount waves along
+ * the way corrected the goal backward and the viewport visibly bounced
+ * back — "scrolls past the target, then jumps back".
  *
- * animatedScrollTo (round-46, per user request): ONE smooth glide from the
- * current position all the way to the target heading — no teleport, no
- * instant phase. A supervisor re-targets the glide (always smoothly)
- * whenever a mount wave moves the goal, and YIELDS to the user instantly:
- * the first wheel / touch / scrollbar drag / scroll-key during the
- * approach cancels all further correction. (round-44's per-frame instant
- * lock-on read as "locked, can't scroll"; the round-45 teleport started
- * far jumps with a hard cut — both are gone.) */
+ * animatedScrollTo (round-47) — three steps, all animated, no teleport:
+ *   0. PRE-MOUNT: force-mount every section the glide will pass through
+ *      (plus the observer's rootMargin band above the landing spot) via
+ *      requestSectionMounts — the layout becomes FINAL before moving.
+ *   1. SETTLE: wait a few frames for the mount commit (goal stable across
+ *      two frames, ~12-frame cap); if the user scrolls first, stand down.
+ *   2. GLIDE: one smooth scroll from the current position to the exact
+ *      heading; a supervisor re-targets (always smoothly) if anything
+ *      still drifts and YIELDS instantly to user input. */
 
 /** Nearest scrollable ancestor (overflowY auto/scroll and actually
  *  overflowing). Walks up from any element — works for both the Composed
@@ -199,41 +201,123 @@ function cancelJumpSupervision() {
   jumpSupervision++;
 }
 
-/** Shared supervised glide: issues a SMOOTH scroll toward getGoalTop()
- *  immediately (the click response is instant) and keeps re-targeting it
- *  while the virtualizer's mount waves settle the layout. Exits when the
- *  user scrolls (their intent wins), when a newer jump takes over, when
- *  the position settles on mounted content, or after a 4s backstop.
- *  Corrections are always smooth — never an instant snap. */
+/** User-intent guard shared by the settle wait and the glide: flips to
+ *  "took over" on the first wheel / touch / scrollbar drag / scroll-key
+ *  aimed at the viewport. keydown listens on document (focus may sit on
+ *  the dialog root, not inside the scroll container). */
+function attachUserIntentGuard(scrollEl: HTMLElement) {
+  let took = false;
+  const onInput = (e: Event) => {
+    if (e.type === "keydown" && !SCROLL_KEYS.has((e as KeyboardEvent).key)) return;
+    took = true;
+  };
+  const localEvents: ("wheel" | "touchstart" | "mousedown")[] = [
+    "wheel", "touchstart", "mousedown",
+  ];
+  const opts: AddEventListenerOptions = { capture: true, passive: true };
+  for (const t of localEvents) scrollEl.addEventListener(t, onInput, opts);
+  document.addEventListener("keydown", onInput, opts);
+  return {
+    tookOver: () => took,
+    detach: () => {
+      for (const t of localEvents) scrollEl.removeEventListener(t, onInput, opts);
+      document.removeEventListener("keydown", onInput, opts);
+    },
+  };
+}
+
+/** round-47 step 0 — pre-mount the span the glide will pass through so
+ *  the goal is FINAL before the animation starts. `targetShell` is the
+ *  jump target's [data-section-idx] shell; upward jumps additionally pin
+ *  the observer's rootMargin band ABOVE the landing spot (those sections
+ *  mount during the final approach and their height swaps would shift
+ *  the goal after arrival). No-op for non-virtualized bodies. */
+function preMountJumpSpan(scrollEl: HTMLElement, targetShell: HTMLElement): void {
+  const mountRoot = targetShell.parentElement;
+  if (!mountRoot) return;
+  const shells = Array.from(
+    mountRoot.querySelectorAll<HTMLElement>("[data-section-idx]"),
+  );
+  if (shells.length === 0) return;
+  const targetIdx = shells.indexOf(targetShell);
+  if (targetIdx < 0) return;
+  // Section at the viewport top (same 80px threshold the rail's spy uses).
+  const scrollRect = scrollEl.getBoundingClientRect();
+  let topIdx = 0;
+  shells.forEach((sh, i) => {
+    if (sh.getBoundingClientRect().top - scrollRect.top <= 80) topIdx = i;
+  });
+  let lo = Math.min(topIdx, targetIdx);
+  const hi = Math.max(topIdx, targetIdx);
+  if (targetIdx < topIdx) {
+    // Upward jump — extend above the landing spot by ~1800px of sections
+    // (placeholder shells report their placeholder height, mounted ones
+    // their real height — both fine for this estimate).
+    let acc = 0;
+    let i = targetIdx - 1;
+    while (i >= 0 && acc < 1800) {
+      acc += shells[i].getBoundingClientRect().height;
+      i -= 1;
+    }
+    lo = Math.min(lo, i + 1);
+  }
+  const indices: number[] = [];
+  for (let i = lo; i <= hi; i++) indices.push(i);
+  requestSectionMounts(mountRoot, indices);
+}
+
+/** round-47 step 1 — wait for the pin-mount commit + layout to settle
+ *  (goal stable across two frames, ~12-frame cap so a huge article can't
+ *  stall the click), then hand off. If the user scrolls first, stand down
+ *  entirely (their intent wins even during the settle window). */
+function waitForLayoutSettle(
+  scrollEl: HTMLElement,
+  getGoal: () => number,
+  then: () => void,
+) {
+  const guard = attachUserIntentGuard(scrollEl);
+  let stable = 0;
+  let last: number | null = null;
+  let frames = 0;
+  const tick = () => {
+    requestAnimationFrame(() => {
+      const goal = getGoal();
+      stable = last !== null && Math.abs(goal - last) <= 1 ? stable + 1 : 0;
+      last = goal;
+      frames += 1;
+      if (guard.tookOver() || !scrollEl.isConnected) {
+        guard.detach();
+        return;
+      }
+      if (stable >= 2 || frames >= 12) {
+        guard.detach();
+        then();
+        return;
+      }
+      tick();
+    });
+  };
+  tick();
+}
+
+/** round-47 step 2 — supervised glide: issues a SMOOTH scroll toward
+ *  getGoalTop() immediately and re-targets it if anything still drifts.
+ *  Exits when the user scrolls (their intent wins), when a newer jump
+ *  takes over, when the position settles on mounted content, or after a
+ *  4s backstop. Corrections are always smooth — never an instant snap. */
 function superviseGlide(
   scrollEl: HTMLElement,
   getGoalTop: () => number | null,
   targetEl?: HTMLElement | null,
 ) {
   const my = ++jumpSupervision;
-  let userTookOver = false;
-  const onUserInput = (e: Event) => {
-    if (e.type === "keydown" && !SCROLL_KEYS.has((e as KeyboardEvent).key)) return;
-    userTookOver = true;
-  };
-  // wheel/touch/mousedown on the scroll container (capture) + keydown on
-  // document (focus may sit on the dialog root, not inside the container).
-  const localEvents: ("wheel" | "touchstart" | "mousedown")[] = [
-    "wheel", "touchstart", "mousedown",
-  ];
-  const opts: AddEventListenerOptions = { capture: true, passive: true };
-  for (const t of localEvents) scrollEl.addEventListener(t, onUserInput, opts);
-  document.addEventListener("keydown", onUserInput, opts);
-  const detach = () => {
-    for (const t of localEvents) scrollEl.removeEventListener(t, onUserInput, opts);
-    document.removeEventListener("keydown", onUserInput, opts);
-  };
+  const guard = attachUserIntentGuard(scrollEl);
 
   // First glide — issued synchronously so the jump starts the moment the
-  // user clicks (no warm-up delay; the supervisor corrects drift later).
+  // settle wait hands off (the supervisor corrects residual drift later).
   const goal0 = getGoalTop();
   if (goal0 === null) {
-    detach();
+    guard.detach();
     return;
   }
   let lastIssued: number = goal0;
@@ -251,18 +335,18 @@ function superviseGlide(
       const dt = Math.max(0, now - lastNow);
       lastNow = now;
       if (
-        userTookOver ||
+        guard.tookOver() ||
         my !== jumpSupervision ||
         !scrollEl.isConnected ||
         (targetEl ? !targetEl.isConnected : false) ||
         now - start > 4000
       ) {
-        detach();
+        guard.detach();
         return;
       }
       const goal = getGoalTop();
       if (goal === null) {
-        detach();
+        guard.detach();
         return;
       }
       const delta = Math.abs(goal - scrollEl.scrollTop);
@@ -271,10 +355,10 @@ function superviseGlide(
       if (moving || delta <= 4) lastProgressAt = now;
 
       if (delta > 4) {
-        // Re-issue only when the goal actually moved (a mount wave swapped
-        // a placeholder height) or when the glide stalled (its animation
-        // was cancelled without user input) — re-issuing every frame would
-        // restart the easing and stutter.
+        // Re-issue only when the goal actually moved (residual drift) or
+        // when the glide stalled (its animation was cancelled without
+        // user input) — re-issuing every frame would restart the easing
+        // and stutter.
         const goalMoved = Math.abs(goal - lastIssued) > 8;
         const stalled = now - lastProgressAt > 200;
         if (goalMoved || stalled) {
@@ -291,7 +375,7 @@ function superviseGlide(
         if (mounted) {
           settledMs += dt;
           if (settledMs >= 400) {
-            detach();
+            guard.detach();
             return;
           }
         } else {
@@ -304,15 +388,29 @@ function superviseGlide(
   step();
 }
 
-/** Animated jump: a single supervised smooth glide from the CURRENT
- *  position to the target heading (see the block comment above). */
+/** Animated jump (round-47): pre-mount → settle → ONE smooth glide from
+ *  the CURRENT position to the target heading (see the block comment). */
 function animatedScrollTo(scrollEl: HTMLElement, targetEl: HTMLElement, offsetAdjust = 12) {
   const computeGoal = () =>
     targetEl.getBoundingClientRect().top -
     scrollEl.getBoundingClientRect().top +
     scrollEl.scrollTop -
     offsetAdjust;
-  superviseGlide(scrollEl, computeGoal, targetEl);
+  // Any supervision still running from a previous jump must not fight
+  // the settle window — take over the token now.
+  cancelJumpSupervision();
+  const shell = targetEl.matches("[data-section-idx]")
+    ? targetEl
+    : (targetEl.closest("[data-section-idx]") as HTMLElement | null);
+  if (shell) {
+    preMountJumpSpan(scrollEl, shell);
+    waitForLayoutSettle(scrollEl, computeGoal, () =>
+      superviseGlide(scrollEl, computeGoal, targetEl),
+    );
+  } else {
+    // Non-virtualized body — the layout is already final; glide at once.
+    superviseGlide(scrollEl, computeGoal, targetEl);
+  }
 }
 
 export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
@@ -2228,16 +2326,23 @@ function ArticleTOCSidebar({
     setActiveIdx(0);
   };
 
-  // Jump to the very bottom of the article. round-45: the bottom is not a
-  // fixed point while sections mount on approach (scrollHeight keeps
-  // shifting), so a one-shot smooth scrollTo lands short — the supervised
-  // glide keeps re-targeting the live maxScroll until it settles.
+  // Jump to the very bottom of the article. round-47: pre-mount the span
+  // so the bottom (maxScroll) is final BEFORE gliding — the mount waves
+  // used to shrink the bottom mid-glide and the viewport bounced back.
   const jumpToBottom = () => {
     const scrollEl = findScrollEl();
-    if (scrollEl) {
-      superviseGlide(scrollEl, () => scrollEl.scrollHeight - scrollEl.clientHeight);
-      setActiveIdx(sections.length - 1);
+    if (!scrollEl) return;
+    cancelJumpSupervision();
+    const goal = () => scrollEl.scrollHeight - scrollEl.clientHeight;
+    const shells = scrollEl.querySelectorAll<HTMLElement>("[data-section-idx]");
+    const lastShell = shells.length > 0 ? shells[shells.length - 1] : null;
+    if (lastShell) {
+      preMountJumpSpan(scrollEl, lastShell);
+      waitForLayoutSettle(scrollEl, goal, () => superviseGlide(scrollEl, goal));
+    } else {
+      superviseGlide(scrollEl, goal);
     }
+    setActiveIdx(sections.length - 1);
   };
 
   // Copy a section's text content to clipboard

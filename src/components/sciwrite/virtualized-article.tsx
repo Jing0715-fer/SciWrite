@@ -50,13 +50,33 @@ const ROOT_MARGIN = "1500px 0px"; // pre-mount sections within 1500px of viewpor
  *      the placeholder uses the RECORDED height instead of the estimate, so
  *      scrollHeight stays constant after the first pass — no mid-scroll
  *      jumps, and jump offsets stay valid.
- *   B. SUPERVISED SMOOTH JUMP: callers jump via [data-h2-idx] markers which
- *      exist on BOTH mounted and placeholder section shells (see
- *      jumpToSection in article-viewer-tabs.tsx): a single smooth glide
- *      from the current position to the heading, re-targeted smoothly
- *      whenever a mount wave moves the goal, and cancelled by the first
- *      user input (round-46 — no teleport, never an instant snap).
+ *   B. PRE-MOUNTED SMOOTH JUMP: callers jump via [data-h2-idx] markers
+ *      which exist on BOTH mounted and placeholder section shells (see
+ *      jumpToSection in article-viewer-tabs.tsx). The span the glide will
+ *      pass through is force-mounted FIRST (requestSectionMounts below),
+ *      so the goal is final before the animation starts — then one smooth
+ *      glide runs to the exact heading, re-targeted smoothly if anything
+ *      still drifts and cancelled by the first user input (round-46/47 —
+ *      no teleport, never an instant snap).
  */
+
+/** round-47: jump pre-mount channel. The jump code (article-viewer-tabs)
+ *  asks the virtualizer to force-mount a span of sections BEFORE the
+ *  animated glide starts, so the goal is final for the whole animation —
+ *  gliding through unmeasured placeholders made jumps overshoot and then
+ *  bounce back when the mount waves corrected the goal. Dispatched on the
+ *  VirtualizedArticle wrapper (the section shells' parent node);
+ *  VirtualizedSections listens there and merges the indices into its
+ *  visible set. Pinned sections unmount naturally when the viewport
+ *  leaves them (the observer's boundary-crossing flow) — no TTL needed. */
+export const SECTION_MOUNT_REQUEST = "sciwrite:section-mount-request";
+
+export function requestSectionMounts(root: HTMLElement, indices: number[]): void {
+  // bubbles: true — the listener may sit on an ancestor of the dispatch
+  // node (the caller's ref can be co-attached to outer nodes), so the
+  // event must climb to reach it.
+  root.dispatchEvent(new CustomEvent(SECTION_MOUNT_REQUEST, { detail: indices, bubbles: true }));
+}
 
 /**
  * Estimate the rendered height of a section based on its character mix.
@@ -158,6 +178,21 @@ export function VirtualizedArticle({
   const cleanedContent = React.useMemo(() => cleanArticleContent(content), [content]);
   const sections = React.useMemo(() => splitIntoSections(cleanedContent), [cleanedContent]);
 
+  // round-47 fix: the mount-request listener must sit on THIS wrapper (the
+  // shells' direct parent). The caller's contentRef can be co-attached to an
+  // ancestor node elsewhere — last-writer-wins makes which node it points at
+  // non-deterministic — so anchor the listener with an internal ref merged
+  // onto the same div. The dispatch node (shells' parentElement) then always
+  // matches the listener node.
+  const localWrapperRef = React.useRef<HTMLDivElement | null>(null);
+  const setWrapperRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      localWrapperRef.current = node;
+      if (contentRef) contentRef.current = node;
+    },
+    [contentRef],
+  );
+
   // Extract the "## References" section from the FULL article content so that
   // body sections (which don't contain the References section) can still
   // resolve citation markers like [1], [2] to the correct reference.
@@ -207,13 +242,14 @@ export function VirtualizedArticle({
   }
 
   return (
-    <div ref={contentRef} className={`${className} scroll-academic`}>
+    <div ref={setWrapperRef} className={`${className} scroll-academic`}>
       <VirtualizedSections
         sections={sections}
         annotations={annotations}
         references={globalArticleRefs}
         onCitationClick={onCitationClick}
         onAnnotationClick={onAnnotationClick}
+        rootRef={localWrapperRef}
       />
     </div>
   );
@@ -242,12 +278,14 @@ function VirtualizedSections({
   references,
   onCitationClick,
   onAnnotationClick,
+  rootRef,
 }: {
   sections: Section[];
   annotations: Annotation[];
   references: CitationRef[];
   onCitationClick?: (ref: CitationRef, index: number) => void;
   onAnnotationClick?: (a: Annotation) => void;
+  rootRef?: React.RefObject<HTMLDivElement | null>;
 }) {
   const [visibleSet, setVisibleSet] = React.useState<Set<number>>(new Set());
   const observerRef = React.useRef<IntersectionObserver | null>(null);
@@ -297,6 +335,33 @@ function VirtualizedSections({
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  // round-47: jump pre-mount channel — see requestSectionMounts above.
+  // Merges the requested indices into the visible set; the observer's
+  // natural boundary-crossing flow unmounts them once the viewport moves
+  // on (no IO entry fires for a far pinned section until the viewport
+  // actually crosses its rootMargin boundary, so pins persist).
+  React.useEffect(() => {
+    const root = rootRef?.current;
+    if (!root) return;
+    const handler = (e: Event) => {
+      const indices = (e as CustomEvent).detail as number[] | undefined;
+      if (!indices || indices.length === 0) return;
+      setVisibleSet((prev) => {
+        const next = new Set(prev);
+        let changed = false;
+        for (const i of indices) {
+          if (i >= 0 && i < sections.length && !next.has(i)) {
+            next.add(i);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    };
+    root.addEventListener(SECTION_MOUNT_REQUEST, handler);
+    return () => root.removeEventListener(SECTION_MOUNT_REQUEST, handler);
+  }, [rootRef, sections.length]);
 
   // Callback for MeasureOnMount — records a section's real height.
   const handleMeasured = React.useCallback((idx: number, h: number) => {
@@ -369,10 +434,10 @@ function VirtualizedSections({
                   onAnnotationClick={onAnnotationClick}
                   suppressRefList={!isReferencesSection && references.length > 0}
                 />
-                {/* round-44: record the real height one frame after mount so
-                    the placeholder can reuse it on unmount (stable
+                {/* round-44: record the real height at mount so the
+                    placeholder can reuse it on unmount (stable
                     scrollHeight). */}
-                <MeasureOnMount idx={idx} elRef={sectionRefs} onMeasured={handleMeasured} />
+                <MeasureOnMount idx={idx} onMeasured={handleMeasured} />
               </>
             ) : (
               // Placeholder — an EMPTY div at the recorded/estimated height.
@@ -388,31 +453,43 @@ function VirtualizedSections({
 }
 
 /**
- * MeasureOnMount — invisible helper rendered inside a MOUNTED section:
- * measures the section shell's real height SYNCHRONOUSLY in the same commit
- * (useLayoutEffect — before paint, so the recorded height is the layout's
- * final value for that frame) and reports it through onMeasured. React
- * batches the setState calls from all sections mounting in the same commit
- * into ONE re-render, so the placeholder-height updates land in a single
- * layout pass instead of a drawn-out feedback loop (the rAF-based version
- * produced serial re-render waves that kept shifting the layout for >2s —
- * every mid-flight jump offset kept going stale).
+ * MeasureOnMount — invisible sentinel rendered inside a MOUNTED section.
+ *
+ * round-47 fix: this used to look the shell up in the parent's ref map,
+ * but React's bottom-up commit order runs this component's layout effect
+ * BEFORE the shell's ref callback populates that map — every lookup came
+ * back undefined, so heights were NEVER recorded and every unmount fell
+ * back to the estimate (scrollHeight changed on each unmount — the
+ * "jumps down past the target, then bounces back" symptom). Instead the
+ * sentinel measures its OWN parentElement (the shell): the sentinel's
+ * host ref is guaranteed to attach before this effect runs — same
+ * bottom-up order, used to our advantage. Measuring synchronously in the
+ * same commit (before paint) keeps the recorded height the layout's final
+ * value for that frame, and React batches the setStates from all sections
+ * mounting in one commit into a single re-render.
  */
 function MeasureOnMount({
   idx,
-  elRef,
   onMeasured,
 }: {
   idx: number;
-  elRef: React.RefObject<Map<number, HTMLDivElement>>;
   onMeasured: (idx: number, h: number) => void;
 }) {
+  const sentinelRef = React.useRef<HTMLSpanElement | null>(null);
   React.useLayoutEffect(() => {
-    const el = elRef.current?.get(idx);
-    if (el && el.isConnected) {
-      const h = el.getBoundingClientRect().height;
+    const shell = sentinelRef.current?.parentElement;
+    if (shell && shell.isConnected) {
+      // Full footprint: distance to the NEXT shell's top (height + the
+      // inter-section gap). The gap comes from the mounted content's
+      // trailing margin and vanishes on unmount — the placeholder must
+      // reserve it too, or every unmount shrinks the layout by the gap and
+      // mid-glide goals drift (round-47: observed -20px per passed section).
+      const next = shell.nextElementSibling;
+      const h = next
+        ? next.getBoundingClientRect().top - shell.getBoundingClientRect().top
+        : shell.getBoundingClientRect().height;
       if (h > 0) onMeasured(idx, h);
     }
-  }, [idx, elRef, onMeasured]);
-  return null;
+  }, [idx, onMeasured]);
+  return <span ref={sentinelRef} aria-hidden="true" style={{ display: "none" }} />;
 }

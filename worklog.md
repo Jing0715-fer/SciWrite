@@ -2695,3 +2695,31 @@ Work Log:
 Stage Summary:
 - 跳转动画最终形态：点击 → 同步起 smooth 滑行 → 挂载波期间 smooth 重定向追踪 → 精确落位后 0.4s 静止即撤；用户任何输入立即让位；全程零 instant 零 teleport
 - 修改文件：article-viewer-tabs.tsx（animatedScrollTo 重命名+teleport 删除+首滑同步化）、virtualized-article.tsx（注释同步）
+
+---
+Task ID: round-47
+Agent: main (Z.ai Code)
+Task: 用户报障「现在还是跳到下面再往回跳，不要这样」——跳转先冲过目标再弹回
+
+Work Log:
+- 根因定位（数值探针层层深挖，三连环）：
+  - 表层：首滑目标按「未测量估算高度」计算（偏远），滑行途中挂载波把目标往回调 → 视口冲过头再弹回（实测 TOC6：视口峰值 1658 vs 终点 1502）
+  - 中层：pin 事件通道断裂——监听器挂在 composedContentRef.current（外层 div，双重挂载 ref 竞争的外层胜出）而派发在内层 wrapper 且 bubbles:false，事件永远到不了监听器；前两次「pin 生效」实为滑行落点自然挂载的假象
+  - 深层（决定性发现，调试探针 mfx-lookup=false 实锤）：MeasureOnMount 的 useLayoutEffect 先于外壳 ref 回调执行（React 自底向上提交顺序），sectionRefs 映射恒为空 → **高度测量自 round-44 以来从未成功过**，卸载占位全部回落估算值 → scrollHeight 随挂载状态漂移 = 一切弹跳的总根源；另实测 IO rootMargin 1500px 被溢出祖先裁剪吞掉（isIntersecting 只在真正可见时为 true），预挂载从未生效
+- 修复（virtualized-article.tsx 为主）：
+  - ① MeasureOnMount 哨兵重构：渲染隐形 span，用 sentinelRef.current.parentElement 找外壳（子 ref 先于父效果挂载——同一自底向上顺序反用），彻底消除 ref 时序依赖；测量值改「完整足迹」= 下一壳 top − 本壳 top（含段间距——间距随内容卸载消失，占位必须预留，否则每次卸载布局缩 ~20px）
+  - ② pin 通道修复：VirtualizedArticle 内部 localWrapperRef（merge 回调，与外部 ref 竞争解耦）锚定监听器于壳父节点；requestSectionMounts 加 bubbles:true 兜底
+  - ③ article-viewer-tabs.tsx：animatedScrollTo 三步化（preMountJumpSpan 预挂载沿途+落点上方 rootMargin 带 → waitForLayoutSettle 目标连续 2 帧稳定才起滑/12 帧上限/用户先滚则全撤 → superviseGlide 单条 smooth 滑行）；attachUserIntentGuard 抽共享；jumpToBottom 同样预挂载+settle
+- E2E 验证（agent-browser 数值探针，MscL 文章）：
+  - 缓存首次真正生效：挂载 248/458 → 卸载占位 248/458（零差值）；挂载/卸载布局壳间距逐位一致（268/470/274/432/379）✓
+  - 远跳 TOC6（0→2391）：pin 挂载 ✓、settle 257ms ✓、真实调用仅 2 次（2379→2391 微调）、**maxSample === final === 2391（视口从未越过终点 1px——零回弹）**、轨迹单调、落点 delta=12 ✓
+  - 上跳 TOC1（2452→435）：**单次 smooth 调用直达**（零纠偏）✓、单调、delta=12 ✓
+  - 底部跳：单次 smooth 精确落 maxScroll=2456 ✓
+  - 零 instant 全场景 ✓；console 仅 4 条既有基线警告 ✓
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）；dev.log 无新错误；调试探针全部移除（rg 验证零残留）
+- 诊断方法论入档：①「假成功」陷阱——手动派发事件后观察到的挂载其实是滑行落点的自然 IO 挂载，断言前必须证明因果；② React 自底向上提交顺序：子组件 useLayoutEffect 先于父 host ref 回调——跨层级 ref 映射在 effect 期不可用，哨兵 parentElement 模式是正解；③ IO rootMargin 会被溢出祖先裁剪吞掉（目标 rect 先被 clip 再与根带相交）——overflow 容器内的「预挂载带」策略全部无效，强制挂载必须走状态通道
+
+Stage Summary:
+- 三层连环根因（估算目标漂移 → pin 事件断裂 → 测量从未生效）一次修复；跳转动画终态：预挂载定形布局 → 单条 smooth 单调滑行 → 12px 落点，全程零回弹零瞬移零锁
+- 修改文件：virtualized-article.tsx（哨兵测量+足迹高度+pin 通道+内部 ref 锚定）、article-viewer-tabs.tsx（三步化跳转+guard 抽取+jumpToBottom 预挂载）
+- 顺带修复 round-44 遗留假象：高度缓存从未工作过（本轮才真正生效）；IO rootMargin 预挂载无效的档案记录
