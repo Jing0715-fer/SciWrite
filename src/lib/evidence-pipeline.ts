@@ -83,21 +83,31 @@ function formatRefForAnalysis(r: EvidenceRefInput, i: number): string {
  * reference — not inferences about the topic in general. References are
  * processed in batches of ~14 to keep outputs well under token limits and
  * parsing reliable.
+ *
+ * round-42: `opts.fullTexts` (refId → full-text block) deepens the analysis —
+ * refs whose full text was fetched get a ~900-char excerpt appended, so the
+ * extracted claims come from the COMPLETE article rather than just the
+ * abstract (能获取到全文的一定要看全文). The batch size shrinks to 10 when
+ * full texts are present so each prompt stays comfortably under
+ * llm-session's 28000-char compression cap.
  */
 export async function extractEvidenceBank(
   projectId: string,
   refs: EvidenceRefInput[],
   topic: string,
   field: string,
-  opts: { maxRefs?: number; batchSize?: number; maxTokens?: number } = {}
+  opts: { maxRefs?: number; batchSize?: number; maxTokens?: number; fullTexts?: Map<string, string> } = {}
 ): Promise<EvidenceItem[]> {
   const maxRefs = opts.maxRefs ?? 40;
-  const batchSize = opts.batchSize ?? 14;
+  // round-42: shrink batches when full-text excerpts inflate each ref block.
+  const batchSize = opts.fullTexts && opts.fullTexts.size > 0
+    ? Math.min(opts.batchSize ?? 14, 10)
+    : (opts.batchSize ?? 14);
   const limited = refs.slice(0, maxRefs);
 
   const system = `You are a meticulous research analyst building an EVIDENCE BANK for a review article on: ${topic} (${field}).
 Your ONLY job is to extract claims that each source ACTUALLY makes. You are the anti-hallucination stage:
-- Every claim must be directly supported by the reference's title/abstract shown to you.
+- Every claim must be directly supported by the reference's title/abstract (and full-text excerpt, when shown) — never beyond what is shown.
 - Do NOT infer, extrapolate, or add domain knowledge not present in the source.
 - Do NOT write claims about the topic in general.
 - Prefer quantitative specifics (numbers, methods, named proteins, trial names) over vague statements.`;
@@ -106,7 +116,15 @@ Your ONLY job is to extract claims that each source ACTUALLY makes. You are the 
 
   for (let b = 0; b < limited.length; b += batchSize) {
     const batch = limited.slice(b, b + batchSize);
-    const refList = batch.map((r, j) => formatRefForAnalysis(r, b + j)).join("\n\n");
+    const refList = batch.map((r, j) => {
+      const base = formatRefForAnalysis(r, b + j);
+      const ft = opts.fullTexts?.get(r.id || "");
+      if (ft) {
+        const excerpt = ft.replace(/\s+/g, " ").slice(0, 900);
+        return `${base}\n  FULL-TEXT EXCERPT (from the complete article — extract claims from here too, deeper than the abstract): ${excerpt}`;
+      }
+      return base;
+    }).join("\n\n");
     const prompt = `SOURCES (batch ${Math.floor(b / batchSize) + 1}):
 ${refList}
 
@@ -160,6 +178,13 @@ Respond as STRICT JSON only:
  * allocated to multiple sections; every section must receive at least
  * `minRefsPerSection` references so the writer always has material.
  *
+ * round-42: `opts.preallocatedRefs` (per-section 1-based ref-index arrays)
+ * short-circuits the LLM call — the PLAN stage already co-designed the
+ * outline and its citation map (先根据主题、长度确定大纲和引用哪些参考文献),
+ * so this stage only validates the plan, tops thin sections up to the
+ * minimum in pool-priority order, and filters the evidence bank. The LLM
+ * allocator runs ONLY when no pre-allocation was provided (legacy paths).
+ *
  * Falls back to keyword-overlap allocation if the LLM response is unusable
  * (never blocks the pipeline).
  */
@@ -169,7 +194,12 @@ export async function allocateEvidenceToSections(
   refs: EvidenceRefInput[],
   evidence: EvidenceItem[],
   topic: string,
-  opts: { minRefsPerSection?: number; maxRefsPerSection?: number; maxTokens?: number } = {}
+  opts: {
+    minRefsPerSection?: number;
+    maxRefsPerSection?: number;
+    maxTokens?: number;
+    preallocatedRefs?: number[][];
+  } = {}
 ): Promise<SectionAllocation[]> {
   const minRefs = opts.minRefsPerSection ?? 6;
   const maxRefs = opts.maxRefsPerSection ?? 14;
@@ -180,6 +210,40 @@ export async function allocateEvidenceToSections(
 
   if (!evidence.length || !refs.length) {
     return fallbackAlloc;
+  }
+
+  // --- round-42: plan-driven allocation (no LLM call — the plan stage
+  // already decided which refs each section cites; validate + top up).
+  if (opts.preallocatedRefs && opts.preallocatedRefs.length > 0) {
+    const cited = new Set<number>();
+    const merged: SectionAllocation[] = sections.map((s, i) => {
+      const planned = (opts.preallocatedRefs![i] || [])
+        .map((n) => parseInt(String(n), 10))
+        .filter((n) => n >= 1 && n <= refs.length);
+      const uniq = [...new Set(planned)].slice(0, maxRefs);
+      for (const n of uniq) cited.add(n);
+      return {
+        sectionIndex: i,
+        refIndices: uniq,
+        evidence: evidence.filter((e) => uniq.includes(e.refIndex)),
+        rationale: "plan-preallocated",
+      };
+    });
+    // Top thin sections up to minRefs in pool order (the pool arrives
+    // priority-ordered from smart curation). Never exceeds available refs —
+    // a thin pool simply yields sections with fewer refs (不强行凑数).
+    for (const alloc of merged) {
+      if (alloc.refIndices.length >= minRefs) continue;
+      for (let n = 1; n <= refs.length && alloc.refIndices.length < minRefs; n++) {
+        if (!alloc.refIndices.includes(n) && !cited.has(n)) {
+          alloc.refIndices.push(n);
+          cited.add(n);
+          alloc.rationale = "plan-preallocated+priority-topup";
+        }
+      }
+      alloc.evidence = evidence.filter((e) => alloc.refIndices.includes(e.refIndex));
+    }
+    return merged;
   }
 
   const system = `You are a review-article architect allocating an EVIDENCE BANK to article sections.
@@ -317,10 +381,15 @@ function allocateByKeywords(
  * Build the EVIDENCE CONTEXT block for one section's writing prompt.
  * Every claim is shown WITH its citation key, so the writer model can only
  * cite sources through claims that have already been extracted from them.
+ *
+ * round-42: `fullTexts` (refId → block) attaches a compact full-text excerpt
+ * to refs that have one, flagged so the writer knows the claims for that
+ * source come from the complete article.
  */
 export function buildEvidenceContext(
   allocation: SectionAllocation,
-  refs: EvidenceRefInput[]
+  refs: EvidenceRefInput[],
+  fullTexts?: Map<string, string>
 ): string {
   const refSubset = allocation.refIndices
     .map((n) => refs[n - 1])
@@ -333,7 +402,11 @@ export function buildEvidenceContext(
       const yr = r.year ? ` (${r.year})` : "";
       const jour = r.journal ? `, ${r.journal}` : "";
       const abs = r.abstract ? `\n    Abstract: ${r.abstract.slice(0, 300)}` : "";
-      return `{{R${i + 1}}} ${auth}${yr}${jour}. ${r.title || "Untitled"}.${abs}`;
+      const ft = fullTexts?.get(r.id || "");
+      const ftBlock = ft
+        ? `\n    [FULL TEXT AVAILABLE — the verified claims below for this source were extracted from the COMPLETE article]\n    Full-text excerpt: ${ft.replace(/\s+/g, " ").slice(0, 700)}`
+        : "";
+      return `{{R${i + 1}}} ${auth}${yr}${jour}. ${r.title || "Untitled"}.${abs}${ftBlock}`;
     })
     .join("\n");
 

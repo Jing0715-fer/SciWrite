@@ -10,7 +10,7 @@ import {
   type KVSourceInput,
 } from "@/lib/knowledge-verify";
 import {
-  VERIFY_BATCH_SIZE, VERIFY_REMOVE_CONFIDENCE, maxCitableRefsFor } from "@/lib/v2-config";
+  VERIFY_BATCH_SIZE, VERIFY_REMOVE_CONFIDENCE } from "@/lib/v2-config";
 import { logger } from "@/lib/logger";
 import { webSearch } from "@/lib/ai";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
@@ -36,7 +36,6 @@ import {
 } from "@/lib/evidence-pipeline";
 import {
   countBySource,
-  curateReferences,
   dedupePreprintVersions,
   ensurePrimaryPaperCoverage,
   generateWebSearchQueries,
@@ -45,6 +44,19 @@ import {
   trailingUncitedClaimWords,
   safeParseJSON,
 } from "@/lib/generate-full-helpers";
+// round-42: importance-driven citation planning — score every source,
+// curate with a dynamic count, fetch full texts, co-plan outline+citations.
+import {
+  buildFullTextProfiles,
+  scoreSources,
+  smartCurateReferences,
+  fetchFullTextsForRefs,
+  formatScoredRefLine,
+  validateSectionCitationPlan,
+  synthesizeBackfillScore,
+  typicalCitationCount,
+  type SourceScore,
+} from "@/lib/citation-planner";
 import {
   preFlightQuotaCheck,
   isAborted,
@@ -170,6 +182,11 @@ export async function POST(req: NextRequest) {
         knowledgeCrossrefAdded: 0,
         knowledgePromoted: 0,
         knowledgeUnverified: 0,
+        // round-42: citation-planning telemetry
+        citationPlanned: 0,
+        citationCoreCovered: 0,
+        citationLLMDriven: false,
+        fullTextsUsed: 0,
       };
 
       // Hoisted for the catch block's failure-recovery logic (try-block
@@ -645,12 +662,20 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           );
         }
 
-        // ============ STEP 2: Curate ============
-        send("step", { step: "curate", status: "started", message: `Curating references...` });
-        // ★ round-14: mechanically drop preprint duplicates of published works
-        // BEFORE curation, so the same work can never enter the article twice
-        // (E2E finding: bioRxiv/Research Square preprints cited side-by-side
-        // with their eLife/Nat Commun published versions).
+        // ============ STEP 1.7: Score source importance (round-42) ============
+        // 先对文献重要性打分：LLM scores EVERY gathered source for topical
+        // relevance + scholarly importance, with the mechanical full-text
+        // profile (PMC free article / deep-read summary) as an understanding-
+        // depth tiebreaker. The preprint dedupe runs BEFORE scoring so the
+        // scores align with the deduplicated pool the curator will see.
+        send("step", {
+          step: "score",
+          status: "started",
+          message: `Scoring ${savedReferences.length} sources for importance (relevance × importance × full-text depth)...`,
+        });
+        // ★ round-14 (moved up from the curate step): mechanically drop
+        // preprint duplicates of published works BEFORE scoring/curation, so
+        // the same work can never enter the article twice.
         const deduped = dedupePreprintVersions(savedReferences);
         if (deduped.dropped.length > 0) {
           stats.preprintDuplicatesDropped = deduped.dropped.length;
@@ -661,38 +686,138 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
                 .join(" | ")
           );
         }
-        const maxCitableRefs = maxCitableRefsFor(targetWords, deduped.refs.length);
-        let curatedRefs = await curateReferences(
-          projectId, deduped.refs, project.topic, project.field || "life sciences", maxCitableRefs, maxTokens
+        const fullTextProfiles = buildFullTextProfiles(deduped.refs, savedDataSources);
+        const scoring = await scoreSources(
+          projectId,
+          deduped.refs,
+          fullTextProfiles,
+          project.topic,
+          project.field || "life sciences",
+          {
+            maxTokens,
+            onProgress: (m) => send("step", { step: "score", status: "progress", message: m }),
+          }
         );
+        const allScores = scoring.scores;
+        {
+          const core = allScores.filter((s) => s.tier === "core").length;
+          const important = allScores.filter((s) => s.tier === "important").length;
+          const marginal = allScores.length - core - important;
+          const withFullText = allScores.filter((s) => s.depth === "fulltext").length;
+          send("step", {
+            step: "score",
+            status: "done",
+            scoredCount: allScores.length,
+            coreCount: core,
+            importantCount: important,
+            marginalCount: marginal,
+            fullTextCount: withFullText,
+            llmBatches: scoring.llmBatches,
+            fallbackBatches: scoring.fallbackBatches,
+            message: `Scored ${allScores.length} sources: ${core} core / ${important} important / ${marginal} marginal (${withFullText} with full text available).`,
+          });
+          log(`score: ${allScores.length} sources — core=${core} important=${important} marginal=${marginal} fulltext=${withFullText} llmBatches=${scoring.llmBatches} fallbackBatches=${scoring.fallbackBatches}`);
+        }
+
+        // ============ STEP 2: Curate — dynamic citation count (round-42) ============
+        // The LLM now decides HOW MANY references the article genuinely
+        // needs from the scored pool (bounded by guardrails), instead of the
+        // old fixed-count selection. A thin pool yields a smaller citation
+        // list; a rich pool feeding a short article drops marginal sources.
+        send("step", {
+          step: "curate",
+          status: "started",
+          message: `Selecting the citation pool — the count follows source quality, not a fixed quota...`,
+        });
+        const smart = await smartCurateReferences(
+          projectId,
+          deduped.refs,
+          allScores,
+          project.topic,
+          project.field || "life sciences",
+          targetWords,
+          {
+            maxTokens,
+            onProgress: (m) => send("step", { step: "curate", status: "progress", message: m }),
+          }
+        );
+        let curatedRefs = smart.refs;
+        let curatedScores = smart.scores;
+        stats.citationPlanned = smart.plannedCount;
+        stats.citationLLMDriven = smart.llmDriven;
         send("step", {
           step: "curate",
           status: "done",
           curatedCount: curatedRefs.length,
-          message: `Curated ${curatedRefs.length} references from ${deduped.refs.length}${deduped.dropped.length ? ` (${deduped.dropped.length} preprint duplicates dropped)` : ""}.`,
+          plannedCitations: smart.plannedCount,
+          llmDriven: smart.llmDriven,
+          message: `Citation pool: ${curatedRefs.length} of ${deduped.refs.length} scored sources selected for a ${targetWords}-word article (typical density ~${typicalCitationCount(targetWords)}).`,
+          detail: smart.rationale,
         });
-        log(`curate: ${curatedRefs.length} refs`);
+        log(`curate: ${curatedRefs.length}/${deduped.refs.length} refs — plannedCitations=${smart.plannedCount} llmDriven=${smart.llmDriven} — ${smart.rationale}`);
 
-        // ============ STEP 3: Plan outline ============
-        send("step", { step: "plan", status: "started", message: "Planning article outline..." });
+        // ============ STEP 2.5: Fetch full texts for the pool (round-42) ============
+        // 能获取到全文的一定要看全文：the pool arrives priority-ordered, so
+        // the fetch budget goes to the most important sources first. Deep-read
+        // summaries ride along free; PMC fetches are capped at 8 × 15k chars.
+        send("step", {
+          step: "curate",
+          status: "progress",
+          message: `Fetching full texts for the highest-priority sources (enables deeper discussion)...`,
+        });
+        const fullTexts = await fetchFullTextsForRefs(curatedRefs, fullTextProfiles, {
+          maxCount: 8,
+          maxChars: 15000,
+          onProgress: (m, extra) => send("step", { step: "curate", status: "progress", message: m, ...extra }),
+        });
+        stats.fullTextsUsed = fullTexts.size;
+        send("step", {
+          step: "curate",
+          status: "progress",
+          message: `Full-text stage complete: ${fullTexts.size} source(s) readable in depth.`,
+        });
+        log(`fulltext: ${fullTexts.size} sources with full text/deep-read content`);
+
+        // ============ STEP 3: Plan outline + citation map (round-42) ============
+        // 先根据主题、长度确定大纲和引用哪些参考文献，再细化内容：the plan
+        // now co-designs the outline AND which pool sources each section
+        // cites — the allocation stage downstream only refines this map.
+        send("step", {
+          step: "plan",
+          status: "started",
+          message: `Planning the outline + citation map for a ${targetWords}-word article from ${curatedRefs.length} scored sources...`,
+        });
         const planSystem =
           "You are a senior research advisor who designs publication-ready review outlines. " +
-          "Plan sections with target word counts that sum to the total. Prefer MORE sections with SMALLER targets.";
+          "Plan sections with target word counts that sum to the total, AND decide which references each section cites. " +
+          "Prefer MORE sections with SMALLER targets.";
+        const scoredPoolLines = curatedRefs
+          .slice(0, 40)
+          .map((r: any, i: number) => formatScoredRefLine(r, curatedScores[i], i + 1))
+          .join("\n");
         const planPrompt = `RESEARCH TOPIC: ${project.topic}
 FIELD: ${project.field || "life sciences"}
 TARGET TOTAL WORDS: ${targetWords}
-CURATED REFERENCES: ${curatedRefs.length} citable references.
+CITATION POOL: ${curatedRefs.length} scored sources — the article's citations come ONLY from this pool.
 
-KEY SOURCES:
-${curatedRefs.slice(0, 30).map((r: any, i: number) => `[${i + 1}] ${r.authors || "Anon"} (${r.year || "n.d."}) ${r.title?.slice(0, 80) || ""}`).join("\n")}
+SCORED SOURCES (sorted by citation priority — CORE > IMPORTANT > MARGINAL):
+${scoredPoolLines}
 
 Plan a comprehensive review article with ${Math.max(5, Math.ceil(targetWords / 400))}-${Math.max(8, Math.ceil(targetWords / 300))} sections.
 Each section 200-450 words. Sections must cover DISTINCT aspects of the topic.
 
+CITATION PLANNING — design the outline AND the citations TOGETHER:
+- For EACH section, list the pool sources it will cite as "refIndices" (the [n] numbers above).
+- Every CORE source must be cited by at least one section.
+- MARGINAL sources may be dropped entirely — never cite a source that does not fit a section's focus just to use it.
+- A ${targetWords}-word review typically cites ~${typicalCitationCount(targetWords)} references in total; let the pool and the section needs decide the final count — do not pad.
+- Give each section 2-6 refIndices (more for evidence-dense sections, fewer for outlook/perspective sections).
+- Sources with FULL TEXT: yes support deeper claims — favor them for sections needing mechanistic or quantitative detail.
+
 Respond as STRICT JSON:
 {
   "sections": [
-    { "title": "descriptive title", "focus": "what this section covers", "targetWords": 300 }
+    { "title": "descriptive title", "focus": "what this section covers", "targetWords": 300, "refIndices": [1, 4, 7] }
   ]
 }
 Output JSON only.`;
@@ -776,7 +901,37 @@ Output JSON only.`;
           curatedRefs,
         );
         if (coverage.backfilled.length > 0) {
+          // round-42: re-align the score array with the post-backfill pool
+          // BEFORE citation-plan validation. Replacements swap the ref at an
+          // index (plan refIndices pointing there are stale → stripped below;
+          // core-retention re-adds the new primary paper deliberately);
+          // appends extend the array. Every backfilled paper gets a
+          // synthesized CORE score so the validator force-retains it.
+          const scoreByTitle = new Map<string, SourceScore>();
+          curatedRefs.forEach((r: any, i: number) => {
+            const key = `${String(r?.title || "").toLowerCase().trim()}|${String(r?.doi || r?.url || r?.externalId || "").toLowerCase()}`;
+            scoreByTitle.set(key, curatedScores[i]);
+          });
+          const staleIndices = new Set<number>();
+          for (const b of coverage.backfilled) {
+            if (!b.replacedTitle) continue;
+            const idx = coverage.refs.findIndex((r: any) => String(r.title || "") === b.addedTitle);
+            if (idx >= 0) staleIndices.add(idx + 1);
+          }
           curatedRefs = coverage.refs;
+          curatedScores = coverage.refs.map((r: any, i: number) => {
+            const key = `${String(r?.title || "").toLowerCase().trim()}|${String(r?.doi || r?.url || r?.externalId || "").toLowerCase()}`;
+            const found = scoreByTitle.get(key);
+            if (found) return { ...found, index: i + 1 };
+            return { ...synthesizeBackfillScore(r, fullTextProfiles.get(r.id)), index: i + 1 };
+          });
+          if (staleIndices.size > 0) {
+            for (const s of sections) {
+              if (Array.isArray(s.refIndices)) {
+                s.refIndices = s.refIndices.filter((n: any) => !staleIndices.has(parseInt(String(n), 10)));
+              }
+            }
+          }
           stats.coverageBackfills = coverage.backfilled;
           log(
             `plan: coverage backfill — ` +
@@ -791,11 +946,36 @@ Output JSON only.`;
           });
         }
 
+        // round-42: enforce the joint outline+citation plan mechanically —
+        // validate indices, top thin sections up to 2 refs in pool-priority
+        // order (never forcing relevance < 4 sources), and force-retain every
+        // CORE-tier source in its best-matching section (重要引用持续保留).
+        const citationPlanSummary = validateSectionCitationPlan(
+          sections,
+          curatedRefs,
+          curatedScores,
+          { key: "refIndices", minPerSection: 2, maxPerSection: 12 },
+        );
+        stats.citationPlanned = citationPlanSummary.totalPlanned;
+        stats.citationCoreCovered = citationPlanSummary.coreCovered;
+        send("step", {
+          step: "plan",
+          status: "progress",
+          message: `Citation map: ${citationPlanSummary.totalPlanned}/${curatedRefs.length} pool sources cited — ${citationPlanSummary.coreCovered} core retained${citationPlanSummary.toppedUp ? `, ${citationPlanSummary.toppedUp} priority top-up(s)` : ""}${citationPlanSummary.coreMissing ? `, ${citationPlanSummary.coreMissing} core UNCOVERED (sections at capacity)` : ""}.`,
+        });
+        log(
+          `plan: citation map — ${citationPlanSummary.totalPlanned}/${curatedRefs.length} cited, coreCovered=${citationPlanSummary.coreCovered}, coreMissing=${citationPlanSummary.coreMissing}, toppedUp=${citationPlanSummary.toppedUp}`
+        );
+
         // ============ STEP 4: ★ Analyze — extract evidence bank ============
+        // round-42: full texts ride along — refs whose full text was fetched
+        // get a ~900-char excerpt in the analysis prompt, so their extracted
+        // claims come from the COMPLETE article, deeper than abstract-only
+        // refs (能获取到全文的一定要看全文).
         send("step", {
           step: "analyze",
           status: "started",
-          message: `Analyzing ${curatedRefs.length} sources and extracting an evidence bank (claims pre-bound to references)...`,
+          message: `Analyzing ${curatedRefs.length} sources and extracting an evidence bank (${fullTexts.size} with full text)...`,
         });
 
         const evidenceBank = await extractEvidenceBank(
@@ -803,7 +983,7 @@ Output JSON only.`;
           curatedRefs as EvidenceRefInput[],
           project.topic,
           project.field || "life sciences",
-          { maxRefs: Math.min(curatedRefs.length, 40), batchSize: 14, maxTokens }
+          { maxRefs: Math.min(curatedRefs.length, 40), batchSize: 14, maxTokens, fullTexts }
         );
 
         send("step", {
@@ -817,24 +997,38 @@ Output JSON only.`;
         log(`analyze: ${evidenceBank.length} evidence items`);
 
         // ============ STEP 5: ★ Allocate evidence to sections ============
-        send("step", { step: "allocate", status: "started", message: "Allocating references + evidence to sections..." });
+        // round-42: the plan stage already co-designed the citation map —
+        // pass it as the pre-allocation so this stage validates + tops up
+        // instead of re-deciding from scratch. minRefsPerSection drops 5→3:
+        // a thin pool must not be padded with irrelevant sources just to
+        // reach a per-section quota (数据源有限时宁缺毋滥).
+        send("step", { step: "allocate", status: "started", message: "Allocating references + evidence to sections per the citation map..." });
 
+        const preallocatedRefs = sections.map((s: any) =>
+          Array.isArray(s.refIndices) ? s.refIndices : []
+        );
+        const hasPreallocation = preallocatedRefs.some((a) => a.length > 0);
         const allocations = await allocateEvidenceToSections(
           projectId,
           sections,
           curatedRefs as EvidenceRefInput[],
           evidenceBank,
           project.topic,
-          { minRefsPerSection: 5, maxRefsPerSection: 12, maxTokens }
+          {
+            minRefsPerSection: 3,
+            maxRefsPerSection: 12,
+            maxTokens,
+            ...(hasPreallocation ? { preallocatedRefs } : {}),
+          }
         );
 
         send("step", {
           step: "allocate",
           status: "done",
-          message: `Allocated references to ${allocations.length} sections (avg ${Math.round(allocations.reduce((s, a) => s + a.refIndices.length, 0) / Math.max(1, allocations.length))} refs/section).`,
+          message: `Allocated references to ${allocations.length} sections (avg ${Math.round(allocations.reduce((s, a) => s + a.refIndices.length, 0) / Math.max(1, allocations.length))} refs/section${hasPreallocation ? ", from the plan's citation map" : ""}).`,
           detail: allocations.map((a, i) => `§${i + 1}: ${a.refIndices.length} refs, ${a.evidence.length} claims (${a.rationale})`).join("\n"),
         });
-        log(`allocate: ${JSON.stringify(allocations.map(a => a.refIndices.length))}`);
+        log(`allocate: ${JSON.stringify(allocations.map(a => a.refIndices.length))}${hasPreallocation ? " (plan-preallocated)" : ""}`);
 
         // ============ STEP 6: Generate sections with keyed citations ============
         send("step", {
@@ -885,7 +1079,9 @@ Output JSON only.`;
             sectionRefs.push(...curatedRefs.slice(0, 6));
           }
 
-          const evidenceContext = buildEvidenceContext(allocation, curatedRefs as EvidenceRefInput[]);
+          // round-42: full-text excerpts ride into the writer's context so
+          // sections citing fetched sources can draw on the complete article.
+          const evidenceContext = buildEvidenceContext(allocation, curatedRefs as EvidenceRefInput[], fullTexts);
 
           // ★ FIX (narrow digest window): the digest only carries the LAST 3
           // sections (style reference). By section 8 of a 10-section article
@@ -1952,6 +2148,11 @@ ${cleanEn}`;
             auditBlockingErrors: audit.summary.blockingErrors,
             auditTopicalityWarnings: audit.summary.suspect + audit.summary.unsupported,
             auditOrphans: audit.summary.orphan,
+            // round-42: citation-planning telemetry
+            citationsPlanned: stats.citationPlanned,
+            citationCoreCovered: stats.citationCoreCovered,
+            citationPlanLLMDriven: stats.citationLLMDriven,
+            fullTextsUsed: stats.fullTextsUsed,
           },
           message: `v2 pipeline complete: ${articleWordCount} words${articleContentZh ? ` + ${countWords(articleContentZh)} Chinese chars` : ""}, ${globalRefs.length} references, ${stats.citationsChecked} citations adversarially verified (${stats.citationsRemoved} removed).`,
         });

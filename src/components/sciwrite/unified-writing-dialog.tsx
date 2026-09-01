@@ -27,6 +27,7 @@ import {
   ChevronDown,
   Microscope,
   Target,
+  Gauge,
   ShieldCheck,
   BookCheck,
   ArrowUpCircle,
@@ -845,6 +846,10 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
         // round-33: LLM-knowledge cross-check runs between gather and curate
         // (fills missing metadata + adds PubMed-verified gap sources).
         { id: "knowledge", label: t("oneClick.stepKnowledge") || "Knowledge cross-check", icon: BookCheck },
+        // round-42: every gathered source is scored for importance/relevance
+        // (full-text availability as a depth tiebreaker) BEFORE curation, so
+        // the citation count follows source quality instead of a fixed quota.
+        { id: "score", label: t("oneClick.stepScore") || "Score source importance", icon: Gauge },
         { id: "curate", label: t("oneClick.stepCurate"), icon: Filter },
         { id: "plan", label: t("oneClick.stepPlan"), icon: ListTree },
         { id: "analyze", label: t("oneClick.stepAnalyze") || "Analyze Evidence", icon: Microscope },
@@ -861,6 +866,8 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
     }
     const base = [
       { id: "gather", label: t("oneClick.stepGather"), icon: Database },
+      // round-42: importance scoring before curation (same as v2).
+      { id: "score", label: t("oneClick.stepScore") || "Score source importance", icon: Gauge },
       { id: "curate", label: t("oneClick.stepCurate"), icon: Filter },
       { id: "relationships", label: t("oneClick.stepRelationships"), icon: Network },
       { id: "plan", label: t("oneClick.stepPlan"), icon: ListTree },
@@ -1065,7 +1072,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
             </div>
             <p className="mt-1 text-[9px] leading-relaxed text-muted-foreground">
               {t("oneClick.pipelineV2Desc") ||
-                "Analyze sources → extract evidence claims → allocate to sections → write with structural citation keys → adversarially verify every citation. Highest citation accuracy."}
+                "Score every source's importance → curate with a dynamic citation count → co-plan outline + citations → extract evidence (full texts when available) → write with structural keys → adversarially verify. Highest citation accuracy."}
             </p>
           </button>
           <button
@@ -1083,7 +1090,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
             </div>
             <p className="mt-1 text-[9px] leading-relaxed text-muted-foreground">
               {t("oneClick.pipelineV1Desc") ||
-                "Legacy pipeline: relationship analysis + per-section keyword filtering + LLM-written numeric citations."}
+                "Legacy pipeline: importance scoring + relationship analysis + per-section keyword filtering + LLM-written numeric citations."}
             </p>
           </button>
         </div>
@@ -1100,6 +1107,9 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
               <ul className="text-[10px] text-muted-foreground leading-relaxed list-disc ml-3 space-y-0.5">
                 <li>{t("oneClick.v2AccuracyKeyed") || "The model never writes citation numbers — structural {{Rn}} keys are converted to numbers by code"}</li>
                 <li>{t("oneClick.v2AccuracyEvidence") || "Writing draws on evidence claims extracted from each source (analyze → allocate → write)"}</li>
+                {/* round-42: LLM-planned dynamic citation count + full-text depth */}
+                <li>{t("oneClick.v2AccuracyScore") || "Citation count is planned by the LLM from scored source importance — no padding with irrelevant references; core references are always retained"}</li>
+                <li>{t("oneClick.v2AccuracyFullText") || "Full texts are fetched for the highest-priority sources and feed the evidence extraction (deeper than abstract-only)"}</li>
                 <li>{t("oneClick.v2AccuracyVerify") || "Every citation is adversarially verified against the reference's own abstract before saving"}</li>
               </ul>
             </div>

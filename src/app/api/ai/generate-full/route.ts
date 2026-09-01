@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { webSearch } from "@/lib/ai";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
-import { queryDatabase, fetchFullTextForPubMed } from "@/lib/databases";
+import { queryDatabase } from "@/lib/databases";
 import { countWords, renumberByAppearance, sanitizeSectionContent, buildStructureContextFromDataSources } from "@/lib/writing";
 import { generateArticleTitle } from "@/lib/article-title";
 import { translateSectionTitles } from "@/lib/section-title-zh";
@@ -21,13 +21,24 @@ import {
   ncbiItemsCount,
   countBySource,
   generateWebSearchQueries,
-  curateReferences,
   inferFormat,
   safeParseJSON,
   extractKeywords,
   extractSectionKeywords,
   scoreRelevance,
 } from "@/lib/generate-full-helpers";
+// round-42: importance-driven citation planning — score every source,
+// curate with a dynamic count, co-plan outline+citations.
+import {
+  buildFullTextProfiles,
+  scoreSources,
+  smartCurateReferences,
+  fetchFullTextsForRefs,
+  formatScoredRefLine,
+  validateSectionCitationPlan,
+  typicalCitationCount,
+  type SourceScore,
+} from "@/lib/citation-planner";
 import { safeErrorMessage } from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
@@ -767,89 +778,110 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           return;
         }
 
-        // ============ STEP 2: LLM curates the most relevant sources ============
-        log(`curate: starting — chatWithSession for relevance ranking (${savedReferences.length} refs)`);
+        // ============ STEP 1.7: Score source importance (round-42) ============
+        // 先对文献重要性打分：LLM scores EVERY gathered reference for topical
+        // relevance + scholarly importance, with the mechanical full-text
+        // profile (PMC free article / deep-read summary) as an understanding-
+        // depth tiebreaker. Curating only AFTER scoring lets the citation
+        // count follow source quality instead of a fixed quota.
+        send("step", {
+          step: "score",
+          status: "started",
+          message: `Scoring ${savedReferences.length} sources for importance (relevance × importance × full-text depth)...`,
+        });
+        const fullTextProfiles = buildFullTextProfiles(savedReferences, savedDataSources);
+        const scoring = await scoreSources(
+          projectId,
+          savedReferences,
+          fullTextProfiles,
+          project.topic,
+          project.field || "life sciences",
+          {
+            maxTokens,
+            onProgress: (m) => send("step", { step: "score", status: "progress", message: m }),
+          }
+        );
+        const allScores = scoring.scores;
+        {
+          const core = allScores.filter((s: SourceScore) => s.tier === "core").length;
+          const important = allScores.filter((s: SourceScore) => s.tier === "important").length;
+          const marginal = allScores.length - core - important;
+          const withFullText = allScores.filter((s: SourceScore) => s.depth === "fulltext").length;
+          send("step", {
+            step: "score",
+            status: "done",
+            scoredCount: allScores.length,
+            coreCount: core,
+            importantCount: important,
+            marginalCount: marginal,
+            fullTextCount: withFullText,
+            llmBatches: scoring.llmBatches,
+            fallbackBatches: scoring.fallbackBatches,
+            message: `Scored ${allScores.length} sources: ${core} core / ${important} important / ${marginal} marginal (${withFullText} with full text available).`,
+          });
+          log(`score: ${allScores.length} sources — core=${core} important=${important} marginal=${marginal} fulltext=${withFullText} llmBatches=${scoring.llmBatches} fallbackBatches=${scoring.fallbackBatches}`);
+        }
+
+        // ============ STEP 2: Curate — dynamic citation count (round-42) ============
+        // The LLM decides HOW MANY references this article genuinely needs
+        // from the scored pool (guardrailed), replacing the old fixed-count
+        // `max(20, targetWords/200)` selection. We still SAVE every source —
+        // curation only selects which ones enter the LLM's context.
         send("step", {
           step: "curate",
           status: "started",
-          message: `LLM curating ${savedReferences.length} references for a ${targetWords}-word article...`,
-          detail: "Selecting most relevant subset for focused context window",
+          message: `Selecting the citation pool for a ${targetWords}-word article — the count follows source quality, not a fixed quota...`,
         });
 
-        // Curate references to keep the context window manageable. We still SAVE every
-        // source — curation only selects which ones to inject into the LLM's context.
-        const maxCitableRefs = Math.min(savedReferences.length, Math.max(20, Math.floor(targetWords / 200)));
-        const curatedRefs = await curateReferences(projectId, savedReferences, project.topic, project.field || "life sciences", maxCitableRefs, maxTokens);
-
+        const smart = await smartCurateReferences(
+          projectId,
+          savedReferences,
+          allScores,
+          project.topic,
+          project.field || "life sciences",
+          targetWords,
+          {
+            maxTokens,
+            onProgress: (m) => send("step", { step: "curate", status: "progress", message: m }),
+          }
+        );
+        const curatedRefs = smart.refs;
+        const curatedScores = smart.scores;
         send("step", {
           step: "curate",
           status: "done",
           curatedCount: curatedRefs.length,
           totalAvailable: savedReferences.length,
-          message: `Curated ${curatedRefs.length} most relevant references from ${savedReferences.length} total.`,
-          detail: curatedRefs.slice(0, 10).map((r: any, i: number) => `${i + 1}. ${r.authors || "Anon"} (${r.year || "n.d."}) ${r.title?.slice(0, 60) || ""}`).join("\n") + (curatedRefs.length > 10 ? `\n... and ${curatedRefs.length - 10} more` : ""),
+          plannedCitations: smart.plannedCount,
+          llmDriven: smart.llmDriven,
+          message: `Citation pool: ${curatedRefs.length} of ${savedReferences.length} scored sources selected (typical density for ${targetWords}w: ~${typicalCitationCount(targetWords)}).`,
+          detail: smart.rationale + "\n" + curatedRefs.slice(0, 10).map((r: any, i: number) => `${i + 1}. ${r.authors || "Anon"} (${r.year || "n.d."}) ${r.title?.slice(0, 60) || ""}`).join("\n") + (curatedRefs.length > 10 ? `\n... and ${curatedRefs.length - 10} more` : ""),
         });
+        log(`curate: ${curatedRefs.length}/${savedReferences.length} refs — plannedCitations=${smart.plannedCount} llmDriven=${smart.llmDriven} — ${smart.rationale}`);
 
-        // ============ STEP 2.5: Fetch full text for PMC-indexed articles ============
+        // ============ STEP 2.5: Fetch full text for the citation pool ============
+        // round-42: shared fetchFullTextsForRefs — the pool arrives
+        // priority-ordered so the fetch budget goes to the most important
+        // sources first, and deep-read summaries for web sources ride along
+        // as compact full-text substitutes (能获取到全文的一定要看全文).
         send("step", {
           step: "curate",
           status: "progress",
-          message: `Fetching full text for PMC-indexed free articles (enables deeper discussion)...`,
-          detail: "Up to 8 PMC free articles, 15k chars each",
+          message: `Fetching full text for the highest-priority sources (enables deeper discussion)...`,
+          detail: "Up to 8 PMC free articles, 15k chars each + deep-read summaries",
         });
 
-        let fullTextsFetched = 0;
-        const fullTexts = new Map<string, string>(); // refId → full text
-
-        // Fetch full text for up to 8 PMC-indexed references (raised from 5)
-        const pmcRefs = curatedRefs.filter((r: any) => r.type === "pubmed" && r.externalId).slice(0, 8);
-        for (let pi = 0; pi < pmcRefs.length; pi++) {
-          const ref = pmcRefs[pi];
-          try {
-            const ds = savedDataSources.find((d: any) =>
-              d.externalId === ref.externalId && d.extra
-            );
-            let pmcId: string | undefined;
-            if (ds?.extra) {
-              try {
-                const extra = JSON.parse(ds.extra);
-                pmcId = extra.pmcId || extra.hasFreeFullText ? extra.pmcId : undefined;
-              } catch {}
-            }
-
-            const ftStart = Date.now();
-            const fullText = await fetchFullTextForPubMed(ref.externalId, pmcId);
-            if (fullText && fullText.length > 500) {
-              // Limit to 15000 chars per article to balance depth vs context window
-              fullTexts.set(ref.id, fullText.slice(0, 15000));
-              fullTextsFetched++;
-              send("step", {
-                step: "curate",
-                status: "progress",
-                message: `Fetched full text for PMID:${ref.externalId} (${pi + 1}/${pmcRefs.length}, ${Math.round(fullText.length / 1000)}k chars, ${Date.now() - ftStart}ms)`,
-                pmcIndex: pi + 1,
-                pmcTotal: pmcRefs.length,
-                pmid: ref.externalId,
-                chars: fullText.length,
-              });
-            } else {
-              send("step", {
-                step: "curate",
-                status: "progress",
-                message: `PMID:${ref.externalId} — no free full text available (skipped)`,
-                pmid: ref.externalId,
-                skipped: true,
-              });
-            }
-          } catch {
-            // Skip failed fetches
-          }
-        }
+        const pmcCandidates = curatedRefs.filter((r: any) => r.type === "pubmed" && r.externalId);
+        const fullTexts = await fetchFullTextsForRefs(curatedRefs, fullTextProfiles, {
+          maxCount: 8,
+          maxChars: 15000,
+          onProgress: (m, extra) => send("step", { step: "curate", status: "progress", message: m, ...extra }),
+        });
 
         send("step", {
           step: "curate",
           status: "progress",
-          message: `Full text retrieval complete: ${fullTextsFetched}/${pmcRefs.length} PMC articles fetched.`,
+          message: `Full text retrieval complete: ${fullTexts.size} source(s) readable in depth (of ${pmcCandidates.length} PMC candidates + deep-read summaries).`,
         });
 
         // ============ STEP 3: Analyze source relationships ============
@@ -974,25 +1006,32 @@ Analyze how these sources relate. Respond as STRICT JSON:
           send("step", { step: "relationships", status: "skipped", message: "Relationship analysis skipped." });
         }
 
-        // ============ STEP 4: Plan article outline from source content ============
-        send("step", { step: "plan", status: "started", message: "Planning article outline based on source content..." });
+        // ============ STEP 4: Plan outline + citation map (round-42) ============
+        // 先根据主题、长度确定大纲和引用哪些参考文献，再细化内容：the plan
+        // co-designs the outline AND which pool sources each section cites;
+        // the per-section filtering in STEP 6 now honors these suggestions.
+        send("step", { step: "plan", status: "started", message: `Planning the outline + citation map for a ${targetWords}-word article from ${curatedRefs.length} scored sources...` });
 
         const planSystem =
           "You are a senior research advisor who designs publication-ready article outlines. " +
-          "Given a research topic, curated references, and a target word count, produce a detailed " +
-          "section plan with target word counts that sum to the total target. " +
+          "Given a research topic, a scored reference pool, and a target word count, produce a detailed " +
+          "section plan with target word counts that sum to the total target — AND decide which references " +
+          "each section should cite. " +
           "For large articles, plan MORE sections with SMALLER word counts to avoid exceeding " +
           "the LLM's max token limit per section.";
+
+        const scoredPoolLines = curatedRefs
+          .slice(0, 40)
+          .map((r: any, i: number) => formatScoredRefLine(r, curatedScores[i], i + 1))
+          .join("\n");
 
         const planPrompt = `RESEARCH TOPIC: ${project.topic}
 FIELD: ${project.field || "life sciences"}
 TARGET TOTAL WORDS: ${targetWords}
-CURATED REFERENCES: ${curatedRefs.length} citable references + ${savedDataSources.length} data sources.
+CITATION POOL: ${curatedRefs.length} scored sources (the article's citations come ONLY from this pool) + ${savedDataSources.length} data sources.
 
-KEY SOURCES BY THEME:
-${curatedRefs.slice(0, 30).map((r: any, i: number) =>
-  `[${i + 1}] ${r.authors || "Anon"} (${r.year || "n.d."}) ${r.title?.slice(0, 80) || ""}`
-).join("\n")}
+SCORED SOURCES (sorted by citation priority — CORE > IMPORTANT > MARGINAL):
+${scoredPoolLines}
 
 Plan a comprehensive review article. For ${targetWords} words, use ${Math.max(5, Math.ceil(targetWords / 500))}-${Math.max(8, Math.ceil(targetWords / 400))} sections.
 Each section should be 200-500 words (keep sections SMALL to avoid max token issues and ensure each section reaches its target).
@@ -1005,6 +1044,14 @@ each section should target ~${Math.floor(targetWords / Math.max(5, Math.ceil(tar
 v80-1: For larger articles (1500w+), prefer MORE sections with SMALLER targets
 (200-300w each) rather than fewer sections with larger targets. This improves
 达标率 because LLM writes more reliably for 200-300w targets than 400w+.
+
+CITATION PLANNING — design the outline AND the citations TOGETHER:
+- For EACH section, list the pool sources it will cite as "suggestedRefIndices" (the [n] numbers above).
+- Every CORE source must be cited by at least one section.
+- MARGINAL sources may be dropped entirely — never cite a source that does not fit a section's focus just to use it.
+- A ${targetWords}-word review typically cites ~${typicalCitationCount(targetWords)} references in total; let the pool and the section needs decide the final count — do not pad.
+- Give each section 2-6 suggestedRefIndices (more for evidence-dense sections, fewer for outlook/perspective sections).
+- Sources with FULL TEXT: yes support deeper claims — favor them for sections needing mechanistic or quantitative detail.
 
 Respond as STRICT JSON:
 {
@@ -1143,13 +1190,30 @@ Output JSON only.`;
         }
         log(`plan: validated ${sections.length} sections (total ${plannedTotal}w, ${plannedPct}% of target, ${duplicateTitles} duplicates fixed)`);
 
+        // round-42: enforce the joint outline+citation plan mechanically —
+        // validate suggestedRefIndices, top thin sections up to 2 refs in
+        // pool-priority order (never forcing relevance < 4 sources), and
+        // force-retain every CORE-tier source in its best-matching section
+        // (重要引用持续保留). STEP 6's per-section filtering honors the result.
+        const citationPlanSummary = validateSectionCitationPlan(
+          sections,
+          curatedRefs,
+          curatedScores,
+          { key: "suggestedRefIndices", minPerSection: 2, maxPerSection: 12 },
+        );
+        log(
+          `plan: citation map — ${citationPlanSummary.totalPlanned}/${curatedRefs.length} cited, coreCovered=${citationPlanSummary.coreCovered}, coreMissing=${citationPlanSummary.coreMissing}, toppedUp=${citationPlanSummary.toppedUp}`
+        );
+
         send("step", {
           step: "plan",
           status: "done",
           sections: sections.map((s: any) => ({ title: s.title, targetWords: s.targetWords })),
           sectionCount: sections.length,
-          message: `Planned ${sections.length} sections totaling ~${sections.reduce((s: number, sec: any) => s + (sec.targetWords || 0), 0)} words.`,
-          detail: sections.map((s: any, i: number) => `§${i + 1} ${s.title} (~${s.targetWords}w)`).join("\n"),
+          plannedCitations: citationPlanSummary.totalPlanned,
+          coreCovered: citationPlanSummary.coreCovered,
+          message: `Planned ${sections.length} sections totaling ~${sections.reduce((s: number, sec: any) => s + (sec.targetWords || 0), 0)} words + citation map: ${citationPlanSummary.totalPlanned}/${curatedRefs.length} pool sources cited (${citationPlanSummary.coreCovered} core retained).`,
+          detail: sections.map((s: any, i: number) => `§${i + 1} ${s.title} (~${s.targetWords}w, ${(s.suggestedRefIndices || []).length} refs)`).join("\n"),
         });
 
         // ============ STEP 5: Context strings are now built PER SECTION ============
@@ -1284,33 +1348,49 @@ Output JSON only.`;
           let lastChunkSystem = "";
 
           // ---- Per-section reference & data-source filtering ----
-          // Filter the global curatedRefs + savedDataSources down to only
-          // those relevant to THIS section's title + focus. This prevents
-          // the LLM from citing irrelevant sources (e.g. TMC7-fertility refs
-          // in a section about TMC1 animal models).
+          // round-42: the plan stage co-designed this section's citations —
+          // its suggestedRefIndices are now the PRIMARY reference set. The
+          // keyword-overlap filter only tops up when the plan left the
+          // section below the configured minimum (plan refs are never
+          // duplicated into the keyword set).
           //
-          // Strategy: extract keywords from the section title + focus, then
-          // score each ref/data-source by keyword overlap with its title +
-          // abstract. Keep the top sectionRefTopN refs (min sectionRefMinN)
-          // and top sectionDsTopN data sources (min sectionDsMinN). These
-          // thresholds are configurable via the UI's Advanced settings.
+          // Legacy strategy (still the top-up path): extract keywords from
+          // the section title + focus, then score each remaining ref by
+          // keyword overlap with its title + abstract. Keep the top
+          // sectionRefTopN refs (min sectionRefMinN). These thresholds are
+          // configurable via the UI's Advanced settings.
+          const suggestedRefs: any[] = [];
+          {
+            const suggestedIds = new Set<string>();
+            for (const n of section.suggestedRefIndices || []) {
+              const r = curatedRefs[parseInt(String(n), 10) - 1];
+              if (r && r.id && !suggestedIds.has(r.id)) {
+                suggestedIds.add(r.id);
+                suggestedRefs.push(r);
+              }
+            }
+          }
           const sectionKeywords = extractSectionKeywords(
             `${section.title} ${section.focus || ""}`,
           );
-          const scoredRefs = curatedRefs.map((r: any, idx: number) => ({
-            ref: r,
-            originalIndex: idx,
-            score: scoreRelevance(sectionKeywords, `${r.title || ""} ${r.abstract || ""} ${r.journal || ""}`),
-          }));
+          const suggestedSet = new Set(suggestedRefs);
+          const scoredRefs = curatedRefs
+            .filter((r: any) => !suggestedSet.has(r))
+            .map((r: any, idx: number) => ({
+              ref: r,
+              originalIndex: idx,
+              score: scoreRelevance(sectionKeywords, `${r.title || ""} ${r.abstract || ""} ${r.journal || ""}`),
+            }));
           scoredRefs.sort((a: any, b: any) => b.score - a.score);
           // Keep refs with score > 0, but always keep at least sectionRefMinN
           // (so the LLM has enough to cite from) and at most sectionRefTopN
           // (to stay within context budget). If fewer than sectionRefMinN
           // have score > 0, top up from the remaining refs by original order.
           const relevantScored = scoredRefs.filter((s: any) => s.score > 0);
+          const keywordPicks = relevantScored.slice(0, Math.max(0, sectionRefTopN - suggestedRefs.length)).map((s: any) => s.ref);
           let sectionRefs: any[];
-          if (relevantScored.length >= sectionRefMinN) {
-            sectionRefs = relevantScored.slice(0, sectionRefTopN).map((s: any) => s.ref);
+          if (suggestedRefs.length + keywordPicks.length >= sectionRefMinN) {
+            sectionRefs = [...suggestedRefs, ...keywordPicks];
           } else {
             // Not enough keyword-matched refs — take what we have + top up
             // from the rest to reach sectionRefMinN. This ensures the LLM
@@ -1318,8 +1398,8 @@ Output JSON only.`;
             const have = new Set(relevantScored.map((s: any) => s.originalIndex));
             const topUp = scoredRefs
               .filter((s: any) => !have.has(s.originalIndex))
-              .slice(0, sectionRefMinN - relevantScored.length);
-            sectionRefs = [...relevantScored, ...topUp].map((s: any) => s.ref);
+              .slice(0, sectionRefMinN - suggestedRefs.length - relevantScored.length);
+            sectionRefs = [...suggestedRefs, ...relevantScored.map((s: any) => s.ref), ...topUp.map((s: any) => s.ref)];
           }
 
           // Same filtering for data sources

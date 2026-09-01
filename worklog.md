@@ -2540,3 +2540,49 @@ Stage Summary:
 - 参数语义变更：4 项数据源上限默认无限（UI 0+∞、后端 9999 哨兵、v2 prompt 无限分支）；output token 默认 20480、上限 81920（UI+双管线+ai.ts 全链一致；外部 provider 保护性 32768 钳制有意保留）
 - 修改文件：unified-writing-dialog.tsx、api/ai/generate-full/route.ts、api/ai/generate-full-v2/route.ts、lib/ai.ts、lib/i18n.tsx
 - 运维教训入档：后台进程必须用 .zscripts/dev-daemon.py 启动；显示管道吞 [m 字面量的坑（od -c 仲裁）
+
+---
+Task ID: round-42
+Agent: main (Z.ai Code)
+Task: 用户指令「需要加入根据文章长度动态确定文献引用数的功能，由LLM智能确定（既要根据收集数据源数量，也要根据数据源和文章的相关性来决定，不能在数据源有限的情况下强行引入一些无关文献引用，数据源来源充足的情况下，短文是可以适当去掉一些相关性不太高的引用，但是重要引用需要持续保留，可以先对所有的文献的重要性打分（了解程度也要参考，是否看了全文）来确定引用优先级高低吗？先根据主题，长度确定大纲和引用哪些参考文献，再细化内容，内容要充分参考文献内容(能获取到全文的一定要看全文)）」——引用数量从机械公式改为 LLM 重要性驱动 + 大纲引用联合规划 + 全文深度利用
+
+Work Log:
+- 新模块 src/lib/citation-planner.ts（双管线共享，全部阶段带机械回退，llm-cache 复用）：
+  ① buildFullTextProfiles(refs, dataSources)：机械判定每源的"了解深度"——pubmed 源查 DataSource.extra 的 pmcId/hasFreeFullText（PMC 免费全文）、web 源识别 deep-read 结构化摘要（KEY FINDINGS 头）→ fulltext/abstract/metadata 三档
+  ② scoreSources()：LLM 批量（20/批，prompt ~9k 字符）给每源打 relevance(1-10)×importance(1-10)；prompt 内嵌 FULL TEXT: yes 深度信号作平局裁决；priority = rel×0.55 + imp×0.35 + 深度加成(1/0.5/0)；tier = core(≥7.5)/important(≥5.5)/marginal；批失败→关键词重叠+近现年机械回退（管线不阻断）
+  ③ smartCurateReferences()：动态引用数精选——LLM 自主决定引用数量（softFloor..hardCap 区间内），规则编码用户策略：REL≤3 永不入选（宁缺毋滥）、CORE 全保留（重要引用持续保留）、池薄选少不凑数、短文+富池丢 MARGINAL、全文源加分；四重机械护栏（core 并集/rel≤3 剥离/softFloor 仅 rel≥4 补足/hardCap=maxCitableRefsFor）
+  ④ fetchFullTextsForRefs()：优先级序抓 PMC 全文（8 篇×15k 字符）+ deep-read 摘要免费随行
+  ⑤ validateSectionCitationPlan()：计划护栏——索引校验去重截断、每节 soft-min=2 按池优先级补足（仅 rel≥4，池尽即止不强凑）、CORE 未引用者按关键词最佳匹配节强制保留；支持 refIndices(v2)/suggestedRefIndices(v1) 双键
+  ⑥ synthesizeBackfillScore()：coverage 回填论文的合成 CORE 分
+- evidence-pipeline.ts 改造：
+  ⑦ extractEvidenceBank 增加 fullTexts 参数——有全文的源附 900 字符摘录（claims 从全文提取，比摘要更深），批次自动收缩 14→10 保 28k 压缩上限安全
+  ⑧ allocateEvidenceToSections 增加 preallocatedRefs——计划预分配直达（跳过 LLM 重决策），池序补足至 min 3（原 5，降门槛不凑数）；无预分配时走原 LLM/关键词路径
+  ⑨ buildEvidenceContext 增加 fullTexts——{{Rn}} 参考条目附 700 字符全文摘录 + [FULL TEXT AVAILABLE] 标记
+- V2 管线（generate-full-v2/route.ts）：
+  ⑩ STEP 1.7 score 新阶段（knowledge 后）：dedupePreprintVersions 前移至此保证分数对齐去重池；步骤事件含 tier 计数/全文数/批次数
+  ⑪ STEP 2 curate → smartCurateReferences（替换固定数 curateReferences）；done 事件含 plannedCitations/llmDriven/rationale
+  ⑫ STEP 2.5 全文抓取（v2 首次拥有全文能力）；curate progress 事件流
+  ⑬ STEP 3 plan 升级为大纲+引用联合规划：SCORED SOURCES 列表（tier/REL/IMP/FULL TEXT 行）+ CITATION PLANNING 规则块；解析 sections[].refIndices
+  ⑭ coverage 回填后分数重同步：title 键映射重建 curatedScores、替换槽位的陈旧索引剥离（core-retention 重新落位）、回填论文合成 CORE 分——修复 plan 索引与替换后池的错位隐患
+  ⑮ analyze 传 fullTexts；allocate 传 preallocatedRefs+min3；generate 的 buildEvidenceContext 传 fullTexts；stats/accuracy 遥测 +4（citationsPlanned/coreCovered/llmDriven/fullTextsUsed）
+- V1 管线（generate-full/route.ts）：
+  ⑯ STEP 1.7 score + STEP 2 smartCurate（同一共享函数）；STEP 2.5 改用共享 fetchFullTextsForRefs（v1 首次获得 deep-read 摘要注入 + 优先序抓取）
+  ⑰ STEP 4 plan prompt 升级（SCORED SOURCES + CITATION PLANNING；suggestedRefIndices 从"schema 里存在但从未使用"变为真消费）+ validateSectionCitationPlan(key=suggestedRefIndices)
+  ⑱ STEP 6 分段引用过滤重构：plan 建议引用为主集（去重校验），关键词过滤降级为补足路径（union 后 cap sectionRefTopN）
+- UI+i18n：
+  ⑲ STEPS 数组双管线插入 score 步骤（Gauge 图标，v2 第 3 位/v1 第 2 位）；步骤指示器 9→10 步
+  ⑳ v2 准确性保障列表 +2 条（动态引用数保障/全文深度保障）；管线描述文案更新；oneClick.stepScore/v2AccuracyScore/v2AccuracyFullText ×2 语言；pipelineV2Desc/v1Desc 更新
+- E2E 验证（agent-browser + curl SSE 探针 + 确定性断言脚本，真实 LLM）：
+  ① 确定性脚本 20/20 断言 PASS：typicalCitationCount 缩放/钳制、profiles 双通道识别、validateSectionCitationPlan（垃圾索引剥离/core 保留/rel=3 永不强加/计数一致/每节 cap）、backfill 合成分、scored 行格式、buildEvidenceContext 全文标记+摘录+700 cap+无映射时缺失
+  ② v2 探针（CRISPR 项目）：score 107 源 6 批 LLM 0 回退（35 core/44 imp/28 marg/54 fulltext）→ smart curate 20/107 llmDriven=true 带理由 → fulltext 8 篇 → plan 7 节+引用地图 20/20 coreCovered=20 → analyze 49 evidence → allocate [5,3,3,3,3,3,5] plan-preallocated ✓
+  ③ v1 探针：score 140 源 7 批 0 回退 → curate 20/140 llmDriven=true → relationships 落库（20 节点/16 边/4 主题）→ plan 5+2 节、引用地图 20/20 toppedUp=5（校验器补足实跑验证）✓
+  ④ 浏览器完整运行（MscL/MscS 项目，SSE 持活）：步骤指示器 Step 1/10→8/10 全程推进；UI 日志完整呈现 [score] started/5 批 progress/done（84 源 53 core/26 imp/5 marg）、[curate] 动态精选 20/84+8 篇全文抓取进度、[plan] 大纲+引用地图 done、[generate] 7 节流式、compose 完成——**最终文章 2597 词、19 refs（计划 20 池落地 19）、60 处 [n] 标记、success 卡片 160 源/7 节/2597 词**；console 仅既知 resizable 基线警告零新增
+  ⑤ 429 压力路径实跑验证：提供方限流时 score 全批机械回退（llmBatches=0/fallback=4）+ curate 机械回退（llmDriven=false 按优先级 10 源）+ r37 崩溃回滚恢复快照（7 段落/132 源/7 链接逐位还原）——降级链与原子性全部按设计工作
+  ⑥ 排查澄清：FGT 的 Review/RelationshipAnalysis 行缺失系 round-41 沙箱回滚的既有损失（v1/v2 强制清除均不删这三表，本轮浏览器运行非肇事者）；round-39 自动触发会在打开标签时自愈重生成
+- 测试资产清理：两个探针项目 DELETE 200、临时脚本删除、浏览器关闭；质量门 tsc 0 错误 / lint 0 error 161 warning（=基线）
+
+Stage Summary:
+- 引用数量决策从机械公式（max(20, words/200) 固定数精选）全面升级为 LLM 智能确定：重要性打分（relevance×importance×全文深度）→ 动态数量精选（护栏内自主决策）→ 大纲+引用联合规划（先规划后细化）→ 内容生成深度消费全文（v2 首次具备全文能力）
+- 用户五项策略全部编码落地：池薄不凑数（rel≤3 永不入选+softFloor 只补 rel≥4）、短文丢边际保核心（tier 分层+core 强保留）、了解程度参与打分（PMC/deep-read 深度信号+平局裁决）、先大纲引用后内容（plan 联合+allocate 预分配直达）、全文必读（v1/v2 全文注入证据提取与写作上下文）
+- 修改文件：src/lib/citation-planner.ts（新）、src/lib/evidence-pipeline.ts、src/app/api/ai/generate-full-v2/route.ts、src/app/api/ai/generate-full/route.ts、src/components/sciwrite/unified-writing-dialog.tsx、src/lib/i18n.tsx
+- 值得注意的设计决策：coverage 回填（v2 round-15）与引用计划的索引错位用"分数重同步+陈旧索引剥离+合成 CORE 分"三步治理；v1 的 suggestedRefIndices 从死 schema 字段变为活链路
