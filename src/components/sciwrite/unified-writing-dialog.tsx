@@ -139,12 +139,24 @@ export function UnifiedWritingDialog({
           // the streaming-log panel can sit beside the main content as an
           // independent column.
           //   Not running → max-w-5xl (64rem): main column only.
-          //   Running     → max-w-[96vw] (round-32): the article being
-          //                 generated gets the full screen width — no wasted
-          //                 side margins on wide displays.
+          //   Running     → max-w-7xl (80rem, round-43): main column (~60rem)
+          //                 + log panel (20rem) — the exact budget the
+          //                 two-column layout needs.
+          // round-32 had uncapped this to 96vw ("article being generated gets
+          // the full screen width") — on wide displays the dialog exploded
+          // from 64rem to ~115rem the moment generation started and snapped
+          // back when it finished, which users read as a jarring layout jump
+          // (reported round-43). 7xl restores the deliberate two-column
+          // geometry, and the transition class below eases the change.
           // (The Dialog component no longer carries a default sm:max-w-lg
           // that would override these — see ui/dialog.tsx.)
-          isFullArticleRunning ? "max-w-[96vw]" : "max-w-5xl",
+          isFullArticleRunning ? "sm:max-w-7xl" : "max-w-5xl",
+          // Ease the running-state width change instead of snapping.
+          // Note: the running width is sm:-prefixed so the base dialog's
+          // mobile fallback (max-w-[calc(100%-2rem)]) still applies below
+          // sm — responsive variants only override it ≥640px (see
+          // ui/dialog.tsx for the cascade rationale).
+          "transition-[max-width] duration-300 ease-out",
           // Only the Full Article tab gets a concrete h-[92vh]: its root is
           // absolutely positioned (absolute inset-0) and needs a real height
           // to fill. Every other tab lets its content define the dialog height
@@ -1044,7 +1056,11 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
     // exactly. This gives the flex row a concrete height equal to the
     // content area's height, so the main column's overflow-y-auto triggers
     // correctly when content exceeds the dialog's max-h-[92vh].
-    <div className="absolute inset-0 flex">
+    // round-43: on <sm viewports the row becomes a COLUMN — the fixed w-80
+    // log panel used to squeeze the main column down to a ~38px sliver on
+    // phones; stacked, the main column keeps the full width and the log
+    // becomes a compact strip at the bottom.
+    <div className="absolute inset-0 flex flex-col sm:flex-row">
       {/* Main column: config + progress + results.
           Always flex-1 so its width never changes when the log panel
           appears/disappears. min-w-0 + overflow-y-auto ensure the
@@ -1639,15 +1655,19 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
 
       {/* Independent streaming-log panel — rendered ONLY when the pipeline
           is running. This is a SIBLING of the main column, not a child, so
-          it has its own fixed width (w-80 = 20rem) and does NOT eat into the
-          main column's width budget. The parent dialog widens to max-w-7xl
-          when running to make room for this panel beside the main column.
+          on ≥sm it has its own fixed width (w-80 = 20rem) and does NOT eat
+          into the main column's width budget. The parent dialog widens to
+          max-w-7xl when running to make room for this panel beside the main
+          column (round-43: back from the round-32 96vw uncapping; see the
+          width comment at the DialogContent).
+          On <sm the panel stacks BELOW the main column as a compact strip
+          (round-43): full width, fixed height, top border.
 
           The panel is a self-contained card: its own border, header bar with
           title + log count + clear button, a scrollable log area, and a
           sticky live-preview footer that follows the streaming output. */}
       {isRunning && (
-        <aside className="w-80 shrink-0 flex flex-col h-full border-l border-border/60 bg-muted/20">
+        <aside className="w-full sm:w-80 h-52 sm:h-full shrink-0 flex flex-col border-t sm:border-t-0 sm:border-l border-border/60 bg-muted/20">
           {/* Panel header — independent title bar */}
           <div className="px-3 py-2.5 border-b border-border/40 shrink-0 flex items-center gap-1.5 bg-muted/40">
             <Terminal className="h-3.5 w-3.5 text-primary shrink-0" />

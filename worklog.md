@@ -2586,3 +2586,30 @@ Stage Summary:
 - 用户五项策略全部编码落地：池薄不凑数（rel≤3 永不入选+softFloor 只补 rel≥4）、短文丢边际保核心（tier 分层+core 强保留）、了解程度参与打分（PMC/deep-read 深度信号+平局裁决）、先大纲引用后内容（plan 联合+allocate 预分配直达）、全文必读（v1/v2 全文注入证据提取与写作上下文）
 - 修改文件：src/lib/citation-planner.ts（新）、src/lib/evidence-pipeline.ts、src/app/api/ai/generate-full-v2/route.ts、src/app/api/ai/generate-full/route.ts、src/components/sciwrite/unified-writing-dialog.tsx、src/lib/i18n.tsx
 - 值得注意的设计决策：coverage 回填（v2 round-15）与引用计划的索引错位用"分数重同步+陈旧索引剥离+合成 CORE 分"三步治理；v1 的 suggestedRefIndices 从死 schema 字段变为活链路
+
+---
+Task ID: round-43
+Agent: main (Z.ai Code)
+Task: 用户反馈「AI Writing Hub 运行时窗口变宽了，有这个UI的问题」——全文生成启动瞬间对话框从 1024px 爆炸式加宽到 96vw，生成结束又骤缩回
+
+Work Log:
+- 根因定位：round-32 解封文章显示宽度时把 unified-writing-dialog 的「运行态」宽度一并从 max-w-7xl 改成了 max-w-[96vw]（本意是阅读面铺满，但写作对话框在 1920px 屏上点击 Generate 瞬间 1024→1843px，+80% 跳变，结束后回弹）——用户此次明确反馈该跳变是 UI 问题；历史考证 round-32 用户原始诉求只针对文章阅读区（viewer），写作对话框是被同一 commit 顺带改掉的
+- 修复三处（unified-writing-dialog.tsx）：
+  ① 运行态宽度 max-w-[96vw] → sm:max-w-7xl（1280px = 主列 958px + 日志面板 320px 的精确双列预算，round-32 之前的既有设计）；sm: 前缀保证 <640px 时基础类的 max-w-[calc(100%-2rem)] 移动安全边距仍然生效（responsive variant 只在 ≥640px 覆盖，级联依据 ui/dialog.tsx 注释）
+  ② 加 transition-[max-width] duration-300 ease-out——宽度变化 300ms 缓动展开/收起，不再瞬跳
+  ③ 移动端堆叠（同布局块防御性修复）：根容器 flex → flex-col sm:flex-row；日志面板 w-80/h-full → w-full sm:w-80 h-52 sm:h-full + border-t sm:border-l——原来 390px 屏上固定 w-80 面板把主列挤成 38px 细条，现在主列全宽 + 底部 208px 紧凑日志条
+  ④ 三处注释同步（DialogContent 宽度说明 / 根布局说明 / aside 说明）
+- 验证方法：临时 debug 强制 isRunning=true（热重载复现完整运行态布局，含 aside 渲染 + 父级加宽联动），实测后回滚
+- agent-browser 几何实测（最终仲裁）：
+  - 1920×1080 运行态：dialog 1280px（原 1843）= aside 320 + 主列 958 ✓；transitionProperty=max-width / 0.3s 生效 ✓；docScrollW 1920=winW 无横向溢出 ✓
+  - 390×844 运行态：dialog 358px + left 16px（呼吸边距回归，原全出血）✓；主列 356px 全宽（原 38px 细条）✓；日志条 208px 底部堆叠 ✓；无横向溢出 ✓
+  - 非运行态（debug 回滚后复验）：1024px = max-w-5xl 不变 ✓（本修复对闲置表单态零影响）
+  - console 仅 4 条既知 resizable 面板基线警告，0 error / 0 page error
+- 截图资产：/tmp/r43-shots/（desktop-1920-running.png / mobile-390-running.png[修复前全出血对照] / desktop-1920-running-fixed.png / mobile-390-running-fixed.png）
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）；dev.log 本轮零新增错误（无 500/429/Error）
+
+Stage Summary:
+- 运行态宽度跳变治愈：1024 →（300ms 缓动）→ 1280 而非 →1843 骤变；日志面板双列布局保留（这正是运行态需要额外宽度的原因），只是去掉过头部分
+- 移动端运行态从「主列 38px 细条」缺陷修为「主列全宽 + 底部日志条」标准响应式布局
+- 修改文件：仅 src/components/sciwrite/unified-writing-dialog.tsx（1 文件，纯 className/注释级修改，零逻辑改动）
+- 文章阅读区（viewer 96vw）不动——那是 round-32 用户明确要求且仍然想要的行为
