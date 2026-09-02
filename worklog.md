@@ -2756,3 +2756,35 @@ Stage Summary:
 - 「回调一次」结构性根除：跳转路径零原生 smooth、零 scrollTo 调用、单条实时轨迹、构造不越界；落点精度从 12px 提升到 0px
 - 修改文件：article-viewer-tabs.tsx（glideTo/waitForLayoutSettle ack 门控/preMountJumpSpan 返回 Promise/jumpToTop/Bottom/搜索滚动统一）、virtualized-article.tsx（requestSectionMounts Promise+ack/VirtualizedSections pendingAck 效果/MeasureOnMount 90ms 延迟复测）
 - 环境备注：round-47 测试项目（Full Generation Test/MscL）未随 DB 提交已丢失，本轮起用 TMC Round-17（9 壳 2,990w）为标准测试资产；「MscL 804px 视口」等旧档案不再适用
+
+---
+Task ID: round-49
+Agent: main (Z.ai Code)
+Task: 用户报障「文章的跳转没有问题了，但是左边的目录的跳转会先跳到点击的章节，再跳到上一个章节，再回到点击的章节」——TOC 点击后高亮三段弹跳
+
+Work Log:
+- 根因定位（代码走查 + 静态阈值分析，E2E 前锁定机制）：
+  - 文章视口轨迹本身完全正常（round-48 glideTo 已数值验证单调零回弹）——弹的不是文章，是 **TOC 轨道的高亮**
+  - 三连环机制：①点击 jumpToSection → setActiveIdx(N) 高亮瞬时跳到点击行（用户视线刚点完轨道、正盯着轨道）；②滑行中每个 scroll 事件触发 spy 重算「最后一个 top ≤ 容器顶+80px 的标题」→ 减速逼近段目标标题仍在 80px 侦察线以下 → spy 报告 N-1 → 高亮跳到上一章节；③落地（标题 +12px ≤ 80px）→ spy 报告 N → 高亮跳回
+  - 佐证：spy 阈值 80px vs 落点偏移 +12px——中间 68px 的逼近窗口里 spy 必然报 N-1，减速段（EASE 0.22）在该窗口停留 ~200-300ms，肉眼可见；中间章节逐个闪过太快、最终 N-1→N 翻转最显眼，与用户描述「先到点击、再到上一个、再回来」逐字吻合
+- 修复（article-viewer-tabs.tsx，纯旁路静音层，跳转引擎动画/落点/弃权零改动）：
+  - ① jump-flight 注册表（模块级 beginFlight/endFlight/jumpFlightActive/onFlightEnd）：settle+glide 全程 mute spy，飞行结束发布一次性重同步；令牌纪律镜像 jumpSupervision——settle→glide 嵌套交接（glide 先 begin 新 token，settle 的 end 成 no-op），静音无缝跨交接
+  - ② 接线：waitForLayoutSettle 入口 beginFlight（settle 也是飞行——预挂载提交若经 scroll-anchoring 顶动 scrollTop 同样会翻转高亮），两个出口（用户接管 stand-down / then 交接，try/finally）endFlight；glideTo 入口 beginFlight，全部出口（用户接管/被取代/断连/goal null/落地 settle/4s 兜底）endFlight
+  - ③ spy 改造：handleScroll 首行 jumpFlightActive() 早退；订阅 onFlightEnd 落地一次性重同步（顺带修好：搜索跳转落地在节中间、无后续 scroll 事件，此前高亮会陈旧到下一次用户滚动）；底部钳制（scrollTop ≥ maxScroll-2 钉轨道最后一行，经 railLenRef 钳到轨道范围——本文 9 壳 vs 8 行错配：第 9 壳是 References、轨道不列，直接报 8 会清空高亮）
+  - 途中两次自纠：railLenRef 渲染期赋值触发 react-compiler「Cannot access refs during render」error → 改 effect 内更新（同 paragraphsRef 既有模式）；首版底部钳制报 8 → E2E 抓到落地 activeRowAtRest=-1（高亮消失）→ railLen 钳制修复后 =7
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）；dev.log 无新错误
+- E2E 验证（agent-browser 数值探针，TMC Round-17 文章 9 壳 8 行 2990w，逐帧采样 [t, scrollTop, 高亮行]）：
+  - 向下远跳 0→7：高亮轨迹 **[0,7]——从未经过 6 或任何中间索引**；文章 0 反转、落点 +12px 精确、shell7 已挂载
+  - 短跳 500→745（行 1）：高亮 [0,1]、落点 +12
+  - 向上远跳 3414→725（行 1）：高亮 [7,1] 直达、零下漂、落点 +12
+  - 滚轮接管：飞行中发 WheelEvent → 滑行在滚轮位置精确冻结（3391 稳定不动）；随后手动滚到 900px → 高亮正确跟随到行 1——静音必然解除、无泄漏
+  - 底部跳：落点 = maxScroll 误差 0px、落地高亮钉最后一行 7（修复前 -1 消失）
+  - HMR 后完整回归：顶部跳行 0（落 168 = 标题块 +12 正确）→ 远跳行 6：高亮 [6] 全程钉住、0 反转、落点 +12、activeAtRest=6
+  - spy 常规存活：非跳转手动滚动高亮即时正确跟随
+  - console 仅 4 条既有基线警告 + HMR 日志，零新增
+- 方法论入档：①「弹跳的主体要找对」——用户说「文章没问题但目录跳转弹」时，报障对象是用户视线所在的 UI 区域（刚点击的轨道）；数值探针必须同时采样文章 scrollTop 与轨道高亮两条轨迹才能定位弹的是哪条；②静态阈值分析（spy 80px 线 vs 落点 +12px 的 68px 窗口 × 减速段停留时长）足以在跑 E2E 前锁定机制；③渲染期写 ref 是 react-compiler 红线，ref 镜像一律走 effect
+
+Stage Summary:
+- TOC 高亮三段弹跳结构性根除：点击行高亮瞬时到位并全程钉住（settle+glide 全程静音）、落地一次性重同步、用户输入立即交还 spy；顺带修复搜索跳转落地高亮陈旧 + 底部短尾节/References 错配的高亮错位
+- 修改文件：article-viewer-tabs.tsx（flight 注册表 + settle/glide 全出口接线 + spy 静音/重同步/底部钳制/railLenRef）
+- 跳转引擎零行为改动（纯旁路层）；全部 6 类场景数值验证通过

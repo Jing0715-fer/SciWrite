@@ -160,7 +160,17 @@ interface Props {
  *      live-goal stepper bends toward the moving goal with continuous
  *      velocity — no restart, no second animation, and it can never pass
  *      the live goal by more than one bounded step. Yields to the first
- *      user input instantly. */
+ *      user input instantly.
+ *
+ * round-49 — jump-flight registry: while a programmatic jump is in
+ * flight (settle + glide) the TOC rail's scroll spy stays MUTED and
+ * re-syncs once when the flight ends. Mid-flight the spy used to
+ * overwrite the clicked entry's highlight with whatever section the
+ * viewport was sweeping past — during the slow final approach that is
+ * the section ABOVE the target (its heading is still below the 80px
+ * spy line; it only crosses ~12px from the top at arrival), so every
+ * TOC click bounced the highlight "clicked → previous → clicked"
+ * while the article itself landed perfectly (round-48). */
 
 /** Nearest scrollable ancestor (overflowY auto/scroll and actually
  *  overflowing). Walks up from any element — works for both the Composed
@@ -208,6 +218,42 @@ let jumpSupervision = 0;
  *  own programmatic scrolls, e.g. search-match navigation). */
 function cancelJumpSupervision() {
   jumpSupervision++;
+}
+
+/* round-49 — jump-flight registry (see the block comment above).
+ * beginFlight() mutes the rail spy and returns a token; endFlight(token)
+ * publishes the "flight ended" re-sync ONLY if no newer flight has begun
+ * since — settle→glide handoffs nest tokens (the glide begins its flight
+ * before the settle's token is retired), so the outer end is a no-op and
+ * the mute survives the handoff. User input exits the glide at once,
+ * ending the flight and handing the spy back to the user's scrolling. */
+let flightSeq = 0;
+const flightEndSubs = new Set<() => void>();
+function beginFlight(): number {
+  return ++flightSeq;
+}
+function endFlight(token: number) {
+  if (token === 0 || token !== flightSeq) return;
+  flightSeq = 0;
+  for (const fn of [...flightEndSubs]) {
+    try {
+      fn();
+    } catch {
+      /* a listener error must not break the jump engine */
+    }
+  }
+}
+function jumpFlightActive(): boolean {
+  return flightSeq !== 0;
+}
+/** Subscribe to "programmatic jump ended" — the TOC spy re-syncs the
+ *  highlight exactly once here (e.g. search jumps land mid-section and
+ *  no further scroll event would ever fix the highlight otherwise). */
+function onFlightEnd(fn: () => void): () => void {
+  flightEndSubs.add(fn);
+  return () => {
+    flightEndSubs.delete(fn);
+  };
 }
 
 /** User-intent guard shared by the settle wait and the glide: flips to
@@ -296,6 +342,10 @@ function waitForLayoutSettle(
   then: () => void,
 ) {
   const guard = attachUserIntentGuard(scrollEl);
+  // round-49: the settle is part of the jump flight — mute the rail spy
+  // from click time (pre-mount commits can nudge scrollTop via scroll
+  // anchoring and would flip the highlight before the glide even starts).
+  const flight = beginFlight();
   let pinDone = pin === null;
   if (pin) {
     pin.then(
@@ -314,11 +364,16 @@ function waitForLayoutSettle(
       frames += 1;
       if (guard.tookOver() || !scrollEl.isConnected) {
         guard.detach();
+        endFlight(flight); // user intent won — spy resumes with their scroll
         return;
       }
       if ((stable >= 2 && pinDone) || frames >= 14) {
         guard.detach();
-        then();
+        try {
+          then(); // the glide begins its own, newer flight first
+        } finally {
+          endFlight(flight); // no-op when then() began one; else un-mute
+        }
         return;
       }
       tick();
@@ -342,6 +397,7 @@ function glideTo(
   targetEl?: HTMLElement | null,
 ) {
   const my = ++jumpSupervision;
+  const flight = beginFlight(); // round-49: mute the TOC spy for the flight
   const guard = attachUserIntentGuard(scrollEl);
 
   // Stepping: move a clamped fraction of the remaining gap per frame.
@@ -367,11 +423,13 @@ function glideTo(
         now - start > MAX_MS
       ) {
         guard.detach();
+        endFlight(flight);
         return;
       }
       const goal = getGoalTop();
       if (goal === null) {
         guard.detach();
+        endFlight(flight);
         return;
       }
       const pos = scrollEl.scrollTop;
@@ -397,6 +455,7 @@ function glideTo(
           if (settledAt === 0) settledAt = now;
           if (now - settledAt >= SETTLE_MS) {
             guard.detach();
+            endFlight(flight); // landed — re-sync the spy once, at rest
             return;
           }
         } else {
@@ -2245,7 +2304,10 @@ function StatCell({
  * Behavior:
  * - Clicking a section scrolls the content area so that section's `## ` header
  *   is at the top (or as close as possible)
- * - Active section is highlighted based on scroll position (scroll spy)
+ * - Active section is highlighted based on scroll position (scroll spy);
+ *   the spy is muted while a programmatic jump is in flight (round-49) so
+ *   the highlight stays on the clicked entry and re-syncs at landing —
+ *   previously it bounced "clicked → previous → clicked" mid-flight
  * - Shows section number, title, format badge, word count
  * - ZH indicator (•) on sections that have a Chinese translation
  * - Collapsible on small screens via lg: breakpoint
@@ -2260,6 +2322,19 @@ function ArticleTOCSidebar({
   const { t } = useI18n();
   const [activeIdx, setActiveIdx] = React.useState(0);
   const [copiedIdx, setCopiedIdx] = React.useState<number | null>(null);
+  // round-49: rail length via ref (sections is an inline .map() — new array
+  // identity per render; a ref keeps the spy effect deps clean, same
+  // pattern as paragraphsRef above). Used to clamp the spy's bottom report
+  // to the RAIL's last entry — the marker list ([data-h2-idx]/h2) can
+  // include trailing matter the rail doesn't list (e.g. a references
+  // section); reporting it would clear the highlight at the article's
+  // bottom instead of pinning the last rail row.
+  const railLenRef = React.useRef(sections.length);
+  // Updated in an effect (render-phase ref writes are forbidden by the
+  // react compiler rules — same pattern as paragraphsRef below).
+  React.useEffect(() => {
+    railLenRef.current = sections.length;
+  }, [sections.length]);
 
   // Scroll spy — listen to scroll events on the closest scrollable ancestor
   // (the ScrollArea viewport) and update activeIdx based on which `## ` heading
@@ -2281,6 +2356,13 @@ function ArticleTOCSidebar({
     if (!scrollEl) return;
 
     const handleScroll = () => {
+      // round-49: stand down while a programmatic jump is in flight — the
+      // viewport sweeps sections the user never scrolled to, and during
+      // the final approach the section ABOVE the target is the last one
+      // past the 80px line (the target's heading only crosses it at
+      // arrival). Highlighting it mid-flight was the visible
+      // "clicked → previous → clicked" bounce. Re-sync: subscription below.
+      if (jumpFlightActive()) return;
       // Find section markers inside contentRef — [data-h2-idx] shells are
       // present for EVERY section (mounted or placeholder, round-44), so
       // the spy works across the whole article; non-virtualized bodies
@@ -2300,12 +2382,30 @@ function ArticleTOCSidebar({
           currentIdx = i;
         }
       });
+      // At the article's very bottom the final section's heading can sit
+      // below the threshold line (short trailing section) — but it IS the
+      // one on screen; pin the RAIL's last row instead of the previous
+      // section (and never an unlisted trailing marker like references).
+      if (
+        scrollEl!.scrollTop + scrollEl!.clientHeight >=
+        scrollEl!.scrollHeight - 2
+      ) {
+        const railLen = railLenRef.current || headings.length;
+        currentIdx = Math.min(headings.length - 1, railLen - 1);
+      }
       setActiveIdx(currentIdx);
     };
 
     scrollEl.addEventListener("scroll", handleScroll, { passive: true });
+    // round-49: one re-sync when a jump flight ends (the flight's own
+    // exit publishes this — search jumps land mid-section and would
+    // otherwise keep a stale highlight until the next user scroll).
+    const offFlightEnd = onFlightEnd(handleScroll);
     handleScroll(); // initial sync
-    return () => scrollEl?.removeEventListener("scroll", handleScroll);
+    return () => {
+      scrollEl?.removeEventListener("scroll", handleScroll);
+      offFlightEnd();
+    };
   }, [contentRef]);
 
   // Find the scrollable ancestor (helper used by jump + scroll-to-top/bottom)
