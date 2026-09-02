@@ -356,7 +356,12 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         const runWithRetry = async (database: string, query: string) => {
           for (let attempt = 0; attempt < 3; attempt++) {
             try {
-              return await queryDatabase(database as any, query);
+              // round-50: searchOpts adds query variant expansion (TMC1 /
+              // TMC-1 / TMC 1 …) + LLM relevance filtering, with the project
+              // topic as organism/context disambiguator.
+              return await queryDatabase(database as any, query, {
+                searchOpts: { context: project.topic },
+              });
             } catch (err: any) {
               if (err?.message?.includes("HTTP 400") || attempt >= 2) throw err;
               await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));

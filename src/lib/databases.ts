@@ -1,4 +1,11 @@
 import type { DatabaseQueryResponse, DatabaseResultItem, DatabaseSource } from "./types";
+import {
+  expandQueryVariants,
+  filterItemsByRelevance,
+  runWithConcurrency,
+  type FilteredOutItem,
+  type SearchEnhanceOpts,
+} from "./search-enhance";
 
 const UA =
   "Mozilla/5.0 (compatible; SciWriteAssistant/1.0; +https://example.com/sciwrite)";
@@ -180,14 +187,49 @@ export async function fetchPubMedAbstracts(
   return out;
 }
 
-export async function searchPubMed(query: string, retmax = 10): Promise<DatabaseQueryResponse> {
+export async function searchPubMed(
+  query: string,
+  retmax = 10,
+  enhance: SearchEnhanceOpts = {}
+): Promise<DatabaseQueryResponse> {
   const cleaned = query.trim();
-  const esearch = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(
-    cleaned
-  )}&retmax=${retmax}&retmode=json&sort=relevance`;
-  const esData = await fetchJson(esearch);
-  const ids: string[] = esData?.esearchresult?.idlist ?? [];
-  const total = parseInt(esData?.esearchresult?.count ?? "0", 10);
+  const doExpand = enhance.expandVariants !== false;
+  const doFilter = enhance.filterByLlm !== false;
+
+  /* round-50: variant expansion — PubMed tokenizes "TMC1" / "TMC-1" /
+   * "TMC 1" differently, so one spelling misses papers indexed under the
+   * others. NCBI allows ~3 req/s without an API key: variant esearches run
+   * serially with a 300ms gap (≤6 variants ≈ +1.5s). Original-spelling hits
+   * keep priority in the merged order. */
+  const { variants } = doExpand
+    ? await expandQueryVariants(cleaned, enhance.context)
+    : { variants: [cleaned] };
+  const multiVariant = variants.length > 1;
+
+  const seenIds = new Set<string>();
+  const ids: string[] = [];
+  let singleTotal = 0;
+  for (let vi = 0; vi < variants.length; vi++) {
+    const v = variants[vi];
+    const esearch = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(
+      v
+    )}&retmax=${retmax}&retmode=json&sort=relevance`;
+    const esData = await fetchJson(esearch);
+    if (vi === 0) singleTotal = parseInt(esData?.esearchresult?.count ?? "0", 10);
+    for (const id of esData?.esearchresult?.idlist ?? []) {
+      if (!seenIds.has(id)) {
+        seenIds.add(id);
+        ids.push(id);
+      }
+    }
+    if (vi < variants.length - 1) await new Promise((r) => setTimeout(r, 300));
+  }
+  // Metadata headroom: enrich a few more than retmax so the LLM filter can
+  // remove irrelevant entries without shrinking the page below retmax.
+  if (ids.length > retmax + 10) ids.length = retmax + 10;
+  // Single-variant keeps the database-side count; a multi-spelling union has
+  // no single count — report the deduped hits actually retrieved.
+  const total = multiVariant ? ids.length : singleTotal;
 
   if (ids.length === 0) {
     return { source: "pubmed", query: cleaned, total: 0, items: [] };
@@ -236,7 +278,28 @@ export async function searchPubMed(query: string, retmax = 10): Promise<Database
     };
   }).filter(Boolean) as DatabaseResultItem[];
 
-  return { source: "pubmed", query: cleaned, total, items };
+  /* round-50: LLM relevance filter — drop entries whose primary subject is a
+   * different protein than the query target (conservative: uncertain or
+   * failed calls keep everything; the citation planner re-scores later). */
+  let finalItems = items;
+  let filteredOut: FilteredOutItem[] | undefined;
+  if (doFilter && items.length > 1) {
+    const r = await filterItemsByRelevance(items, cleaned, enhance.context);
+    if (r.dropped.length > 0) {
+      finalItems = r.kept;
+      filteredOut = r.dropped;
+    }
+  }
+  if (finalItems.length > retmax) finalItems = finalItems.slice(0, retmax);
+
+  return {
+    source: "pubmed",
+    query: cleaned,
+    total,
+    items: finalItems,
+    variants: multiVariant ? variants : undefined,
+    filteredOut,
+  };
 }
 
 /**
@@ -429,11 +492,38 @@ export async function searchUniprot(
 }
 
 /* ---------------- RCSB PDB ---------------- */
-export async function searchRcsb(
+
+/**
+ * RCSB's search API returns HTTP 204 with an EMPTY body for zero hits — the
+ * generic fetchJson would choke on res.json() of "" and surface that as a
+ * spurious error. This dedicated fetcher normalizes 204/empty to null.
+ */
+async function rcsbSearchFetch(url: string): Promise<any> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": UA, Accept: "application/json" },
+      signal: ctrl.signal,
+    });
+    if (res.status === 204) return null;
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+    }
+    const text = await res.text();
+    if (!text.trim()) return null;
+    return JSON.parse(text);
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/** One RCSB full-text search → ranked entry IDs (+ database-side total). */
+async function rcsbSearchIds(
   query: string,
-  limit = 10
-): Promise<DatabaseQueryResponse> {
-  const cleaned = query.trim();
+  rows: number
+): Promise<{ ranked: { id: string; score: number }[]; total: number }> {
   const body = {
     query: {
       type: "group",
@@ -442,26 +532,78 @@ export async function searchRcsb(
         {
           type: "terminal",
           service: "full_text",
-          parameters: {
-            value: cleaned,
-          },
+          parameters: { value: query },
         },
       ],
     },
     return_type: "entry",
     request_options: {
-      paginate: { start: 0, rows: limit },
+      paginate: { start: 0, rows },
       results_content_type: ["experimental"],
       sort: [{ sort_by: "score", direction: "desc" }],
     },
   };
-  const url = "https://search.rcsb.org/rcsbsearch/v2/query?json=" + encodeURIComponent(JSON.stringify(body));
-  const data = await fetchJson(url);
-  const total = data?.total_count ?? 0;
-  const resultSet = data?.result_set ?? [];
-  const ids = resultSet.map((r: any) => r.identifier);
+  const url =
+    "https://search.rcsb.org/rcsbsearch/v2/query?json=" + encodeURIComponent(JSON.stringify(body));
+  const data = await rcsbSearchFetch(url);
+  const resultSet: any[] = data?.result_set ?? [];
+  return {
+    ranked: resultSet.map((r) => ({ id: String(r.identifier), score: Number(r.score ?? 0) })),
+    total: data?.total_count ?? 0,
+  };
+}
 
-  const items: DatabaseResultItem[] = [];
+export async function searchRcsb(
+  query: string,
+  limit = 10,
+  enhance: SearchEnhanceOpts = {}
+): Promise<DatabaseQueryResponse> {
+  const cleaned = query.trim();
+  const doExpand = enhance.expandVariants !== false;
+  const doFilter = enhance.filterByLlm !== false;
+
+  /* round-50: variant expansion + merged multi-search. RCSB's Lucene
+   * full-text tokenizer treats TMC1 / TMC-1 / TMC 1 as DISTINCT tokens, so a
+   * single spelling silently loses most of the pool (user-observed: "TMC1"
+   * → 3 entries while "TMC-1" unlocks the rest). Original-spelling hits keep
+   * priority in the merged ranking; each variant searches `limit` rows in
+   * parallel (search.rcsb.org tolerates light concurrency). */
+  const { variants } = doExpand
+    ? await expandQueryVariants(cleaned, enhance.context)
+    : { variants: [cleaned] };
+  const multiVariant = variants.length > 1;
+
+  let firstErr: unknown = null;
+  const perVariant = await runWithConcurrency(variants, 4, async (v) => {
+    try {
+      return await rcsbSearchIds(v, limit);
+    } catch (err) {
+      if (firstErr === null) firstErr = err;
+      return null;
+    }
+  });
+  if (perVariant.every((r) => r === null)) {
+    throw firstErr ?? new Error("RCSB search failed for all query variants");
+  }
+
+  const idRank = new Map<string, { order: number; score: number }>();
+  perVariant.forEach((r, order) => {
+    if (!r) return;
+    for (const { id, score } of r.ranked) {
+      if (!idRank.has(id)) idRank.set(id, { order, score });
+    }
+  });
+  // Metadata headroom: enrich a few more than limit so the LLM filter can
+  // remove irrelevant entries without shrinking the page below limit.
+  const ids = [...idRank.keys()].slice(0, limit + 10);
+  // Single-variant keeps the historical database-side total_count; the
+  // deduped union count is the only honest number for multi-spelling.
+  const total = multiVariant ? idRank.size : (perVariant[0]?.total ?? 0);
+
+  // NOTE (round-50 refactor): the strictly serial per-ID loop became a
+  // worker pool (concurrency 6) — 20+ IDs meant 40+ sequential HTTP
+  // round-trips. The old entryMeta map was write-only dead state (never read
+  // after the loop) and was dropped.
   // FIX (citation-accuracy audit): the RCSB /core/pubmed/{id} endpoint does
   // NOT return title/authors/journal fields — it returns rcsb_pubmed_*
   // fields (rcsb_id = PMID, rcsb_pubmed_abstract_text = real abstract,
@@ -478,12 +620,10 @@ export async function searchRcsb(
   //      journal/year
   //   3. fall back to structure metadata when no publication is linked
   const pmidByPdb = new Map<string, string>();
-  const entryMeta = new Map<string, any>();
 
-  for (const id of ids) {
+  const items = await runWithConcurrency(ids, 6, async (id): Promise<DatabaseResultItem> => {
     try {
       const meta = await fetchJson(`https://data.rcsb.org/rest/v1/core/entry/${id}`);
-      entryMeta.set(id, meta);
       const method = meta?.exptl?.[0]?.method;
       const res = meta?.rcsb_entry_info?.resolution_combined?.[0];
       const org = meta?.rcsb_entry_info?.organism_scientific_name?.join(", ");
@@ -522,7 +662,7 @@ export async function searchRcsb(
         // No associated publication — structure metadata only
       }
 
-      items.push({
+      return {
         source: "rcsb",
         externalId: id,
         title: pubTitle || id,
@@ -541,16 +681,16 @@ export async function searchRcsb(
           pmcId: pmcId || "",
           hasPublication: hasPub,
         },
-      });
+      };
     } catch {
-      items.push({
+      return {
         source: "rcsb",
         externalId: id,
         title: id,
         url: `https://www.rcsb.org/structure/${id}`,
-      });
+      };
     }
-  }
+  });
 
   // Enrich RCSB items that have a linked publication with REAL publication
   // metadata (title/authors/journal/year) from PubMed esummary.
@@ -588,7 +728,29 @@ export async function searchRcsb(
     }
   }
 
-  return { source: "rcsb", query: cleaned, total, items };
+  /* round-50: LLM relevance filter — full-text retrieval routinely mixes in
+   * entries whose primary subject is a DIFFERENT protein that merely mentions
+   * the query term. Conservative: uncertain/failure keeps the entry; the
+   * citation planner re-scores the pool later anyway. */
+  let finalItems = items;
+  let filteredOut: FilteredOutItem[] | undefined;
+  if (doFilter && items.length > 1) {
+    const r = await filterItemsByRelevance(items, cleaned, enhance.context);
+    if (r.dropped.length > 0) {
+      finalItems = r.kept;
+      filteredOut = r.dropped;
+    }
+  }
+  if (finalItems.length > limit) finalItems = finalItems.slice(0, limit);
+
+  return {
+    source: "rcsb",
+    query: cleaned,
+    total,
+    items: finalItems,
+    variants: multiVariant ? variants : undefined,
+    filteredOut,
+  };
 }
 
 /* ---------------- NCBI Gene ---------------- */
@@ -911,18 +1073,28 @@ export async function lookupCrossrefDoi(doi: string): Promise<DatabaseResultItem
 }
 
 /* ---------------- Router ---------------- */
+export interface QueryDatabaseOpts {
+  program?: "blastp" | "blastn";
+  database?: string;
+  /** round-50: query variant expansion + LLM relevance filtering (applies
+   * to pubmed + rcsb). Title-exact-match verification lookups must pass
+   * { expandVariants: false, filterByLlm: false } — extra recall there
+   * manufactures false positives. */
+  searchOpts?: SearchEnhanceOpts;
+}
+
 export async function queryDatabase(
   source: DatabaseSource,
   query: string,
-  opts: { program?: "blastp" | "blastn"; database?: string } = {}
+  opts: QueryDatabaseOpts = {}
 ): Promise<DatabaseQueryResponse> {
   switch (source) {
     case "pubmed":
-      return searchPubMed(query, 20);
+      return searchPubMed(query, 20, opts.searchOpts);
     case "uniprot":
       return searchUniprot(query, 20);
     case "rcsb":
-      return searchRcsb(query, 20);
+      return searchRcsb(query, 20, opts.searchOpts);
     case "ncbi":
       return searchNcbiGene(query, 20);
     case "blast":

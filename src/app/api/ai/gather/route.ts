@@ -174,7 +174,7 @@ Output JSON only. Use lowercase database names.`;
   if (body.runQueries && queries.length) {
     sendLog(`Executing ${queries.slice(0, 6).length} database queries in parallel...`);
     const responses = await Promise.allSettled(
-      queries.slice(0, 6).map((q) => queryDatabase(q.database, q.query).then((r) => ({ ...r, rationale: q.rationale })))
+      queries.slice(0, 6).map((q) => queryDatabase(q.database, q.query, { searchOpts: { context: body.topic } }).then((r) => ({ ...r, rationale: q.rationale })))
     );
     for (const r of responses) {
       if (r.status === "fulfilled") results.push(r.value);
@@ -230,7 +230,7 @@ Output JSON only. 'index' in remove suggestions is 1-based into the gathered sou
   if (body.runQueries && addSuggestions.length) {
     sendLog(`Executing ${addSuggestions.slice(0, 4).length} suggested queries...`);
     const responses = await Promise.allSettled(
-      addSuggestions.slice(0, 4).map((s: any) => queryDatabase(s.database as DatabaseSource, String(s.query)).then((r) => ({ ...r, rationale: String(s.reason || "") })))
+      addSuggestions.slice(0, 4).map((s: any) => queryDatabase(s.database as DatabaseSource, String(s.query), { searchOpts: { context: body.topic } }).then((r) => ({ ...r, rationale: String(s.reason || "") })))
     );
     for (const r of responses) {
       if (r.status === "fulfilled") addedResults.push(r.value);

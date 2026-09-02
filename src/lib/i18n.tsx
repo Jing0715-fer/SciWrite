@@ -709,6 +709,8 @@ export const translations = {
     // Database query panel extras
     "db.pleaseEnterQuery": "Please enter a search query.",
     "db.foundToast": "Found {n} result(s) from {src}.",
+    "db.variantsUsed": "Searched {n} query variants",
+    "db.filteredOut": "Filtered {n} off-topic result(s) — different protein (show why)",
     "db.blastpProtein": "blastp (protein)",
     "db.blastnNucleotide": "blastn (nucleotide)",
     "db.source": "Source",
@@ -2052,6 +2054,8 @@ export const translations = {
     // Database query panel extras
     "db.pleaseEnterQuery": "请输入搜索查询。",
     "db.foundToast": "从 {src} 找到 {n} 条结果。",
+    "db.variantsUsed": "已搜索 {n} 种拼写变体",
+    "db.filteredOut": "已过滤 {n} 条离题结果（研究对象为其他蛋白，点击展开原因）",
     "db.blastpProtein": "blastp（蛋白质）",
     "db.blastnNucleotide": "blastn（核苷酸）",
     "db.source": "数据源",

@@ -282,6 +282,50 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
               ))}
             </div>
           )}
+          {/* round-50: search-transparency strip — which query spellings ran
+              (TMC1 / TMC-1 / TMC 1 / full-name aliases) and which entries the
+              LLM relevance filter removed as being about a different protein. */}
+          {results && !searchMut.isPending && (results.variants || results.filteredOut) && (
+            <div className="text-[11px] surface-card rounded-lg p-2.5 space-y-1.5 acad-fade-in">
+              {results.variants && results.variants.length > 1 && (
+                <div className="flex items-start gap-1.5 flex-wrap">
+                  <span className="text-muted-foreground shrink-0">
+                    {t("db.variantsUsed", { n: results.variants.length })}:
+                  </span>
+                  <span className="flex flex-wrap gap-1">
+                    {results.variants.map((v) => (
+                      <span
+                        key={v}
+                        className="inline-block px-1.5 py-px rounded bg-primary/8 text-primary border border-primary/15 font-mono leading-4"
+                      >
+                        {v}
+                      </span>
+                    ))}
+                  </span>
+                </div>
+              )}
+              {results.filteredOut && results.filteredOut.length > 0 && (
+                <details className="group">
+                  <summary className="cursor-pointer text-muted-foreground hover:text-foreground transition-colors select-none list-none flex items-center gap-1">
+                    <ChevronDown className="h-3 w-3 shrink-0 transition-transform group-open:rotate-180" />
+                    {t("db.filteredOut", { n: results.filteredOut.length })}
+                  </summary>
+                  <div className="mt-1.5 space-y-1 pl-4 max-h-40 overflow-y-auto">
+                    {results.filteredOut.map((f, i) => (
+                      <div key={`${f.externalId ?? f.title}-${i}`} className="leading-relaxed">
+                        <span className="text-muted-foreground line-through">
+                          {f.title.length > 72 ? f.title.slice(0, 72) + "…" : f.title}
+                        </span>
+                        <span className="block text-[10px] text-muted-foreground/80 pl-2">
+                          {f.reason}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
           {results &&
             results.items.map((item, idx) => (
               <ResultCard

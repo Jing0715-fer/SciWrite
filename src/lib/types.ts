@@ -179,6 +179,17 @@ export interface DatabaseQueryResponse {
   total: number;
   items: DatabaseResultItem[];
   rawSnippet?: string;
+  /**
+   * round-50: the actual query spellings executed (original first). Present
+   * when variant expansion ran and produced more than the original alone —
+   * e.g. ["TMC1", "TMC-1", "TMC 1", "transmembrane channel-like protein 1"].
+   */
+  variants?: string[];
+  /**
+   * round-50: entries the LLM relevance filter removed as being about a
+   * different protein, with reasons (for UI transparency).
+   */
+  filteredOut?: { externalId?: string; title: string; reason: string }[];
 }
 
 export interface WriteRequest {

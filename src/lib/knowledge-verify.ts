@@ -375,7 +375,13 @@ export async function verifyMissingViaPubMed(
 
   for (const suggestion of missing) {
     try {
-      const res = await queryDatabase("pubmed", suggestion.title.slice(0, 180));
+      // round-50: title-exact-match verification — variant expansion would
+      // manufacture false positives (a "TMC-1" paper matching a "TMC1"
+      // suggestion title is NOT the same as a title match), and the LLM
+      // relevance filter would fight the titleSimilarity gate below. Opt out.
+      const res = await queryDatabase("pubmed", suggestion.title.slice(0, 180), {
+        searchOpts: { expandVariants: false, filterByLlm: false },
+      });
       const items: any[] = res.items || [];
       let best: { item: any; sim: number } | null = null;
       for (const item of items) {

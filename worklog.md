@@ -2788,3 +2788,34 @@ Stage Summary:
 - TOC 高亮三段弹跳结构性根除：点击行高亮瞬时到位并全程钉住（settle+glide 全程静音）、落地一次性重同步、用户输入立即交还 spy；顺带修复搜索跳转落地高亮陈旧 + 底部短尾节/References 错配的高亮错位
 - 修改文件：article-viewer-tabs.tsx（flight 注册表 + settle/glide 全出口接线 + spy 静音/重同步/底部钳制/railLenRef）
 - 跳转引擎零行为改动（纯旁路层）；全部 6 类场景数值验证通过
+
+---
+Task ID: round-50
+Agent: main (Z.ai Code)
+Task: 用户报障「数据源收集缺陷：研究 TMC1 时 RCSB 搜 TMC1 只能搜到 3 个，很多重要文献得用 TMC-1 才能搜到；需要 LLM 扩展搜索关键词加入变体，并过滤掉混入的多种不同蛋白」
+
+Work Log:
+- 链路调查（Explore agent）：searchRcsb/searchPubMed 对 query 仅 trim() 直接透传——RCSB Lucene full_text 分词把 TMC1 / TMC-1 / TMC 1 当三个不同 token（单拼写静默丢失大半池子）；且 full_text 检索无任何蛋白相关性过滤（混入仅提及目标蛋白的其他蛋白条目）
+- 修复（三层，新建 src/lib/search-enhance.ts）：
+  - ① 机械变体（确定性、零成本）：mechanicalQueryVariants 识别 query 中「字母串+分隔符?+数字」蛋白名 token（≥2 字母，p53 类不误伤），生成三种分隔形态并原位替换（长查询安全）；空格形态仅限 ≤3 词短查询（避免 "channel 1" 假命中）
+  - ② LLM 别名扩展：expandQueryWithLlm 生成官方全名/别名/旧符号（TMC1 → transmembrane channel-like protein 1、DFNA36、DFNB7 耳聋基因别名），llm-cache 30min 缓存、失败静默降级为纯机械变体、与机械变体去重后 ≤3 条
+  - ③ LLM 相关性过滤：filterItemsByRelevance 判断每条结果的主要研究对象是否为目标蛋白（KEEP：本身/突变体/复合物/机理；DROP：别的蛋白、仅提及、缩写撞名如天体物理 TMC-1 分子云、HIV 蛋白酶+TMC-126 药名；拿不准→保留），25 条/批、索引校验、失败/解析失败保留全部（宁多勿漏，citation-planner 事后打分兜底）
+- 接线（databases.ts）：
+  - searchRcsb：变体并行搜索（4 并发）→ idRank 合并去重（原词命中优先 order，再 score）→ 富集上限 limit+10（给过滤留余量）→ 逐 ID 串行元数据富集改为 6 并发 worker pool（30 ID 从 ~15s → ~3s；顺手清掉 write-only 死代码 entryMeta Map）→ LLM 过滤 → 截回 limit
+  - 专用 rcsbSearchFetch：RCSB 搜索 API 对 0 命中返回 204 空 body——通用 fetchJson 的 res.json() 会抛 SyntaxError；204/空文本归一化为 null（原词 0 命中+变体有结果现在能正常返回，全部变体失败才抛错保持旧语义）
+  - searchPubMed：变体 esearch 串行 + 300ms 间隔（NCBI 无 key 限 ~3 req/s，≤6 变体 ≈ +1.5s）→ PMID 合并去重 → esummary/efetch 批量一次
+  - queryDatabase opts 加 searchOpts 透传；total 语义：单变体保持数据库端 count（历史兼容），多变体报告去重命中数（唯一诚实数字）
+- 调用点：gather organize/critique 传 context=body.topic（物种/语境消歧）；generate-full-v2 runWithRetry 传 context=project.topic；knowledge-verify 的 title 精确验证 opt-out（expandVariants:false + filterByLlm:false——变体会制造假阳性、过滤会与 titleSimilarity 门打架）
+- 前端：database-query-panel 搜索透明度条——变体 chips（mono 小标签）+ 可展开的被过滤列表（标题删除线+原因），i18n en/zh 双语键 db.variantsUsed/db.filteredOut
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）；dev.log 无新错误
+- E2E 验证（agent-browser + curl 数值探针）：
+  - RCSB TMC1（curl）：variants=[TMC1, TMC-1, TMC 1, transmembrane channel-like protein 1, DFNA36, DFNB7]、去重命中 42（用户实测原 3 个，召回 14 倍）、过滤 23 条（HIV-1 Protease+TMC-126 抑制剂、HSV 胸苷激酶、雌激素受体、结核杆菌 PE-PPE-EspG——全是「标题含 TMC-1x 药名」的无关蛋白）、保留 7 条真 TMC 家族结构（8XOQ/8Z3F/6WUD CIB2-TMC1 复合、7USW/X/Y 线虫 TMC-1、8TKP TMC-2）、耗时 17.3s
+  - PubMed TMC1（curl）：variants 同上、保留 20 条真 TMC1 文献、剔除 7 条（TMC-1 分子云天体物理文献 ×3——扩展召回后混入的绝佳例证、中国 cohort 基因筛查提及、C. elegans 钠趋化研究）、耗时 11.9s
+  - opt-out（bun 脚本直调）：title 精确验证路径 variants=undefined、filteredOut=0、第一条精确命中
+  - 面板 UI（agent-browser 1600×1000 桌面布局）：RCSB+TMC1 搜索 → "Searched 6 query variants" + 6 个 chips 渲染、"Filtered 23 off-topic result(s)" 折叠条渲染、details 展开后被剔条目+原因渲染、结果卡列表正常；console 仅 resizable-panels 既有基线警告零新增
+- 方法论入档：①「变体扩展与过滤必须成对出现」——扩召回（3→42）必然引入撞名噪音（TMC-1 分子云、TMC-126 药名），只扩不滤会把用户第二个痛点变成灾难；②外部 API 的 204 空体是隐藏契约——RCSB 0 命中返回 204 而非 200+空数组，通用 fetchJson 把它当错误，变体搜索把该路径从「异常」变成「该变体 0 命中」；③ LLM 辅助层的降级方向不对称：扩展失败→静默用机械变体（无损），过滤失败→保留全部（宁多勿漏），因为事后还有 citation-planner 打分，而丢真文献不可逆
+
+Stage Summary:
+- 数据源收集双重缺陷根除：机械变体（TMC1↔TMC-1↔TMC 1）零成本兜底 + LLM 别名（全名/疾病符号）扩召回 + LLM 过滤剔无关蛋白；RCSB 召回 3→42、PubMed 混入的天体物理/综述/筛查文献被剔
+- 修改文件：src/lib/search-enhance.ts（新）、src/lib/databases.ts（searchRcsb/searchPubMed/queryDatabase/rcsbSearchFetch/并发池）、src/lib/types.ts（variants/filteredOut 字段）、src/app/api/ai/gather/route.ts ×2（context）、src/app/api/ai/generate-full-v2/route.ts（context）、src/lib/knowledge-verify.ts（opt-out）、src/components/sciwrite/database-query-panel.tsx（透明度条）、src/lib/i18n.tsx（db.variantsUsed/db.filteredOut en+zh）
+- generate-full-v2 / gather 全管线自动受益（经 queryDatabase 默认开启）；手动数据库面板带可视化透明度
