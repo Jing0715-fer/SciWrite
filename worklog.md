@@ -2723,3 +2723,36 @@ Stage Summary:
 - 三层连环根因（估算目标漂移 → pin 事件断裂 → 测量从未生效）一次修复；跳转动画终态：预挂载定形布局 → 单条 smooth 单调滑行 → 12px 落点，全程零回弹零瞬移零锁
 - 修改文件：virtualized-article.tsx（哨兵测量+足迹高度+pin 通道+内部 ref 锚定）、article-viewer-tabs.tsx（三步化跳转+guard 抽取+jumpToBottom 预挂载）
 - 顺带修复 round-44 遗留假象：高度缓存从未工作过（本轮才真正生效）；IO rootMargin 预挂载无效的档案记录
+
+---
+Task ID: round-48
+Agent: main (Z.ai Code)
+Task: 用户报障「跳转的位置还是不准确，后续还是会回调一次，需要继续修复」——round-47 之后跳转仍有一次可见回调
+
+Work Log:
+- 环境恢复：本地被回滚到 round-26，git pull --ff-only 到 origin/main（13c4436 round-47）；pull 后 bunx prisma generate（retranslate 路由的 tsc 假错全部消除）；dev 服务器中途死亡一次，后台重启
+- E2E 复现（agent-browser 数值探针，TMC Round-17 文章 9 壳 2,990w，全新未测量状态）：
+  - 向下远跳 TOC0→7：scrollTo 调用 2 次（t=132 → 3885，t=526 → 3764）——第二条 smooth 即用户看到的「回调一次」；goal 在 t=526 漂移 -121px（滑行途中视口后方 section 卸载，陈旧缓存高度 ≠ 实际高度）
+  - settle 竞速本轮未触发（pin t=108 已挂载早于起滑 t=132）——真正根因是「陈旧测量 + 原生 smooth 端点钉死 + 重发=第二段动画」三连环
+  - 陈旧测量源头实锤：MeasureOnMount 同步测量发生在弹窗刚开、markdown 多遍渲染/字体未定型时
+- 修复（三层，机制级根除）：
+  - ① glideTo 实时目标 rAF 滑行（article-viewer-tabs.tsx）彻底取代 superviseGlide：每帧重读实时 goal、直写 scrollTop（EASE 0.22 / MIN 4 / MAX 110 / SETTLE 350ms / 兜底 4s）；任何漂移只弯折轨迹（速度连续），构造上不越过实时目标，全程零 scrollTo 调用；用户滚轮 1 帧内弃权；落点 <1px
+  - ② 挂载 ack 通道（virtualized-article.tsx）：requestSectionMounts 返回 Promise，detail 携带 ack——无需挂载时同步 ack，需挂载时在 [visibleSet] 提交后的 effect 里 ack，250ms 安全超时兜底；waitForLayoutSettle 增加 pin 参数，settle 必须「ack + goal 连续 2 帧稳定」（上限 14 帧）才起滑，封死「提交前起滑」竞速
+  - ③ MeasureOnMount 延迟复测：+90ms setTimeout 重测并让后值生效——缓存收敛到定型布局，根除 -121px 类卸载漂移源头；卸载前清理超时
+  - 全部跳转路径统一走 glideTo：TOC/jumpToSectionIdx（经 animatedScrollTo 三步链）、jumpToBottom（pin+settle+glide）、jumpToTop（直滑 goal=0）、两处搜索滚动（实时 goal = 匹配元素 rect - clientHeight/3，targetEl 传 mark + closest 壳判 mounted）；原生 smooth 在跳转路径中零残留
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）；dev.log 无新错误
+- E2E 验证（同文章，7 场景全绿）：
+  - 向下远跳 0→7：scrollTo=0、越界 0、落点误差 0px（round-47 为 12px）、反转 0；goal 在 t=293 仍漂移（延迟复测生效中）但轨迹无缝吸收
+  - 向上跳 7→1：scrollTo=0、欠越 0、单调、精确落点
+  - 底部跳：scrollTo=0、final === trueMax（误差 0px）、越界 0
+  - 顶部跳：scrollTo=0、final=0 精确、单调
+  - 滚轮弃权：滑行 351ms 处发 WheelEvent，353ms 停笔（1.7ms/一帧内）；手动置位后 600ms 无回拉
+  - 搜索跳转（"channel" 43 处匹配）：scrollTo=0、落点误差 0px
+  - End 键跳转：scrollTo=0、正常滑行至末节
+  - console 仅 4 条既有基线警告（resizable-panels ×3 + DialogContent aria ×1）+ HMR 日志，零新增
+- 方法论入档：①「单次调用≠单段动画」——原生 smooth 的端点在 issue 时钉死，布局漂移后任何重发都是第二段可见动画，监督式纠偏永远治标；实时目标步进器让漂移成为轨迹弯折而非动画重启；② probe 双目标采样（目标 goal + mounted 计数逐帧记录）可以直接定位「哪次卸载引入多少漂移」；③ 环境回滚恢复流程：pull 后必须 prisma generate 再信 tsc
+
+Stage Summary:
+- 「回调一次」结构性根除：跳转路径零原生 smooth、零 scrollTo 调用、单条实时轨迹、构造不越界；落点精度从 12px 提升到 0px
+- 修改文件：article-viewer-tabs.tsx（glideTo/waitForLayoutSettle ack 门控/preMountJumpSpan 返回 Promise/jumpToTop/Bottom/搜索滚动统一）、virtualized-article.tsx（requestSectionMounts Promise+ack/VirtualizedSections pendingAck 效果/MeasureOnMount 90ms 延迟复测）
+- 环境备注：round-47 测试项目（Full Generation Test/MscL）未随 DB 提交已丢失，本轮起用 TMC Round-17（9 壳 2,990w）为标准测试资产；「MscL 804px 视口」等旧档案不再适用

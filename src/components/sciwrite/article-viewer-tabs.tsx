@@ -133,7 +133,7 @@ interface Props {
   onClose: () => void;
 }
 
-/* round-44..47 — scroll-jump helpers shared by the viewer and its TOC rail.
+/* round-44..48 — scroll-jump helpers shared by the viewer and its TOC rail.
  *
  * The article body is virtualized (VirtualizedArticle): a section far from
  * the viewport is an EMPTY placeholder shell whose height is the last
@@ -143,15 +143,24 @@ interface Props {
  * the way corrected the goal backward and the viewport visibly bounced
  * back — "scrolls past the target, then jumps back".
  *
- * animatedScrollTo (round-47) — three steps, all animated, no teleport:
+ * animatedScrollTo (round-48) — three steps, no teleport, no native smooth:
  *   0. PRE-MOUNT: force-mount every section the glide will pass through
- *      (plus the observer's rootMargin band above the landing spot) via
- *      requestSectionMounts — the layout becomes FINAL before moving.
- *   1. SETTLE: wait a few frames for the mount commit (goal stable across
- *      two frames, ~12-frame cap); if the user scrolls first, stand down.
- *   2. GLIDE: one smooth scroll from the current position to the exact
- *      heading; a supervisor re-targets (always smoothly) if anything
- *      still drifts and YIELDS instantly to user input. */
+ *      (plus the observer's band above the landing spot) via
+ *      requestSectionMounts — which now RESOLVES once the pin is committed
+ *      (round-48 ack channel), so the settle can't race the commit.
+ *   1. SETTLE: wait for the pin-commit ack + the goal to stabilize across
+ *      two frames (~14-frame cap); if the user scrolls first, stand down.
+ *   2. GLIDE: a rAF stepper that re-reads the LIVE goal every frame and
+ *      writes scrollTop directly (round-48: no scrollTo({behavior:
+ *      "smooth"}) anywhere). Native smooth pinned its endpoint to the
+ *      goal at issue time — ANY mid-flight drift (stale measured cache,
+ *      late mount, scroll-anchoring) forced a second animation to the
+ *      corrected goal, which the user saw as "jumps past, then bounces
+ *      back once" (probe-verified: second smooth at -121px drift). The
+ *      live-goal stepper bends toward the moving goal with continuous
+ *      velocity — no restart, no second animation, and it can never pass
+ *      the live goal by more than one bounded step. Yields to the first
+ *      user input instantly. */
 
 /** Nearest scrollable ancestor (overflowY auto/scroll and actually
  *  overflowing). Walks up from any element — works for both the Composed
@@ -226,21 +235,26 @@ function attachUserIntentGuard(scrollEl: HTMLElement) {
   };
 }
 
-/** round-47 step 0 — pre-mount the span the glide will pass through so
+/** round-47/48 step 0 — pre-mount the span the glide will pass through so
  *  the goal is FINAL before the animation starts. `targetShell` is the
  *  jump target's [data-section-idx] shell; upward jumps additionally pin
- *  the observer's rootMargin band ABOVE the landing spot (those sections
- *  mount during the final approach and their height swaps would shift
- *  the goal after arrival). No-op for non-virtualized bodies. */
-function preMountJumpSpan(scrollEl: HTMLElement, targetShell: HTMLElement): void {
+ *  the band ABOVE the landing spot (those sections mount during the final
+ *  approach and their height swaps would shift the goal after arrival).
+ *  Returns the pin-commit Promise (round-48 ack channel) — null for
+ *  non-virtualized bodies (no shells → nothing to pin, the settle then
+ *  runs with the layout already final). */
+function preMountJumpSpan(
+  scrollEl: HTMLElement,
+  targetShell: HTMLElement,
+): Promise<void> | null {
   const mountRoot = targetShell.parentElement;
-  if (!mountRoot) return;
+  if (!mountRoot) return null;
   const shells = Array.from(
     mountRoot.querySelectorAll<HTMLElement>("[data-section-idx]"),
   );
-  if (shells.length === 0) return;
+  if (shells.length === 0) return null;
   const targetIdx = shells.indexOf(targetShell);
-  if (targetIdx < 0) return;
+  if (targetIdx < 0) return null;
   // Section at the viewport top (same 80px threshold the rail's spy uses).
   const scrollRect = scrollEl.getBoundingClientRect();
   let topIdx = 0;
@@ -263,19 +277,32 @@ function preMountJumpSpan(scrollEl: HTMLElement, targetShell: HTMLElement): void
   }
   const indices: number[] = [];
   for (let i = lo; i <= hi; i++) indices.push(i);
-  requestSectionMounts(mountRoot, indices);
+  return requestSectionMounts(mountRoot, indices);
 }
 
-/** round-47 step 1 — wait for the pin-mount commit + layout to settle
- *  (goal stable across two frames, ~12-frame cap so a huge article can't
- *  stall the click), then hand off. If the user scrolls first, stand down
- *  entirely (their intent wins even during the settle window). */
+/** round-47/48 step 1 — wait for the pin-mount COMMIT (the round-48 ack
+ *  Promise from preMountJumpSpan resolves only after the virtualizer has
+ *  committed the pin) and for the goal to stabilize across two frames
+ *  (~14-frame cap so a huge article can't stall the click), then hand
+ *  off. Before the ack existed the goal was trivially "stable" before
+ *  React had even committed the pin — the glide launched at a stale
+ *  estimate-based goal and corrected mid-flight. If the user scrolls
+ *  first, stand down entirely (their intent wins even during the settle
+ *  window). */
 function waitForLayoutSettle(
   scrollEl: HTMLElement,
   getGoal: () => number,
+  pin: Promise<void> | null,
   then: () => void,
 ) {
   const guard = attachUserIntentGuard(scrollEl);
+  let pinDone = pin === null;
+  if (pin) {
+    pin.then(
+      () => { pinDone = true; },
+      () => { pinDone = true; },
+    );
+  }
   let stable = 0;
   let last: number | null = null;
   let frames = 0;
@@ -289,7 +316,7 @@ function waitForLayoutSettle(
         guard.detach();
         return;
       }
-      if (stable >= 2 || frames >= 12) {
+      if ((stable >= 2 && pinDone) || frames >= 14) {
         guard.detach();
         then();
         return;
@@ -300,12 +327,16 @@ function waitForLayoutSettle(
   tick();
 }
 
-/** round-47 step 2 — supervised glide: issues a SMOOTH scroll toward
- *  getGoalTop() immediately and re-targets it if anything still drifts.
- *  Exits when the user scrolls (their intent wins), when a newer jump
- *  takes over, when the position settles on mounted content, or after a
- *  4s backstop. Corrections are always smooth — never an instant snap. */
-function superviseGlide(
+/** round-48 step 2 — live-goal glide. Every frame: re-read the goal from
+ *  the live DOM and write scrollTop directly toward it (no native smooth,
+ *  no scrollTo). Any mid-flight drift bends the trajectory with
+ *  continuous velocity instead of restarting an animation — the
+ *  "overshoot, then one bounce back" class of bug is structurally
+ *  impossible: each step is clamped to the CURRENT gap, so the viewport
+ *  can never pass the live goal by more than one bounded step. Exits on
+ *  user input (their intent wins), a newer jump (module token), target
+ *  disconnection, or after settling on mounted content. */
+function glideTo(
   scrollEl: HTMLElement,
   getGoalTop: () => number | null,
   targetEl?: HTMLElement | null,
@@ -313,33 +344,27 @@ function superviseGlide(
   const my = ++jumpSupervision;
   const guard = attachUserIntentGuard(scrollEl);
 
-  // First glide — issued synchronously so the jump starts the moment the
-  // settle wait hands off (the supervisor corrects residual drift later).
-  const goal0 = getGoalTop();
-  if (goal0 === null) {
-    guard.detach();
-    return;
-  }
-  let lastIssued: number = goal0;
-  scrollEl.scrollTo({ top: Math.max(0, goal0), behavior: "smooth" });
+  // Stepping: move a clamped fraction of the remaining gap per frame.
+  // EASE 0.22 gives a native-like ease-out; MIN_STEP keeps the final
+  // approach from crawling; MAX_STEP caps long jumps at ~6600px/s.
+  const EASE = 0.22;
+  const MIN_STEP = 4;
+  const MAX_STEP = 110;
+  const SETTLE_MS = 350;
+  const MAX_MS = 4000;
 
   const start = performance.now();
-  let lastNow = start;
-  let lastTop = scrollEl.scrollTop;
-  let lastProgressAt = start;
-  let settledMs = 0;
+  let settledAt = 0;
 
   const step = () => {
     requestAnimationFrame(() => {
       const now = performance.now();
-      const dt = Math.max(0, now - lastNow);
-      lastNow = now;
       if (
         guard.tookOver() ||
         my !== jumpSupervision ||
         !scrollEl.isConnected ||
         (targetEl ? !targetEl.isConnected : false) ||
-        now - start > 4000
+        now - start > MAX_MS
       ) {
         guard.detach();
         return;
@@ -349,38 +374,38 @@ function superviseGlide(
         guard.detach();
         return;
       }
-      const delta = Math.abs(goal - scrollEl.scrollTop);
-      const moving = Math.abs(scrollEl.scrollTop - lastTop) >= 0.5;
-      lastTop = scrollEl.scrollTop;
-      if (moving || delta <= 4) lastProgressAt = now;
-
-      if (delta > 4) {
-        // Re-issue only when the goal actually moved (residual drift) or
-        // when the glide stalled (its animation was cancelled without
-        // user input) — re-issuing every frame would restart the easing
-        // and stutter.
-        const goalMoved = Math.abs(goal - lastIssued) > 8;
-        const stalled = now - lastProgressAt > 200;
-        if (goalMoved || stalled) {
-          lastIssued = goal;
-          lastProgressAt = now;
-          scrollEl.scrollTo({ top: Math.max(0, goal), behavior: "smooth" });
-        }
-        settledMs = 0;
-      } else {
-        // Settled — but only count it once the target's CONTENT is mounted
-        // (virtualized placeholders are empty shells; a mounted section
-        // contains its h2), and only after ~0.4s of stillness.
-        const mounted = !targetEl || targetEl.tagName === "H2" || targetEl.querySelector("h2") !== null;
+      const pos = scrollEl.scrollTop;
+      const gap = goal - pos;
+      const absGap = Math.abs(gap);
+      if (absGap < 1) {
+        // On goal — pin the exact (possibly fractional) position. The
+        // write is idempotent, so repeating it during the settle window
+        // cannot jitter.
+        if (absGap > 0.05) scrollEl.scrollTop = goal;
+        // Only count stillness once the target's CONTENT is mounted —
+        // virtualized placeholders are empty shells; a mounted section
+        // contains its h2. Non-shell targets (search marks) count via
+        // their enclosing section shell; no shells at all = always
+        // mounted (non-virtualized body).
+        const sec = targetEl ? targetEl.closest("[data-section-idx]") : null;
+        const mounted =
+          !targetEl ||
+          targetEl.tagName === "H2" ||
+          targetEl.querySelector("h2") !== null ||
+          (sec ? sec.querySelector("h2") !== null : true);
         if (mounted) {
-          settledMs += dt;
-          if (settledMs >= 400) {
+          if (settledAt === 0) settledAt = now;
+          if (now - settledAt >= SETTLE_MS) {
             guard.detach();
             return;
           }
         } else {
-          settledMs = 0;
+          settledAt = 0;
         }
+      } else {
+        settledAt = 0;
+        const move = Math.min(Math.max(absGap * EASE, MIN_STEP), MAX_STEP, absGap);
+        scrollEl.scrollTop = pos + Math.sign(gap) * move;
       }
       step();
     });
@@ -388,28 +413,29 @@ function superviseGlide(
   step();
 }
 
-/** Animated jump (round-47): pre-mount → settle → ONE smooth glide from
- *  the CURRENT position to the target heading (see the block comment). */
+/** Animated jump (round-48): pre-mount (+ack) → settle → live-goal glide
+ *  from the CURRENT position to the target heading (see the block
+ *  comment). */
 function animatedScrollTo(scrollEl: HTMLElement, targetEl: HTMLElement, offsetAdjust = 12) {
   const computeGoal = () =>
     targetEl.getBoundingClientRect().top -
     scrollEl.getBoundingClientRect().top +
     scrollEl.scrollTop -
     offsetAdjust;
-  // Any supervision still running from a previous jump must not fight
-  // the settle window — take over the token now.
+  // Any glide still running from a previous jump must not fight the
+  // settle window — take over the token now.
   cancelJumpSupervision();
   const shell = targetEl.matches("[data-section-idx]")
     ? targetEl
     : (targetEl.closest("[data-section-idx]") as HTMLElement | null);
   if (shell) {
-    preMountJumpSpan(scrollEl, shell);
-    waitForLayoutSettle(scrollEl, computeGoal, () =>
-      superviseGlide(scrollEl, computeGoal, targetEl),
+    const pin = preMountJumpSpan(scrollEl, shell);
+    waitForLayoutSettle(scrollEl, computeGoal, pin, () =>
+      glideTo(scrollEl, computeGoal, targetEl),
     );
   } else {
     // Non-virtualized body — the layout is already final; glide at once.
-    superviseGlide(scrollEl, computeGoal, targetEl);
+    glideTo(scrollEl, computeGoal, targetEl);
   }
 }
 
@@ -483,11 +509,8 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
   // the old querySelectorAll("h2") missed unmounted sections);
   // non-virtualized bodies use the h2s directly. Index is clamped to
   // [0, total-1], so passing 999 jumps to the last section.
-  // Supervised smooth scroll: see animatedScrollTo above — the single
-  // smooth scrollTo used to miss mid-flight when virtualized sections
-  // mounted along the way and changed the scrollHeight. round-46: one
-  // animated glide from the current position, and it yields to user
-  // input instantly.
+  // Jump engine: see animatedScrollTo above — pre-mount + settle + live-
+  // goal glide (round-48), yields to user input instantly.
   const jumpToSectionIdx = React.useCallback((idx: number) => {
     if (!composedContentRef.current) return;
     const root = composedContentRef.current;
@@ -2304,9 +2327,8 @@ function ArticleTOCSidebar({
 
   // Jump to a section by scrolling the closest scrollable ancestor.
   // Targets [data-h2-idx] shells (present even while the section is a
-  // virtualized placeholder, round-44) and uses the supervised smooth
-  // scroll (round-46): one animated glide from the current position,
-  // re-targeted when mount waves move the goal, yielded on user input.
+  // virtualized placeholder, round-44) and uses the round-48 jump engine:
+  // pre-mount + settle + live-goal glide, yielded on user input.
   const jumpToSection = (idx: number) => {
     if (!contentRef.current) return;
     const root = contentRef.current;
@@ -2319,16 +2341,18 @@ function ArticleTOCSidebar({
     }
   };
 
-  // Jump to the very top of the article (scroll position 0)
+  // Jump to the very top of the article (scroll position 0).
+  // round-48: routed through the live-goal glide like every other jump —
+  // zero native smooth animations anywhere in the jump paths.
   const jumpToTop = () => {
     const scrollEl = findScrollEl();
-    scrollEl?.scrollTo({ top: 0, behavior: "smooth" });
+    if (scrollEl) glideTo(scrollEl, () => 0);
     setActiveIdx(0);
   };
 
-  // Jump to the very bottom of the article. round-47: pre-mount the span
-  // so the bottom (maxScroll) is final BEFORE gliding — the mount waves
-  // used to shrink the bottom mid-glide and the viewport bounced back.
+  // Jump to the very bottom of the article. round-47/48: pre-mount the
+  // span (ack-gated) so the bottom (maxScroll) is final BEFORE gliding,
+  // then the live-goal glide tracks maxScroll for any residual drift.
   const jumpToBottom = () => {
     const scrollEl = findScrollEl();
     if (!scrollEl) return;
@@ -2337,10 +2361,10 @@ function ArticleTOCSidebar({
     const shells = scrollEl.querySelectorAll<HTMLElement>("[data-section-idx]");
     const lastShell = shells.length > 0 ? shells[shells.length - 1] : null;
     if (lastShell) {
-      preMountJumpSpan(scrollEl, lastShell);
-      waitForLayoutSettle(scrollEl, goal, () => superviseGlide(scrollEl, goal));
+      const pin = preMountJumpSpan(scrollEl, lastShell);
+      waitForLayoutSettle(scrollEl, goal, pin, () => glideTo(scrollEl, goal));
     } else {
-      superviseGlide(scrollEl, goal);
+      glideTo(scrollEl, goal);
     }
     setActiveIdx(sections.length - 1);
   };
@@ -2631,13 +2655,18 @@ function ArticleSearchBar({
         }
       }
       if (scrollEl) {
-        const scrollRect = scrollEl.getBoundingClientRect();
-        const elRect = found[0].getBoundingClientRect();
-        const offset = elRect.top - scrollRect.top + scrollEl.scrollTop - scrollEl.clientHeight / 3;
-        // round-45: take over from any active jump supervision first —
-        // otherwise the two smooth scrolls fight over the viewport.
+        const el = found[0] as HTMLElement;
+        const goal = () => {
+          const r = el.getBoundingClientRect();
+          const sr = scrollEl!.getBoundingClientRect();
+          return r.top - sr.top + scrollEl!.scrollTop - scrollEl!.clientHeight / 3;
+        };
+        // round-48: live-goal glide (was a one-shot native smooth to a
+        // pre-computed offset — it missed whenever the layout drifted
+        // while the browser animated). Yields to user input like every
+        // other jump path.
         cancelJumpSupervision();
-        scrollEl.scrollTo({ top: Math.max(0, offset), behavior: "smooth" });
+        glideTo(scrollEl, goal, el);
       }
       // Highlight first match more strongly
       found.forEach((m, i) => {
@@ -2671,13 +2700,14 @@ function ArticleSearchBar({
       }
     }
     if (scrollEl) {
-      const scrollRect = scrollEl.getBoundingClientRect();
-      const elRect = el.getBoundingClientRect();
-      const offset = elRect.top - scrollRect.top + scrollEl.scrollTop - scrollEl.clientHeight / 3;
-      // round-45: take over from any active jump supervision first —
-      // otherwise the two smooth scrolls fight over the viewport.
+      const goal = () => {
+        const r = el.getBoundingClientRect();
+        const sr = scrollEl!.getBoundingClientRect();
+        return r.top - sr.top + scrollEl!.scrollTop - scrollEl!.clientHeight / 3;
+      };
+      // round-48: live-goal glide — see the search-open site above.
       cancelJumpSupervision();
-      scrollEl.scrollTo({ top: Math.max(0, offset), behavior: "smooth" });
+      glideTo(scrollEl, goal, el);
     }
     // Highlight current match more strongly
     marksRef.current.forEach((m, i) => {

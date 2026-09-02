@@ -50,17 +50,19 @@ const ROOT_MARGIN = "1500px 0px"; // pre-mount sections within 1500px of viewpor
  *      the placeholder uses the RECORDED height instead of the estimate, so
  *      scrollHeight stays constant after the first pass — no mid-scroll
  *      jumps, and jump offsets stay valid.
- *   B. PRE-MOUNTED SMOOTH JUMP: callers jump via [data-h2-idx] markers
+ *   B. PRE-MOUNTED LIVE GLIDE: callers jump via [data-h2-idx] markers
  *      which exist on BOTH mounted and placeholder section shells (see
  *      jumpToSection in article-viewer-tabs.tsx). The span the glide will
- *      pass through is force-mounted FIRST (requestSectionMounts below),
- *      so the goal is final before the animation starts — then one smooth
- *      glide runs to the exact heading, re-targeted smoothly if anything
- *      still drifts and cancelled by the first user input (round-46/47 —
- *      no teleport, never an instant snap).
+ *      pass through is force-mounted FIRST (requestSectionMounts below,
+ *      whose round-48 ack tells the caller when the commit landed), then
+ *      a live-goal rAF glide runs to the exact heading — re-reading the
+ *      goal every frame so any residual drift bends the trajectory
+ *      smoothly instead of triggering a second animation, and cancelled
+ *      by the first user input (round-46..48 — no teleport, never an
+ *      instant snap, never a native smooth restart).
  */
 
-/** round-47: jump pre-mount channel. The jump code (article-viewer-tabs)
+/** round-47/48: jump pre-mount channel. The jump code (article-viewer-tabs)
  *  asks the virtualizer to force-mount a span of sections BEFORE the
  *  animated glide starts, so the goal is final for the whole animation —
  *  gliding through unmeasured placeholders made jumps overshoot and then
@@ -68,14 +70,33 @@ const ROOT_MARGIN = "1500px 0px"; // pre-mount sections within 1500px of viewpor
  *  VirtualizedArticle wrapper (the section shells' parent node);
  *  VirtualizedSections listens there and merges the indices into its
  *  visible set. Pinned sections unmount naturally when the viewport
- *  leaves them (the observer's boundary-crossing flow) — no TTL needed. */
+ *  leaves them (the observer's boundary-crossing flow) — no TTL needed.
+ *
+ *  round-48: the request RESOLVES (ack) once the virtualizer has COMMITTED
+ *  the pin — the detail carries an `ack` callback fired after the mount
+ *  commit's passive effects (or synchronously when nothing needs
+ *  mounting). The caller's settle wait gates on this Promise, closing the
+ *  race where the goal looked "stable" before React had even committed
+ *  and the glide launched at a stale estimate-based goal. A 250ms safety
+ *  timeout covers listeners that never ack. */
 export const SECTION_MOUNT_REQUEST = "sciwrite:section-mount-request";
 
-export function requestSectionMounts(root: HTMLElement, indices: number[]): void {
-  // bubbles: true — the listener may sit on an ancestor of the dispatch
-  // node (the caller's ref can be co-attached to outer nodes), so the
-  // event must climb to reach it.
-  root.dispatchEvent(new CustomEvent(SECTION_MOUNT_REQUEST, { detail: indices, bubbles: true }));
+export function requestSectionMounts(root: HTMLElement, indices: number[]): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const ack = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    // bubbles: true — the listener may sit on an ancestor of the dispatch
+    // node (the caller's ref can be co-attached to outer nodes), so the
+    // event must climb to reach it.
+    root.dispatchEvent(
+      new CustomEvent(SECTION_MOUNT_REQUEST, { detail: { indices, ack }, bubbles: true }),
+    );
+    window.setTimeout(ack, 250);
+  });
 }
 
 /**
@@ -336,17 +357,48 @@ function VirtualizedSections({
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // round-47: jump pre-mount channel — see requestSectionMounts above.
+  // round-47/48: jump pre-mount channel — see requestSectionMounts above.
   // Merges the requested indices into the visible set; the observer's
   // natural boundary-crossing flow unmounts them once the viewport moves
   // on (no IO entry fires for a far pinned section until the viewport
-  // actually crosses its rootMargin boundary, so pins persist).
+  // actually crosses its boundary, so pins persist). round-48: the ack
+  // callback resolves the caller's pin Promise — synchronously when
+  // nothing needs mounting (no commit would follow), otherwise after the
+  // commit (the [visibleSet] effect below).
+  const visibleSetRef = React.useRef(visibleSet);
+  React.useEffect(() => {
+    visibleSetRef.current = visibleSet;
+  }, [visibleSet]);
+  const pendingAckRef = React.useRef<(() => void) | null>(null);
+  React.useEffect(() => {
+    const ack = pendingAckRef.current;
+    if (ack) {
+      pendingAckRef.current = null;
+      ack();
+    }
+  }, [visibleSet]);
   React.useEffect(() => {
     const root = rootRef?.current;
     if (!root) return;
     const handler = (e: Event) => {
-      const indices = (e as CustomEvent).detail as number[] | undefined;
-      if (!indices || indices.length === 0) return;
+      const detail = (e as CustomEvent).detail as
+        | { indices?: number[]; ack?: () => void }
+        | undefined;
+      const indices = detail?.indices;
+      if (!indices || indices.length === 0) {
+        detail?.ack?.();
+        return;
+      }
+      const cur = visibleSetRef.current;
+      const needsMount = indices.some((i) => i >= 0 && i < sections.length && !cur.has(i));
+      if (!needsMount) {
+        // Everything requested is already visible — no commit will follow,
+        // so ack at once (otherwise the caller's settle would hang on the
+        // frame cap).
+        detail?.ack?.();
+        return;
+      }
+      if (detail?.ack) pendingAckRef.current = detail.ack;
       setVisibleSet((prev) => {
         const next = new Set(prev);
         let changed = false;
@@ -467,6 +519,15 @@ function VirtualizedSections({
  * same commit (before paint) keeps the recorded height the layout's final
  * value for that frame, and React batches the setStates from all sections
  * mounting in one commit into a single re-render.
+ *
+ * round-48: the synchronous measurement can still be STALE — markdown is
+ * a multi-pass render (citation chips, footnote positions) and web fonts
+ * settle a few frames after the mount commit. A stale entry is exactly
+ * what the placeholder uses on unmount, and the E2E probe caught a
+ * -121px goal jump from it mid-glide ("position still wrong, one bounce
+ * back"). Re-measure ~90ms later and let the later value win; the extra
+ * setState is render-only (mounted sections don't read the placeholder
+ * height) so it never disturbs the live layout.
  */
 function MeasureOnMount({
   idx,
@@ -476,7 +537,7 @@ function MeasureOnMount({
   onMeasured: (idx: number, h: number) => void;
 }) {
   const sentinelRef = React.useRef<HTMLSpanElement | null>(null);
-  React.useLayoutEffect(() => {
+  const measure = React.useCallback(() => {
     const shell = sentinelRef.current?.parentElement;
     if (shell && shell.isConnected) {
       // Full footprint: distance to the NEXT shell's top (height + the
@@ -491,5 +552,14 @@ function MeasureOnMount({
       if (h > 0) onMeasured(idx, h);
     }
   }, [idx, onMeasured]);
+  React.useLayoutEffect(() => {
+    measure();
+    // round-48: deferred re-measure — the layout may still be settling
+    // (multi-pass markdown, font swap) when the synchronous pass runs.
+    // The cleanup also covers unmount-before-90ms (sentinel detached →
+    // the re-measure no-ops).
+    const t = window.setTimeout(measure, 90);
+    return () => window.clearTimeout(t);
+  }, [measure]);
   return <span ref={sentinelRef} aria-hidden="true" style={{ display: "none" }} />;
 }
