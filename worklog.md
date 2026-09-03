@@ -2848,3 +2848,32 @@ Stage Summary:
 - 4 层防御闭环：元数据重试→救援通道→确定性剔除→入库垃圾门，外加查询设计源头治理；「无标题的离题 RCSB 卡片」在任何 data.rcsb.org 健康状态下都不可能再入库
 - 修改文件：src/lib/databases.ts（buildRcsbItem/池+救援/metaDropped/esummary 重试）、src/lib/search-enhance.ts（盲区守卫）、src/app/api/ai/generate-full-v2/route.ts（垃圾门+提示）、src/app/api/ai/generate-full/route.ts（垃圾门）、src/app/api/ai/gather/route.ts（查询设计提示）
 - 对用户问题的直接回答：那批数据是过滤器上线前的旧运行产物（当前库中已不存在）；即使如此，元数据抓取失败仍会产生漏网的裸卡片——本轮已结构性堵死
+---
+Task ID: round-52
+Agent: main (Z.ai Code)
+Task: 用户报障「进度条不符合实际：第8步(generate)第9步(verify)要按章节数循环执行多次但进度条没有足够占比，且会出现进度条回退」
+
+Work Log:
+- 根因定位（代码走查，两问归一）：
+  - 前端进度 = (currentStep+1)/STEPS.length 均分，仅 status==="started" 推进 → 10 步各占 10%
+  - v2 管线 generate/verify 是按章节交错循环：generate.started §i → verify.started §i → verify.done §i → generate.done §i → generate.started §i+1——循环吃掉 60-80% 墙钟却只占 20% 条幅；且 currentStep 在 7↔8 间反复横跳 → 条在 80%↔90% 间回退（用户所见）；translate 按章节循环同样被均分压缩
+- 修复（新建 src/lib/progress-tracker.ts，事件驱动加权单调跟踪器）：
+  - 相位加权模型：固定相位按 weight 分配区间；**连续循环相位（generate+verify）合并为一个 family 区间**、按 unitWeight(2:0.9) 切分每章节单元的子片——章节交错把条推向前进而非在两个步骤槽间弹跳；v2 权重下 9 章循环族占条幅 76.7%（旧 20%）
+  - N 学习：plan.done 的 sectionCount 学习全部 family；循环事件自带 total 可按 family 精化（translate 的 total=已存章节数）；重归一化后单调钳制吸收位移（条冻结而非回退）
+  - 固定相位渐近爬升：长相位（gather 每查询 20-30s 一个 progress 事件）从常数 2/3 位改为逐事件推进（0.35→0.92 渐近），条持续可见移动；循环相位内 v1 chunk/totalChunks 定位、v2 translate streaming 按 accumulatedLength/wordCount×1.8 插值、无信息事件按每单元爬升兜底
+  - 单调保证：tracker 服务端 max-clamp（含 99.4 上限——complete 才是 100 的唯一时刻）+ 前端二次 Math.max 钳制；unknown step（init/audit/relationships/review）原样透传不装饰
+  - 探针暴露并修复布局哨兵 bug：无循环相位的配置 familyN.join("|")="" 与初始 "" 相同 → 布局永不计算（生产配置必有循环相位故未触发，但契约必须成立）→ lastLayoutKey 改 null 哨兵
+- 接线（两路由同一模式，~60 处 send 调用点零改动）：rawSend 原始入队 + send 包装器逐事件注入 progress + complete 时 finish()；v2 相位表 [gather2.2 knowledge1.4 score0.9 curate0.7 plan0.9 analyze1.1 allocate0.2 | gen2.0+verify0.9 (loop) | compose0.5 | translate0.75 (both)]；v1 [gather score curate relationships plan | gen1.0 (loop) | translate0.75 (both) | compose0.8]；v2 translate.started 补 wordCount 字段供流式插值
+- 前端（unified-writing-dialog.tsx）：barProgress 状态（后端值+二次单调钳制；无 progress 的旧路由回退到均匀估计仍单调）；标签加 §i/N 章节计数（"Step 8/10 · §3/9: Generate sections"——循环不再被读作卡死/回退）；运行开始重置
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）
+- 数值探针（/home/z/probes，6 场景 24 断言全过）：v2 英文 9 章交错序列严格单调、族区间 [21.8, 98.5] 占 76.7%、每章 8.5%；N=12 迟到学习零回退；限速 skip 连跳至族末；both 模式 translate 族 18.4% 区间+流式插值递增；v1 chunk 插值递增；未知 step null 透传、error 事件推进单元、finish=100；固定相位爬升 8 事件 24.1→59.8 严格递增、done 跳相位末
+- E2E（agent-browser 真实全管线 ×2）：
+  - 第一次运行（04:04）：gather→knowledge→score(127源)→curate→FATAL 于 plan LLM 调用——根因是我 04:10 的 curl SSE 取证探针与浏览器运行共享限速预算触发 429 风暴 abort（探针干扰，非代码缺陷）；该次已验证事件流带 progress（fiber 读 streamLog 状态确认 progress:4.7 在客户端）与 DOM 采样 5%（gather 旧模块常数位）
+  - 第二次运行（04:24，新模块，5 查询+2000 词）：完整 23.3min 收官（2132 词 17 refs，relationships+review 自动完成）；**155 个 step 事件 100% 单调零回退**；7 章交错序列 26.2→33.3→36.5→43.6→…→98.2 严格前进（旧实现该序列在 8↔9 步序间横跳）；循环族实测占 72%；gather 爬升 4%→6% 逐事件可见；gen§1 26.2 < verify§1 33.3 < gen§2 36.5；console 零新增
+  - 探针方法学：DOM 查询 /^\d+%/ 匹配到了页头 workspace 词数胶囊的 "0%"——对话框真实进度条是第二个匹配（5%）；「多个同名元素时按 class 上下文缩小查询范围」
+- 方法论入档：①「进度条的诚实性=权重×单调」——均分步序在循环型管线里必然同时失真（占比）和回退（交错事件序）；交错子相位必须共享一个连续区间才能把交错转化为前进；②单调钳制是双侧的（服务端 tracker + 客户端 state），任何未来的乱序事件都翻不了车；③「无事件即无进度」——长静默 LLM 调用期间条停顿是诚实的（不伪造心跳）；爬升只对「有事件但无位置信息」的场景插值；④取证探针要考虑共享限速预算——并发两条全管线会互相打死（第一次 E2E 的 abort 即此）
+
+Stage Summary:
+- 进度条双重缺陷根除：generate/verify 循环族占条幅 72-77%（按真实章节数动态学习），交错事件只前进不回退（155 事件实测零回退），translate 循环同权重化，gather 等长阶段逐事件爬升；§i/N 标签让循环读作迭代而非卡死
+- 修改文件：src/lib/progress-tracker.ts（新）、src/app/api/ai/generate-full-v2/route.ts（rawSend 包装器+相位表+translate wordCount）、src/app/api/ai/generate-full/route.ts（同模式）、src/components/sciwrite/unified-writing-dialog.tsx（barProgress/loopInfo/§标签/兜底）
+- v1/v2 双管线自动受益（包装器拦截所有 step 事件，60 处调用点零改动）；旧无 progress 路由前端兜底仍单调

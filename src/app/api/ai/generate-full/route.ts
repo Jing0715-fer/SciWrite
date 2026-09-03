@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { webSearch } from "@/lib/ai";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
+import { PipelineProgressTracker } from "@/lib/progress-tracker";
 import { countWords, renumberByAppearance, sanitizeSectionContent, buildStructureContextFromDataSources } from "@/lib/writing";
 import { generateArticleTitle } from "@/lib/article-title";
 import { translateSectionTitles } from "@/lib/section-title-zh";
@@ -136,7 +137,7 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       let isClosed = false;
-      const send = (event: string, data: any) => {
+      const rawSend = (event: string, data: any) => {
         if (isClosed) return;
         try {
           controller.enqueue(
@@ -146,6 +147,35 @@ export async function POST(req: NextRequest) {
           // Controller may be closed already
           isClosed = true;
         }
+      };
+      // round-52 (ported from v2): honest progress bar. The old bar was
+      // (stepIndex+1)/totalSteps — v1's per-section (× per-chunk) generate
+      // loop and both-mode translate loop own most of the wall clock but got
+      // a fixed ~14% each. The tracker maps phases to weighted bar regions,
+      // learns the real section count from the plan event, interpolates
+      // chunk/streaming events inside a section's unit, and only ever emits
+      // monotonic values. `progress` rides on every step event.
+      const trackerBothMode = (body.language || "English") === "both";
+      const progressTracker = new PipelineProgressTracker([
+        { step: "gather", weight: 2.2 },
+        { step: "score", weight: 0.9 },
+        { step: "curate", weight: 0.7 },
+        { step: "relationships", weight: 0.6 },
+        { step: "plan", weight: 0.9 },
+        { step: "generate", unitWeight: 1 },
+        ...(trackerBothMode ? [{ step: "translate", unitWeight: 0.75 }] : []),
+        { step: "compose", weight: 0.8 },
+      ]);
+      const send = (event: string, data: any) => {
+        if (event === "step" && data && typeof data === "object") {
+          const progress = progressTracker.onEvent(data);
+          if (progress != null) {
+            rawSend(event, { ...data, progress });
+            return;
+          }
+        }
+        if (event === "complete") progressTracker.finish();
+        rawSend(event, data);
       };
       const safeClose = () => {
         if (isClosed) return;

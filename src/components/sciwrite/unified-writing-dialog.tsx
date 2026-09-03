@@ -829,6 +829,15 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
   // instruction is appended to the section-generation prompt.
   const [selectedTemplateId, setSelectedTemplateId] = React.useState<string>("");
   const [templateManagerOpen, setTemplateManagerOpen] = React.useState(false);
+  // round-52: real progress percent (0-100) from the backend's weighted
+  // monotonic tracker — replaces the uniform (stepIndex+1)/N bar that gave
+  // the per-section generate/verify loop a fixed ~10% and oscillated 8↔9
+  // across every section iteration.
+  const [barProgress, setBarProgress] = React.useState(0);
+  // Latest loop iteration (§i/N) for the active step's label — loop phases
+  // (generate/verify/translate) run once per section, so the bare step
+  // ordinal made multi-section runs look stuck on "Step 8".
+  const [loopInfo, setLoopInfo] = React.useState<{ section: number; total: number } | null>(null);
   const logEndRef = React.useRef<HTMLDivElement>(null);
   const logScrollRef = React.useRef<HTMLDivElement>(null);
 
@@ -936,6 +945,8 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
     setResult(null);
     setStreamLog([]);
     setLivePreview("");
+    setBarProgress(0);
+    setLoopInfo(null);
     // Report the real generation target so the workspace progress bar
     // tracks THIS run's goal (round 26 — no more fixed 1000w bar).
     onGenerationTargetWords?.(targetWords);
@@ -969,6 +980,29 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
           // So we need to check data.step (not event, which is always "step")
           if (stepMap[data.step] !== undefined && data.status === "started") {
             setCurrentStep(stepMap[data.step]);
+            // round-52: track the §i/N loop counter so the label reads
+            // "Step 8/10 · §3/9: Generate sections" instead of a bare
+            // ordinal that bounces between 8 and 9 every section.
+            setLoopInfo(
+              typeof data.section === "number" && typeof data.total === "number"
+                ? { section: data.section, total: data.total }
+                : null
+            );
+            // Legacy fallback for routes that don't emit weighted progress
+            // yet: the old uniform estimate, kept monotonic by the clamp.
+            if (typeof data.progress !== "number") {
+              const fbIdx = stepMap[data.step];
+              if (fbIdx !== undefined) {
+                setBarProgress((p) => Math.max(p, ((fbIdx + 1) / STEPS.length) * 100));
+              }
+            }
+          }
+          // round-52: backend tracker value — weighted by real phase cost,
+          // monotonic server-side, and clamped again here so the bar can
+          // NEVER move backwards regardless of event ordering.
+          if (typeof data.progress === "number") {
+            const v = Math.max(0, Math.min(100, data.progress));
+            setBarProgress((p) => Math.max(p, v));
           }
           if (data.message) {
             setStreamLog((prev) => {
@@ -1491,15 +1525,15 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold tabular-nums text-primary">
                 {currentStep >= 0 && currentStep < STEPS.length
-                  ? `Step ${currentStep + 1}/${STEPS.length}: ${STEPS[currentStep].label}`
+                  ? `Step ${currentStep + 1}/${STEPS.length}${loopInfo ? ` · §${loopInfo.section}/${loopInfo.total}` : ""}: ${STEPS[currentStep].label}`
                   : "Processing..."}
               </span>
               <span className="text-[10px] text-muted-foreground tabular-nums">
-                {Math.round(((currentStep + 1) / STEPS.length) * 100)}%
+                {Math.round(barProgress)}%
               </span>
             </div>
             <Progress
-              value={((currentStep + 1) / STEPS.length) * 100}
+              value={barProgress}
               className="h-2 progress-glow"
             />
           </div>

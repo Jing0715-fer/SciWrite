@@ -34,6 +34,7 @@ import {
   buildEvidenceContext,
   type EvidenceRefInput,
 } from "@/lib/evidence-pipeline";
+import { PipelineProgressTracker } from "@/lib/progress-tracker";
 import {
   countBySource,
   dedupePreprintVersions,
@@ -136,13 +137,50 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       let isClosed = false;
-      const send = (event: string, data: any) => {
+      const rawSend = (event: string, data: any) => {
         if (isClosed) return;
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ event, ...data })}\n\n`));
         } catch {
           isClosed = true;
         }
+      };
+      // round-52: honest progress bar. The old bar was
+      // (stepIndex+1)/totalSteps — the generate/verify loop (N sections ×
+      // LLM write + adversarial check, 60-80% of wall clock) got a fixed
+      // ~10%+10% share, and the per-section event interleave
+      // (generate.started §i → verify.started §i → generate.started §i+1)
+      // made the bar oscillate 8→9→8→9 across the whole loop. The tracker
+      // gives loop families a bar region proportional to unitWeight × N,
+      // learns the real section count from the plan event, and only ever
+      // emits monotonic values. `progress` rides on every step event.
+      const trackerBothMode = (body.language || "English") === "both";
+      const progressTracker = new PipelineProgressTracker([
+        { step: "gather", weight: 2.2 },
+        { step: "knowledge", weight: 1.4 },
+        { step: "score", weight: 0.9 },
+        { step: "curate", weight: 0.7 },
+        { step: "plan", weight: 0.9 },
+        { step: "analyze", weight: 1.1 },
+        { step: "allocate", weight: 0.2 },
+        // generate+verify interleave PER SECTION — consecutive loop phases
+        // share one family region so the bar sweeps forward through the
+        // whole loop instead of bouncing between two step slots.
+        { step: "generate", unitWeight: 2 },
+        { step: "verify", unitWeight: 0.9 },
+        { step: "compose", weight: 0.5 },
+        ...(trackerBothMode ? [{ step: "translate", unitWeight: 0.75 }] : []),
+      ]);
+      const send = (event: string, data: any) => {
+        if (event === "step" && data && typeof data === "object") {
+          const progress = progressTracker.onEvent(data);
+          if (progress != null) {
+            rawSend(event, { ...data, progress });
+            return;
+          }
+        }
+        if (event === "complete") progressTracker.finish();
+        rawSend(event, data);
       };
       const safeClose = () => {
         if (isClosed) return;
@@ -1821,6 +1859,9 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
                 section: sectionNum,
                 total: generatedParagraphs.length,
                 title: para.title,
+                // round-52: rides along for the progress tracker's streaming
+                // interpolation (chars-written → fraction of the unit).
+                wordCount: para.wordCount,
                 message: `Translating section ${sectionNum}/${generatedParagraphs.length}: ${para.title} (${para.wordCount} EN words → 中文)`,
               });
 
