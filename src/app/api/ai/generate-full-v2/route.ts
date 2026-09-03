@@ -309,6 +309,7 @@ Design ${maxDbQueries >= 9999
           : `a focused search plan with ${Math.max(5, maxDbQueries - 4)}-${maxDbQueries} well-chosen queries (NOT more — too many causes JSON truncation)`
         }.
 Distribute across databases: mostly PubMed (reviews, mechanisms, diseases, methods), a few RCSB structure searches, a few UniProt gene-name searches, 1-2 NCBI gene searches.
+CRITICAL: every query must center on the primary molecule's symbol or specific name (e.g. "TMC1 cryo-EM structure", "transmembrane channel-like protein 1") — NEVER a generic descriptor phrase (e.g. "membrane protein complex structure") whose common words full-text-match thousands of unrelated entries.
 
 Respond as STRICT JSON (keep it under 4000 characters):
 {
@@ -473,7 +474,18 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
 
         const savedDataSources: any[] = [];
         const savedReferences: any[] = [];
+        let skippedTitleless = 0;
         for (const item of uniqueItems) {
+          // round-51 junk guard: an item with no real title (missing, or just
+          // the external ID — the RCSB metadata-fetch failure fallback) is
+          // unverifiable and un-citable; saving it floods the knowledge panel
+          // with bare-ID cards (the exact 6VYM/2QTS/5W2O/5W2Q defect).
+          const itemTitle = String(item.title || "").trim();
+          if (!itemTitle || itemTitle === String(item.externalId || "")) {
+            skippedTitleless++;
+            log(`gather: skipped titleless item ${item.source}:${item.externalId || item.url || "?"}`);
+            continue;
+          }
           try {
             const ds = await db.dataSource.create({
               data: {
@@ -531,6 +543,9 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           } catch (dsErr: any) {
             log(`gather: data source create failed for "${String(item.title).slice(0, 50)}": ${String(dsErr?.message ?? dsErr).slice(0, 100)}`);
           }
+        }
+        if (skippedTitleless > 0) {
+          log(`gather: junk guard skipped ${skippedTitleless} titleless item(s) — not saved`);
         }
 
         send("step", {

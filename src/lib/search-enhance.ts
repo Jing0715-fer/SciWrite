@@ -276,15 +276,37 @@ export async function filterItemsByRelevance(
   const q = query.trim();
   if (!q) return { kept: items, dropped: [], usedLlm: false };
 
+  /* round-51 blind-spot guard: entries with no usable metadata (title
+   * missing, or just the external ID) cannot be judged — the "when
+   * uncertain, KEEP" policy would silently admit them. That was the exact
+   * hole that let bare title=ID RCSB cards survive as pinned sources when
+   * data.rcsb.org blipped. Drop them deterministically instead. */
+  const judgeable: DatabaseResultItem[] = [];
+  const dropped: FilteredOutItem[] = [];
+  for (const it of items) {
+    const title = String(it.title || "").trim();
+    if (!title || title === String(it.externalId || "")) {
+      dropped.push({
+        externalId: it.externalId,
+        title: title || String(it.externalId),
+        reason: "no title/metadata available — cannot verify relevance",
+      });
+    } else {
+      judgeable.push(it);
+    }
+  }
+  if (judgeable.length <= 1) {
+    return { kept: judgeable, dropped, usedLlm: false };
+  }
+
   const system =
     "You are a rigorous screening assistant for biomedical search results. Respond ONLY with JSON.";
   const contextLine = context ? `\nResearch context: ${String(context).slice(0, 300)}` : "";
   const keepIdx = new Set<number>();
-  const dropped: FilteredOutItem[] = [];
   let usedLlm = false;
 
-  for (let off = 0; off < items.length; off += FILTER_BATCH) {
-    const batch = items.slice(off, off + FILTER_BATCH);
+  for (let off = 0; off < judgeable.length; off += FILTER_BATCH) {
+    const batch = judgeable.slice(off, off + FILTER_BATCH);
     const listing = batch.map((it, i) => itemLine(it, off + i)).join("\n");
     const prompt =
       `Research target (the molecule/protein the user studies): ${q}${contextLine}\n\n` +
@@ -328,11 +350,11 @@ export async function filterItemsByRelevance(
     const dropArr = Array.isArray(parsed.drop) ? parsed.drop : [];
     for (const d of dropArr) {
       const i = Number((d as any)?.i);
-      if (Number.isInteger(i) && i >= 0 && i < items.length && !droppedIdx.has(i)) {
+      if (Number.isInteger(i) && i >= 0 && i < judgeable.length && !droppedIdx.has(i)) {
         droppedIdx.add(i);
         dropped.push({
-          externalId: items[i]?.externalId,
-          title: String(items[i]?.title || "(untitled)").slice(0, 200),
+          externalId: judgeable[i]?.externalId,
+          title: String(judgeable[i]?.title || "(untitled)").slice(0, 200),
           reason: String((d as any)?.reason || "primary subject is a different protein").slice(0, 200),
         });
       }
@@ -340,7 +362,7 @@ export async function filterItemsByRelevance(
     const keepArr = Array.isArray(parsed.keep) ? parsed.keep : [];
     for (const k of keepArr) {
       const i = Number(k);
-      if (Number.isInteger(i) && i >= 0 && i < items.length && !droppedIdx.has(i)) {
+      if (Number.isInteger(i) && i >= 0 && i < judgeable.length && !droppedIdx.has(i)) {
         keepIdx.add(i);
       }
     }
@@ -350,7 +372,7 @@ export async function filterItemsByRelevance(
     }
   }
 
-  const kept = items.filter((_, i) => keepIdx.has(i));
+  const kept = judgeable.filter((_, i) => keepIdx.has(i));
   return { kept, dropped, usedLlm };
 }
 

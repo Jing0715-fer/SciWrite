@@ -688,8 +688,22 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
 
         // Persist sources serially — Prisma+SQLite serializes writes internally anyway,
         // and serial calls avoid transaction-lock contention. Progress is emitted every batch.
+        let skippedTitleless = 0;
         for (let i = 0; i < itemsToSave.length; i++) {
           const item = itemsToSave[i];
+          // round-51 junk guard (same as v2): titleless items (missing title
+          // or title === external ID — the RCSB metadata-fetch failure
+          // fallback) are unverifiable/un-citable — never save bare-ID cards.
+          const itemTitle = String(item.title || "").trim();
+          if (!itemTitle || itemTitle === String(item.externalId || "")) {
+            skippedTitleless++;
+            send("step", {
+              step: "gather",
+              status: "progress",
+              message: `Skipped titleless item ${item.source}:${item.externalId || "?"} (no usable metadata — not saved)`,
+            });
+            continue;
+          }
           const start = Date.now();
           try {
             const ds = await db.dataSource.create({
@@ -759,6 +773,9 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
               lastSourceDb: item.source,
             });
           }
+        }
+        if (skippedTitleless > 0) {
+          log(`gather: junk guard skipped ${skippedTitleless} titleless item(s) — not saved`);
         }
         log(`gather: save loop done (savedDataSources=${savedDataSources.length}, refs=${savedReferences.length}, total ${Date.now() - t0}ms since gather start)`);
 

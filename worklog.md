@@ -2819,3 +2819,32 @@ Stage Summary:
 - 数据源收集双重缺陷根除：机械变体（TMC1↔TMC-1↔TMC 1）零成本兜底 + LLM 别名（全名/疾病符号）扩召回 + LLM 过滤剔无关蛋白；RCSB 召回 3→42、PubMed 混入的天体物理/综述/筛查文献被剔
 - 修改文件：src/lib/search-enhance.ts（新）、src/lib/databases.ts（searchRcsb/searchPubMed/queryDatabase/rcsbSearchFetch/并发池）、src/lib/types.ts（variants/filteredOut 字段）、src/app/api/ai/gather/route.ts ×2（context）、src/app/api/ai/generate-full-v2/route.ts（context）、src/lib/knowledge-verify.ts（opt-out）、src/components/sciwrite/database-query-panel.tsx（透明度条）、src/lib/i18n.tsx（db.variantsUsed/db.filteredOut en+zh）
 - generate-full-v2 / gather 全管线自动受益（经 queryDatabase 默认开启）；手动数据库面板带可视化透明度
+
+---
+Task ID: round-51
+Agent: main (Z.ai Code)
+Task: 用户报障「TMC 任务里搜到的前 4 个 RCSB 数据源（6VYM/2QTS/5W2O/5W2Q）都和 TMC 无关、且全部没有标题等内容，为何没有被过滤掉」
+
+Work Log:
+- DB 取证：这 4 条 DataSource/Reference 均不在当前库中（被后续运行清除）；最后一次 DataSource 写入是 08-31 07:11（MscL 项目），round-50 过滤器 09-02 12:45 才上线——**用户看到的脏数据是 round-50 之前的管线运行产物**；用户 8Z3F 卡片显示 struct.title（"Complex structure of CIB2 and TMC1 CR1"）+ rcsb.org URL 而非 PubMed 富集元数据，旁证该次运行时 data.rcsb.org 元数据抓取大面积失败
+- 身份核实：6VYM=MscS 机械敏感通道、2QTS=ASIC1 酸敏感通道、5W2O/5W2Q=结核杆菌 KasA——是「TMC complex membrane protein structure」这类泛词查询的全词匹配噪音（LLM 设计的坏查询）
+- 复现（round-50 代码，同一查询）：7 条保留全在题、23 条被剔（含 5W2O/5W2Q/6VYM）、零裸条目、LLM 还把短语扩展出 TMC1/TMC protein complex 变体——过滤器在元数据正常时工作良好
+- 真实残留漏洞定位（本轮核心工作）：元数据 fetch 瞬时失败（429/5xx/网络抖动）时 catch 分支静默退化为裸 title=ID 卡片 → LLM 过滤器无法判断（保守策略「拿不准→保留」）→ 管线照存为 pinned 数据源；三处叠加正是用户看到的现象
+- 修复（四层）：
+  - ① databases.ts：buildRcsbItem 模块级助手（entry+pubmed 两次 fetch 各带 1 次重试退避）；池化一遍（并发 6）失败者进入**串行救援通道**（350ms 冷却间隔重试）；两遍均失败的 id 直接剔除并进 filteredOut（透明化「metadata unavailable after retries」）；esummary 富集加 1 次重试（此前单次 NCBI 抖动会把所有带文献的 RCSB 条目困在 struct.title 回退态——用户 8Z3F 卡片症状）
+  - ② search-enhance.ts 盲区守卫：无标题/标题=ID 的条目在 LLM 判断前确定性剔除（「无法判断」不再等于「保留」），判断列表与索引全部换 judgeable
+  - ③ generate-full-v2 + v1 入库垃圾门：titleless 条目（title 缺失或 = externalId）永不入库，log + step 消息双通道曝光
+  - ④ 查询设计提示（v2 gatherPrompt + gather organize system）：查询必须以主要分子的符号/专名为中心（"TMC1 cryo-EM structure"），禁止泛词描述短语（"membrane protein complex structure" 全词匹配数千无关条目）——从源头减少噪音进入
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线；期间引入 1 条 v1 skippedTitleless 未用警告，已补汇总日志消除）
+- E2E 验证：
+  - 盲区守卫单测（bun 直调 filterItemsByRelevance）：[裸×2, 真×1] → 2 条确定性剔除（reason="no title/metadata available"）、usedLlm=false（无 LLM 调用纯确定性路径）、真条目保留
+  - 用户原查询复测：7 保留（全部 TMC 家族 + 有 abstract）、23 剔除（含 6VYM/5W2O/5W2Q，reason 分别为 MscS channel/KasA inhibitor）、零裸条目
+  - TMC1 回归：variants 6 种（TMC1/TMC-1/TMC 1/全名/DFNA36/TMC1_HUMAN）、7 保留全在题、23 剔、零裸
+  - dev.log 无新错误/警告；页面正常渲染
+- 方法论入档：①「保守过滤策略的盲区在输入退化处」——「拿不准→保留」在元数据缺失时把守恒变成放水；任何保守策略必须先界定「可判断域」，域外走确定性规则；②静默降级（catch 返回裸卡片）把瞬时故障固化成永久脏数据——降级路径要么可重试要么可见，不能无声通过；③取证链（DB 时间戳 × git 提交时间 × 卡片字段形态）能在零复现条件下区分「已修复的旧行为」与「仍存在的漏洞」，用户报障未必是当前代码的行为
+- 环境备注：用户项目无需清理——4 条垃圾数据源已不在库中（自然清除）
+
+Stage Summary:
+- 4 层防御闭环：元数据重试→救援通道→确定性剔除→入库垃圾门，外加查询设计源头治理；「无标题的离题 RCSB 卡片」在任何 data.rcsb.org 健康状态下都不可能再入库
+- 修改文件：src/lib/databases.ts（buildRcsbItem/池+救援/metaDropped/esummary 重试）、src/lib/search-enhance.ts（盲区守卫）、src/app/api/ai/generate-full-v2/route.ts（垃圾门+提示）、src/app/api/ai/generate-full/route.ts（垃圾门）、src/app/api/ai/gather/route.ts（查询设计提示）
+- 对用户问题的直接回答：那批数据是过滤器上线前的旧运行产物（当前库中已不存在）；即使如此，元数据抓取失败仍会产生漏网的裸卡片——本轮已结构性堵死

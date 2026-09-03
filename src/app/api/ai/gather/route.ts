@@ -143,7 +143,9 @@ async function runOrganize(body: GatherBody, sendLog: (msg: string) => void) {
     "You are a research data strategist. Given a research purpose, design a multi-database search plan " +
     "to gather the most relevant primary sources. Use PubMed for literature, UniProt for proteins, RCSB PDB for structures, " +
     "NCBI for genes, and BLAST only if a specific sequence is central. " +
-    "Produce 4-8 queries total, distributed across the most relevant databases. Each query must be a concrete, runnable search string.";
+    "Produce 4-8 queries total, distributed across the most relevant databases. Each query must be a concrete, runnable search string. " +
+    "CRITICAL: every query must center on the primary molecule's symbol or specific name (e.g. 'TMC1 cryo-EM structure') — " +
+    "never a generic descriptor phrase (e.g. 'membrane protein complex structure') whose common words full-text-match thousands of unrelated entries.";
 
   const prompt = `RESEARCH TOPIC: ${body.topic}
 FIELD: ${body.field || "life sciences"}

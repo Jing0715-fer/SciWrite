@@ -553,6 +553,91 @@ async function rcsbSearchIds(
   };
 }
 
+/**
+ * Build one RCSB result item: entry metadata + linked publication.
+ * round-51: THROWS on entry-metadata failure so the caller can retry or
+ * drop — the old silent fallback returned a bare title=ID card, which is
+ * useless for citation planning AND blinds the round-50 LLM relevance
+ * filter ("when uncertain, KEEP" admitted junk whenever data.rcsb.org
+ * blipped — the exact bare 6VYM/2QTS/5W2O/5W2Q cards the user hit).
+ * Each fetch gets 1 retry: transient 429/5xx/network blips recover; a 404
+ * (withdrawn entry / no linked publication) costs one 600ms retry at most.
+ */
+async function buildRcsbItem(
+  id: string,
+  pmidByPdb: Map<string, string>
+): Promise<DatabaseResultItem> {
+  const meta = await withRetry(
+    () => fetchJson(`https://data.rcsb.org/rest/v1/core/entry/${id}`),
+    1,
+    600
+  );
+  const method = meta?.exptl?.[0]?.method;
+  const res = meta?.rcsb_entry_info?.resolution_combined?.[0];
+  const org = meta?.rcsb_entry_info?.organism_scientific_name?.join(", ");
+  const date = meta?.rcsb_accession_info?.initial_release_date;
+
+  // Structure-metadata fallback reference
+  let pubTitle: string | undefined = meta?.struct?.title || id;
+  let pubAuthors: string | undefined = org;
+  let pubJournal: string | undefined = method ? `PDB · ${method}` : "RCSB PDB";
+  let pubYear: string | undefined = date?.slice(0, 4);
+  let pubDoi: string | undefined = meta?.rcsb_entry_container_identifiers?.doi;
+  let pubAbstract: string | undefined = [
+    method ? `Method: ${method}` : "",
+    res ? `Resolution: ${res} Å` : "",
+    org ? `Organism: ${org}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  let hasPub = false;
+  let pmcId: string | undefined;
+
+  try {
+    const pubData = await withRetry(
+      () => fetchJson(`https://data.rcsb.org/rest/v1/core/pubmed/${id}`),
+      1,
+      600
+    );
+    if (pubData && pubData.rcsb_id) {
+      const pmid = String(pubData.rcsb_id);
+      pmidByPdb.set(id, pmid);
+      hasPub = true;
+      // Real abstract + DOI from RCSB (fields actually present)
+      if (pubData.rcsb_pubmed_abstract_text) {
+        pubAbstract = String(pubData.rcsb_pubmed_abstract_text).slice(0, 2500);
+      }
+      if (pubData.rcsb_pubmed_doi) pubDoi = String(pubData.rcsb_pubmed_doi);
+      if (pubData.rcsb_pubmed_central_id) {
+        pmcId = String(pubData.rcsb_pubmed_central_id);
+      }
+    }
+  } catch {
+    // No associated publication — structure metadata only
+  }
+
+  return {
+    source: "rcsb",
+    externalId: id,
+    title: pubTitle || id,
+    authors: pubAuthors,
+    journal: pubJournal,
+    year: pubYear,
+    url: `https://www.rcsb.org/structure/${id}`,
+    doi: pubDoi,
+    abstract: pubAbstract,
+    extra: {
+      method: method || "",
+      resolution: res ? String(res) : "",
+      organism: org || "",
+      pdbId: id,
+      pmid: pmidByPdb.get(id) || "",
+      pmcId: pmcId || "",
+      hasPublication: hasPub,
+    },
+  };
+}
+
 export async function searchRcsb(
   query: string,
   limit = 10,
@@ -619,78 +704,50 @@ export async function searchRcsb(
   //   2. batch-fetch PubMed esummary for those PMIDs → real title/authors/
   //      journal/year
   //   3. fall back to structure metadata when no publication is linked
+  //
+  // round-51 metadata resilience: first pass at concurrency 6 (each fetch
+  // retries transient failures once in-flight inside buildRcsbItem); ids
+  // whose metadata still fails get a SEQUENTIAL rescue pass with 350ms
+  // cool-down gaps — data.rcsb.org blips are transient, and the old silent
+  // fallback (a bare title=ID card) both blinded the round-50 relevance
+  // filter ("when uncertain, KEEP") and flooded projects with unverifiable
+  // pinned sources. Ids failing BOTH passes are dropped and surfaced in
+  // filteredOut instead of being returned as junk.
   const pmidByPdb = new Map<string, string>();
 
-  const items = await runWithConcurrency(ids, 6, async (id): Promise<DatabaseResultItem> => {
+  const slots = await runWithConcurrency(ids, 6, (id) =>
+    buildRcsbItem(id, pmidByPdb).catch((err: any) => {
+      console.warn(
+        `[searchRcsb] metadata fetch failed for ${id}: ${err?.message?.slice(0, 100)}`
+      );
+      return null;
+    })
+  );
+
+  // Rescue pass — sequential, gentle, original ranking order preserved.
+  const items: DatabaseResultItem[] = [];
+  const metaDropped: FilteredOutItem[] = [];
+  for (let i = 0; i < ids.length; i++) {
+    const item = slots[i];
+    if (item) {
+      items.push(item);
+      continue;
+    }
+    const id = ids[i];
+    await new Promise((r) => setTimeout(r, 350));
     try {
-      const meta = await fetchJson(`https://data.rcsb.org/rest/v1/core/entry/${id}`);
-      const method = meta?.exptl?.[0]?.method;
-      const res = meta?.rcsb_entry_info?.resolution_combined?.[0];
-      const org = meta?.rcsb_entry_info?.organism_scientific_name?.join(", ");
-      const date = meta?.rcsb_accession_info?.initial_release_date;
-
-      // Structure-metadata fallback reference
-      let pubTitle: string | undefined = meta?.struct?.title || id;
-      let pubAuthors: string | undefined = org;
-      let pubJournal: string | undefined = method ? `PDB · ${method}` : "RCSB PDB";
-      let pubYear: string | undefined = date?.slice(0, 4);
-      let pubDoi: string | undefined = meta?.rcsb_entry_container_identifiers?.doi;
-      let pubAbstract: string | undefined = [
-        method ? `Method: ${method}` : "",
-        res ? `Resolution: ${res} Å` : "",
-        org ? `Organism: ${org}` : "",
-      ].filter(Boolean).join(" · ");
-      let hasPub = false;
-      let pmcId: string | undefined;
-
-      try {
-        const pubData = await fetchJson(`https://data.rcsb.org/rest/v1/core/pubmed/${id}`);
-        if (pubData && pubData.rcsb_id) {
-          const pmid = String(pubData.rcsb_id);
-          pmidByPdb.set(id, pmid);
-          hasPub = true;
-          // Real abstract + DOI from RCSB (fields actually present)
-          if (pubData.rcsb_pubmed_abstract_text) {
-            pubAbstract = String(pubData.rcsb_pubmed_abstract_text).slice(0, 2500);
-          }
-          if (pubData.rcsb_pubmed_doi) pubDoi = String(pubData.rcsb_pubmed_doi);
-          if (pubData.rcsb_pubmed_central_id) {
-            pmcId = String(pubData.rcsb_pubmed_central_id);
-          }
-        }
-      } catch {
-        // No associated publication — structure metadata only
-      }
-
-      return {
-        source: "rcsb",
-        externalId: id,
-        title: pubTitle || id,
-        authors: pubAuthors,
-        journal: pubJournal,
-        year: pubYear,
-        url: `https://www.rcsb.org/structure/${id}`,
-        doi: pubDoi,
-        abstract: pubAbstract,
-        extra: {
-          method: method || "",
-          resolution: res ? String(res) : "",
-          organism: org || "",
-          pdbId: id,
-          pmid: pmidByPdb.get(id) || "",
-          pmcId: pmcId || "",
-          hasPublication: hasPub,
-        },
-      };
-    } catch {
-      return {
-        source: "rcsb",
+      items.push(await buildRcsbItem(id, pmidByPdb));
+    } catch (err: any) {
+      console.warn(
+        `[searchRcsb] metadata rescue failed for ${id}: ${err?.message?.slice(0, 100)}`
+      );
+      metaDropped.push({
         externalId: id,
         title: id,
-        url: `https://www.rcsb.org/structure/${id}`,
-      };
+        reason: "RCSB metadata unavailable after retries — excluded (unverifiable source)",
+      });
     }
-  });
+  }
 
   // Enrich RCSB items that have a linked publication with REAL publication
   // metadata (title/authors/journal/year) from PubMed esummary.
@@ -699,7 +756,10 @@ export async function searchRcsb(
       const pmids = [...new Set([...pmidByPdb.values()])];
       const esummaryUrl =
         `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${pmids.join(",")}&retmode=json`;
-      const sumData = await fetchJson(esummaryUrl);
+      // round-51: 1 retry — a single NCBI blip here used to strand every
+      // RCSB-with-publication item at its structure-metadata fallback
+      // (struct.title + rcsb.org URL instead of the real paper metadata).
+      const sumData = await withRetry(() => fetchJson(esummaryUrl), 1, 800);
       const sumResult = sumData?.result ?? {};
       for (const item of items) {
         if (item.source !== "rcsb") continue;
@@ -731,16 +791,18 @@ export async function searchRcsb(
   /* round-50: LLM relevance filter — full-text retrieval routinely mixes in
    * entries whose primary subject is a DIFFERENT protein that merely mentions
    * the query term. Conservative: uncertain/failure keeps the entry; the
-   * citation planner re-scores the pool later anyway. */
+   * citation planner re-scores the pool later anyway.
+   * round-51: entries dropped for unavailable metadata (rescue pass failed)
+   * merge into the same transparency list. */
   let finalItems = items;
   let filteredOut: FilteredOutItem[] | undefined;
+  const allDrops: FilteredOutItem[] = [...metaDropped];
   if (doFilter && items.length > 1) {
     const r = await filterItemsByRelevance(items, cleaned, enhance.context);
-    if (r.dropped.length > 0) {
-      finalItems = r.kept;
-      filteredOut = r.dropped;
-    }
+    finalItems = r.kept;
+    allDrops.push(...r.dropped);
   }
+  if (allDrops.length > 0) filteredOut = allDrops;
   if (finalItems.length > limit) finalItems = finalItems.slice(0, limit);
 
   return {
