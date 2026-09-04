@@ -2877,3 +2877,26 @@ Stage Summary:
 - 进度条双重缺陷根除：generate/verify 循环族占条幅 72-77%（按真实章节数动态学习），交错事件只前进不回退（155 事件实测零回退），translate 循环同权重化，gather 等长阶段逐事件爬升；§i/N 标签让循环读作迭代而非卡死
 - 修改文件：src/lib/progress-tracker.ts（新）、src/app/api/ai/generate-full-v2/route.ts（rawSend 包装器+相位表+translate wordCount）、src/app/api/ai/generate-full/route.ts（同模式）、src/components/sciwrite/unified-writing-dialog.tsx（barProgress/loopInfo/§标签/兜底）
 - v1/v2 双管线自动受益（包装器拦截所有 step 事件，60 处调用点零改动）；旧无 progress 路由前端兜底仍单调
+
+---
+Task ID: 55
+Agent: main (Z.ai Code)
+Task: push 到 GitHub + 整合远程分叉（用户报"本地代码落后远程很多"）+ P0 翻译 bug 真实复测
+
+Work Log:
+- 用户诉求链：①push 到 GitHub ②本地"落后远程很多需整合" ③上一会话报的 both 模式翻译缺失（本地真实测试"确实没有生成中文"）
+- git 状态核查：本地 main = 远程 ec304b1（round-52）+ 1 个沙箱 DB 快照提交 0ae13c9；fetch 后 0 behind 1 ahead —— 本地代码并未落后
+- 分支考古（关键澄清）：远程另有 3 分支
+  - e2e-test-clean：149 个 main 缺失提交，但 merge-base 为空 = 无关历史（沙箱回滚前旧世系，v112-v118 时代，Aug 4-26）；diff 显示 main 比它多 19,855 行、只少 4,788 行；唯一独有功能 numeric-fact cross-check（extractNumericFacts/numericFactSupportedByRef）经 git grep 证实**零调用方=从未接线的死代码**，main 无任何实际缺失
+  - e2e-test-dedup-fix：0 unique 提交 = 纯陈旧指针，已从远程删除
+  - archive/pre-20260824：显式归档，保留
+- 执行整合：git push origin main（ec304b1..0ae13c9）+ 删除 e2e-test-dedup-fix；验证 origin/main = 0ae13c9 同步完成
+- P0 翻译 bug 静态排查（四环全查）：unified-writing-dialog OneClickTab 发送 language 字段 ✅（行 651 的 language 属 ParagraphTab 无关）；api-client aiGenerateFullV2Stream 透传 ✅；v2 路由 body.language→isBothMode→STEP 9（1813 行）逐节翻译→contentZh update ✅；/api/articles/[id] GET 用 include 全字段 ✅；Prisma schema Article.contentZh/titleZh 存在 ✅；article-viewer-tabs 中文 tab 展示逻辑 ✅；i18n "English + 中文"=value"both" 对应正确 ✅
+- P0 翻译 bug E2E 真实复测（动态证据）：建测试项目跑完整 v2 both 管线（600 词/5 查询/3 网搜）：init 事件 bothMode:true → 全管线 ~12min → translate 阶段 5/5 节全部翻译成功（每节 33-35s，共 2138 中文字符）→ DB 验证：article.titleZh="TMC1通道结构：构架、机械传感机制及临床相关性"、contentZh=4757 字符（首段正宗中文学术译文）、articleVersion.contentZh 快照 4757 ✅
+- 测试项目已清理（DELETE API + 列表确认移除）
+- 结论：GitHub 最新 main 上 both 模式翻译链路完全正常；用户本地"没有中文"的根因 = 本地代码落后（旧版本无 round-27+ 的 v2 翻译步骤，或 round-53 会话声称的修复随沙箱回滚从未真正落地——git 历史证实 round-53/54 提交在任何分支都不存在）
+
+Stage Summary:
+- 整合完成：本地 main(0ae13c9) 已推送 GitHub，陈旧分支 e2e-test-dedup-fix 删除；旧世系 e2e-test-clean/archive 保留为历史归档（内容 96% 被 main 取代，无实际功能缺失）
+- P0 关闭：both 模式翻译在最新代码 E2E 全链路验证通过（前端→路由→STEP9 翻译→contentZh/titleZh 入库→版本快照）；用户本地需 git pull 到 0ae13c9 后重新生成即得中文
+- 待用户确认：本地环境是否用 v1 管线或旧代码版本；pull 后如仍无中文再报现象（届时查 streamLog 的 translate FAILED 行）
