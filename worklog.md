@@ -2960,3 +2960,28 @@ Work Log:
 
 Stage Summary:
 - round-57 全部 7 项修复经代码接线、DB 持久化、浏览器 UI 三层验证闭环；180° 类问题今后每次 review 必然浮出为显式 weakness（用户可见）
+
+---
+Task ID: 58-in-progress
+Agent: main (Z.ai Code)
+Task: round-57 修复后的回归生产测试（新领域 PCSK9）+ 外部知识核验
+
+Work Log:
+- 新建 PCSK9 回归项目 cmtqy35wn002iowu8g1gn16x3（心血管药理领域，测 round-57 机械门控的泛化性；round-56 审计是神经科学 TMC1/TMC2）
+- 生产尝试 ×3 全部死于 z.ai 账户级硬节流（08:13 起 429 持续，chat+web_search 双通道，外部因素）：
+  - run#1（07:54-08:14，20min 正常推进：252 源采集+DOI 回填+curate 密度下限补足 25/252 llmDriven=false 机械兜底）→ plan 步骤 FATAL：curate 的 429 重试耗尽 setAbort（120s TTL）→ plan 立即抛 RateLimitAbortedError → 管线死亡
+  - run#2（08:36）→ 第一次 gather LLM 调用即遭持续 429，31 秒内 5 次退避全败 → FATAL
+  - run#3（09:09-09:28）→ patience 修复后首跑：硬扛 19 分钟节流（8 轮耐心周期日志完整）后耗尽 → FATAL——修复前后对比 31s vs 19min，实证价值
+- ★ 暴露并修复真实稳定性缺陷（commit 2d1bcc0，双重修复均在 rate-limiter 单点）：
+  - 缺陷 A（瞬时 abort 级联）：429 重试耗尽 setAbort 后，后续调用立即抛错而非等待 120s TTL 过期——round-52 E2E#1 与本轮 run#1 同死法。修复：waitOutTransientAbort()（有界等待 ≤2 轮 TTL，quota 型 abort 仍快速失败）
+  - 缺陷 B（退避上限 16s）：分钟级 429 风暴期间 5 次重试 31s 内耗尽即弃。修复：patience429 耐心周期（梯子耗尽→冷却完整 abort TTL→重开新梯子；chat/chatStream 8 轮≈20min/调用）
+- 节流期间零 LLM 依赖的完成项：
+  - PubMed esearch/esummary 构建 PCSK9 里程碑真值表 8+2 篇（Seidah 2003 发现 / Abifadel 2003 首报突变 / Cohen 2005+2006 LOF 保护 / FOURIER 28834471 / ODYSSEY 30403574 / ORION-1 28306389 / ORION-9 32197277 / Qian 2007 内存机制 17449864 等，存 /tmp/r58-landmarks.md）
+  - audit-tools/r58-mech-audit.ts 综合机械审计脚本：解析正文 References 节（区分 PubMed 引用 vs web 引用 + 非一级 host 判定）、全句级未引用断言计数、密度 floor 核对、PCSK9 landmark 覆盖、越界 [n] 检测、review fact-check 发现提取、--verify 批量 esummary 元数据核验
+  - 用 round-56 文章干跑验证：精确复现全部旧发现（[7] MIT 页+[19] 波士顿儿童医院=非一级、180° 句在未引断言列表、密度 20<29 FAIL、17/17 PubMed 元数据一致、fact-check weakness 在 Review 表）
+- 服务器侧看门狗（src/app/api/dev/watchdog/route.ts，不提交）：dev server 进程内 interval 探测（每 3min），恢复即自动 POST 启动管线并 drain SSE——沙箱会回收一切 Bash 子进程（nohup/setsid/mini-service 均实验证伪），dev server 进程是唯一可跨会话存活的执行环境；期间不可编辑 watched 文件（Turbopack 重载会杀掉 interval，已实证）
+
+Stage Summary:
+- 生产被外部账户节流阻塞（4h+ 持续，时间窗未知）；看门狗已常驻，恢复即自动完成生产
+- 两个模型无关的稳定性修复已提交实证（瞬时 abort 有界等待 + 429 耐心周期），管线从"31 秒死"变为"扛 19 分钟"
+- 审计工具链全部就绪并经 round-56 文章干跑验证（机械审计脚本 + PubMed 里程碑真值表 + esummary 批量核验）
