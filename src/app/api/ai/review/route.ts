@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chatWithSession } from "@/lib/llm-session";
 import { safeErrorMessage } from "@/lib/api-helpers";
+import { factCheckArticle, FactCheckFinding } from "@/lib/fact-check";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -69,16 +70,56 @@ export async function POST(req: NextRequest) {
 }
 
 async function runReview(article: any) {
+  // ★ round-57: WEB FACT-CHECK LAYER. The old reviewer was closed-box — it
+  // could judge style and structure but had NO WAY to know a claim
+  // contradicts the real literature (round-56 fatal finding: "MT current
+  // phase-shifted by 180°" vs the actual "currents completely absent").
+  // Before scoring, mechanically extract the fabrication-prone claims
+  // (quantitative / negative-existence / novelty / attribution), live-web-
+  // search each, and arbitrate. Findings are injected into the review prompt
+  // AND persisted so the Review tab surfaces them. Best-effort: a web
+  // failure leaves the review at the pre-round-57 baseline.
+  let factChecks: FactCheckFinding[] = [];
+  let claimsChecked = 0;
+  try {
+    const fc = await factCheckArticle(article.projectId, article.title, article.content);
+    factChecks = fc.findings;
+    claimsChecked = fc.claimsChecked;
+  } catch {
+    // factCheckArticle swallows internally; belt-and-braces.
+  }
+  const contradicting = factChecks.filter((f) => f.verdict === "CONTRADICTED");
+  // round-57 E2E lesson 3: a quantitative or negative-existence claim that
+  // the web cannot corroborate is a red flag EVEN WHEN CITED (the round-56
+  // fatal was exactly a cited fabricated number) — the citation itself may
+  // be misattributed. Attribution claims are too fine-grained for snippets,
+  // so only UNCITED attribution findings are persisted (noise control).
+  const unverifiable = factChecks.filter(
+    (f) =>
+      f.verdict === "UNVERIFIABLE" &&
+      (!f.cited || f.kind === "quantitative" || f.kind === "negative-existence")
+  );
+
   const system =
     "You are a rigorous scientific peer reviewer in the style of a top-tier journal " +
     "(Nature/Science/Cell). You evaluate manuscripts on multiple dimensions and " +
     "provide structured, actionable feedback. Be specific, critical, and constructive.";
 
+  const factCheckBlock =
+    factChecks.length > 0
+      ? `\nWEB FACT-CHECK RESULTS (live web search performed just now — these are ground-truth probes; weigh them heavily):\n${factChecks
+          .map(
+            (f) =>
+              `- [${f.verdict}] (${f.kind}${f.cited ? ", cited" : ", UNCITED"}) "${f.claim}" — ${f.evidence}`
+          )
+          .join("\n")}\nAny CONTRADICTED claim is a factual error against the published literature — it MUST appear in your weaknesses and lower the citations/methodology scores.\n`
+      : "";
+
   const prompt = `ARTICLE TITLE: ${article.title}
 ${article.abstract ? `ABSTRACT: ${article.abstract}\n` : ""}
 ARTICLE CONTENT:
 ${article.content}
-
+${factCheckBlock}
 Provide a comprehensive peer review. Score each dimension 0-10 (10 = excellent).
 Respond as STRICT JSON:
 {
@@ -117,6 +158,34 @@ Output JSON only.`;
     suggestions: [],
   });
 
+  // Persist the web fact-check findings INTO the review record — appended
+  // to weaknesses + suggestions (the Review tab renders both arrays
+  // verbatim, so the findings surface without a schema change).
+  const weaknesses: string[] = Array.isArray(parsed.weaknesses) ? [...parsed.weaknesses] : [];
+  const suggestions: any[] = Array.isArray(parsed.suggestions) ? [...parsed.suggestions] : [];
+  for (const f of contradicting) {
+    weaknesses.push(
+      `FACT-CHECK CONTRADICTED (${f.kind}): "${f.claim.slice(0, 160)}" — web evidence: ${f.evidence.slice(0, 140)}`
+    );
+    suggestions.push({
+      section: "Web fact-check",
+      issue: `Claim contradicted by the literature: "${f.claim.slice(0, 160)}"`,
+      fix: `Correct or remove this claim. Evidence: ${f.evidence.slice(0, 200)}`,
+    });
+  }
+  for (const f of unverifiable) {
+    weaknesses.push(
+      f.cited
+        ? `FACT-CHECK UNVERIFIABLE (${f.kind}, CITED but uncorroborated): "${f.claim.slice(0, 160)}" — the web found no corroboration for this specific claim; verify the cited source actually supports it, or correct/remove.`
+        : `FACT-CHECK UNVERIFIABLE & UNCITED (${f.kind}): "${f.claim.slice(0, 160)}" — no web evidence found; cite a primary source or remove.`
+    );
+    suggestions.push({
+      section: "Web fact-check",
+      issue: `Uncited claim the web could not verify: "${f.claim.slice(0, 160)}"`,
+      fix: "Add a primary citation supporting this claim, or remove it.",
+    });
+  }
+
   const round = (article.reviews?.[0]?.round || 0) + 1;
   const review = await db.review.create({
     data: {
@@ -131,12 +200,22 @@ Output JSON only.`;
       verdict: parsed.verdict || "major-revision",
       summary: parsed.summary || "",
       strengths: JSON.stringify(parsed.strengths || []),
-      weaknesses: JSON.stringify(parsed.weaknesses || []),
-      suggestions: JSON.stringify(parsed.suggestions || []),
+      weaknesses: JSON.stringify(weaknesses),
+      suggestions: JSON.stringify(suggestions),
     },
   });
 
-  return { review, scores: parsed.scores, verdict: parsed.verdict };
+  return {
+    review,
+    scores: parsed.scores,
+    verdict: parsed.verdict,
+    factCheck: {
+      claimsChecked,
+      contradicted: contradicting.length,
+      unverifiableUncited: unverifiable.length,
+      findings: factChecks,
+    },
+  };
 }
 
 async function runRevise(article: any, reviewId: string) {
@@ -185,17 +264,35 @@ Output the revised article in Markdown. Do NOT add commentary — output only th
     metadata: { mode: "revise", articleId: article.id, round: review.round },
   });
 
-  // Save revised content on the review record + update the article
+  // Save revised content on the review record + update the article.
+  // ★ round-57: bilingual-stale guard. If the article had a Chinese half,
+  // this revision just rewrote the English content — keeping the OLD
+  // contentZh would silently serve a translation of the PRE-revision text
+  // (the halves diverge from here on). Null it (article-version snapshots
+  // preserve the old pairing) and tell the caller; the article viewer's
+  // re-translate flow can regenerate the Chinese half.
+  const hadZh = Boolean(article.contentZh);
   await db.review.update({
     where: { id: reviewId },
     data: { revisedContent: revised },
   });
   const updated = await db.article.update({
     where: { id: article.id },
-    data: { content: revised },
+    data: { content: revised, ...(hadZh ? { contentZh: null } : {}) },
   });
 
-  return { article: updated, revised, reviewId };
+  return {
+    article: updated,
+    revised,
+    reviewId,
+    ...(hadZh
+      ? {
+          zhStale: true,
+          message:
+            "English content revised — the Chinese half was superseded and cleared. Re-translate from the article viewer to regenerate it.",
+        }
+      : {}),
+  };
 }
 
 async function runAutoIterate(article: any, rounds: number) {

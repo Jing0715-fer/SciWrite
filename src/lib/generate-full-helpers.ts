@@ -171,6 +171,26 @@ function isPrimaryTherapyPaper(r: any): boolean {
   return /\bgene therapy\b|\btherapeutic\b|\brestores (auditory|hearing|function)\b|\btreatment of\b|\brna interference\b|\bgene editing\b|\bcrispr\b|\baav\b|\bantisense\b/.test(t);
 }
 
+/** round-57: primary discovery/identification paper (cloning, first
+ *  characterization). The round-56 audit shipped a "Discovery and
+ *  Identification" section whose landmark cloning papers (Kurima 2002,
+ *  Yamaguchi 2010) sat unused in the pool while the narrative invented
+ *  its own history — the structure/therapy signals couldn't see this
+ *  section type at all. */
+function isPrimaryDiscoveryPaper(r: any): boolean {
+  const t = String(r?.title || "").toLowerCase();
+  if (looksLikeReview(r)) return false;
+  return /\b(?:identif\w+|discovery of|discover\w+|clon\w+|isolat\w+|mapped|positional\b.*\bgene|characterization of|novel gene|new gene family|mutant\w* (?:gene|locus))\b/.test(t)
+    && /\b(?:gene|protein|family|locus|channel|mutation|deafness)\b/.test(t);
+}
+
+/** round-57: primary disease/mutation paper. */
+function isPrimaryDiseasePaper(r: any): boolean {
+  const t = String(r?.title || "").toLowerCase();
+  if (looksLikeReview(r)) return false;
+  return /\b(?:mutations?|deafness|hearing loss|dfnb\d+|dfna\d+|pathogenic|variant\w*|disease-causing|nonsyndromic)\b/.test(t);
+}
+
 export interface CoverageBackfillResult {
   refs: any[];
   backfilled: { signal: string; addedTitle: string; replacedTitle: string | null }[];
@@ -213,6 +233,18 @@ export function ensurePrimaryPaperCoverage(
       name: "structure",
       active: /structur|architect|cryo|morpholog|anatom/.test(corpus),
       test: isPrimaryStructurePaper,
+      min: 2,
+    },
+    {
+      name: "discovery",
+      active: /discover|identific|clon|isolat|history|first (?:described|identified|cloned)/.test(corpus),
+      test: isPrimaryDiscoveryPaper,
+      min: 2,
+    },
+    {
+      name: "disease",
+      active: /mutat|deaf|disease|hearing loss|clinical|patholog|dfn[ab]/.test(corpus),
+      test: isPrimaryDiseasePaper,
       min: 2,
     },
     {
@@ -722,6 +754,57 @@ export function trailingUncitedClaimWords(content: string): number | null {
   }
   if (words >= 60 && evidenceHits >= 2) return words;
   return null;
+}
+
+/** round-57: negative-existence claims — "X has not been reported",
+ *  "remains elusive". These are GLOBAL factual assertions about the state
+ *  of the literature: when wrong they are the most damaging class of
+ *  scientific error a review can make (the round-56 TMC article did exactly
+ *  this), and they MUST carry a citation that scopes them. */
+const NEGATIVE_EXISTENCE_CLAIM_RE =
+  /\b(?:not been (?:reported|observed|determined|characterized|demonstrated|described|elucidated|solved)|remain(?:s|ed|ing)? (?:elusive|unknown|unclear|unresolved|undetermined|unexplored|poorly understood|controversial)|has yet to be|no (?:atomic |high-resolution )?(?:structure|report|study|evidence|data) (?:has|have) been)\b/i;
+
+export interface UncitedAssertionIssue {
+  sentence: string;
+  pattern: "evidence-verb" | "negative-existence";
+}
+
+/**
+ * round-57: WHOLE-SECTION uncited-assertion scan. The trailing gate above
+ * only catches a >=60-word uncited block at the END of a section — the
+ * round-56 audit showed fabricated/unsupported assertions sitting mid-text
+ * ("the TMC family was first recognized in Drosophila") sailing through
+ * with zero gate triggers. This scan flags EVERY sentence that makes an
+ * evidence assertion or a negative-existence claim without a {{Rn}} key.
+ *
+ * Used by the generation gate: >=2 flagged sentences triggers one retry;
+ * flagged-but-unfixed sentences are forwarded to the adversarial verifier
+ * and the final audit so nothing silently escapes.
+ */
+export function uncitedAssertionSentences(content: string): UncitedAssertionIssue[] {
+  const issues: UncitedAssertionIssue[] = [];
+  for (const s of splitIntoSentences(content)) {
+    if (/\{\{R\d+\}\}/.test(s)) continue; // cited — the pairing check covers it
+    const words = (s.match(/\S+/g) || []).length;
+    if (words < 8) continue; // connectors, not claims
+    if (NEGATIVE_EXISTENCE_CLAIM_RE.test(s)) {
+      issues.push({ sentence: s.slice(0, 240), pattern: "negative-existence" });
+    } else if (EVIDENCE_VERB_RE.test(s) && words >= 12) {
+      issues.push({ sentence: s.slice(0, 240), pattern: "evidence-verb" });
+    }
+  }
+  return issues;
+}
+
+/**
+ * round-57: density floor for the curated citation pool. The round-56
+ * audit: 3000 words citing 20 refs (LLM chose "typical ~15") while 6
+ * landmark papers sat unused IN the gathered pool — real reviews cite
+ * denser. Mechanical floor, always capped by what the pool can honestly
+ * supply (enforcement tops up only with relevance >= 4 sources).
+ */
+export function citationDensityFloor(targetWords: number): number {
+  return Math.max(18, Math.min(50, Math.round(targetWords / 120)));
 }
 
 function dedupContentWords(sentence: string): string[] {

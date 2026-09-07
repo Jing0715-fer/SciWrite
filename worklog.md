@@ -2923,3 +2923,25 @@ Stage Summary:
 - 但正文声明层存在 1 处致命捏造 + 2 处非一级源引用 + 3 处未引用叙述错误 + 6 篇里程碑文献缺失——全部源于"验证只做配对不做事实核查"的架构性盲区
 - 产出改进方案（P0：review 注入 web 事实核查 + web 源分级准入；P1：全句级未引用断言核查 + curation 密度下限与 landmark 保底；P2：blocking 真阻断 + revise 后 contentZh 重译 + verify 批失败重试）——详见交付报告
 - 测试项目与文章保留（cmtqnqkb60000nfvlgmjjywbj / article cmtqpqx2y014snfvl238asch1）供用户 UI 查看
+
+---
+Task ID: 57
+Agent: main (Z.ai Code)
+Task: 代码级实现 round-56 审计缺陷的修复——目标：模型无关的稳定产出、无致命科学错误、不漏重要源、review 结合网络搜索
+
+Work Log:
+- P0-A（review 网络事实核查）新建 src/lib/fact-check.ts：机械提取 4 类捏造高危声明（quantitative/negative-existence/novelty/attribution，优先级排序、上限 6 条）→ 每条实时 web_search（quantitative 双查询：原文+去数字主语探针）→ 单次 LLM 仲裁（VERIFIED/CONTRADICTED/UNVERIFIABLE）；三层机械护栏：① VERIFIED 的 quantitative 声明要求具体数字字面出现在证据中（复合声明陷阱：捏造数字+真实泛述会被仲裁误判 VERIFIED）② 结果冲突检测（缺失条件+正向结果声明 vs 证据"completely absent"→ 硬判 CONTRADICTED；同 snippet 自含声明结果时跳过防误报）③ 全程 best-effort 零抛错（网络失败=回到 round-56 基线）
+- review 路由注入：findings 进 review prompt（"weigh heavily"）+ 持久化到 weaknesses/suggestions（无 schema 变更，现有 Review tab 直接渲染）；UNVERIFIABLE 规则——quantitative/negative-existence 即使已引用也持久化（round-56 致命正是"已引用的捏造数字"），attribution 仅未引用时持久化（防噪）
+- P0-B（web 源分级准入）新建 src/lib/source-tier.ts：确定性 host/path 模式（医院科普/科技媒体/百科/基因门户/博客）标记 NON-PRIMARY，curate 前从引用池剔除（type=web 才判，未知 host 保持可引防误伤）；v2 route 接入 partitionCitablePoolIndexed（refs↔scores 同步过滤），coverage backfill 候选同样用分级后池防回流
+- P1-A（全句级未引用断言门控）generate-full-helpers 新增 uncitedAssertionSentences：负存在声明（含 remained 时态）+证据动词句、≥8 词、无 {{Rn}} 即标记；≥2 处触发重生成（带具体句子反馈），改进判据=重试后更少；telemetry uncitedAssertionGateHits
+- P1-B（密度下限+landmark 保底）citationDensityFloor=clamp(words/120,18,50)，curate 后用 relevance≥4 未选源按优先级补足；ensurePrimaryPaperCoverage 新增 discovery（min2：identif/clon/discover/isolat+gene）与 disease（min2：mutat/deaf/DFN）信号——round-56 "Discovery and Identification" 节 landmark 全缺正因此
+- P2 三项：① stripOutOfRangeCitations（citation-audit）在 compose 持久化前机械剔除越界 [n]（articleBody+段落镜像同步，round-56 的 5 个 blocking 错误照存问题根治）② revise 后 contentZh 置空+zhStale 标记（双语半篇不再静默分叉，版本快照保留旧配对）③ adversarialVerifySection 每批 1 次重试（2s 冷却，原 console.warn 静默放行）
+- E2E 验证（对含 180° 句的既有审计文章跑 review ×6，含限流重试）：四轮迭代修复四个真实缺陷——提取正则 \b 在 ° 后接标点失效（E2E-1）、查询自嵌捏造措辞导致搜不到反驳证据（E2E-2 引入主语探针）、"数字出现即可验证"指令反而教唆误判（E2E-3 改必要非充分）、复合声明/文献争议误报（E2E-4 同 snippet 自含结果跳过）
+- ★ 科学反转（重要更正）：取证发现 "180° phase-shift" 句并非纯捏造——检索到的 Kim 2013 (PMC4569002) 摘要原文即 "in the absence of both isoforms, we recorded a large MT current that was phase-shifted 180°"——该句忠实转述其引文 [1] Kim 2013；真实缺陷是 Kim 2013 与 Kawashima 2011（"currents completely absent"）的文献冲突未被文章承认。round-56 的 "FATAL fabricated" 属过度诊断，但"未承认文献争议+review 零发现"的结论不变——新 fact-check 层正是暴露此类问题的机制（fc8 抓 CONTRADICTED/fc9 抓 UNVERIFIABLE，均持久化为 weakness，裁决随证据集波动但必浮出）
+- 终验：180° 声明 UNVERIFIABLE+CITED 持久化 weakness、1 条 fact-check weakness 进 Review 记录、verdict 响应（citations 6）；tsc 0 错误、lint 0 error/161 warning（=基线）
+
+Stage Summary:
+- 7 项修复全部落地：fact-check 库+review 注入（P0-A）、web 源分级准入（P0-B）、全句级断言门控（P1-A）、密度下限+discovery/disease 信号（P1-B）、越界引用机械修复/双语失效保护/verify 重试（P2）
+- 新文件：src/lib/fact-check.ts、src/lib/source-tier.ts；修改：review route、generate-full-v2 route、generate-full-helpers、citation-audit
+- 4 个 E2E 迭代教训入档：正则词边界在符号单位后失效、自嵌措辞查询、充分性指令反转、文献争议误报防护
+- round-56 审计结论修正：180° 句=忠实引用+未承认的文献冲突（非捏造）；但暴露机制的价值不变且已被 E2E 证明

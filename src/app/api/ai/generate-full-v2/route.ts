@@ -43,8 +43,14 @@ import {
   inferFormat,
   removeCrossSectionDuplicates,
   trailingUncitedClaimWords,
+  uncitedAssertionSentences,
+  citationDensityFloor,
   safeParseJSON,
 } from "@/lib/generate-full-helpers";
+// round-57: mechanical admission gate for non-primary web sources + the
+// out-of-range citation repair used at compose time.
+import { partitionCitablePoolIndexed } from "@/lib/source-tier";
+import { stripOutOfRangeCitations } from "@/lib/citation-audit";
 // round-42: importance-driven citation planning — score every source,
 // curate with a dynamic count, fetch full texts, co-plan outline+citations.
 import {
@@ -225,6 +231,11 @@ export async function POST(req: NextRequest) {
         citationCoreCovered: 0,
         citationLLMDriven: false,
         fullTextsUsed: 0,
+        // round-57: admission-gate + density-floor telemetry
+        nonPrimaryWebExcluded: 0,
+        densityFloorToppedUp: 0,
+        outOfRangeCitationsStripped: 0,
+        uncitedAssertionGateHits: 0,
       };
 
       // Hoisted for the catch block's failure-recovery logic (try-block
@@ -787,10 +798,38 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           status: "started",
           message: `Selecting the citation pool — the count follows source quality, not a fixed quota...`,
         });
+        // ★ round-57 (admission gate): MECHANICAL primary-source tiering.
+        // Non-primary web pages (hospital outreach, popular-science news,
+        // gene portals, encyclopedias, blogs) are excluded from the citable
+        // pool BEFORE curation — the round-56 audit shipped 10% non-primary
+        // webpage citations because general web results entered with no
+        // primary/secondary distinction. Deterministic host/path patterns,
+        // unknown hosts stay citable (no false positives on small journals);
+        // scores are filtered in lockstep so the 1:1 refs↔scores alignment
+        // survives. Excluded sources stay in the project as gathered context.
+        const tiered = partitionCitablePoolIndexed(deduped.refs);
+        let poolRefs = deduped.refs;
+        let poolScores = allScores;
+        if (tiered.excluded.length > 0) {
+          const keep = new Set(tiered.keepIndices);
+          poolRefs = deduped.refs.filter((_: any, i: number) => keep.has(i));
+          poolScores = allScores.filter((_: any, i: number) => keep.has(i));
+          stats.nonPrimaryWebExcluded = tiered.excluded.length;
+          log(
+            `curate: excluded ${tiered.excluded.length} non-primary web sources — ` +
+              tiered.excluded.map((e) => `${e.reason.slice(0, 40)} (${e.title.slice(0, 40)})`).join(" | ")
+          );
+          send("step", {
+            step: "curate",
+            status: "progress",
+            message: `Admission gate: excluded ${tiered.excluded.length} non-primary web source(s) from the citation pool (outreach/news/portal pages).`,
+            detail: tiered.excluded.map((e) => `${e.title} — ${e.reason}`).join("\n"),
+          });
+        }
         const smart = await smartCurateReferences(
           projectId,
-          deduped.refs,
-          allScores,
+          poolRefs,
+          poolScores,
           project.topic,
           project.field || "life sciences",
           targetWords,
@@ -801,6 +840,43 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         );
         let curatedRefs = smart.refs;
         let curatedScores = smart.scores;
+        // ★ round-57 (density floor): the LLM curator under-selects (round-56:
+        // 3000 words → 20 refs, "typical ~15" while real reviews cite denser
+        // and 6 landmark papers sat unused in the pool). Top the pool up to
+        // the mechanical floor with the best-scoring UNSELECTED sources —
+        // only relevance ≥ 4 (honest floor: a thin/weak pool stays thin),
+        // never above the existing hard cap, never non-primary.
+        const densityFloor = citationDensityFloor(targetWords);
+        if (curatedRefs.length < Math.min(densityFloor, poolRefs.length)) {
+          const floor = Math.min(densityFloor, poolRefs.length);
+          const selectedKeys = new Set(
+            curatedRefs.map((r: any) => `${String(r?.title || "").toLowerCase().trim()}|${String(r?.doi || r?.url || r?.externalId || "").toLowerCase()}`)
+          );
+          const byPriority = poolScores
+            .map((s, i) => ({ s, ref: poolRefs[i] }))
+            .filter(
+              (x) =>
+                x.s.relevance >= 4 &&
+                !selectedKeys.has(`${String(x.ref?.title || "").toLowerCase().trim()}|${String(x.ref?.doi || x.ref?.url || x.ref?.externalId || "").toLowerCase()}`)
+            )
+            .sort((a, b) => b.s.priority - a.s.priority);
+          let toppedUp = 0;
+          for (const cand of byPriority) {
+            if (curatedRefs.length >= floor) break;
+            curatedRefs.push(cand.ref);
+            curatedScores.push({ ...cand.s, index: curatedRefs.length });
+            toppedUp++;
+          }
+          if (toppedUp > 0) {
+            stats.densityFloorToppedUp = toppedUp;
+            log(`curate: density floor topped up +${toppedUp} (→ ${curatedRefs.length}, floor ${densityFloor})`);
+            send("step", {
+              step: "curate",
+              status: "progress",
+              message: `Citation density floor: added ${toppedUp} high-relevance source(s) — pool now ${curatedRefs.length} refs (floor ${densityFloor} for ${targetWords} words).`,
+            });
+          }
+        }
         stats.citationPlanned = smart.plannedCount;
         stats.citationLLMDriven = smart.llmDriven;
         send("step", {
@@ -809,10 +885,10 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           curatedCount: curatedRefs.length,
           plannedCitations: smart.plannedCount,
           llmDriven: smart.llmDriven,
-          message: `Citation pool: ${curatedRefs.length} of ${deduped.refs.length} scored sources selected for a ${targetWords}-word article (typical density ~${typicalCitationCount(targetWords)}).`,
+          message: `Citation pool: ${curatedRefs.length} of ${poolRefs.length} citable sources selected for a ${targetWords}-word article (typical density ~${typicalCitationCount(targetWords)}, floor ${densityFloor}).`,
           detail: smart.rationale,
         });
-        log(`curate: ${curatedRefs.length}/${deduped.refs.length} refs — plannedCitations=${smart.plannedCount} llmDriven=${smart.llmDriven} — ${smart.rationale}`);
+        log(`curate: ${curatedRefs.length}/${poolRefs.length} refs — plannedCitations=${smart.plannedCount} llmDriven=${smart.llmDriven} floor=${densityFloor} — ${smart.rationale}`);
 
         // ============ STEP 2.5: Fetch full texts for the pool (round-42) ============
         // 能获取到全文的一定要看全文：the pool arrives priority-ordered, so
@@ -952,10 +1028,14 @@ Output JSON only.`;
         // (Jeong 2022 Nature sat unused in the gather pool), and a therapeutic
         // section with zero therapy references (Askew 2015 never curated).
         // Enforce coverage mechanically now that the section titles are known.
+        // round-57: candidates come from the TIERED pool (non-primary web
+        // sources can't sneak back in via backfill) and the signal list now
+        // includes discovery + disease/mutation papers (the round-56 audit's
+        // "Discovery and Identification" section had its landmarks unused).
         const coverage = ensurePrimaryPaperCoverage(
           project.topic,
           sections.map((s: any) => `${s.title} ${s.focus || ""}`),
-          deduped.refs,
+          poolRefs,
           curatedRefs,
         );
         if (coverage.backfilled.length > 0) {
@@ -1313,20 +1393,30 @@ You cite ONLY with {{Rn}} keys — never numeric [n] citations.`;
           // If the output contains raw numeric [n] markers, malformed keys,
           // ZERO citations (round-14: a "Therapeutic Perspectives" section
           // shipped with 0 citations while asserting concrete gene-therapy and
-          // CRISPR claims), or a TRAILING UNCITED CLAIM BLOCK (round-17: §8 of
+          // CRISPR claims), a TRAILING UNCITED CLAIM BLOCK (round-17: §8 of
           // the E2E run made substantive therapeutic claims for its last ~100
-          // words while all {{Rn}} keys sat in the first paragraph), retry
-          // ONCE with a corrective instruction.
+          // words while all {{Rn}} keys sat in the first paragraph), or ANYWHERE-IN-TEXT
+          // UNCITED ASSERTION SENTENCES (round-57: the round-56 audit found
+          // fabricated/unsupported assertions sitting mid-section — "the TMC
+          // family was first recognized in Drosophila" — invisible to the
+          // trailing-only gate), retry ONCE with a corrective instruction.
           const gate = keyedCitationsAreValid(chunkContent, sectionRefs.length);
           const keyedCount = (chunkContent.match(/\{\{R\d+\}\}/g) || []).length;
           const zeroCite = keyedCount === 0;
           const trailingBlock = trailingUncitedClaimWords(chunkContent);
           const trailingGate = !zeroCite && keyedCount > 0 && trailingBlock !== null;
-          if (zeroCite || trailingGate || (!gate.ok && (gate.rawNumericMarkers > 0 || gate.outOfRangeKeys > 0))) {
+          // round-57: whole-section uncited-assertion scan (negative-existence
+          // claims + evidence-verb assertions without a {{Rn}} key). >=2 hits
+          // triggers the retry; single hits stay for the verify/audit layers
+          // (over-triggering burns a regeneration for stylistic hedges).
+          const uncitedAssertions = uncitedAssertionSentences(chunkContent);
+          const uncitedGate = !zeroCite && uncitedAssertions.length >= 2;
+          if (zeroCite || trailingGate || uncitedGate || (!gate.ok && (gate.rawNumericMarkers > 0 || gate.outOfRangeKeys > 0))) {
             stats.gateRetries++;
             if (zeroCite) stats.zeroCitationRetries++;
             if (trailingGate) stats.trailingUncitedRetries++;
-            log(`generate: section ${sectionNum} FAILED validation gate (zeroCite=${zeroCite}, trailing=${trailingGate ? `${trailingBlock}w` : "no"}, raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
+            if (uncitedGate) stats.uncitedAssertionGateHits++;
+            log(`generate: section ${sectionNum} FAILED validation gate (zeroCite=${zeroCite}, trailing=${trailingGate ? `${trailingBlock}w` : "no"}, uncitedAssertions=${uncitedGate ? uncitedAssertions.length : 0}, raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
             send("step", {
               step: "generate",
               status: "progress",
@@ -1336,7 +1426,9 @@ You cite ONLY with {{Rn}} keys — never numeric [n] citations.`;
                 ? `Section ${sectionNum}: validation gate triggered (ZERO citations) — retrying with grounding instruction...`
                 : trailingGate
                   ? `Section ${sectionNum}: validation gate triggered (trailing ${trailingBlock} uncited claim words) — retrying with grounding instruction...`
-                  : `Section ${sectionNum}: validation gate triggered (raw numeric markers: ${gate.rawNumericMarkers}) — retrying with corrective instruction...`,
+                  : uncitedGate
+                    ? `Section ${sectionNum}: validation gate triggered (${uncitedAssertions.length} uncited assertion sentences incl. ${uncitedAssertions.filter((u) => u.pattern === "negative-existence").length} "not-reported" claims) — retrying with grounding instruction...`
+                    : `Section ${sectionNum}: validation gate triggered (raw numeric markers: ${gate.rawNumericMarkers}) — retrying with corrective instruction...`,
             });
             try {
               const retryPrompt = prompt + (zeroCite
@@ -1347,7 +1439,13 @@ CORRECTION: your previous output contained ZERO {{Rn}} citations, but this secti
                   ? `
 
 CORRECTION: in your previous output, the last ${trailingBlock} words make substantive factual claims (experimental findings, therapeutic advances, mechanistic assertions) WITHOUT any {{Rn}} citation, while all citations sit earlier in the section. Every claim sentence — especially in closing/outlook paragraphs — must cite the specific listed reference that supports it, using {{Rn}} keys. Rewrite the SAME section, either grounding those trailing claims in the listed references or reframing them as explicitly open questions. Output the corrected section only.`
-                  : `
+                  : uncitedGate
+                    ? `
+
+CORRECTION: your previous output contains UNCITED ASSERTION SENTENCES — factual claims stated as established fact without any {{Rn}} citation. Specifically these sentences:
+${uncitedAssertions.map((u, i) => `${i + 1}. "${u.sentence}" [${u.pattern}]`).join("\n")}
+Each of these asserts a specific finding, mechanism, historical event, or a "has not been reported" claim about the literature. Rewrite the SAME section: ground every such sentence in the specific listed reference that supports it ({{Rn}} keys), or reframe it as an explicitly open question, or remove it. NEVER state a historical/discovery fact or a "not reported" claim without a citation. Output the corrected section only.`
+                    : `
 
 CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] or [2], or invalid keys. Rewrite the SAME section content using ONLY {{Rn}} citation keys from the list. Every citation must be a {{Rn}} key. Output the corrected section only.`);
               const retryContent = await chatWithSession(projectId, retryPrompt, {
@@ -1361,17 +1459,20 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
               const retryGate = keyedCitationsAreValid(sanitizedRetry, sectionRefs.length);
               const retryKeyed = (sanitizedRetry.match(/\{\{R\d+\}\}/g) || []).length;
               const retryTrailing = trailingUncitedClaimWords(sanitizedRetry);
+              const retryUncited = uncitedAssertionSentences(sanitizedRetry);
               let improved: boolean;
               if (zeroCite) {
                 improved = retryKeyed > 0 && retryGate.rawNumericMarkers === 0;
               } else if (trailingGate) {
                 improved = retryTrailing === null || (retryTrailing ?? 0) < (trailingBlock ?? 0);
+              } else if (uncitedGate) {
+                improved = retryUncited.length < uncitedAssertions.length;
               } else {
                 improved = retryGate.rawNumericMarkers < gate.rawNumericMarkers;
               }
               if (improved) {
                 chunkContent = sanitizedRetry;
-                log(`generate: section ${sectionNum} retry improved (keyed ${keyedCount}→${retryKeyed}, raw ${gate.rawNumericMarkers}→${retryGate.rawNumericMarkers})`);
+                log(`generate: section ${sectionNum} retry improved (keyed ${keyedCount}→${retryKeyed}, raw ${gate.rawNumericMarkers}→${retryGate.rawNumericMarkers}, uncited ${uncitedAssertions.length}→${retryUncited.length})`);
               }
             } catch (retryErr: any) {
               log(`generate: section ${sectionNum} retry failed: ${retryErr?.message?.slice(0, 80)}`);
@@ -1665,6 +1766,41 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           });
           globalRefs.length = 0;
           globalRefs.push(...filteredRefs);
+        }
+
+        // ★ round-57: MECHANICAL out-of-range citation repair, BEFORE any
+        // persistence. The compose audit used to report "blocking" errors
+        // (out-of-range [n]) and save the article anyway (round-56 audit: 5
+        // blocking errors shipped). Now every [n] beyond the FINAL reference
+        // list is stripped deterministically — an honest uncited sentence
+        // beats a fabricated citation — from the article body AND the
+        // paragraph mirrors, so body/references/translation/snapshot all
+        // agree. (renumberedContents can legitimately carry pre-filter
+        // numbers after orphan removal — those are stale against the final
+        // list and equally stripped, matching the missing reference rows.)
+        {
+          let totalStripped = 0;
+          const bodyRepair = stripOutOfRangeCitations(articleBody, globalRefs.length);
+          if (bodyRepair.stripped > 0) {
+            articleBody = bodyRepair.content;
+            totalStripped += bodyRepair.stripped;
+          }
+          for (let si = 0; si < renumberedContents.length; si++) {
+            const paraRepair = stripOutOfRangeCitations(renumberedContents[si], globalRefs.length);
+            if (paraRepair.stripped > 0) {
+              renumberedContents[si] = paraRepair.content;
+              totalStripped += paraRepair.stripped;
+            }
+          }
+          if (totalStripped > 0) {
+            stats.outOfRangeCitationsStripped = totalStripped;
+            log(`compose: stripped ${totalStripped} out-of-range citation marker(s) against the ${globalRefs.length}-entry reference list`);
+            send("step", {
+              step: "compose",
+              status: "progress",
+              message: `Citation repair: removed ${totalStripped} marker(s) citing beyond the ${globalRefs.length}-entry reference list (honest removal — no fabricated [n]).`,
+            });
+          }
         }
 
         const refList = globalRefs
@@ -2214,6 +2350,11 @@ ${cleanEn}`;
             citationCoreCovered: stats.citationCoreCovered,
             citationPlanLLMDriven: stats.citationLLMDriven,
             fullTextsUsed: stats.fullTextsUsed,
+            // round-57: admission-gate + honesty-repair telemetry
+            nonPrimaryWebExcluded: stats.nonPrimaryWebExcluded,
+            densityFloorToppedUp: stats.densityFloorToppedUp,
+            outOfRangeCitationsStripped: stats.outOfRangeCitationsStripped,
+            uncitedAssertionGateHits: stats.uncitedAssertionGateHits,
           },
           message: `v2 pipeline complete: ${articleWordCount} words${articleContentZh ? ` + ${countWords(articleContentZh)} Chinese chars` : ""}, ${globalRefs.length} references, ${stats.citationsChecked} citations adversarially verified (${stats.citationsRemoved} removed).`,
         });
@@ -2407,49 +2548,69 @@ ${block}
 Adjudicate every check. Respond as STRICT JSON:
 {"checks":[{"id":1,"verdict":"...","confidence":0,"reason":"..."}]}`;
 
-    try {
-      llmCalls++;
-      const raw = await chatWithSession(projectId, prompt, {
-        system,
-        temperature: 0.1,
-        taskType: "verify",
-        maxTokens: opts.maxTokens,
-        metadata: { step: "adversarial-verify", batch: Math.floor(b / batchSize) + 1 },
-      });
-      const parsed = safeParseJSON(raw, { checks: [] });
-      for (const c of parsed.checks || []) {
-        const id = parseInt(String(c.id), 10);
-        if (isNaN(id) || id < 1 || id > batch.length) continue;
-        let verdict = String(c.verdict || "").toUpperCase();
-        if (!["SUPPORTED", "UNSUPPORTED", "PARTIAL"].includes(verdict)) continue;
-        const reason = String(c.reason || "").slice(0, 240);
-        // Contradiction guard (E2E finding): verdict=UNSUPPORTED while the
-        // reason says the reference "explicitly describes/defines/states" the
-        // claim is a reviewer false positive — downgrade to PARTIAL (flag only).
-        if (
-          verdict === "UNSUPPORTED" &&
-          (/explicitly (describes|defines|states|discusses|mentions|reports|shows|demonstrates)/i.test(reason) ||
-            /directly matches/i.test(reason) ||
-            /(?:directly|closely) (?:relates|aligns|correspond)s?/i.test(reason))
-        ) {
-          verdict = "PARTIAL";
-        }
-        const confidence = Math.max(0, Math.min(100, parseInt(String(c.confidence ?? 50), 10) || 50));
-        const item: VerifyCheck = {
-          n: batch[id - 1].n,
-          sentence: batch[id - 1].sentence,
-          verdict: verdict as VerifyCheck["verdict"],
-          confidence,
-          reason,
-        };
-        if (verdict === removeVerdict && confidence >= removeConfidence) {
-          removals.push(item);
-        } else if (verdict === "UNSUPPORTED" || verdict === "PARTIAL") {
-          flagged.push(item);
+    // round-57: ONE retry per batch. A transient LLM blip (429/timeout) used
+    // to silently skip the WHOLE batch — its citations shipped unverified
+    // (round-56: verify failures were console.warn-and-move-on). A 2s
+    // cool-down then a single retry recovers the transient case; a second
+    // failure still skips (non-fatal by design, logged).
+    let raw: string | undefined;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        llmCalls++;
+        raw = await chatWithSession(projectId, prompt, {
+          system,
+          temperature: 0.1,
+          taskType: "verify",
+          maxTokens: opts.maxTokens,
+          metadata: { step: "adversarial-verify", batch: Math.floor(b / batchSize) + 1, attempt },
+        });
+        break;
+      } catch (err: any) {
+        if (attempt === 1) {
+          console.warn(`[adversarialVerifySection] batch ${Math.floor(b / batchSize) + 1} attempt 1 failed (${err?.message?.slice(0, 80)}) — retrying once`);
+          await new Promise((r) => setTimeout(r, 2000));
+        } else {
+          console.warn(`[adversarialVerifySection] batch failed (2 attempts): ${err?.message?.slice(0, 100)}`);
         }
       }
-    } catch (err: any) {
-      console.warn(`[adversarialVerifySection] batch failed: ${err?.message?.slice(0, 100)}`);
+    }
+    if (raw !== undefined) {
+      try {
+        const parsed = safeParseJSON(raw, { checks: [] });
+        for (const c of parsed.checks || []) {
+          const id = parseInt(String(c.id), 10);
+          if (isNaN(id) || id < 1 || id > batch.length) continue;
+          let verdict = String(c.verdict || "").toUpperCase();
+          if (!["SUPPORTED", "UNSUPPORTED", "PARTIAL"].includes(verdict)) continue;
+          const reason = String(c.reason || "").slice(0, 240);
+          // Contradiction guard (E2E finding): verdict=UNSUPPORTED while the
+          // reason says the reference "explicitly describes/defines/states" the
+          // claim is a reviewer false positive — downgrade to PARTIAL (flag only).
+          if (
+            verdict === "UNSUPPORTED" &&
+            (/explicitly (describes|defines|states|discusses|mentions|reports|shows|demonstrates)/i.test(reason) ||
+              /directly matches/i.test(reason) ||
+              /(?:directly|closely) (?:relates|aligns|correspond)s?/i.test(reason))
+          ) {
+            verdict = "PARTIAL";
+          }
+          const confidence = Math.max(0, Math.min(100, parseInt(String(c.confidence ?? 50), 10) || 50));
+          const item: VerifyCheck = {
+            n: batch[id - 1].n,
+            sentence: batch[id - 1].sentence,
+            verdict: verdict as VerifyCheck["verdict"],
+            confidence,
+            reason,
+          };
+          if (verdict === removeVerdict && confidence >= removeConfidence) {
+            removals.push(item);
+          } else if (verdict === "UNSUPPORTED" || verdict === "PARTIAL") {
+            flagged.push(item);
+          }
+        }
+      } catch (parseErr: any) {
+        console.warn(`[adversarialVerifySection] batch parse failed: ${parseErr?.message?.slice(0, 100)}`);
+      }
     }
     await new Promise((r) => setTimeout(r, 1500));
   }

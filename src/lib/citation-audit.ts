@@ -126,6 +126,39 @@ export function expandCitationRange(inner: string): number[] {
   return nums;
 }
 
+/**
+ * round-57: MECHANICAL out-of-range citation repair. The compose-stage audit
+ * reports "blocking" out-of-range markers ([n] with n > refCount — including
+ * any number inside a range like [4-9]) but the article was saved anyway
+ * (round-56 audit: 5 blocking errors in the shipped article). This strips
+ * every marker that cites beyond the reference list — an honest uncited
+ * sentence beats a fabricated citation. Applied to the renumbered section
+ * contents BEFORE persistence so paragraphs, article body, translation, and
+ * version snapshot all stay consistent. Returns the repaired text (the
+ * original if nothing was out of range) plus the strip count for telemetry.
+ */
+export function stripOutOfRangeCitations(
+  content: string,
+  refCount: number
+): { content: string; stripped: number } {
+  let stripped = 0;
+  const repaired = content.replace(
+    /\[(\d+(?:[,\-–\s]*\d+)*)\]/g,
+    (marker, inner: string) => {
+      const nums = expandCitationRange(inner);
+      // Any number beyond the list (or unparseable) → the whole marker is
+      // dishonest; remove it. Markers inside {{ }} or URLs never match this
+      // shape (braces/protocol prefixes), so the regex is safe for body text.
+      if (nums.length === 0 || nums.some((n) => n < 1 || n > refCount)) {
+        stripped++;
+        return "";
+      }
+      return marker;
+    }
+  );
+  return { content: repaired, stripped };
+}
+
 /** Normalize a source-type alias to its canonical form (pmid→pubmed, pdb→rcsb). */
 export function normalizeType(t: string | null | undefined): string {
   const lt = (t || "").toLowerCase();
