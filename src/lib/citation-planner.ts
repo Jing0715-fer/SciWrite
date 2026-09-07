@@ -339,9 +339,12 @@ Respond as STRICT JSON only:
   return { scores, llmBatches, fallbackBatches };
 }
 
-/** Natural citation density for a review of the given length. */
+/** Natural citation density for a review of the given length.
+ * round-57 (P1-2): /200 → /120 — a 3000-word review now targets ~25 refs
+ * (was 15), matching the 1-per-100-150-words density of real reviews, so
+ * in-pool landmark papers survive curation instead of being thinned out. */
 export function typicalCitationCount(targetWords: number): number {
-  return Math.max(6, Math.min(40, Math.round(targetWords / 200)));
+  return Math.max(8, Math.min(60, Math.round(targetWords / 120)));
 }
 
 /**
@@ -381,9 +384,14 @@ export async function smartCurateReferences(
 
   const hardCap = maxCitableRefsFor(targetWords, refs.length);
   const typical = typicalCitationCount(targetWords);
-  // Soft floor: min(6, refs with relevance >= 5) — shrinks for thin pools.
+  // Soft floor: round-57 (P1-2) — was min(6, …) which let the LLM thin a
+  // 265-source pool down to 20 and discard in-pool landmarks the article
+  // would later narrate uncited. The floor now tracks the typical density
+  // (75% of it, bounded by genuinely-relevant (REL>=5) supply and the cap):
+  // a thin pool still yields a small list, a rich pool keeps its landmarks.
   const eligibleFloor = scores.filter((s) => s.relevance >= 5).length;
-  const softFloor = Math.min(6, eligibleFloor, hardCap);
+  const densityFloor = Math.round(typical * 0.75);
+  const softFloor = Math.min(Math.max(6, densityFloor), eligibleFloor, hardCap);
 
   // Priority-desc listing (scores aligned 1:1 with refs input order).
   const order = scores.map((s, i) => ({ score: s, ref: refs[i] }));
@@ -415,10 +423,11 @@ CITATION BUDGET:
 SELECTION RULES (in priority order):
 1. Relevance first: NEVER include a source with REL <= 3. An uncited point is better than an irrelevant citation.
 2. Include EVERY source marked CORE (tier column), up to ${hardCap}.
-3. If the pool is thin or mostly MARGINAL, choose FEWER references — do NOT pad toward the typical count.
-4. For a SHORT article with a RICH pool, drop MARGINAL sources and keep the high-priority ones.
-5. Prefer primary research over reviews when both report the same finding; prefer the peer-reviewed version over its preprint.
-6. FULL TEXT sources support deeper discussion — break ties toward them.
+3. LANDMARKS ARE MANDATORY (round-57): first discoveries, gene/protein cloning papers, structure determinations, and clinical-trial milestones for the topic's central molecules are ALWAYS in scope for a review — include them even when their raw priority ties with newer work. A review that narrates a discovery without citing its primary paper is a failed review.
+4. If the pool is thin or mostly MARGINAL, choose FEWER references — do NOT pad toward the typical count.
+5. For a SHORT article with a RICH pool, drop MARGINAL sources and keep the high-priority ones.
+6. Prefer primary research over reviews when both report the same finding; prefer the peer-reviewed version over its preprint.
+7. FULL TEXT sources support deeper discussion — break ties toward them.
 
 Respond as STRICT JSON only:
 { "indices": [1, 2, 5, ...], "plannedCount": 18, "rationale": "one sentence explaining the count" }

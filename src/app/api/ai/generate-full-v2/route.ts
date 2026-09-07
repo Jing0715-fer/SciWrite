@@ -43,8 +43,14 @@ import {
   inferFormat,
   removeCrossSectionDuplicates,
   trailingUncitedClaimWords,
+  uncitedAssertionSentences,
   safeParseJSON,
 } from "@/lib/generate-full-helpers";
+// round-57 (P0-1): mechanical source-tier gate — hospital/news/encyclopedia/
+// gene-portal web pages are partitioned out of the citation pool before the
+// plan/analyze/allocate stages ever see them. Fail-safe: an empty result
+// keeps the unfiltered pool (the run never bricks on a classification).
+import { partitionCitablePool } from "@/lib/source-tier";
 // round-42: importance-driven citation planning — score every source,
 // curate with a dynamic count, fetch full texts, co-plan outline+citations.
 import {
@@ -225,6 +231,11 @@ export async function POST(req: NextRequest) {
         citationCoreCovered: 0,
         citationLLMDriven: false,
         fullTextsUsed: 0,
+        // round-57: source-tier / uncited-assertion / verify-retry telemetry
+        sourceTierDropped: 0,
+        uncitedAssertionRetries: 0,
+        citationsUnverified: 0,
+        outOfRangeCitationsStripped: 0,
       };
 
       // Hoisted for the catch block's failure-recovery logic (try-block
@@ -814,6 +825,41 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         });
         log(`curate: ${curatedRefs.length}/${deduped.refs.length} refs — plannedCitations=${smart.plannedCount} llmDriven=${smart.llmDriven} — ${smart.rationale}`);
 
+        // ============ STEP 2.2 (round-57 P0-1): Source-tier gate ============
+        // The curate LLM scores topical relevance, not SOURCE TIER — a
+        // hospital outreach page about the topic scores REL 8/10 while being
+        // useless as first-class evidence (round-56: [19] was a Boston
+        // Children's popular-science page standing in for Askew 2015). This
+        // mechanical pass partitions non-primary WEB pages (hospital/media/
+        // encyclopedia/gene-portal) out of the pool. Database-typed refs
+        // (pubmed/rcsb/uniprot) are exempt; empty-result falls back to the
+        // unfiltered pool rather than bricking the run.
+        {
+          const tier = partitionCitablePool(curatedRefs, curatedScores);
+          if (tier.dropped.length > 0 && !tier.fellBackToUnfiltered) {
+            stats.sourceTierDropped = tier.dropped.length;
+            log(
+              `source-tier: dropped ${tier.dropped.length} non-primary web source(s) — ` +
+                tier.dropped.map((d) => `[${d.reason}]`).join(" | "),
+            );
+            send("step", {
+              step: "curate",
+              status: "progress",
+              message: `Source-tier gate: ${tier.dropped.length} non-primary web source(s) removed from the citation pool (${curatedRefs.length} → ${tier.keptRefs.length}).`,
+              detail: tier.dropped.map((d) => `dropped: ${d.reason} — ${String(d.ref?.title || "").slice(0, 70)}`).join("\n"),
+            });
+            curatedRefs = tier.keptRefs;
+            curatedScores = tier.keptScores;
+          } else if (tier.fellBackToUnfiltered) {
+            log(`source-tier: gate would have emptied the pool (${tier.dropped.length} candidates) — kept unfiltered pool as fail-safe`);
+            send("step", {
+              step: "curate",
+              status: "progress",
+              message: `Source-tier gate skipped — every candidate was non-primary; pool kept unfiltered as fail-safe.`,
+            });
+          }
+        }
+
         // ============ STEP 2.5: Fetch full texts for the pool (round-42) ============
         // 能获取到全文的一定要看全文：the pool arrives priority-ordered, so
         // the fetch budget goes to the most important sources first. Deep-read
@@ -991,6 +1037,27 @@ Output JSON only.`;
             }
           }
           stats.coverageBackfills = coverage.backfilled;
+          // round-57 fix: the backfill pulls from the PRE-curation pool
+          // (deduped.refs) which bypassed the STEP 2.2 source-tier gate —
+          // the E2E run's [therapy] signal re-imported a Boston Children's
+          // hospital page AFTER the gate had dropped its siblings. Re-run
+          // the mechanical tier partition on the post-backfill pool so every
+          // appended web source faces the same non-primary check.
+          const backfillTier = partitionCitablePool(coverage.refs, curatedScores);
+          if (backfillTier.dropped.length > 0 && !backfillTier.fellBackToUnfiltered) {
+            log(
+              `source-tier (post-backfill): dropped ${backfillTier.dropped.length} non-primary web source(s) — ` +
+                backfillTier.dropped.map((d) => `[${d.reason}] ${String(d.ref?.title || "").slice(0, 50)}`).join(" | "),
+            );
+            send("step", {
+              step: "plan",
+              status: "progress",
+              message: `Source-tier gate (post-backfill): ${backfillTier.dropped.length} non-primary web source(s) removed from the backfilled pool.`,
+            });
+            curatedRefs = backfillTier.keptRefs;
+            curatedScores = backfillTier.keptScores;
+            stats.sourceTierDropped += backfillTier.dropped.length;
+          }
           log(
             `plan: coverage backfill — ` +
               coverage.backfilled
@@ -1322,11 +1389,17 @@ You cite ONLY with {{Rn}} keys — never numeric [n] citations.`;
           const zeroCite = keyedCount === 0;
           const trailingBlock = trailingUncitedClaimWords(chunkContent);
           const trailingGate = !zeroCite && keyedCount > 0 && trailingBlock !== null;
-          if (zeroCite || trailingGate || (!gate.ok && (gate.rawNumericMarkers > 0 || gate.outOfRangeKeys > 0))) {
+          // round-57 (P1-1): whole-sentence uncited-assertion scan — the
+          // trailing-60-words gate missed mid-paragraph fabrications (the
+          // Drosophila-first inversion narrated with zero citations).
+          const uncitedAssertions = uncitedAssertionSentences(chunkContent);
+          const uncitedGate = !zeroCite && uncitedAssertions.length > 0;
+          if (zeroCite || trailingGate || uncitedGate || (!gate.ok && (gate.rawNumericMarkers > 0 || gate.outOfRangeKeys > 0))) {
             stats.gateRetries++;
             if (zeroCite) stats.zeroCitationRetries++;
             if (trailingGate) stats.trailingUncitedRetries++;
-            log(`generate: section ${sectionNum} FAILED validation gate (zeroCite=${zeroCite}, trailing=${trailingGate ? `${trailingBlock}w` : "no"}, raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
+            if (uncitedGate) stats.uncitedAssertionRetries = (stats.uncitedAssertionRetries || 0) + 1;
+            log(`generate: section ${sectionNum} FAILED validation gate (zeroCite=${zeroCite}, trailing=${trailingGate ? `${trailingBlock}w` : "no"}, uncitedAssert=${uncitedGate ? uncitedAssertions.length : 0}, raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
             send("step", {
               step: "generate",
               status: "progress",
@@ -1336,7 +1409,9 @@ You cite ONLY with {{Rn}} keys — never numeric [n] citations.`;
                 ? `Section ${sectionNum}: validation gate triggered (ZERO citations) — retrying with grounding instruction...`
                 : trailingGate
                   ? `Section ${sectionNum}: validation gate triggered (trailing ${trailingBlock} uncited claim words) — retrying with grounding instruction...`
-                  : `Section ${sectionNum}: validation gate triggered (raw numeric markers: ${gate.rawNumericMarkers}) — retrying with corrective instruction...`,
+                  : uncitedGate
+                    ? `Section ${sectionNum}: validation gate triggered (${uncitedAssertions.length} uncited high-risk assertion sentence(s)) — retrying with grounding instruction...`
+                    : `Section ${sectionNum}: validation gate triggered (raw numeric markers: ${gate.rawNumericMarkers}) — retrying with corrective instruction...`,
             });
             try {
               const retryPrompt = prompt + (zeroCite
@@ -1347,7 +1422,14 @@ CORRECTION: your previous output contained ZERO {{Rn}} citations, but this secti
                   ? `
 
 CORRECTION: in your previous output, the last ${trailingBlock} words make substantive factual claims (experimental findings, therapeutic advances, mechanistic assertions) WITHOUT any {{Rn}} citation, while all citations sit earlier in the section. Every claim sentence — especially in closing/outlook paragraphs — must cite the specific listed reference that supports it, using {{Rn}} keys. Rewrite the SAME section, either grounding those trailing claims in the listed references or reframing them as explicitly open questions. Output the corrected section only.`
-                  : `
+                  : uncitedGate
+                    ? `
+
+CORRECTION: these specific sentences from your previous output make high-risk factual assertions (numbers, existence claims, or first/novel claims) WITHOUT any {{Rn}} citation:
+${uncitedAssertions.map((s: string, j: number) => `${j + 1}. "${s}"`).join("\n")}
+
+Every factual assertion of this kind MUST cite the listed reference that supports it ({{Rn}} keys), or be removed/reframed as explicitly open. Do NOT leave checkable claims (specific quantities, existence claims, first-discovery claims) uncited anywhere in the section — including mid-paragraph. Rewrite the SAME section. Output the corrected section only.`
+                    : `
 
 CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] or [2], or invalid keys. Rewrite the SAME section content using ONLY {{Rn}} citation keys from the list. Every citation must be a {{Rn}} key. Output the corrected section only.`);
               const retryContent = await chatWithSession(projectId, retryPrompt, {
@@ -1366,6 +1448,8 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
                 improved = retryKeyed > 0 && retryGate.rawNumericMarkers === 0;
               } else if (trailingGate) {
                 improved = retryTrailing === null || (retryTrailing ?? 0) < (trailingBlock ?? 0);
+              } else if (uncitedGate) {
+                improved = uncitedAssertionSentences(sanitizedRetry).length < uncitedAssertions.length;
               } else {
                 improved = retryGate.rawNumericMarkers < gate.rawNumericMarkers;
               }
@@ -1418,7 +1502,7 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             if (verifyErr instanceof RateLimitAbortedError || verifyErr instanceof QuotaExhaustedError) {
               abortedDueToRateLimit = true;
               log(`verify: section ${sectionNum} skipped — rate limit hit; saving section with unverified citations`);
-              verifyResult = { checked: 0, removedNums: [], flagged: [], removals: [] } as any;
+              verifyResult = { checked: 0, removedNums: [], flagged: [], removals: [], llmCalls: 0, unverifiedChecks: 0 } as any;
             } else {
               throw verifyErr;
             }
@@ -1426,6 +1510,9 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           stats.citationsChecked += verifyResult.checked;
           stats.citationsRemoved += verifyResult.removedNums.length;
           stats.citationsFlagged += verifyResult.flagged.length;
+          if (verifyResult.unverifiedChecks > 0) {
+            stats.citationsUnverified = (stats.citationsUnverified || 0) + verifyResult.unverifiedChecks;
+          }
 
           if (verifyResult.removedNums.length > 0) {
             const after = removeCitationsAndRenumber(sectionContent, citedRefs, new Set(verifyResult.removedNums));
@@ -1441,10 +1528,10 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             checked: verifyResult.checked,
             removed: verifyResult.removedNums.length,
             flagged: verifyResult.flagged.length,
-            message: `Section ${sectionNum} verification: ${verifyResult.checked} citations checked, ${verifyResult.removedNums.length} removed, ${verifyResult.flagged.length} flagged (${Date.now() - verifyStart}ms).`,
+            message: `Section ${sectionNum} verification: ${verifyResult.checked} citations checked, ${verifyResult.removedNums.length} removed, ${verifyResult.flagged.length} flagged${verifyResult.unverifiedChecks ? `, ${verifyResult.unverifiedChecks} SAVED UNVERIFIED (batch failure)` : ""} (${Date.now() - verifyStart}ms).`,
             detail: verifyResult.removals.map((r) => `[${r.n}] ${r.reason}`).join("\n"),
           });
-          log(`verify: section ${sectionNum} — checked=${verifyResult.checked} removed=${verifyResult.removedNums.length} flagged=${verifyResult.flagged.length}`);
+          log(`verify: section ${sectionNum} — checked=${verifyResult.checked} removed=${verifyResult.removedNums.length} flagged=${verifyResult.flagged.length}${verifyResult.unverifiedChecks ? ` unverified=${verifyResult.unverifiedChecks}` : ""}`);
 
           // ---- Save the paragraph + cited references ----
           // ★ FIX (atomic section save): paragraph + references were created
@@ -1622,6 +1709,46 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
         let articleBody = renumberedContents
           .map((c, i) => `## ${generatedParagraphs[i]?.title || `Section ${i + 1}`}\n\n${c}`)
           .join("\n\n");
+
+        // ---- round-57 (P2-1): strip out-of-range citation markers ----
+        // The orphan-ref filter below only REMAPS in-range citations when
+        // orphans exist; when every real ref is cited (filteredRefs.length
+        // === globalRefs.length) its replace pass is skipped entirely and a
+        // stray LLM marker like [21] with only 20 refs would survive into
+        // the final article pointing at nothing. Mechanical, unconditional:
+        // any citation number outside 1..globalRefs.length is dropped from
+        // its marker (valid numbers in the same marker are kept).
+        {
+          const maxGlobal = globalRefs.length;
+          let oorStripped = 0;
+          const oorRe = /\[(\d+(?:[,\-–\s]\d+)*)\]/g;
+          articleBody = articleBody.replace(oorRe, (match, inner: string) => {
+            const nums = inner.split(/[,;]\s*/).flatMap((s: string) => {
+              const rm = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+              if (rm) {
+                const arr: number[] = [];
+                for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) arr.push(n);
+                return arr;
+              }
+              const n = parseInt(s);
+              return isNaN(n) ? [] : [n];
+            });
+            const valid = nums.filter((n: number) => n >= 1 && n <= maxGlobal);
+            if (valid.length === nums.length) return match;
+            oorStripped += nums.length - valid.length;
+            if (valid.length === 0) return "";
+            return `[${valid.sort((a, b) => a - b).join(",")}]`;
+          });
+          if (oorStripped > 0) {
+            stats.outOfRangeCitationsStripped = oorStripped;
+            log(`compose: stripped ${oorStripped} out-of-range citation number(s) (pool has ${maxGlobal} refs)`);
+            send("step", {
+              step: "compose",
+              status: "progress",
+              message: `Compose guard: removed ${oorStripped} citation marker(s) pointing beyond the reference list (${maxGlobal} refs).`,
+            });
+          }
+        }
 
         const citedInBody = new Set<number>();
         const citeScanRe = /\[(\d+(?:[,\-–\s]\d+)*)\]/g;
@@ -2042,9 +2169,23 @@ ${cleanEn}`;
             message: `Composing Chinese full article from ${translatedCount}/${translatedContents.length} translated sections...`,
           });
 
+          // round-57 (P2-3, v2 side): failed section translations are EXCLUDED
+          // from the composed Chinese body rather than emitted as heading-
+          // only holes — a "## 标题\n\n(空)" gap makes the two halves
+          // structurally divergent (the EN half has the content, the ZH half
+          // silently lacks it). The missing sections are logged and named so
+          // the user knows exactly what to retranslate.
+          const missingZh = translatedContents
+            .map((c, i) => (c.trim().length === 0 ? i + 1 : 0))
+            .filter((n) => n > 0);
           const zhBody = translatedContents
-            .map((c, i) => `## ${titleZhs[i] || generatedParagraphs[i]?.title || sections[i]?.title || `Section ${i + 1}`}\n\n${c}`)
+            .map((c, i) => ({ c, i }))
+            .filter(({ c }) => c.trim().length > 0)
+            .map(({ c, i }) => `## ${titleZhs[i] || generatedParagraphs[i]?.title || sections[i]?.title || `Section ${i + 1}`}\n\n${c}`)
             .join("\n\n");
+          if (missingZh.length > 0) {
+            log(`translate: zh compose EXCLUDED ${missingZh.length} failed section(s): §${missingZh.join(", §")} (retranslate available per-section)`);
+          }
 
           let cleanZhBody = zhBody.trim();
           cleanZhBody = cleanZhBody.replace(/^#{1}\s+.+\n*/m, "").trim();
@@ -2324,6 +2465,10 @@ export interface VerifySectionResult {
   flagged: VerifyCheck[];
   removedNums: number[];
   llmCalls: number;
+  /** round-57 (P2-2): checks whose verification batch failed even after the
+   * retry — their citations were saved UNVERIFIED. Surfaced honestly in the
+   * step message and stats instead of being silently swallowed. */
+  unverifiedChecks: number;
 }
 
 export async function adversarialVerifySection(
@@ -2344,7 +2489,7 @@ export async function adversarialVerifySection(
   const { body } = splitBodyAndReferences(content);
   const citations = extractBodyCitations(body).filter((c) => c.n >= 1 && c.n <= refs.length);
   if (!citations.length) {
-    return { checked: 0, removals: [], flagged: [], removedNums: [], llmCalls: 0 };
+    return { checked: 0, removals: [], flagged: [], removedNums: [], llmCalls: 0, unverifiedChecks: 0 };
   }
 
   // De-duplicate by n (multiple sentences citing the same ref are checked once
@@ -2387,6 +2532,7 @@ confidence is 0-100 (how sure you are of YOUR verdict). Output JSON only.`;
   const removals: VerifyCheck[] = [];
   const flagged: VerifyCheck[] = [];
   let llmCalls = 0;
+  let unverifiedChecks = 0;
 
   for (let b = 0; b < checks.length; b += batchSize) {
     const batch = checks.slice(b, b + batchSize);
@@ -2407,7 +2553,16 @@ ${block}
 Adjudicate every check. Respond as STRICT JSON:
 {"checks":[{"id":1,"verdict":"...","confidence":0,"reason":"..."}]}`;
 
-    try {
+    // round-57 (P2-2): batch-failure handling. Previously a single LLM
+    // hiccup on one batch was swallowed by console.warn — those citations
+    // shipped UNVERIFIED with no signal to anyone (and a rate-limit abort
+    // was swallowed too, so the caller's graceful-skip never fired). Now:
+    //   - rate-limit/quota errors PROPAGATE (the caller's existing handler
+    //     skips the section gracefully);
+    //   - any other failure gets ONE retry after a 3s cool-down;
+    //   - a failed-after-retry batch is counted in `unverifiedChecks` so
+    //     the caller and stats can surface "saved unverified" honestly.
+    const runBatch = async (): Promise<void> => {
       llmCalls++;
       const raw = await chatWithSession(projectId, prompt, {
         system,
@@ -2448,17 +2603,36 @@ Adjudicate every check. Respond as STRICT JSON:
           flagged.push(item);
         }
       }
+    };
+
+    try {
+      await runBatch();
     } catch (err: any) {
-      console.warn(`[adversarialVerifySection] batch failed: ${err?.message?.slice(0, 100)}`);
+      if (err instanceof RateLimitAbortedError || err instanceof QuotaExhaustedError) {
+        throw err; // caller's graceful-skip owns these
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+      try {
+        await runBatch();
+      } catch (retryErr: any) {
+        if (retryErr instanceof RateLimitAbortedError || retryErr instanceof QuotaExhaustedError) {
+          throw retryErr;
+        }
+        unverifiedChecks += batch.length;
+        console.warn(
+          `[adversarialVerifySection] batch ${Math.floor(b / batchSize) + 1} failed after retry: ${retryErr?.message?.slice(0, 100)} — ${batch.length} citations saved UNVERIFIED`,
+        );
+      }
     }
     await new Promise((r) => setTimeout(r, 1500));
   }
 
   return {
-    checked: checks.length,
+    checked: checks.length - unverifiedChecks,
     removals,
     flagged,
     removedNums: [...new Set(removals.map((r) => r.n))],
     llmCalls,
+    unverifiedChecks,
   };
 }

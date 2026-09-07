@@ -2923,3 +2923,73 @@ Stage Summary:
 - 但正文声明层存在 1 处致命捏造 + 2 处非一级源引用 + 3 处未引用叙述错误 + 6 篇里程碑文献缺失——全部源于"验证只做配对不做事实核查"的架构性盲区
 - 产出改进方案（P0：review 注入 web 事实核查 + web 源分级准入；P1：全句级未引用断言核查 + curation 密度下限与 landmark 保底；P2：blocking 真阻断 + revise 后 contentZh 重译 + verify 批失败重试）——详见交付报告
 - 测试项目与文章保留（cmtqnqkb60000nfvlgmjjywbj / article cmtqpqx2y014snfvl238asch1）供用户 UI 查看
+
+---
+Task ID: 57-re
+Agent: main (Z.ai Code)
+Task: 重新实现 round-57 七项防护并启动全新完整生产测试验证（用户指令：继续全文生产测试+外部知识核验）
+
+Work Log:
+- 会话恢复取证：上一会话摘要声称 round-57 已完成（commit 3d6aab9、fact-check.ts、浏览器验证截图），但四路证据全部反证——git 所有分支无 3d6aab9、src/lib/fact-check.ts 与 source-tier.ts 不存在、DB review 表零 FACT-CHECK 记录、worklog 停在 Task 56、/tmp 痕迹全失。结论：round-57 从未持久化（与 round-53 同型的沙箱回滚吞工作），实际基线 = round-56（8 缺陷全部在野）
+- 重新实现七项防护（P0×2 + P1×2 + P2×3）：
+  ① src/lib/source-tier.ts（新，~340 行）：机械域名分级——医院/媒体/百科/基因门户/大学新闻页从引用池剔除（仅对 web 型引用生效；pubmed/rcsb/uniprot 型豁免；nature.com/articles/d41586- 新闻 DOI 前缀识别；全池被剔时回退未过滤池防砖死）
+  ② src/lib/fact-check.ts（新，~470 行）：四类高危声明提取（定量/否定存在/首创/归属，优先引用声明>未引用，3/节上限，近重复去重）→ 逐条 web_search（串行+250ms 冷却）→ LLM 仲裁三层护栏（定量声明须字面匹配才算 VERIFIED；正向断言 vs 证据明示缺失硬判 CONTRADICTED；复合句按最弱成分裁决）→ 全部搜索失败时 ran:false 回退基线
+  ③ review 路由接线：runReview 前跑 factCheckArticle，findings 注入 review prompt + 强制合并进 Review.weaknesses（FACT-CHECK 前缀可追溯）；maxDuration 180→600
+  ④ review revise 路径：修订 EN 后置空 contentZh（双语半静默分叉根除，返回 zhCleared 标志）
+  ⑤ v2 STEP 2.2：curate 后 source-tier 门控（stats.sourceTierDropped + step 消息双通道透明化）
+  ⑥ v2 STEP 6：uncitedAssertionSentences 全句级门控（trailing-60 词门只管段尾的历史盲区补齐；重试 prompt 逐句点名未引用高危断言）
+  ⑦ v2 compose：无条件剥离越界引用标记（孤儿引用过滤的 replace 分支只在 filteredRefs<globalRefs 时运行的漏洞）；citation-planner：CITABLE_REFS_PER_WORDS 200→120、typicalCitationCount /200→/120 cap 60、softFloor=75%·typical、curate prompt 增"里程碑文献强制入选"规则；verify 批失败一次重试+限流错误上抛（原静默吞掉）；translate 失败节排除出中文正文（防空洞标题分叉）
+- 质量门：bunx tsc --noEmit 0 错误；bun run lint 0 error/161 warning（=基线）
+- 机械层探针（probe-round57.ts，38 断言全过后删除）：分级 12 例（bostonchildrens/mayoclin/news.mit.edu/sciencedaily/genecards/wikipedia/ncbi-gene→non-primary；pubmed/nature-articles/doi→primary；nature d41586 新闻 DOI 前缀→non-primary）+ 分池 5 断言（web 型精准剔除/db 型豁免/scores 索引对齐/全坏回退）+ 未引用断言 6 例（180° 中段句命中/否定存在命中/已引用句不命中/过渡句不命中/纯年份不命中）+ 声明提取 8 断言（四类+引用号携带+优先级+查询构造）+ 引用块解析 5 断言
+- 修复探针暴露的两处真实缺陷：nature.com/articles/d41586-（新闻 DOI 前缀）被 /articles/ 路径误白名单；2:2:2 化学计量比模式漏检（补比率正则）
+- 启动全新完整生产：项目 cmtqnqkb60000nfvlgmjjywbj（TMC1/TMC2，neuroscience），v2 both 模式，3000 词，maxDbQueries/maxWebSearchQueries 无限，maxTokens 20480，SSE 后台流式跟踪（/tmp/production-run3-sse.log），预计 ~55 分钟
+- 方法论入档：①「会话摘要 ≠ 持久化事实」——上一会话对 round-57 的三层验证描述在 git/文件/DB/worklog 四路证据下全部证伪，恢复会话必须先对摘要声称的工作做存在性审计再决定继续路径；②机械层先行探针再跑长生产——55 分钟生产前先用 38 断言证明门控层正确，避免在错误代码上烧一小时
+
+Stage Summary:
+- round-57 七项防护全部重新落地并静态+探针验证通过；生产测试进行中
+- 修改文件：src/lib/source-tier.ts（新）、src/lib/fact-check.ts（新）、src/app/api/ai/review/route.ts、src/app/api/ai/generate-full-v2/route.ts、src/lib/generate-full-helpers.ts、src/lib/citation-planner.ts、src/lib/v2-config.ts
+- 待生产完成后：引用池/密度/里程碑/越界/双语五维核验 → review fact-check 生效验证 → web_search 独立交叉验证 → 修复前后对比报告 → commit/push
+
+---
+Task ID: 57-verify
+Agent: main (Z.ai Code)
+Task: 全新完整生产测试验证 round-57 七项防护 + 外部知识核验新文章科学性 + 修复前后对比报告
+
+Work Log:
+- 第一次启动尝试（curl SSE 后台）：curl 进程随 Bash 工具调用结束被进程组清理杀死 → clientDisconnected → 服务端管线白跑（gather 后会全跳章节）；用 dev server 重启终止孤儿运行并清空限流窗口，改用 agent-browser 驱动 UI（真实浏览器保活 SSE 长连接，round-56 同款方法）
+- 第二次启动：gather 阶段遭遇提供方 429 风暴（PubMed 相关性过滤的 LLM 调用连续 5 次退避不过）→ markAborted → plan 阶段 chat 调用被 "previous call aborted" 拒绝 → FATAL。非代码缺陷（外部限流 + 孤儿运行烧掉的预算）；等 6 分钟窗口清零后第三次启动
+- 第三次启动（17:52:39）：**完整收官 53 分 20 秒**（与 round-56 的 55 分钟一致）——2564 词 EN + 9148 字符 ZH（9/9 节翻译全成）、17 refs、4 处跨节去重、进度条单调、零管线故障
+- 生产中防护触发实录：
+  - 密度修复生效：curate 25/190 refs、plannedCitations=25（round-56 是 20；rationale 明言 rich pool justifying maximum citation count）
+  - source-tier 门控触发：剔除 2 个非一级 web 源（uniprot.org 门户页 + oto.hms.harvard.edu/news 大学新闻页——正是 round-56 的 [7]/[19] 缺陷类）
+  - 里程碑覆盖：coverage backfill 引回 Clark 2024 C. elegans TMC-2 结构；Kurima 系列、Jeong 2022 结构全在场；citation map 24/24 core 全覆盖
+- 新文章核验（article cmtrl5w1m01oym7wxn875spn4）：
+  - 编号完整性 17/17（distinctCited=17=refListCount，零越界零孤儿）
+  - **round-56 的 FATAL 捏造（180° phase-shift）在新文章中不存在**；无 phase-shift/absent 类声明、无 Drosophila 历史倒置、无未引用首创句
+  - uncitedAssertionSentences 扫描：0 条高危未引用断言
+  - 残余逃逸 1：[14] Boston Children's 医院页经 coverage backfill 绕过门控混入（gene-therapy 信号要一手文献、池内只有医院页）——根因：backfill 从 pre-curation 池取源，晚于 STEP 2.2 门控运行；修复：backfill 后对池再跑一次 partitionCitablePool
+  - 残余逃逸 2：[15] researchgate.net 镜像 URL——修复：新增 MIRROR_HOSTS 类（journal+year 或 doi 在场的已发表论文镜像保留、裸门户页剔除）
+  - 审计假阳性根因定位并修复：compose 报 26 blocking 全是 mismatch 假阳性（正文解析条目 externalId 缺失 → title: 身份 vs DB 的 pubmed:PMID 身份永不相等）；修复：身份不等时回退归一化标题比较（真漂移标题必不同）；修复后 mismatch 26→0
+- review fact-check 层首次实战（POST /api/ai/review，153s）：4 声明提取、1 VERIFIED / 0 CONTRADICTED / 3 UNVERIFIABLE / 0 ERROR；findings 注入 review prompt + 强制合并进 Review.weaknesses（FACT-CHECK 前缀可追溯）；verdict minor-revision 7 分（round-56：major-revision 6.5 且零发现）
+- 独立 web_search 交叉核验（3 组查询）：
+  - M412K 声明（文章称"人类最普遍 TMC1 突变之一"）：**判定为真实科学错误**——M412K 是 Beethoven 小鼠模型突变（Vreugde 2002，Beurg 2021/PNAS 2019/Corns 2016 全是小鼠研究），人类 DFNA36 最常见是 D543N（OMIM，11 个无关家系）；fact-check 层已将其以 UNVERIFIABLE 浮出在 Review tab（round-56 同类错误完全隐形——设计目标"捏造不得无声存活"达成）
+  - 基因疗法恢复小鼠听力：内容真实（Askew 2015 "Tmc gene therapy restores auditory function in deaf mice"、Nist-Lund 2019 Nature 均确证），仅引用层级错（[14] 医院页应为一手文献）
+  - DFNA36/DFNB7/B11 疾病关联、"over 100 mutations"（Nakanishi 2014 "large number worldwide"）：可信
+- 质量门：tsc 0 错误；lint 0 error/161 warning（=基线，清理了 1 个新增未用常量警告）
+- 浏览器 E2E（agent-browser）：新文章 EN+中文 双半渲染 ✅、Review tab 显示 FACT-CHECK/M412K/UNVERIFIABLE ✅、console 零错误 ✅、截图 /tmp/round57-review-tab.png
+- 方法论入档：①「后台 curl SSE 会被 Bash 进程组清理杀死」——长时流式生产必须经真实浏览器驱动（agent-browser 保活），curl 只适合短时取证；②「限流预算是全局共享资源」——孤儿运行、取证探针、生产运行共享同一提供方配额，杀掉任何运行后要等窗口清零再重启；③「门控必须覆盖所有入池路径」——source-tier 门控挡住了 curate 主路径，但 coverage backfill 这条侧路径把同缺陷类源又带回来了（E2E 才能暴露；静态审查会漏）；④「审计的身份比较要处理单侧缺失」——文本渲染天然丢失 externalId，任何 identity 比较都要有降级路径
+
+Stage Summary:
+- 修复前后对比（round-56 → round-57 同项目同主题同参数）：
+  · FATAL 捏造（180°）：存在 → 消除（全文零该类声明）
+  · 非一级引用：2/20=10% → 门控剔除 2 个同缺陷类源；残余 1 医院页（backfill 逃逸，已补修门控覆盖全部入池路径）+1 镜像（按元数据规则有意保留）
+  · 引用密度：20（hardCap 卡死）→ curate 25 计划（终稿 17 cited 为生成自然收缩）
+  · 里程碑：6 篇缺失 → Clark 2024/Kurima 系列在场；Askew 2015 内容真实但引用层级错
+  · 未引用高危断言：3+（隐形）→ 0（新门控）；残留科学错误（M412K 小鼠/人类混淆）被 fact-check 浮出为 Review weakness（可见可修）
+  · 越界引用：机制漏洞 → 0（17/17 完美）
+  · 双语：5707 字符 → 9148 字符 9/9 节；revise 置空 contentZh 防分叉
+  · review 盲区：零发现 → 3 条 FACT-CHECK weakness + minor-revision 7
+  · 审计：5 假阳性 blocking → 26 假阳性 → 修复后 0
+- 本轮追加修复 3 处：backfill 后二次 tier 门控（route）、MIRROR_HOSTS 元数据判定（source-tier）、审计单侧身份回退标题比较（citation-audit）
+- 修改文件（57-verify 追加）：src/app/api/ai/generate-full-v2/route.ts、src/lib/source-tier.ts、src/lib/citation-audit.ts
+- 测试资产：项目 cmtqnqkb60000nfvlgmjjywbj / 新文章 cmtrl5w1m01oym7wxn875spn4 / 基线文章 cmtqpqx2y014snfvl238asch1 保留供 UI 对照

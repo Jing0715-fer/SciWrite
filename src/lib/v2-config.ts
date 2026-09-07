@@ -18,8 +18,15 @@ export const VERIFY_REMOVE_CONFIDENCE = 80;
 export const MIN_CITABLE_REFS = 20;
 
 /** The citable pool grows with target length: one reference per this many
- *  target words (e.g. 2000 words → up to 10 extra refs above the minimum). */
-export const CITABLE_REFS_PER_WORDS = 200;
+ *  target words.
+ *
+ *  round-57 (P1-2): was 200 — a 3000-word review capped at 20 refs while the
+ *  pool held 265, and curation dropped in-pool landmark papers (Askew 2015,
+ *  Kurima 2002 …) whose findings the article then narrated UNCITED. Real
+ *  review articles run ~1 citation per 100–150 words; 120 raises the 3000-
+ *  word cap to 25 without padding short articles (the MIN still dominates
+ *  below ~2400 words). */
+export const CITABLE_REFS_PER_WORDS = 120;
 
 /**
  * Hard cap on the total characters of (context + prompt) handed to the LLM

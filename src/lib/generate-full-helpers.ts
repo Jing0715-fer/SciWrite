@@ -724,6 +724,53 @@ export function trailingUncitedClaimWords(content: string): number | null {
   return null;
 }
 
+/**
+ * round-57 (P1-1): WHOLE-SENTENCE-level uncited-assertion gate.
+ *
+ * trailingUncitedClaimWords only fires on a ≥60-word TRAILING block of
+ * uncited claims — the round-56 audit's fabricated sentences (the
+ * Drosophila-first historical inversion, preprint-conclusions-as-fact) sat
+ * in the MIDDLE of citation-bearing paragraphs and walked straight past it.
+ * This gate scans EVERY sentence: an assertion carrying a high-risk claim
+ * signature (a number that is not a bare year / a negation-existence /
+ * a first-claim) with NO citation key anywhere in the sentence is flagged.
+ *
+ * Scope is deliberately narrow: generic hedging or transition sentences do
+ * not fire — only sentences whose content is externally CHECKABLE and thus
+ * fabricatable. Returns the flagged sentences (trimmed, capped) — empty
+ * array means the section is clean.
+ */
+const UNICITED_NUMBER_RE =
+  /\d+(?:\.\d+)?\s*(?:°|º|%|nM|µM|uM|mM|pM|kb|kDa|Da|bp|Å|å|ms|µs|us|ns|ps|Hz|kHz|MHz|fold|×|kcal|mol|residues?|subunits?|copies)/i;
+
+export function uncitedAssertionSentences(content: string): string[] {
+  const flagged: string[] = [];
+  for (const sentence of splitIntoSentences(content)) {
+    if (/\{\{R\d+\}\}/.test(sentence) || /\[\d/.test(sentence)) continue;
+    const words = (sentence.match(/\S+/g) || []).length;
+    if (words < 8) continue;
+    const clean = sentence
+      .replace(/\[\d+(?:[,\-–;]\s*\d+)*\]/g, " ")
+      .replace(/\{\{R\d+\}\}/g, " ")
+      .replace(/[*_`#>]/g, " ");
+    const withoutYears = clean.replace(/\b(19|20)\d{2}\b/g, " ");
+    const hasNumber =
+      UNICITED_NUMBER_RE.test(withoutYears) || /\b\d+\.\d+\b/.test(withoutYears);
+    const negationExistence =
+      /\b(?:no|none|not|never|neither|absent|lacking|without)\b[^.;:]{0,120}\b(?:report(?:ed|s|ing)?|stud(?:y|ies)|evidence|structure(?:s|d)?|data|publication(?:s)?|homolog(?:s|ues)?|ortholog(?:s|ues)?|inhibitor|therap(?:y|ies)|treatment|determination)\b/i.test(
+        clean,
+      );
+    const firstClaim =
+      /\b(?:first|novel|pioneering|unprecedented|earliest|originally)\b/i.test(clean) &&
+      /\b(?:identif|report|demonstrat|describ|discover|characteriz|resolv|determin|shown|reveal|establish|recogniz|clon)\w*\b/i.test(clean);
+    if (hasNumber || negationExistence || firstClaim) {
+      flagged.push(sentence.replace(/\s+/g, " ").trim().slice(0, 220));
+    }
+    if (flagged.length >= 5) break; // report cap — the retry prompt names them
+  }
+  return flagged;
+}
+
 function dedupContentWords(sentence: string): string[] {
   return sentence
     .replace(/\[\d+(?:[,\-–;]\s*\d+)*\]/g, " ") // numeric citation markers

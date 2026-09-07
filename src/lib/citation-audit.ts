@@ -560,19 +560,34 @@ export function buildAuditReport(
         const refId = refIdentity(ref);
         const dbId = refIdentity(dbRef);
         if (refId !== dbId) {
-          findings.push({
-            n,
-            marker,
-            index,
-            sentence,
-            verdict: "mismatch",
-            reason: `Numbering mismatch: body [${n}] → References entry "${ref.title.slice(
-              0,
-              50
-            )}" but DB reference[${n}] is "${dbRef.title.slice(0, 50)}". The citation numbering has drifted.`,
-            refIdentity: refId,
-          });
-          continue;
+          // round-57: one-sided-identifier fallback. The text-parsed entry
+          // can only carry identifiers extractable from its rendered URL /
+          // DOI line; when the DB reference carries an externalId that never
+          // made it into the rendered line (publisher URLs like
+          // sciencedirect / cell.com / frontiersin carry no PMID), the
+          // identity strings can never match even though the entry IS the
+          // same paper — observed live as 26 spurious "mismatch" blocking
+          // findings on a perfectly-numbered 17-ref E2E article. Only a
+          // title mismatch (after the same normalization refIdentity uses)
+          // proves real numbering drift.
+          const normTitle = (t: string) =>
+            (t || "").toLowerCase().trim().replace(/[.。,;:\s]+$/, "").slice(0, 80);
+          const sameTitle = normTitle(ref.title) === normTitle(dbRef.title);
+          if (!sameTitle) {
+            findings.push({
+              n,
+              marker,
+              index,
+              sentence,
+              verdict: "mismatch",
+              reason: `Numbering mismatch: body [${n}] → References entry "${ref.title.slice(
+                0,
+                50
+              )}" but DB reference[${n}] is "${dbRef.title.slice(0, 50)}". The citation numbering has drifted.`,
+              refIdentity: refId,
+            });
+            continue;
+          }
         }
       }
     }

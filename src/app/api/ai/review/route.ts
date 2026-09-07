@@ -2,9 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chatWithSession } from "@/lib/llm-session";
 import { safeErrorMessage } from "@/lib/api-helpers";
+// round-57 (P0-2): external fact-check layer — every high-risk claim in the
+// article is web-searched and adjudicated against independent evidence
+// before the reviewing LLM scores it. Best-effort: on tool failure the
+// review proceeds exactly as before (factBlock stays empty).
+import {
+  factCheckArticle,
+  factFindingsPromptBlock,
+  factFindingToWeakness,
+} from "@/lib/fact-check";
 
 export const runtime = "nodejs";
-export const maxDuration = 180;
+// round-57: was 180s — the fact-check layer adds up to ~12 searches + ~12
+// arbitration LLM calls ahead of the main review call. 600s keeps the
+// non-streaming POST comfortably ahead of worst-case wall time.
+export const maxDuration = 600;
 
 // AI review of an article — inspired by nature-review-studio (structured
 // multi-dimensional scoring) + ChatReviewer (iterative AI critique).
@@ -74,11 +86,53 @@ async function runReview(article: any) {
     "(Nature/Science/Cell). You evaluate manuscripts on multiple dimensions and " +
     "provide structured, actionable feedback. Be specific, critical, and constructive.";
 
+  // ---- round-57 (P0-2): external fact-check BEFORE the review LLM runs ----
+  // High-risk claims (quantitative / negation-existence / first / attribution)
+  // are extracted, web-searched, and adjudicated against independent
+  // evidence. Findings ride into the review prompt AND are force-merged into
+  // the persisted weaknesses so they are visible in the Review tab even if
+  // the reviewing LLM undersells them. Total failure ⇒ empty block, the
+  // review degrades to its pre-round-57 behavior (never breaks).
+  let factBlock = "";
+  let factWeaknesses: string[] = [];
+  let factSummary: any = null;
+  try {
+    let topic = "";
+    try {
+      const project = await db.project.findUnique({
+        where: { id: article.projectId },
+        select: { topic: true },
+      });
+      topic = project?.topic || "";
+    } catch {}
+    const report = await factCheckArticle(article.projectId, article.content, {
+      maxClaims: 8,
+      topic,
+    });
+    if (report.ran && report.findings.length > 0) {
+      factBlock = factFindingsPromptBlock(report.findings);
+      factWeaknesses = report.findings
+        .filter((f) => f.verdict === "CONTRADICTED" || f.verdict === "UNVERIFIABLE")
+        .map(factFindingToWeakness);
+      factSummary = report.summary;
+      console.log(
+        `[fact-check] article=${article.id} claims=${report.claims.length} ` +
+          `verified=${report.summary.verified} contradicted=${report.summary.contradicted} ` +
+          `unverifiable=${report.summary.unverifiable} errors=${report.summary.errors}`,
+      );
+    }
+  } catch (fcErr: any) {
+    // Best-effort by contract — a fact-check failure must never fail review.
+    console.warn(
+      `[fact-check] degraded to baseline review: ${fcErr?.message?.slice(0, 120) || fcErr}`,
+    );
+  }
+
   const prompt = `ARTICLE TITLE: ${article.title}
 ${article.abstract ? `ABSTRACT: ${article.abstract}\n` : ""}
 ARTICLE CONTENT:
 ${article.content}
-
+${factBlock}
 Provide a comprehensive peer review. Score each dimension 0-10 (10 = excellent).
 Respond as STRICT JSON:
 {
@@ -117,6 +171,22 @@ Output JSON only.`;
     suggestions: [],
   });
 
+  // round-57: force-merge the external fact-check findings into the persisted
+  // weaknesses (deduped against the LLM's own) — the review LLM is *told* to
+  // keep them, but a lazy/generous model must not be able to bury a
+  // CONTRADICTED finding. Cap the merged list at 10 (LLM weaknesses + facts).
+  const llmWeaknesses: string[] = Array.isArray(parsed.weaknesses) ? parsed.weaknesses : [];
+  const mergedWeaknesses = [...llmWeaknesses];
+  for (const w of factWeaknesses) {
+    if (mergedWeaknesses.length >= 10) break;
+    const already = mergedWeaknesses.some(
+      (x) =>
+        typeof x === "string" &&
+        x.replace(/\s+/g, "").slice(0, 80) === w.replace(/\s+/g, "").slice(0, 80),
+    );
+    if (!already) mergedWeaknesses.push(w);
+  }
+
   const round = (article.reviews?.[0]?.round || 0) + 1;
   const review = await db.review.create({
     data: {
@@ -131,12 +201,17 @@ Output JSON only.`;
       verdict: parsed.verdict || "major-revision",
       summary: parsed.summary || "",
       strengths: JSON.stringify(parsed.strengths || []),
-      weaknesses: JSON.stringify(parsed.weaknesses || []),
+      weaknesses: JSON.stringify(mergedWeaknesses),
       suggestions: JSON.stringify(parsed.suggestions || []),
     },
   });
 
-  return { review, scores: parsed.scores, verdict: parsed.verdict };
+  return {
+    review,
+    scores: parsed.scores,
+    verdict: parsed.verdict,
+    ...(factSummary ? { factCheck: factSummary } : {}),
+  };
 }
 
 async function runRevise(article: any, reviewId: string) {
@@ -185,17 +260,24 @@ Output the revised article in Markdown. Do NOT add commentary — output only th
     metadata: { mode: "revise", articleId: article.id, round: review.round },
   });
 
-  // Save revised content on the review record + update the article
+  // Save revised content on the review record + update the article.
+  // round-57 (P2-3): the revision changes the English content, but the
+  // Chinese half (contentZh) still reflects the PRE-revision text — the
+  // bilingual halves silently diverge. Null it out: the viewer shows the
+  // English half (accurate) until the user batch-retranslates, instead of a
+  // stale translation that contradicts the revised English. The flag lets
+  // the client surface "中文已与英文分叉，请重新翻译".
+  const hadZh = Boolean(article.contentZh);
   await db.review.update({
     where: { id: reviewId },
     data: { revisedContent: revised },
   });
   const updated = await db.article.update({
     where: { id: article.id },
-    data: { content: revised },
+    data: { content: revised, ...(hadZh ? { contentZh: null } : {}) },
   });
 
-  return { article: updated, revised, reviewId };
+  return { article: updated, revised, reviewId, ...(hadZh ? { zhCleared: true } : {}) };
 }
 
 async function runAutoIterate(article: any, rounds: number) {
