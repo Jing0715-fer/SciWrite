@@ -2993,3 +2993,26 @@ Stage Summary:
 - 本轮追加修复 3 处：backfill 后二次 tier 门控（route）、MIRROR_HOSTS 元数据判定（source-tier）、审计单侧身份回退标题比较（citation-audit）
 - 修改文件（57-verify 追加）：src/app/api/ai/generate-full-v2/route.ts、src/lib/source-tier.ts、src/lib/citation-audit.ts
 - 测试资产：项目 cmtqnqkb60000nfvlgmjjywbj / 新文章 cmtrl5w1m01oym7wxn875spn4 / 基线文章 cmtqpqx2y014snfvl238asch1 保留供 UI 对照
+
+---
+Task ID: 57-merge
+Agent: main (Z.ai Code)
+Task: 合并两条并行 round-57 世系（远程 3d6aab9+round-58 vs 本地 9f9d9d9 全生产验证）
+
+Work Log:
+- push 时发现远程已分叉：远程含原 round-57（3d6aab9，即上一会话推到 GitHub 的实现）+ round-58（429 韧性 + 审计工具）——推翻"round-57 从未存在"的全局结论：它存在于远程，只是本沙箱回滚丢失（四路取证对本沙箱成立）
+- 合并策略：代码取远程版（更成熟：6 轮 E2E 打磨的 fact-check、Kim-2013 文献冲突更正、curate 前置准入门控结构性覆盖 backfill 旁路、round-58 限流韧性——正是我生产中 FATAL 的解药），DB 保留本地（含生产工件），worklog 取并集
+- 移植本地独有的 4 处 E2E 验证修复：
+  ① citation-audit 单侧身份回退：文本解析条目无 externalId（sciencedirect/cell/frontiersin URL 无 PMID）→ title: 身份 vs DB pubmed:PMID 身份永不相等——身份不等时回退归一化标题比较（实测 26 假阳性 → 0）
+  ② source-tier 镜像站元数据判定：researchgate/academia 携 journal+year 或 doi 的已发表论文镜像保留、裸门户页剔除（E2E 案例：[15] Kurima 2020 MBE researchgate 镜像）
+  ③ v2 翻译失败节排除出中文正文（防空洞标题 EN/ZH 结构分叉）+ 缺失节日志
+  ④ 未引用断言门控并入定量签名（单位/小数/化学计量比，年份剥离）——180° 类捏造向量在生成门控即拦截；否定正则放宽支持插入语句式（"no atomic structure OF X has been reported"）
+- 合并后验证：tsc 0 错误；lint 162 warning/0 error（=远程基线）；三组探针 15 断言全过（镜像规则/审计假阳性清零/定量+否定门控）
+- 踩坑：lint 基线对比时 `git checkout origin/main -- .` 覆盖了二进制 DB → SQLite "readonly database"（dev server 持旧 inode 句柄）→ 重启 dev server 解决；教训：任何触碰 db 文件的 git 操作后必须重启持有句柄的进程
+- 合并代码 live review 复测：round 2（合并版 fact-check）对生产文章 6/6 weaknesses 全为 FACT-CHECK 发现，M412K 持续浮出——两个独立实现的裁决收敛（M412K=Beethoven 小鼠突变被误作人类最普遍突变，UNVERIFIABLE 浮出，不再隐形）
+- 浏览器终验：Review tab FACT-CHECK+M412K 可见、console 零错误、截图 /tmp/round57-merged-review.png
+- 推送：origin/main = 5c335d3
+
+Stage Summary:
+- 双世系统一完成：远程成熟代码 + 本地生产验证工件 + 4 处互补充丁，全部质量门与 E2E 通过
+- 后续任何人接手只有一条 main（5c335d3），无分叉
