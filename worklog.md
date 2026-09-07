@@ -2945,3 +2945,18 @@ Stage Summary:
 - 新文件：src/lib/fact-check.ts、src/lib/source-tier.ts；修改：review route、generate-full-v2 route、generate-full-helpers、citation-audit
 - 4 个 E2E 迭代教训入档：正则词边界在符号单位后失效、自嵌措辞查询、充分性指令反转、文献争议误报防护
 - round-56 审计结论修正：180° 句=忠实引用+未承认的文献冲突（非捏造）；但暴露机制的价值不变且已被 E2E 证明
+
+---
+Task ID: 57-verify
+Agent: main (Z.ai Code)
+Task: round-57 修复的浏览器端最终自检（Post-Launch Self-Verification）
+
+Work Log:
+- 接线核查：fact-check.ts（21KB）→ review route L85 调用；source-tier partitionCitablePoolIndexed → v2 route L810；uncitedAssertionSentences → L1412 生成门控 + L1462 重试判据；stripOutOfRangeCitations → L1783/1789 compose 持久化前修复——7 项修复全部在位
+- DB 持久化验证（审计文章最新 3 条 review 记录）：180° 声明每次运行都作为 fact-check weakness 浮出——07:02 轮 UNVERIFIABLE-CITED（2 条 fact-check weakness）、06:56 轮 CONTRADICTED（当次搜索命中 Kim 2013 摘要原文 "we recorded a large MT current that was phase-shifted 180°"）、06:51 轮 LLM 主动发现（prompt 注入生效）——裁决随当次证据集波动但必浮出，符合设计
+- agent-browser E2E：打开 / → 进入 "Full Production Quality Audit" 项目 → 打开审计文章 → Review tab 渲染验证：verdict "⚠ minor-revision" + WEAKNESSES 含 "FACT-CHECK UNVERIFIABLE (quantitative, CITED but uncorroborated): …phase-shifted by 180°…" 全文可读——用户在 UI 直接看到捏造高危声明警示
+- console 零新增错误（仅 4 条基线已知的 react-resizable-panels/dialog a11y warning）
+- 临时验证脚本已清理；git 工作区干净，3d6aab9 = origin/main 零未推送
+
+Stage Summary:
+- round-57 全部 7 项修复经代码接线、DB 持久化、浏览器 UI 三层验证闭环；180° 类问题今后每次 review 必然浮出为显式 weakness（用户可见）
