@@ -2900,3 +2900,26 @@ Stage Summary:
 - 整合完成：本地 main(0ae13c9) 已推送 GitHub，陈旧分支 e2e-test-dedup-fix 删除；旧世系 e2e-test-clean/archive 保留为历史归档（内容 96% 被 main 取代，无实际功能缺失）
 - P0 关闭：both 模式翻译在最新代码 E2E 全链路验证通过（前端→路由→STEP9 翻译→contentZh/titleZh 入库→版本快照）；用户本地需 git pull 到 0ae13c9 后重新生成即得中文
 - 待用户确认：本地环境是否用 v1 管线或旧代码版本；pull 后如仍无中文再报现象（届时查 streamLog 的 translate FAILED 行）
+
+---
+Task ID: 56
+Agent: main (Z.ai Code)
+Task: 拉取远程最新代码，跑一次完整 full 文章生产，找出不足并提出"模型无关稳定产出/无致命科学错误/不漏重要源/review 结合网络搜索"的改进方案
+
+Work Log:
+- git pull 同步（远程 dd5d294 已含，本地仅多 DB 快照）；建 "Full Production Quality Audit" 项目（TMC1/TMC2 主题，neuroscience）
+- 完整 v2 both 管线：3000 词、无限 db/web 查询、maxTokens 20480 —— 全程 ~55min 零故障收官：3426 EN 词 + 5707 ZH 字符、20 refs、49 引用对验证（2 移除）、4 处跨节重复机械删除、进度条全程单调（round-52 生效）
+- 代码审计 + 实证交叉验证（web_search × 7 + PubMed esummary × 4）发现：
+  ① FATAL：§1 "both isoforms absent → MT current phase-shifted by 180°" 系捏造——Kawashima 2011 原文 "currents were completely absent"，与自引 [1][3] 直接矛盾；该句藏于引用句邻位、无人核查
+  ② SERIOUS：[19] 波士顿儿童医院科普网页被引作 2015 基因治疗里程碑的一级证据（真原始文献 Askew 2015 Sci Transl Med 缺失）；[7] MIT gene 数据库页支撑核心论证——20 refs 中 10% 为非一级 web 源
+  ③ MODERATE：§2 "TMC family first recognized through Drosophila" 历史倒置（TMC1 2002 人/鼠克隆在先）且零引用；§6 bioRxiv 预印本结论写成既定事实；§9 暗示 TMC2 结构已解析（仅 C. elegans TMC-2 Clark 2024 存在且未被引）
+  ④ 覆盖缺口：Askew 2015、Nist-Lund 2019、Kurima 2002（克隆）、Yamaguchi 2010（果蝇 tmc）、Clark 2024（CeTMC-2 结构）全部缺失——正文叙述了这些内容却无对应一级文献
+- 逐环代码审计定位根因（编号缺陷）：#1 runReview 零外部信息（无源池、无 web search）；#2 adversarialVerifySection 只做"引用↔句子"配对不查句子真伪（abstract 截 600 字符）；#3 无 abstract 引用凭题名判；#4 ensurePrimaryPaperCoverage 仅 2 硬编码信号且只从池内补；#5 knowledge GAP 建议 PubMed 单通道 0.72 阈值卡死；#6 trailingUncitedClaimWords 只查段尾 ≥60 词块（中部/开头断言句零拦截）→ 180° 捏造正由此逃逸；#7 auditBlockingErrors=5 照常保存（audit 在 article.create 之后、无反馈修复路径）；#8 筛选漏斗过窄 265→198→20（"typical density ~15"），正文讨论过的里程碑文献在 curation 被丢弃
+- 验证为真的部分（模型无关的稳定层）：20 条引用元数据 100% 真实（PubMed 核验作者列表全对，含 2025 年 4 条新文献；web 源 [12] Adv Sci 2025 也真实）；§3 化学计量（2×TMC-1/2×CALM-1/2×TMIE 二重对称）与 §5 p.E520Q/p.D528N 声明核验正确；机械防护（跨节去重、重编号、2 处 UNSUPPORTED 移除）全部生效
+- review 闭盒实证：自动 review 给 6.5/major-revision，weaknesses 全是泛泛之谈，对上述所有问题（含 180° 捏造、科普网页引用、缺一级文献）零发现
+
+Stage Summary:
+- 完整生产在最新代码上全程无故障，双语产出完整；引用元数据层可靠性极高
+- 但正文声明层存在 1 处致命捏造 + 2 处非一级源引用 + 3 处未引用叙述错误 + 6 篇里程碑文献缺失——全部源于"验证只做配对不做事实核查"的架构性盲区
+- 产出改进方案（P0：review 注入 web 事实核查 + web 源分级准入；P1：全句级未引用断言核查 + curation 密度下限与 landmark 保底；P2：blocking 真阻断 + revise 后 contentZh 重译 + verify 批失败重试）——详见交付报告
+- 测试项目与文章保留（cmtqnqkb60000nfvlgmjjywbj / article cmtqpqx2y014snfvl238asch1）供用户 UI 查看
