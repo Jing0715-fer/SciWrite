@@ -178,7 +178,7 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
         } catch {}
         return r;
       },
-      { label: "chat" },
+      { label: "chat", patience429: 8 },
     );
 
     // Reasoning models (GLM thinking variants, R1-style distills served via
@@ -321,7 +321,7 @@ export async function chatStream(
       } catch {}
       return r;
     },
-    { label: "chatStream" },
+    { label: "chatStream", patience429: 8 },
   );
 
   // If for some reason we didn't get a stream (provider routed elsewhere),

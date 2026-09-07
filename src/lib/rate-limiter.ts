@@ -238,6 +238,37 @@ export function setAbort(reason: string) {
   console.warn(`[rate-limiter] ABORT set: ${reason}`);
 }
 
+/** Milliseconds until the current abort auto-expires (0 if none/already expired). */
+export function abortRemainingMs(): number {
+  if (!abortInfo) return 0;
+  return Math.max(0, ABORT_TTL_MS - (Date.now() - abortInfo.at));
+}
+
+/**
+ * round-58 FIX (transient-abort pipeline death): a 429-retry exhaustion
+ * mid-run sets a 120s-TTL abort; the OLD behavior threw
+ * RateLimitAbortedError immediately at the next call — which the v2 route
+ * treats as FATAL, killing a 20-55min production run after all its gather
+ * work (reproduced: round-52 E2E #1 died to a 429-storm abort; round-58
+ * run died at `plan` 6s after `curate`'s fallback set the abort). Since the
+ * abort TTL is bounded, the resilient behavior for TRANSIENT (429-type)
+ * aborts is to sleep until expiry (≤2 wait cycles) and proceed. QUOTA-type
+ * aborts still fail fast — waiting cannot resurrect a daily quota.
+ */
+async function waitOutTransientAbort(label: string, maxCycles = 2): Promise<boolean> {
+  for (let cycle = 0; cycle < maxCycles; cycle++) {
+    if (!isAborted()) return true;
+    const reason = abortInfo?.reason ?? "";
+    if (/quota/i.test(reason)) return false; // fail fast — not recoverable by waiting
+    const waitMs = abortRemainingMs() + 2000;
+    console.warn(
+      `[rate-limiter] transient abort active for '${label}' (${Math.round(waitMs / 1000)}s left, cycle ${cycle + 1}/${maxCycles}) — waiting it out instead of killing the pipeline`,
+    );
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+  return !isAborted();
+}
+
 export function getQuotaSnapshot(): RateLimitHeaders {
   return quota.snapshot();
 }
@@ -265,10 +296,17 @@ export function getWindowCount(): number {
  */
 export async function withRateLimit<T>(
   fn: (captureHeaders: (h: Headers | undefined | null) => void) => Promise<T>,
-  opts: { maxRetries?: number; label?: string } = {},
+  opts: { maxRetries?: number; label?: string; patience429?: number } = {},
 ): Promise<T> {
   const maxRetries = opts.maxRetries ?? 5;
   const label = opts.label ?? "llm";
+  // round-58: extra 429-storm patience cycles. Each cycle = the standard
+  // retry ladder (1s→16s) + a ~2min abort-TTL cool-down, then a FRESH retry
+  // ladder. Long pipelines (45-60min) must outlast minutes-long provider
+  // 429 storms instead of dying on the first exhausted ladder — reproduced
+  // twice today (run#1 died at curate→plan cascade, run#2 died on the very
+  // first gather call after 22min of provider-side refusal).
+  let patienceLeft = opts.patience429 ?? 0;
 
   // (1) Quota guard — fail fast.
   if (quota.isExhausted()) {
@@ -279,10 +317,24 @@ export async function withRateLimit<T>(
     throw err;
   }
   // (2) Process-wide abort guard (auto-expiring — see abortInfo above).
+  // round-58: transient (429-type) aborts are waited out (bounded ≤2 TTL
+  // cycles) instead of thrown — a 120s-old abort must not FATAL a 55min
+  // pipeline. Quota aborts still throw immediately.
   if (isAborted()) {
-    throw new RateLimitAbortedError(
-      `previous call aborted; skipping '${label}'`,
-    );
+    const recovered = await waitOutTransientAbort(label);
+    if (!recovered) {
+      throw new RateLimitAbortedError(
+        `previous call aborted; skipping '${label}'`,
+      );
+    }
+    // Woke up post-expiry — re-check quota in case it was a quota abort.
+    if (quota.isExhausted()) {
+      const err = new QuotaExhaustedError(
+        `quota exhausted after abort-wait for '${label}'`,
+      );
+      setAbort(err.message);
+      throw err;
+    }
   }
 
   // (4) Sliding-window cool-down.
@@ -297,11 +349,17 @@ export async function withRateLimit<T>(
   // (3) Token bucket — throttles request spacing.
   await bucket.acquire();
 
-  // (5) Retry loop with exponential backoff.
+  // (5) Retry loop with exponential backoff (+ round-58 patience cycles).
   let lastErr: unknown = null;
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
+  let attempt = 0;
+  while (attempt < maxRetries) {
     if (isAborted()) {
-      throw new RateLimitAbortedError(`abort flag set before attempt ${attempt}`);
+      // round-58: same transient-abort wait-out inside the retry loop —
+      // a concurrent call's abort during our backoff must not fail this call.
+      const recoveredMidLoop = await waitOutTransientAbort(label, 1);
+      if (!recoveredMidLoop) {
+        throw new RateLimitAbortedError(`abort flag set before attempt ${attempt}`);
+      }
     }
     let capturedHeaders: Headers | undefined | null;
     try {
@@ -346,13 +404,30 @@ export async function withRateLimit<T>(
         `[rate-limiter] '${label}' attempt ${attempt + 1}/${maxRetries} ` +
           `got ${status ?? "err"} — backing off ${Math.round(jitter)}ms`,
       );
-      // For 429 specifically, also surface as abort after the final retry —
-      // long-running pipelines should stop burning quota.
+
+      // round-58: patience cycle — when the ladder is exhausted on 429 and
+      // patience remains, cool down for a full abort TTL (~2min) and start a
+      // FRESH ladder instead of failing the call (and the pipeline behind it).
       if (attempt === maxRetries - 1 && is429) {
+        if (patienceLeft > 0) {
+          patienceLeft--;
+          console.warn(
+            `[rate-limiter] '${label}' 429 ladder exhausted — patience cycle ` +
+              `(${patienceLeft} left): cooling ~${ABORT_TTL_MS / 1000}s then retrying`,
+          );
+          setAbort(`429 patience cycle on '${label}'`);
+          await waitOutTransientAbort(label, 1);
+          attempt = 0;
+          continue;
+        }
+        // No patience left — surface as abort; long-running pipelines see
+        // RateLimitAbortedError (callers with their own fallbacks degrade
+        // gracefully instead of FATAL-ing only when they handle it).
         setAbort(`429 after ${maxRetries} retries on '${label}'`);
       }
       await new Promise((r) => setTimeout(r, jitter));
     }
+    attempt++;
   }
 
   throw lastErr ?? new Error(`withRateLimit exhausted retries for '${label}'`);
