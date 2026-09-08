@@ -3062,3 +3062,39 @@ Work Log:
 Stage Summary:
 - round-59 实现（含 abort 加固）完成并推送；生产测试被外部提供方 4.5h+ 持续限流阻断，恢复后立即可续（发射台+验证器就绪）
 - 阻断非代码缺陷：本方窗口干净、崩溃回滚正确、降级路径全部按设计工作
+
+---
+Task ID: 60-status
+Agent: main (Z.ai Code)
+Task: 重跑 full 文章生成测试（用户提供恢复后执行）——会话内进展记录（提供方持续阻断）
+
+Work Log:
+- 会话起点确认：round-59（review→surgical revise→renormalize→guard→re-review 闭环，STEP 8.5）已实现并推送（origin/main 含 399184c + raw-probe 探针提交 f8cc830）；测试项目 cmts0llwl000mllubkabybbly（CRISPR prime editing，227 data sources 来自崩溃安全回滚）零文章——生产测试从未完成
+- 提供方状态：chat 与 web_search 双端点 429（账号级限流），自 02:10 起持续（本会话自 08:06 起轮询 7h+，间隔 3-5 分钟单次最小探测）；本方配额窗口完全干净（windowCount=0/coolDownActive=false/aborted=false）；SDK 凭据有效（能收到 429 响应=认证通过）；无备选提供方（.env 无第三方 key，systemd/at/cron 不可用，PID1=tini 容器）
+- 静默期诊断实验（排除"轮询维持惩罚"假设）：完全零 API 调用 26 分钟（12:16-12:42，3×9 分钟纯 sleep 分段）后单次探测仍 429 → 限流为提供方时间/配额锁，与本方行为无关；继续低成本轮询是唯一选项
+- 沙箱进程收割器发现：nohup/setsid/disown 后台守护进程（provider watcher、auto-launcher）均在首次执行后被环境收割（sleep 300 孤儿测试 5 秒存活但守护脚本 3 分钟内死亡）→ 放弃守护进程方案，改为"轮询即发射"模式：/tmp/poll-and-launch.sh 在单次工具调用内完成 [轮询→稳定性双检（45s 间隔 2 次连续 OK）→对话框状态验证→（必要时全量重配置）→语义定位器点击 Generate→确认 Clear & Generate→dev.log POST 验证] 全链
+- agent-browser 发射台就绪度验证：语义定位器全部实测通过（find role button --name "Generate full article" 可解析；AI Hub/Full Article tab/combobox option "English + 中文"/slider Home+ArrowUp 键盘导航方案（Radix slider Home=min 2000, ArrowUp=+1000 → 3000））；当前浏览器（agent-browser 守护进程独立存活）已配置就绪：v2 + English+中文 + 3000 词 + 高级默认（0=无限 db/web 查询、maxTokens 20480）——所有高级参数恰为默认值，仅需语言+滑块两处设置
+- STEP 8.5 修复循环静态复查（等待期间）：有界循环（REPAIR_MAX_REVISIONS+1 轮 review）、guard 拒绝保留修订前文章、非致命降级（compose 产物原样+旧 review 兜底）、修复采纳后重导出 renumberedContents/globalRefs（引用行文本回配原对象，失配回退日志）——代码逻辑无缺陷发现
+
+Stage Summary:
+- 生产测试仍被外部提供方阻断（13h+ 账号级 429，静默实验证明与本方行为无关）；发射台全自动化就绪（poll-and-launch 单调用闭环），恢复即发射
+- 最可能恢复点：UTC 午夜（17:00）每日配额重置或滚动 24h 窗口（明日 02:00 前后）
+
+---
+Task ID: 60
+Agent: main (Z.ai Code)
+Task: 重跑 full 文章生成测试（round-59 修复闭环 + 全新主题 CRISPR prime editing）→ 查看结果 → 提出改进意见
+
+Work Log:
+- 提供方恢复（15:58，限流 13.8h 后 UTC 午夜前后解除）→ poll-and-launch 单调用闭环自动发射成功（浏览器对话框状态因长时间等待丢失 → 脚本自动走全量重配置路径：AI Hub→Full Article→English+中文→滑块 Home+ArrowUp=3000→Generate→Clear & Generate→POST 验证）
+- 完整生产（16:02:33→16:52:33，50.0 分钟）：230 sources/209 refs gather（+3 PMID DOI 回填）→ 195 评分（core=91，fulltext=74，10 LLM 批零回退）→ **curate 25/195（plannedCitations=25）**→ plan 9 节 citation map 25/25 coreCovered=25 coreMissing=0 → 9/9 节生成验证（§5 73s/§9 77s 量级）→ compose 去重 9 处 → **STEP 8.5 修复循环实战触发** → 翻译 9/9 节（11604 字符）→ relationships 5 主题 → review self-fetch 正确跳过
+- 修复循环实录：round 1 verdict=major-revision overall=6 fact={v2 c0 u6 e0} → 6 条 actionable → surgical revise 尝试 → **guard 拒绝（LLM 修订把 9 节坍缩成 7 节，破坏双语结构）** → 修订前文章保留 → Review 行持久化（9 weaknesses 其中 6 FACT-CHECK）→ 管线继续翻译
+- 四组完整性验证（verify-round59.ts）：22 refs/22 distinct cited/零越界/零孤儿；**ref domains 100% 一级源**（21 PubMed+1 ScienceDirect+1 eScholarship 机构库——round-56 同项 10% 非一级）；双语 9/9 标题 22/22 引用零分叉；段落同步 9/9 零失配
+- **外部交叉核验（PubMed efetch 摘要 vs 6 条 UNVERIFIABLE 声明）——全部为真**：[1] ">175 edits"=Anzalone 2019 摘要原文 "more than 175 edits in human cells"；[7] "60-fold lower indel"=Chauhan 2025 原文 "up to 60-fold lower indel errors"；[10] "15 bp"=Mathis 原文 "all edit types up to 15 bp"；[12] "65-170-fold"=An 2024 原文精确匹配；[16] "~50%"=Chalumeau 原文 "∼50% of precise edits"；[18] "2.13 fold"=Volodina 原文 "up to 2.13 fold"。**本轮文章零捏造**（round-56 有 1 FATAL+3 类错误、round-57 有 M412K 混淆）
+- 浏览器 E2E：EN 半区 "Prime Editing: Mechanisms, Optimization, Delivery..." 渲染 ✅、中文半区 "初级编辑技术引言" 渲染 ✅、Review tab FACT-CHECK 可见 ✅、console 零错误 ✅（截图 /tmp/round60-article-en.png、round60-article-zh.png、round60-review-tab.png）
+- 附带发现：① dev server 在管线完成后不久死亡（日志无错误行，疑似沙箱资源收割；重启即恢复，DB 数据无损）② 中文术语 "初级编辑" 非标准译名（文献界通行 "先导编辑"）——翻译层术语锚定缺失
+
+Stage Summary:
+- 测试结论：v2 管线在全新领域（CRISPR prime editing）端到端 50 分钟零故障双语产出；引用层质量全面达标（完整性 100%、一级源 100%、密度 25、覆盖 25/25）；**正文科学性首次达到零捏造**（6 条高危定量声明经引用源摘要核验全部忠实转述）；修复循环基础设施（检测→触发→修订→护栏→持久化→遥测）全链路正确工作
+- 暴露的两个真缺陷：① fact-check 只查 web 不查已入库的引用摘要（98/98 refs 都带摘要）→ 6 个假阳性 UNVERIFIABLE 污染 review 判定（major-revision 的头条 weakness 即假阳性）→ 不必要的修复触发；② surgical 修订不外科（9→7 节坍缩被护栏拦下）→ 若真捏造需要修复时同样会失败；且 guard 拒绝后循环直接 break，2 次修订预算零使用
+- 改进方案（P0×2+P1+P2）：P0-A fact-check 引用摘要佐证优先（DB 已有摘要，零额外 API 成本，web 搜索降级为未引用/摘要不佐证声明的后备）；P0-B 修订结构锚定（prompt 钉死标题+guard 拒绝后带反馈重试而非 break）；P1 章节级修订（只重写受影响章节，结构性安全）；P2 管线阶段断点续跑（提供方中断韧性，本会话损失 8h+）与翻译术语锚定
