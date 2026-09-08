@@ -3043,3 +3043,22 @@ Stage Summary:
 - 一键闭环已落地：生成管线内 review→repair→re-review，翻译只发生一次，Review tab 自动展示闭环全程
 - 探针 34/34 + 路由实弹验证通过；生产测试进行中（预计 ~60 分钟）
 - 修改文件：src/lib/review-engine.ts（新）、src/app/api/ai/review/route.ts（重构）、src/app/api/ai/generate-full-v2/route.ts（STEP 8.5+持久化+complete 遥测）、src/lib/v2-config.ts、src/components/sciwrite/unified-writing-dialog.tsx、src/lib/i18n.tsx
+
+---
+Task ID: 59-status
+Agent: main (Z.ai Code)
+Task: round-59 生产测试状态记录（提供方持续限流阻断）
+
+Work Log:
+- 生产测试三次启动实录（新项目 cmts0llwl000mllubkabybbly，CRISPR prime editing，v2 both 3000 词）：
+  · 启动 #1（01:55）：gather/knowledge 正常推进（204 sources、25/204 curate、8 fulltext），02:12 plan 阶段 FATAL——"previous call aborted; skipping 'chat'"（429 风暴 → abort 标志 120s TTL → knowledge 优雅降级后 6 秒，plan 调用撞上未过期 abort）
+  · 修复 abort 投毒向量：ai.ts 新增 withAbortWaitout（RateLimitAbortedError → 轮询 isAborted() 至自过期 → 重试一次；QuotaExhaustedError 不重试）——chat 与 chatStream 双接线，保护全部管线阶段含 repair loop
+  · 启动 #2（02:22）/ #3（02:40）：gather 第一个 LLM 调用即连续 429 退避 5 次耗尽 → FATAL；崩溃安全回滚正确执行（快照 227 data sources 完整还原）
+- 提供方状态取证：raw 单次最小探测（无重试）自 02:42 起每 4-5 分钟轮询 25+ 次，全部 429 "Too many requests, please try again later"；本方窗口完全干净（/api/quota-status: windowCount=0, aborted=false, coolDownActive=false）；webSearch 返回空结果集（软降级）；无备选提供方（OPENAI/ANTHROPIC/DEEPSEEK 等 API key 全空；llm-config 报告的 Ollama 实际 11434 不可达）；SDK 错误对象无响应头（无 Retry-After 可读）
+- 判断：z-ai 提供方对本沙箱 key 的持续限流/配额耗尽（风暴始于 02:10，已持续 4.5 小时+，非本方行为——本方零调用期间依然 429）。前一会话 55 分钟生产 + review 验证 + 本会话 3 次启动重试可能耗尽当日配额；恢复时点未知（无 reset 头信息）
+- 工作保全：round-59 全部实现 + 探针 + ai.ts 加固已 commit + push（origin/main = 399184c）；生产验证器 verify-round59.ts 就绪（引用完整性/Review 行/双语对齐/段落同步四组检查）；生产发射台就绪（浏览器对话框配置保持：v2 + English + 中文 + 3000 词）
+- 方法论入档：①「外部配额是硬依赖」——全套管线依赖单一提供方，配额耗尽时一切端到端测试停摆；探针轮询要最小足迹（单次裸 SDK 调用，禁 5 连退避——每次退避重试都可能重置惩罚窗口）；②「abort 投毒是真实的运行杀手」——本会话第一次 FATAL 的根因（已修）；③「先 commit 再长等待」——提供方恢复前先把已验证的工作推上 GitHub，防沙箱回滚吞工作（round-53/57 两次前科）
+
+Stage Summary:
+- round-59 实现（含 abort 加固）完成并推送；生产测试被外部提供方 4.5h+ 持续限流阻断，恢复后立即可续（发射台+验证器就绪）
+- 阻断非代码缺陷：本方窗口干净、崩溃回滚正确、降级路径全部按设计工作
