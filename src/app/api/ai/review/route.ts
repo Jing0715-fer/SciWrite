@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { chatWithSession } from "@/lib/llm-session";
 import { safeErrorMessage } from "@/lib/api-helpers";
 // round-57 (P0-2): external fact-check layer — every high-risk claim in the
 // article is web-searched and adjudicated against independent evidence
 // before the reviewing LLM scores it. Best-effort: on tool failure the
 // review proceeds exactly as before (factBlock stays empty).
+// round-59: the review/revise CORE now lives in @/lib/review-engine (shared
+// with the generate-full-v2 in-pipeline auto-repair loop) — this route is the
+// HTTP + persistence wrapper. Prompts and merge logic are identical, so
+// persisted reviews are indistinguishable no matter which path produced them.
 import {
-  factCheckArticle,
-  factFindingsPromptBlock,
-  factFindingToWeakness,
-} from "@/lib/fact-check";
+  reviewArticleCore,
+  reviseArticleCore,
+  type RevisionFeedback,
+} from "@/lib/review-engine";
 
 export const runtime = "nodejs";
 // round-57: was 180s — the fact-check layer adds up to ~12 searches + ~12
@@ -81,112 +84,31 @@ export async function POST(req: NextRequest) {
 }
 
 async function runReview(article: any) {
-  const system =
-    "You are a rigorous scientific peer reviewer in the style of a top-tier journal " +
-    "(Nature/Science/Cell). You evaluate manuscripts on multiple dimensions and " +
-    "provide structured, actionable feedback. Be specific, critical, and constructive.";
-
-  // ---- round-57 (P0-2): external fact-check BEFORE the review LLM runs ----
-  // High-risk claims (quantitative / negation-existence / first / attribution)
-  // are extracted, web-searched, and adjudicated against independent
-  // evidence. Findings ride into the review prompt AND are force-merged into
-  // the persisted weaknesses so they are visible in the Review tab even if
-  // the reviewing LLM undersells them. Total failure ⇒ empty block, the
-  // review degrades to its pre-round-57 behavior (never breaks).
-  let factBlock = "";
-  let factWeaknesses: string[] = [];
-  let factSummary: any = null;
+  // round-59: pure core (fact-check + review LLM) lives in review-engine.
+  let topic = "";
   try {
-    let topic = "";
-    try {
-      const project = await db.project.findUnique({
-        where: { id: article.projectId },
-        select: { topic: true },
-      });
-      topic = project?.topic || "";
-    } catch {}
-    const report = await factCheckArticle(article.projectId, article.content, {
-      maxClaims: 8,
-      topic,
+    const project = await db.project.findUnique({
+      where: { id: article.projectId },
+      select: { topic: true },
     });
-    if (report.ran && report.findings.length > 0) {
-      factBlock = factFindingsPromptBlock(report.findings);
-      factWeaknesses = report.findings
-        .filter((f) => f.verdict === "CONTRADICTED" || f.verdict === "UNVERIFIABLE")
-        .map(factFindingToWeakness);
-      factSummary = report.summary;
-      console.log(
-        `[fact-check] article=${article.id} claims=${report.claims.length} ` +
-          `verified=${report.summary.verified} contradicted=${report.summary.contradicted} ` +
-          `unverifiable=${report.summary.unverifiable} errors=${report.summary.errors}`,
-      );
-    }
-  } catch (fcErr: any) {
-    // Best-effort by contract — a fact-check failure must never fail review.
-    console.warn(
-      `[fact-check] degraded to baseline review: ${fcErr?.message?.slice(0, 120) || fcErr}`,
+    topic = project?.topic || "";
+  } catch {}
+
+  const core = await reviewArticleCore(
+    article.projectId,
+    { title: article.title, abstract: article.abstract, content: article.content },
+    { topic, maxClaims: 8 },
+  );
+
+  if (core.factReport?.ran && core.factReport.findings.length > 0) {
+    console.log(
+      `[fact-check] article=${article.id} claims=${core.factReport.claims.length} ` +
+        `verified=${core.factReport.summary.verified} contradicted=${core.factReport.summary.contradicted} ` +
+        `unverifiable=${core.factReport.summary.unverifiable} errors=${core.factReport.summary.errors}`,
     );
   }
 
-  const prompt = `ARTICLE TITLE: ${article.title}
-${article.abstract ? `ABSTRACT: ${article.abstract}\n` : ""}
-ARTICLE CONTENT:
-${article.content}
-${factBlock}
-Provide a comprehensive peer review. Score each dimension 0-10 (10 = excellent).
-Respond as STRICT JSON:
-{
-  "scores": {
-    "novelty": 0,
-    "significance": 0,
-    "clarity": 0,
-    "methodology": 0,
-    "citations": 0,
-    "overall": 0
-  },
-  "verdict": "accept|minor-revision|major-revision|reject",
-  "summary": "2-3 sentence overall assessment",
-  "strengths": ["specific strength 1", "specific strength 2", "specific strength 3"],
-  "weaknesses": ["specific weakness 1", "specific weakness 2", "specific weakness 3"],
-  "suggestions": [
-    {"section": "Introduction", "issue": "what's wrong", "fix": "how to fix it"},
-    {"section": "Results", "issue": "...", "fix": "..."}
-  ]
-}
-Be demanding but fair. Focus on scientific rigor, citation completeness, and clarity.
-Output JSON only.`;
-
-  const raw = await chatWithSession(article.projectId, prompt, {
-    system,
-    temperature: 0.4,
-    taskType: "review",
-    metadata: { mode: "review", articleId: article.id, title: article.title },
-  });
-  const parsed = safeParseJSON(raw, {
-    scores: { overall: 5 },
-    verdict: "major-revision",
-    summary: "Review parsing failed.",
-    strengths: [],
-    weaknesses: [],
-    suggestions: [],
-  });
-
-  // round-57: force-merge the external fact-check findings into the persisted
-  // weaknesses (deduped against the LLM's own) — the review LLM is *told* to
-  // keep them, but a lazy/generous model must not be able to bury a
-  // CONTRADICTED finding. Cap the merged list at 10 (LLM weaknesses + facts).
-  const llmWeaknesses: string[] = Array.isArray(parsed.weaknesses) ? parsed.weaknesses : [];
-  const mergedWeaknesses = [...llmWeaknesses];
-  for (const w of factWeaknesses) {
-    if (mergedWeaknesses.length >= 10) break;
-    const already = mergedWeaknesses.some(
-      (x) =>
-        typeof x === "string" &&
-        x.replace(/\s+/g, "").slice(0, 80) === w.replace(/\s+/g, "").slice(0, 80),
-    );
-    if (!already) mergedWeaknesses.push(w);
-  }
-
+  const parsed = core.parsed;
   const round = (article.reviews?.[0]?.round || 0) + 1;
   const review = await db.review.create({
     data: {
@@ -201,7 +123,7 @@ Output JSON only.`;
       verdict: parsed.verdict || "major-revision",
       summary: parsed.summary || "",
       strengths: JSON.stringify(parsed.strengths || []),
-      weaknesses: JSON.stringify(mergedWeaknesses),
+      weaknesses: JSON.stringify(core.mergedWeaknesses),
       suggestions: JSON.stringify(parsed.suggestions || []),
     },
   });
@@ -210,7 +132,9 @@ Output JSON only.`;
     review,
     scores: parsed.scores,
     verdict: parsed.verdict,
-    ...(factSummary ? { factCheck: factSummary } : {}),
+    ...(core.factReport?.ran && core.factReport.findings.length > 0
+      ? { factCheck: core.factReport.summary }
+      : {}),
   };
 }
 
@@ -220,45 +144,32 @@ async function runRevise(article: any, reviewId: string) {
     return { error: "Article or review not found." };
   }
 
-  const strengths = safeParseJSON(review.strengths, []);
-  const weaknesses = safeParseJSON(review.weaknesses, []);
-  const suggestions = safeParseJSON(review.suggestions, []);
+  const feedback: RevisionFeedback = {
+    round: review.round,
+    verdict: review.verdict,
+    summary: review.summary,
+    scores: {
+      novelty: review.scoreNovelty,
+      significance: review.scoreSignificance,
+      clarity: review.scoreClarity,
+      methodology: review.scoreMethodology,
+      citations: review.scoreCitations,
+      overall: review.scoreOverall,
+    },
+    strengths: safeParseJSON(review.strengths, []),
+    weaknesses: safeParseJSON(review.weaknesses, []),
+    suggestions: safeParseJSON(review.suggestions, []),
+  };
 
-  const system =
-    "You are a scientific editor who revises articles to address peer-review feedback " +
-    "while preserving scientific accuracy and all inline citations [n] / [SOURCE:ID].";
-
-  const prompt = `ARTICLE TITLE: ${article.title}
-CURRENT CONTENT:
-${article.content}
-
-REVIEWER FEEDBACK (Round ${review.round}):
-Verdict: ${review.verdict}
-Summary: ${review.summary}
-Scores: novelty=${review.scoreNovelty}/10, significance=${review.scoreSignificance}/10, clarity=${review.scoreClarity}/10, methodology=${review.scoreMethodology}/10, citations=${review.scoreCitations}/10, overall=${review.scoreOverall}/10
-
-STRENGTHS:
-${strengths.map((s: string, i: number) => `${i + 1}. ${s}`).join("\n")}
-
-WEAKNESSES:
-${weaknesses.map((w: string, i: number) => `${i + 1}. ${w}`).join("\n")}
-
-REVISION SUGGESTIONS:
-${suggestions.map((s: any, i: number) => `${i + 1}. [${s.section}] ${s.issue} → ${s.fix}`).join("\n")}
-
-Revise the article to address ALL weaknesses and suggestions. Preserve:
-- All inline citations [n] and [SOURCE:ID] markers exactly.
-- The section structure (## headings).
-- The ### Citations / ## References block at the end.
-
-Output the revised article in Markdown. Do NOT add commentary — output only the revised article.`;
-
-  const revised = await chatWithSession(article.projectId, prompt, {
-    system,
-    temperature: 0.5,
-    taskType: "revise",
-    metadata: { mode: "revise", articleId: article.id, round: review.round },
-  });
+  // round-59: "full" mode keeps the legacy manual-revise behavior (address
+  // ALL weaknesses and suggestions) byte-for-byte — only the LLM call moved
+  // into review-engine.
+  const revised = await reviseArticleCore(
+    article.projectId,
+    { title: article.title, content: article.content },
+    feedback,
+    "full",
+  );
 
   // Save revised content on the review record + update the article.
   // round-57 (P2-3): the revision changes the English content, but the

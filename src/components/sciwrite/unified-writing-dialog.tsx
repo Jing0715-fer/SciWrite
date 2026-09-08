@@ -31,6 +31,7 @@ import {
   ShieldCheck,
   BookCheck,
   ArrowUpCircle,
+  Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -878,6 +879,10 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
         { id: "generate", label: t("oneClick.stepGenerate"), icon: PenLine },
         { id: "verify", label: t("oneClick.stepVerify") || "Adversarial Verify", icon: ShieldCheck },
         { id: "compose", label: t("oneClick.stepCompose"), icon: FileStack },
+        // round-59: the pipeline now repairs review findings (external
+        // fact-check verdicts included) BEFORE translation — one click ends
+        // with a fact-hardened final article, not a to-do list.
+        { id: "repair", label: t("oneClick.stepRepair") || "AI review & auto-repair", icon: Wrench },
       ];
       // round-27: v2 translates AFTER compose (sections already carry final
       // global citation numbers), so the translate step comes last.

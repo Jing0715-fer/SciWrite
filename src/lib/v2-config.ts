@@ -43,3 +43,22 @@ export const SESSION_DEFAULT_MAX_MESSAGES = 20;
 export function maxCitableRefsFor(targetWords: number, available: number): number {
   return Math.min(available, Math.max(MIN_CITABLE_REFS, Math.floor(targetWords / CITABLE_REFS_PER_WORDS)));
 }
+
+/* ------------------------------------------------------------------ *
+ * round-59: auto review & repair loop (generate-full-v2 STEP 8.5)
+ * ------------------------------------------------------------------ */
+
+/** Maximum surgical revisions the in-pipeline repair loop will apply.
+ *  Each revision is followed by a re-review, so the worst case is
+ *  REPAIR_MAX_REVISIONS + 1 review rounds (1 initial + one per revise). */
+export const REPAIR_MAX_REVISIONS = 2;
+
+/** A revised article must keep at least this fraction of the original body's
+ *  word count — guards against an LLM "revision" that collapses the article
+ *  into a summary of itself. */
+export const REVISION_MIN_WORD_RATIO = 0.6;
+
+/** A revised article must keep at least this fraction of the original's
+ *  distinct in-range citations AND reference-list entries — guards against a
+ *  revision that quietly strips the evidence grounding out of the article. */
+export const REVISION_MIN_CITATION_RATIO = 0.6;

@@ -1,6 +1,7 @@
 import ZAI from "z-ai-web-dev-sdk";
 import {
   withRateLimit,
+  isAborted,
   QuotaExhaustedError,
   RateLimitAbortedError,
 } from "@/lib/rate-limiter";
@@ -16,6 +17,39 @@ export async function getAI() {
 }
 
 export { QuotaExhaustedError, RateLimitAbortedError };
+
+/**
+ * round-59 (transient-abort wait-out): a 429-storm sets the process-wide
+ * abort flag with a 120s TTL (rate-limiter). Any LLM call made while the
+ * flag is fresh throws RateLimitAbortedError IMMEDIATELY — which turned a
+ * transient provider storm into a FATAL pipeline kill (observed live:
+ * gather/knowledge 429-storm → abort set → knowledge degraded gracefully →
+ * 6s later the plan call hit the still-fresh flag → whole run died).
+ *
+ * This wrapper converts that into "pause ~2 minutes, then retry once":
+ *   - RateLimitAbortedError → poll isAborted() until the flag self-expires
+ *     (TTL 120s + slack), then retry the call ONCE.
+ *   - QuotaExhaustedError → NOT retried (a daily quota does not recover in
+ *     two minutes; retrying would just burn the caller's error handling).
+ *   - anything else → propagate untouched.
+ * The retry re-enters withRateLimit, so cool-downs/backoff still apply.
+ */
+async function withAbortWaitout<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  try {
+    return await fn();
+  } catch (err: unknown) {
+    if (!(err instanceof RateLimitAbortedError)) throw err;
+    const deadline = Date.now() + 150_000; // abort TTL (120s) + cooldown slack
+    while (Date.now() < deadline && isAborted()) {
+      await new Promise((r) => setTimeout(r, 5_000));
+    }
+    if (isAborted()) throw err; // sustained storm — surface it
+    console.warn(
+      `[rate-limiter] transient abort expired; retrying '${label}' once`,
+    );
+    return await fn();
+  }
+}
 
 export interface ChatOptions {
   system?: string;
@@ -155,7 +189,7 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
     //  - 60s cool-down when > 15 calls in 10 min
     //  - Exponential backoff on 429/5xx (1s/2s/4s/8s/16s, max 5 attempts)
     //  - Quota-exhaustion abort (reads x-ratelimit-user-daily-remaining)
-    const response = await withRateLimit(
+    const response = await withAbortWaitout(() => withRateLimit(
       async (captureHeaders) => {
         const r = await zai.chat.completions.create({
           messages,
@@ -178,8 +212,7 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
         } catch {}
         return r;
       },
-      { label: "chat" },
-    );
+      { label: "chat" }), "chat");
 
     // Reasoning models (GLM thinking variants, R1-style distills served via
     // the z-ai gateway) can inline <think>...</think> in content — never let
@@ -303,7 +336,7 @@ export async function chatStream(
   // Streaming still consumes a quota slot — same token-bucket / cool-down /
   // 429-backoff applies. We only rate-limit the START of the stream (the SDK
   // call itself); once the stream body begins, we drain it normally below.
-  const streamBody: any = await withRateLimit(
+  const streamBody: any = await withAbortWaitout(() => withRateLimit(
     async (captureHeaders) => {
       const r = await zai.chat.completions.create({
         messages,
@@ -321,8 +354,7 @@ export async function chatStream(
       } catch {}
       return r;
     },
-    { label: "chatStream" },
-  );
+    { label: "chatStream" }), "chatStream");
 
   // If for some reason we didn't get a stream (provider routed elsewhere),
   // fall back to non-streaming parse.

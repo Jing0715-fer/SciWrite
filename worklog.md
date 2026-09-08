@@ -3016,3 +3016,30 @@ Work Log:
 Stage Summary:
 - 双世系统一完成：远程成熟代码 + 本地生产验证工件 + 4 处互补充丁，全部质量门与 E2E 通过
 - 后续任何人接手只有一条 main（5c335d3），无分叉
+
+---
+Task ID: 59
+Agent: main (Z.ai Code)
+Task: 回答"review 发现问题会自动修复吗"并实现一键闭环（in-pipeline auto review & repair loop）+ 新主题（CRISPR prime editing）完整生产测试
+
+Work Log:
+- 用户诉求解析：① review 发现科学性问题后目前不会自动修复——verify 阶段只重试失败批次，review（含 round-57 fact-check）只把 weakness 写进 Review 表留给用户手动 revise→retranslate→re-check；② 需要一键得到最终完成度高的文章。结论：必须把 review-repair 闭环嵌进生成管线，且必须在翻译之前（修复后只翻译一次，根除 zhCleared 分叉链）
+- 新建 src/lib/review-engine.ts（~570 行，纯核心零 DB）：
+  · reviewArticleCore——fact-check（web 搜索仲裁）+ LLM peer review + weakness 强制合并，与 review 路由逐字节等价（单一事实源）
+  · reviseArticleCore 双模式——"full"（保留旧手动 revise 行为）+ "surgical"（新：最小编辑规则集——CONTRADICTED 移除/改写、未 hedge 的 UNVERIFIABLE 软化为归属表述、VERIFIED 不动、[n] 与 References 块逐字保留、禁新增事实）
+  · actionableFindings——硬触发=任何 CONTRADICTED 或未 hedge 的 UNVERIFIABLE（M412K 类捏造向量）；软触发=reject 或 major-revision 且 citations<6；minor-revision 纯风格问题不触发（防无意义 churn）
+  · renormalizeArticleCitations——确定性引用重整：越界标记剥离→孤儿引用剔除→1..N 紧缩重编号→引用行原样重建（LLM 永远无权重排编号）
+  · restoreOriginalHeadings——把修订文的标题钉回原标题（ZH 半区由 paragraph titles 组装，改写 EN 标题会造成双语结构分叉）
+  · revisionGuard——机械闸门：词数≥60%、引用列表≥60%、distinct 引用≥60%、标题数相等、References 块在场
+- review/route.ts 重构为 engine 薄壳（runReview/runRevise 全部委托核心，DB 行为不变：round 编号、zhCleared、r37 ownership check 全保留）
+- generate-full-v2 STEP 8.5（compose 后、translate 前）：review→surgical revise→renormalize→guard→re-review，上限 REPAIR_MAX_REVISIONS=2 次修订（最多 3 轮 review）；修复采纳后重导出 renumberedContents/globalRefs（引用行文本回配原 globalRefs 对象，失配回退并记日志）；每轮 Review 行持久化（round 1..N，触发修订的轮带 revisedContent）→ Review tab 展示完整闭环；失败非致命（compose 产物原样保留 + 旧 self-fetch review 兜底）；管线尾部 review self-fetch 改为仅兜底（省一次重复 fact-check）
+- v2-config 新增 REPAIR_MAX_REVISIONS / REVISION_MIN_WORD_RATIO / REVISION_MIN_CITATION_RATIO；前端 STEPS 新增 "repair" 步骤（i18n en/zh）；progress tracker 权重表插入 repair(1.2)
+- 质量门：tsc 0 错误；lint 0 error/162 warning（=基线）
+- 机械探针（probe-round59.ts，34 断言全过后删除）：重整器 12 例（OOR 剥离/孤儿剔除/重编号/混合标记/范围展开/OOR 产生的孤儿连带剔除/全引用恒等）+ 标题钉回 7 例（三段钉回/计数失配 null/### 子标题不计数）+ 闸门 6 例（最小编辑过/缺 References 拒/标题坍缩拒/词数坍缩拒/引用坍缩拒/引用列表 5→2 拒）+ 可操作性 8 例（CONTRADICTED 触发/未 hedge UNVERIFIABLE 触发/已 hedge 不触发/VERIFIED 不触发/reject 触发/major+citations5 触发/major 7/7 不触发）——3 个探针失败均为测试用例笔误（测试文章引用不全、正则笔误、阈值边界），引擎行为全部正确
+- 路由级实弹验证：POST /api/ai/review（重构后）对 round-57 文章重跑——HTTP 200/34s，fact-check 4 声明（1 VERIFIED/3 UNVERIFIABLE），M412K 缺陷照常浮出为 weakness，round 3 正常落库 → engine 经 HTTP 路径全通
+- 新主题生产测试启动（01:55:41）：新项目 cmts0llwl000mllubkabybbly「Round-59 Auto-Repair Production Audit」，主题 CRISPR prime editing（基因编辑领域，与此前全部审计线[神经科学/机械转导]不同领域），v2 both 模式 3000 词不限查询，agent-browser 驱动真实浏览器保活 SSE（round-57 教训：后台 curl 会被进程组清理杀死）
+
+Stage Summary:
+- 一键闭环已落地：生成管线内 review→repair→re-review，翻译只发生一次，Review tab 自动展示闭环全程
+- 探针 34/34 + 路由实弹验证通过；生产测试进行中（预计 ~60 分钟）
+- 修改文件：src/lib/review-engine.ts（新）、src/app/api/ai/review/route.ts（重构）、src/app/api/ai/generate-full-v2/route.ts（STEP 8.5+持久化+complete 遥测）、src/lib/v2-config.ts、src/components/sciwrite/unified-writing-dialog.tsx、src/lib/i18n.tsx

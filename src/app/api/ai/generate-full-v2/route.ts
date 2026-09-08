@@ -10,7 +10,10 @@ import {
   type KVSourceInput,
 } from "@/lib/knowledge-verify";
 import {
-  VERIFY_BATCH_SIZE, VERIFY_REMOVE_CONFIDENCE } from "@/lib/v2-config";
+  VERIFY_BATCH_SIZE,
+  VERIFY_REMOVE_CONFIDENCE,
+  REPAIR_MAX_REVISIONS,
+} from "@/lib/v2-config";
 import { logger } from "@/lib/logger";
 import { webSearch } from "@/lib/ai";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
@@ -51,6 +54,19 @@ import {
 // plan/analyze/allocate stages ever see them. Fail-safe: an empty result
 // keeps the unfiltered pool (the run never bricks on a classification).
 import { partitionCitablePool } from "@/lib/source-tier";
+// round-59: in-pipeline auto review & repair — review findings (including
+// the round-57 fact-check verdicts) are REPAIRED before translation, so one
+// click yields a final, fact-hardened, bilingual article instead of
+// "here are the problems, go fix them yourself".
+import {
+  actionableFindings,
+  renormalizeArticleCitations,
+  restoreOriginalHeadings,
+  revisionGuard,
+  reviseArticleCore,
+  reviewArticleCore,
+  splitBodySections,
+} from "@/lib/review-engine";
 // round-42: importance-driven citation planning — score every source,
 // curate with a dynamic count, fetch full texts, co-plan outline+citations.
 import {
@@ -175,6 +191,10 @@ export async function POST(req: NextRequest) {
         { step: "generate", unitWeight: 2 },
         { step: "verify", unitWeight: 0.9 },
         { step: "compose", weight: 0.5 },
+        // round-59: auto review & repair between compose and translate —
+        // external fact-check + peer review + surgical revision run BEFORE
+        // the Chinese half exists (the final EN text is translated once).
+        { step: "repair", weight: 1.2 },
         ...(trackerBothMode ? [{ step: "translate", unitWeight: 0.75 }] : []),
       ]);
       const send = (event: string, data: any) => {
@@ -1807,7 +1827,10 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           })
           .join("\n");
 
-        const articleContent = articleBody.trim() + "\n\n## References\n\n" + refList;
+        // round-59: let — the auto-repair loop (STEP 8.5) may replace this
+        // with the revised, renormalized content before anything downstream
+        // (paragraph sync, article save, translate) consumes it.
+        let articleContent = articleBody.trim() + "\n\n## References\n\n" + refList;
 
         // v121: generate a real article title from what was actually written
         // (the old code stored `project.topic` — the project-creation brief —
@@ -1831,6 +1854,255 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           );
         } catch (titleErr: any) {
           log(`compose: title generation failed, using project topic: ${String(titleErr?.message ?? titleErr).slice(0, 120)}`);
+        }
+
+        // ============ STEP 8.5 (round-59): ★ Auto review & repair loop ============
+        // One-click completeness contract. Round-57 made fabrication VISIBLE
+        // (fact-check verdicts land in the Review tab) but not REPAIRED —
+        // the user had to read the review, trigger a manual revise,
+        // retranslate, and re-check by hand. This stage closes the loop
+        // IN-PIPELINE, BEFORE the Chinese half exists (the final EN text is
+        // translated exactly once, so there is no zhCleared dance):
+        //   review (external fact-check + LLM peer review)
+        //     → surgical revise (CONTRADICTED removed/corrected, unhedged
+        //       UNVERIFIABLE softened, citation findings fixed)
+        //     → mechanical citation renormalization (OOR strip, orphan drop,
+        //       renumber) + original-heading pinning (bilingual structure)
+        //     → revision guard (word/citation/structure floors)
+        //     → re-review; bounded at REPAIR_MAX_REVISIONS revisions.
+        // Every round is persisted as a Review row after the article is
+        // saved, so the Review tab shows the whole loop. A guard-rejected
+        // revision keeps the pre-revision article. Non-fatal: on ANY failure
+        // the compose output stands exactly as round-57 produced it and the
+        // legacy post-pipeline review self-fetch runs instead.
+        const repairRounds: any[] = [];
+        const repairTelemetry = {
+          reviews: 0,
+          revisions: 0,
+          guardRejections: 0,
+          droppedRefs: 0,
+          strippedNumbers: 0,
+          triggered: false,
+          stopReason: "",
+          finalVerdict: "",
+          finalOverall: null as number | null,
+        };
+        send("step", {
+          step: "repair",
+          status: "started",
+          message: "Auto-review & repair: fact-checking the composed article before translation...",
+        });
+        try {
+          const originalSectionTitles = generatedParagraphs.map(
+            (gp: any, i: number) => gp?.title || sections[i]?.title || `Section ${i + 1}`,
+          );
+          let currentContent = articleContent;
+          let revisionsDone = 0;
+          for (let round = 1; round <= REPAIR_MAX_REVISIONS + 1; round++) {
+            if (clientDisconnected) {
+              repairTelemetry.stopReason = "client disconnected";
+              break;
+            }
+            const rc = await reviewArticleCore(
+              projectId,
+              { title: articleTitle, content: currentContent },
+              { topic: project.topic, maxClaims: 8 },
+            );
+            repairTelemetry.reviews++;
+            repairTelemetry.finalVerdict = rc.parsed.verdict || "";
+            repairTelemetry.finalOverall = rc.parsed.scores?.overall ?? null;
+            const act = actionableFindings(rc);
+            const roundEntry: any = {
+              round,
+              core: rc,
+              actionable: act.actionable,
+              trigger: act.trigger,
+              reason: act.reason,
+              revisedContent: null as string | null,
+              guardRejected: null as string[] | null,
+            };
+            repairRounds.push(roundEntry);
+            const factLine = rc.factReport?.ran
+              ? ` fact={v${rc.factReport.summary.verified} c${rc.factReport.summary.contradicted} u${rc.factReport.summary.unverifiable} e${rc.factReport.summary.errors}}`
+              : "";
+            send("step", {
+              step: "repair",
+              status: "progress",
+              round,
+              message:
+                `Review round ${round}: ${rc.parsed.verdict || "?"}` +
+                `${rc.parsed.scores?.overall != null ? ` (${rc.parsed.scores.overall}/10)` : ""}` +
+                `${factLine}` +
+                (act.actionable ? ` — ${act.reason}; revising...` : " — no actionable issues, done."),
+            });
+            log(
+              `repair: round ${round} verdict=${rc.parsed.verdict || "?"} overall=${rc.parsed.scores?.overall ?? "?"}${factLine} actionable=${act.actionable}${act.reason ? ` (${act.reason})` : ""}`,
+            );
+            if (!act.actionable) {
+              repairTelemetry.stopReason = "review clean — no actionable findings";
+              break;
+            }
+            if (revisionsDone >= REPAIR_MAX_REVISIONS) {
+              repairTelemetry.stopReason =
+                "revision budget exhausted — remaining issues are disclosed in the Review tab";
+              send("step", { step: "repair", status: "progress", message: `${repairTelemetry.stopReason}.` });
+              break;
+            }
+
+            // Surgical revision against THIS round's findings.
+            const revised = await reviseArticleCore(
+              projectId,
+              { title: articleTitle, content: currentContent },
+              {
+                round,
+                verdict: rc.parsed.verdict || "major-revision",
+                summary: rc.parsed.summary || "",
+                scores: rc.parsed.scores,
+                strengths: rc.parsed.strengths || [],
+                weaknesses: rc.mergedWeaknesses,
+                suggestions: rc.parsed.suggestions || [],
+              },
+              "surgical",
+            );
+
+            // Mechanical guard — an LLM revision that collapses the article,
+            // strips its citations, or restructures it is rejected and the
+            // pre-revision article stands.
+            const guard = revisionGuard(currentContent, revised);
+            if (!guard.ok) {
+              roundEntry.guardRejected = guard.reasons;
+              repairTelemetry.guardRejections++;
+              repairTelemetry.stopReason = "revision failed the mechanical guard";
+              log(`repair: round ${round} revision REJECTED by guard: ${guard.reasons.join("; ")}`);
+              send("step", {
+                step: "repair",
+                status: "progress",
+                message: `Round ${round} revision rejected by mechanical guard (${guard.reasons[0]}) — keeping the pre-revision article.`,
+              });
+              break;
+            }
+
+            // Renormalize citations deterministically (the LLM never gets to
+            // renumber), then pin the ORIGINAL section headings — the ZH
+            // compose stage builds its half from paragraph titles, so a
+            // reworded EN heading would structurally diverge the halves.
+            const norm = renormalizeArticleCitations(revised);
+            const revSplit = splitBodyAndReferences(norm.content);
+            const pinnedBody = restoreOriginalHeadings(revSplit.body, originalSectionTitles);
+            if (!pinnedBody) {
+              repairTelemetry.guardRejections++;
+              repairTelemetry.stopReason = "revision heading structure unrepairable";
+              log("repair: revision heading count mismatch after guard — rejected");
+              break;
+            }
+            currentContent = pinnedBody.trimEnd() + "\n\n" + revSplit.referencesText.trim();
+            revisionsDone++;
+            repairTelemetry.revisions++;
+            repairTelemetry.triggered = true;
+            repairTelemetry.droppedRefs += norm.droppedRefs;
+            repairTelemetry.strippedNumbers += norm.strippedNumbers;
+            stats.outOfRangeCitationsStripped += norm.strippedNumbers;
+            roundEntry.revisedContent = currentContent;
+            send("step", {
+              step: "repair",
+              status: "progress",
+              round,
+              message:
+                `Round ${round} revision applied${act.hardFindings.length > 0 ? `: ${act.hardFindings.length} flagged claim(s) repaired` : ""}` +
+                `${norm.droppedRefs > 0 ? `, ${norm.droppedRefs} orphaned reference(s) dropped` : ""}. Re-reviewing...`,
+            });
+            log(
+              `repair: round ${round} revision APPLIED (guard ok; droppedRefs=${norm.droppedRefs} stripped=${norm.strippedNumbers} renumbered=${norm.renumbered})`,
+            );
+          }
+
+          // Adopt the repaired content: re-derive everything the downstream
+          // stages consume (paragraph sync, article save, audit, translate,
+          // ZH reference list) so the WHOLE pipeline sees the final article.
+          if (repairTelemetry.triggered && currentContent !== articleContent) {
+            articleContent = currentContent;
+            const finalSplit = splitBodyAndReferences(articleContent);
+            const finalSections = splitBodySections(finalSplit.body);
+            if (finalSections && finalSections.contents.length === renumberedContents.length) {
+              for (let i = 0; i < renumberedContents.length; i++) {
+                renumberedContents[i] = finalSections.contents[i];
+              }
+              // Rebuild globalRefs from the final reference list (survivors
+              // keep their original relative order — the normalizer only
+              // compacts, never reorders). Match final ref LINES back to the
+              // composed list verbatim; a mismatch falls back to the composed
+              // refs (logged) rather than guessing.
+              const origRefLines = refList.split("\n").map((l: string) => l.replace(/^\s*\[\d+\]\s*/, "").trim());
+              const finalRefLines = finalSplit.referencesText
+                .split("\n")
+                .map((l: string) => l.trim())
+                .filter((l: string) => /^\[\d+\]\s/.test(l))
+                .map((l: string) => l.replace(/^\[\d+\]\s*/, "").trim());
+              const newGlobalRefs: any[] = [];
+              for (const fl of finalRefLines) {
+                const idx = origRefLines.findIndex((ol: string) => ol === fl);
+                if (idx >= 0 && idx < globalRefs.length) newGlobalRefs.push(globalRefs[idx]);
+                else break;
+              }
+              const finalBodyCit = new Set<number>();
+              let fcm: RegExpExecArray | null;
+              const fcre = /\[(\d+(?:[,\-–\s]\d+)*)\]/g;
+              while ((fcm = fcre.exec(finalSplit.body)) !== null) {
+                for (const part of fcm[1].split(/[,;]\s*/)) {
+                  const rm = part.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+                  if (rm) {
+                    for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) finalBodyCit.add(n);
+                  } else {
+                    const n = parseInt(part);
+                    if (!isNaN(n)) finalBodyCit.add(n);
+                  }
+                }
+              }
+              const maxFinalCit = finalBodyCit.size > 0 ? Math.max(...finalBodyCit) : 0;
+              if (
+                newGlobalRefs.length === finalRefLines.length &&
+                maxFinalCit <= newGlobalRefs.length
+              ) {
+                globalRefs.length = 0;
+                globalRefs.push(...newGlobalRefs);
+                log(`repair: globalRefs re-synced to the final reference list (${globalRefs.length} refs)`);
+              } else {
+                log(
+                  `repair: reference rematch incomplete (${newGlobalRefs.length}/${finalRefLines.length} lines, maxCit=${maxFinalCit}) — globalRefs kept as composed`,
+                );
+              }
+            } else {
+              log(
+                `repair: final section split mismatch (${finalSections?.contents.length ?? "?"} vs ${renumberedContents.length}) — article content adopted, paragraphs keep pre-repair text`,
+              );
+            }
+          }
+          send("step", {
+            step: "repair",
+            status: "done",
+            message:
+              repairTelemetry.triggered
+                ? `Auto-repair complete: ${repairTelemetry.reviews} review round(s), ${repairTelemetry.revisions} revision(s) applied${repairTelemetry.droppedRefs > 0 ? `, ${repairTelemetry.droppedRefs} orphaned reference(s) dropped` : ""}. Final verdict: ${repairTelemetry.finalVerdict}${repairTelemetry.finalOverall != null ? ` (${repairTelemetry.finalOverall}/10)` : ""}.`
+                : `Auto-review complete (${repairTelemetry.reviews} round(s)): ${repairTelemetry.stopReason || "no revision needed"}. Final verdict: ${repairTelemetry.finalVerdict}${repairTelemetry.finalOverall != null ? ` (${repairTelemetry.finalOverall}/10)` : ""}.`,
+          });
+          log(
+            `repair: done — reviews=${repairTelemetry.reviews} revisions=${repairTelemetry.revisions} guardRejections=${repairTelemetry.guardRejections} stop="${repairTelemetry.stopReason}"`,
+          );
+        } catch (repairErr: any) {
+          // Non-fatal by contract: the compose output stands, no Review rows
+          // are persisted for a half-applied loop (they would describe
+          // revisions that were rolled back), and the legacy post-pipeline
+          // review self-fetch runs instead.
+          repairRounds.length = 0;
+          repairTelemetry.revisions = 0;
+          repairTelemetry.triggered = false;
+          repairTelemetry.stopReason = `loop failed: ${String(repairErr?.message ?? repairErr).slice(0, 120)}`;
+          log(`repair: FAILED — ${repairTelemetry.stopReason}`);
+          send("step", {
+            step: "repair",
+            status: "skipped",
+            message: `Auto-repair skipped after an error (the composed article is unaffected): ${repairErr?.message?.slice(0, 80) || "LLM error"}.`,
+          });
         }
 
         // Update each paragraph's content + references to GLOBAL numbering so
@@ -1905,6 +2177,40 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             },
           },
         });
+
+        // round-59: persist the repair loop's review rounds (round 1..N) —
+        // the Review tab shows the full loop: what each round found, and (on
+        // rounds that triggered a revision) the revisedContent it produced.
+        // A failed persistence is logged, never fatal.
+        if (repairRounds.length > 0) {
+          for (const r of repairRounds) {
+            try {
+              await db.review.create({
+                data: {
+                  articleId: article.id,
+                  round: r.round,
+                  scoreNovelty: r.core.parsed.scores?.novelty ?? null,
+                  scoreSignificance: r.core.parsed.scores?.significance ?? null,
+                  scoreClarity: r.core.parsed.scores?.clarity ?? null,
+                  scoreMethodology: r.core.parsed.scores?.methodology ?? null,
+                  scoreCitations: r.core.parsed.scores?.citations ?? null,
+                  scoreOverall: r.core.parsed.scores?.overall ?? null,
+                  verdict: r.core.parsed.verdict || "major-revision",
+                  summary: r.core.parsed.summary || "",
+                  strengths: JSON.stringify(r.core.parsed.strengths || []),
+                  weaknesses: JSON.stringify(r.core.mergedWeaknesses),
+                  suggestions: JSON.stringify(r.core.parsed.suggestions || []),
+                  ...(r.revisedContent ? { revisedContent: r.revisedContent } : {}),
+                },
+              });
+            } catch (revRowErr: any) {
+              log(
+                `repair: review round ${r.round} persistence FAILED: ${String(revRowErr?.message ?? revRowErr).slice(0, 100)}`,
+              );
+            }
+          }
+          log(`repair: persisted ${repairRounds.length} review round(s)`);
+        }
 
         // Final mechanical audit of the composed article (Layer-2 deterministic)
         // ★ FIX: previously called with `[]` which silently SKIPPED the
@@ -2278,6 +2584,26 @@ ${cleanEn}`;
           send("step", { step: "relationships", status: "skipped", message: "Relationship analysis skipped (timeout or LLM error)." });
           log(`relationships: auto analysis ERROR: ${String(relErr?.message ?? relErr).slice(0, 100)}`);
         }
+        // round-59: the repair loop already reviewed the FINAL article
+        // in-pipeline (fact-check + peer review, possibly multiple rounds)
+        // and persisted Review rows — re-fetching would burn another
+        // fact-check pass to restate the same verdict. The self-fetch below
+        // is now the FALLBACK for when the loop failed wholesale.
+        if (repairRounds.length > 0) {
+          const lastRound = repairRounds[repairRounds.length - 1];
+          send("step", {
+            step: "review",
+            status: "done",
+            verdict: lastRound.core.parsed.verdict,
+            message:
+              `Peer review complete (in-pipeline, ${repairRounds.length} round(s)): ${lastRound.core.parsed.verdict || "done"}` +
+              `${lastRound.core.parsed.scores?.overall != null ? ` (overall ${lastRound.core.parsed.scores.overall}/10)` : ""}` +
+              `${repairTelemetry.revisions > 0 ? ` — ${repairTelemetry.revisions} auto-revision(s) applied` : ""} — see the Review tab.`,
+          });
+          log(
+            `review: in-pipeline repair loop already reviewed (${repairRounds.length} round(s), verdict=${lastRound.core.parsed.verdict}) — self-fetch skipped`,
+          );
+        } else {
         try {
           send("step", { step: "review", status: "started", message: "Running peer review of the final article..." });
           const reviewRes = await fetch(`${req.nextUrl.origin}/api/ai/review`, {
@@ -2303,6 +2629,7 @@ ${cleanEn}`;
           send("step", { step: "review", status: "skipped", message: "Peer review skipped (timeout or LLM error)." });
           log(`review: auto review ERROR: ${String(revErr?.message ?? revErr).slice(0, 100)}`);
         }
+        } // end round-59 fallback review fetch
 
         const totalMs = Date.now() - t0;
         const articleWordCount = countWords(articleContent);
@@ -2355,8 +2682,19 @@ ${cleanEn}`;
             citationCoreCovered: stats.citationCoreCovered,
             citationPlanLLMDriven: stats.citationLLMDriven,
             fullTextsUsed: stats.fullTextsUsed,
+            // round-59: auto-repair loop telemetry
+            autoRepairRounds: repairTelemetry.reviews,
+            autoRepairRevisions: repairTelemetry.revisions,
+            autoRepairGuardRejections: repairTelemetry.guardRejections,
+            autoRepairTriggered: repairTelemetry.triggered,
+            autoRepairDroppedRefs: repairTelemetry.droppedRefs,
+            autoRepairStopReason: repairTelemetry.stopReason,
+            autoRepairFinalVerdict: repairTelemetry.finalVerdict,
+            autoRepairFinalOverall: repairTelemetry.finalOverall,
           },
-          message: `v2 pipeline complete: ${articleWordCount} words${articleContentZh ? ` + ${countWords(articleContentZh)} Chinese chars` : ""}, ${globalRefs.length} references, ${stats.citationsChecked} citations adversarially verified (${stats.citationsRemoved} removed).`,
+          message:
+            `v2 pipeline complete: ${articleWordCount} words${articleContentZh ? ` + ${countWords(articleContentZh)} Chinese chars` : ""}, ${globalRefs.length} references, ${stats.citationsChecked} citations adversarially verified (${stats.citationsRemoved} removed)` +
+            `${repairTelemetry.triggered ? `, ${repairTelemetry.revisions} auto-repair revision(s) applied` : ""}.`,
         });
         safeClose();
       } catch (err: any) {
