@@ -17,6 +17,12 @@ import { chat } from "@/lib/ai";
  *  - Titles that already contain CJK are passed through unchanged.
  *  - Total failure (LLM error) → all-null array (never throws — heading
  *    translation must not break generation).
+ *
+ * round-62: optional `glossary` — the v2 pipeline's domain terminology anchor
+ * ("prime editing → 先导编辑" etc.) is injected into the batch prompt so the
+ * HEADINGS obey the same standard translations as the body text. Round-61
+ * observed the heading batch running before the glossary existed, so titles
+ * could drift from the anchored body terminology.
  */
 
 const CJK_RE = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
@@ -27,7 +33,7 @@ export function hasCJKText(text: string): boolean {
 
 export async function translateSectionTitles(
   titles: string[],
-  opts: { temperature?: number } = {},
+  opts: { temperature?: number; glossary?: string } = {},
 ): Promise<(string | null)[]> {
   const result: (string | null)[] = titles.map(() => null);
   if (!titles.length) return result;
@@ -54,9 +60,10 @@ REQUIREMENTS:
 1. Use standard Chinese academic section terminology (e.g. Introduction → 引言, Methods → 方法, Results → 结果, Discussion → 讨论, Conclusion → 结论, References → 参考文献).
 2. Keep gene/protein names, technical abbreviations (e.g. TMC1, EVER2, ER, pH), numerals, and punctuation like colons unchanged.
 3. Keep each heading concise — a faithful academic rendering, never a literal word-by-word expansion (≤ 40 Chinese characters when possible).
-4. Do NOT add any preamble or commentary. Output ONLY the numbered translations, one per line, in the SAME order, each on its own line in the exact format:
+4. Where a heading contains a domain term listed in the DOMAIN TERM GLOSSARY below, you MUST use the glossary's exact Chinese translation for that term — never a literal or invented alternative.
+5. Do NOT add any preamble or commentary. Output ONLY the numbered translations, one per line, in the SAME order, each on its own line in the exact format:
 <number>. <Chinese heading>
-
+${opts.glossary ? "\n" + opts.glossary + "\n" : ""}
 HEADINGS:
 
 ${list}`;

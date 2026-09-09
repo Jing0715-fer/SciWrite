@@ -1842,6 +1842,34 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
   const { t } = useI18n();
   const [reviewData, setReviewData] = React.useState<any>(null);
 
+  // round-62 (P1-小): the mechanical citation audit's non-blocking TOPICALITY
+  // warnings (Jaccard keyword-overlap screening — "suspect"/"unsupported"
+  // verdicts) used to surface ONLY inside the project-level citation-health
+  // dashboard. This query re-runs the deterministic Layer-2 audit on THIS
+  // article (deep=false → pure computation, no LLM call, no writes) so the
+  // Review tab can list the top offenders right next to the peer review
+  // that judges the same manuscript.
+  const topicalityQ = useQuery({
+    queryKey: ["article-topicality", articleId],
+    queryFn: () =>
+      fetch(`/api/articles/${articleId}/audit-citations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deep: false }),
+      }).then((r) => r.json()),
+    enabled: !!articleId,
+    staleTime: 5 * 60_000,
+  });
+  const topicalityFindings = React.useMemo(() => {
+    const findings = (topicalityQ.data?.findings || []).filter(
+      (f: any) => f?.verdict === "suspect" || f?.verdict === "unsupported"
+    );
+    // Worst first: lowest keyword-overlap score = weakest topical match.
+    return [...findings]
+      .sort((a: any, b: any) => (a.score ?? 1) - (b.score ?? 1))
+      .slice(0, 6);
+  }, [topicalityQ.data]);
+
   // Load saved review on mount — this prevents the Review tab from being
   // empty every time the user switches to it. If a saved review exists,
   // it's loaded instantly; the user can click "Run review" to re-review.
@@ -1957,6 +1985,39 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
               <Loader2 className={reviewMut.isPending ? "h-3.5 w-3.5 animate-spin" : "hidden"} />
               {t("articleViewer.rerunReview")}
             </Button>
+          </div>
+        )}
+
+        {/* round-62 (P1-小): mechanical topicality watch-list — the audit's
+            non-blocking keyword-overlap warnings, worst offenders first.
+            Rendered regardless of review state (it's a deterministic property
+            of the article, not of the LLM review); only when warnings exist —
+            a clean article shows nothing. */}
+        {topicalityFindings.length > 0 && (
+          <div className="mt-4 rounded-lg border border-amber-200/60 dark:border-amber-800/50 bg-amber-50/40 dark:bg-amber-950/20 p-2.5">
+            <div className="flex items-center gap-1.5 mb-1">
+              <ScanSearch className="h-3 w-3 text-amber-600 dark:text-amber-400 shrink-0" />
+              <p className="text-[10px] uppercase tracking-wider font-semibold text-amber-700 dark:text-amber-400">
+                {t("articleViewer.topicalityTitle") || "Topicality watch-list (mechanical, non-blocking)"}
+              </p>
+            </div>
+            <p className="text-[9px] text-muted-foreground leading-relaxed mb-1.5">
+              {t("articleViewer.topicalityDesc") ||
+                "Citations flagged by keyword-overlap screening between the citing sentence and the reference's title/abstract. Low overlap ≠ wrong citation — verify the flagged pair before acting. Full detail lives in Citation Health."}
+            </p>
+            <div className="space-y-1">
+              {topicalityFindings.map((f: any, i: number) => (
+                <p key={i} className="text-[10px] leading-relaxed text-muted-foreground">
+                  <Badge variant="outline" className="mr-1 h-4 px-1 text-[8px] tabular-nums border-amber-300/60 text-amber-700 dark:text-amber-400">[{f.n}]</Badge>
+                  {String(f.reason || "").slice(0, 120)}
+                  {typeof f.score === "number" && (
+                    <span className="ml-1 tabular-nums text-amber-600/80 dark:text-amber-400/80">
+                      · overlap {(f.score * 100).toFixed(0)}%
+                    </span>
+                  )}
+                </p>
+              ))}
+            </div>
           </div>
         )}
       </div>

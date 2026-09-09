@@ -220,10 +220,22 @@ export function ProjectsSidebar({ projects, activeId, onSelect, onDeleted, artic
           divider to taste.
           v107-1: When there are few projects (≤2), give articles more space
           (defaultSize 55) so article boxes display fully. When many projects,
-          use 40 to give the list room to scroll. */}
+          use 40 to give the list room to scroll.
+          round-62 (P2-低): the articles panel is conditionally rendered — with
+          it absent the group held a SINGLE panel at 45/60%, which made
+          react-resizable-panels log "Invalid layout total size" on every
+          mount. A solo projects panel now defaults to 100 so the total is
+          always exactly 100. */}
       <ResizablePanelGroup direction="vertical" className="flex-1 min-h-0">
-        {/* Projects panel */}
-        <ResizablePanel defaultSize={projects.length <= 2 ? 45 : 60} minSize={20}>
+        {/* Projects panel — id/order given because the sibling articles
+            panel mounts/unmounts dynamically (react-resizable-panels needs
+            stable panel identity to re-layout without warnings). */}
+        <ResizablePanel
+          id="sidebar-projects"
+          order={1}
+          defaultSize={articles.length > 0 ? (projects.length <= 2 ? 45 : 60) : 100}
+          minSize={20}
+        >
           {/* v109-2: Use plain overflow-y-auto instead of ScrollArea to match
               the article panel's behavior. ScrollArea's custom scrollbar
               was clipping the right border of project cards. */}
@@ -282,7 +294,7 @@ export function ProjectsSidebar({ projects, activeId, onSelect, onDeleted, artic
             header (article count + icon) is shrink-0 so it stays visible
             even when the list scrolls. */}
         {articles.length > 0 && (
-          <ResizablePanel defaultSize={projects.length <= 2 ? 55 : 40} minSize={25}>
+          <ResizablePanel id="sidebar-articles" order={2} defaultSize={projects.length <= 2 ? 55 : 40} minSize={25}>
             <div className="flex flex-col h-full">
               <div className="flex items-center justify-between px-3 pt-2.5 pb-2 shrink-0 border-t hairline">
                 <span className="eyebrow flex items-center gap-1.5">

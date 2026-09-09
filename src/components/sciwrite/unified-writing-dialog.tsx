@@ -32,6 +32,7 @@ import {
   BookCheck,
   ArrowUpCircle,
   Wrench,
+  History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -849,6 +850,38 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
   });
   const templates = templateData?.templates || [];
 
+  // round-62 (P2-中): resumable-run detection. The v2 pipeline checkpoints
+  // its state (pool → per-section) after every completed stage, and
+  // relaunching the SAME topic resumes from the last checkpoint — but that
+  // used to be announced only via SSE progress messages mid-run. This query
+  // (read-only GET, no side effects) surfaces the resumable state BEFORE
+  // launch so the start dialog can offer an explicit "Resume last run"
+  // option. Polled while the dialog is idle so a run that dies elsewhere
+  // becomes resumable here within ~30s; disabled while a run is in flight
+  // (the checkpoint is being written concurrently — reading it mid-run is
+  // meaningless for THIS dialog instance).
+  const checkpointQ = useQuery({
+    queryKey: ["pipeline-checkpoint", projectId],
+    queryFn: () =>
+      fetch(`/api/projects/${projectId}/pipeline-checkpoint`).then((r) => r.json()),
+    // currentStep === -1 ⇔ not running (isRunning is derived further below;
+    // referencing it here would be a TDZ error).
+    enabled: !!projectId && pipeline === "v2" && currentStep === -1,
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
+  const resumeInfo = checkpointQ.data as
+    | { resumable: boolean; topicMatches?: boolean; topic?: string; sectionsDone?: number; sectionsTotal?: number; refsCount?: number }
+    | undefined;
+  // The banner only appears for a genuinely resumable state: checkpoint
+  // exists AND its topic matches the current project topic (a mismatched
+  // checkpoint is silently discarded by the next fresh run).
+  const showResumeBanner =
+    !!resumeInfo?.resumable &&
+    resumeInfo?.topicMatches !== false &&
+    currentStep === -1 &&
+    !result;
+
   const isBothMode = language === "both";
   // round-27: the v2 evidence-grounded pipeline ALWAYS writes English first
   // (its citation-key machinery is English-first by design), so "中文" and
@@ -1079,6 +1112,10 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
       toast.error(e.message);
     } finally {
       setCurrentStep(-1);
+      // round-62: the run just ended — refresh the checkpoint state so the
+      // resume banner appears immediately after a failed run (checkpoint
+      // kept) or disappears after a completed one (checkpoint cleared).
+      checkpointQ.refetch().catch(() => {});
     }
   };
 
@@ -1107,6 +1144,44 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
           height, instead of overflowing the dialog bounds. */}
       <div className="flex-1 min-w-0 overflow-y-auto scroll-academic px-5 sm:px-6 py-5 flex flex-col gap-4">
       <InfoBanner icon={Zap} text={t("unifiedWrite.fullDesc")} />
+
+      {/* round-62 (P2-中): resumable-run banner — the v2 pipeline's
+          checkpoint/resume state, surfaced BEFORE launch. The backend
+          resumes automatically when the same topic is relaunched; this
+          banner makes that capability VISIBLE and offers a direct path.
+          The button goes straight to doGenerate: the backend's resume path
+          itself rebuilds the paragraphs from the checkpoint (the "clear
+          existing data" confirm dialog would be misleading here — nothing
+          is lost, the interrupted run's partial sections are restored). */}
+      {showResumeBanner && (
+        <div className="rounded-lg border border-amber-300/60 dark:border-amber-700/50 bg-amber-50/60 dark:bg-amber-950/20 p-3">
+          <div className="flex items-start gap-2">
+            <History className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex-1 space-y-1 min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400">
+                {t("oneClick.resumeTitle") || "Resume last run"}
+              </p>
+              <p className="text-[10px] text-muted-foreground leading-relaxed">
+                {t("oneClick.resumeDesc", {
+                  sections: resumeInfo?.sectionsDone ?? 0,
+                  total: resumeInfo?.sectionsTotal ?? 0,
+                  refs: resumeInfo?.refsCount ?? 0,
+                }) ||
+                  `An interrupted run was detected (checkpoint saved ${resumeInfo?.sectionsDone ?? 0} of ${resumeInfo?.sectionsTotal ?? 0} sections, ${resumeInfo?.refsCount ?? 0} references). Launching will restore the citation pool and outline from the checkpoint and skip gather→allocate — resuming from the last completed section instead of starting over.`}
+              </p>
+              <Button
+                size="sm"
+                className="h-7 gap-1.5 text-[11px] mt-1"
+                disabled={isRunning}
+                onClick={() => { void doGenerate(); }}
+              >
+                <History className="h-3.5 w-3.5" />
+                {t("oneClick.resumeBtn") || "Resume interrupted run"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pipeline selector — v2 evidence-grounded (default) vs v1 legacy */}
       <ConfigCard label={t("oneClick.pipelineLabel") || "Generation Pipeline"}>

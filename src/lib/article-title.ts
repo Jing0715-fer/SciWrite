@@ -1,5 +1,6 @@
 import { chat } from "@/lib/ai";
 import { stripReasoning } from "@/lib/writing";
+import { hasCJKText } from "@/lib/section-title-zh";
 
 /**
  * Article title generation.
@@ -95,5 +96,53 @@ TITLE: <english title>${wantZh ? "\nTITLE_ZH: <中文标题>" : ""}`;
     return { title: en, titleZh: zh || null, generated: true };
   } catch {
     return fallback;
+  }
+}
+
+/**
+ * round-62: re-anchor the article TITLE translation on the domain glossary.
+ *
+ * `generateArticleTitle` runs at COMPOSE time — before the v2 pipeline's
+ * translate stage builds its terminology glossary, so the title's Chinese
+ * rendering could drift from the body's anchored terms (round-61 shipped a
+ * titleZh containing "Prime编辑" while every body section correctly used
+ * 先导编辑/引导编辑). This tiny follow-up call re-translates the ALREADY
+ * finalized English title with the glossary injected, after the glossary
+ * exists. One ~200-token call; null on any failure (caller keeps the
+ * original titleZh — never fatal, never changes the English title).
+ */
+export async function retranslateTitleZhWithGlossary(
+  enTitle: string,
+  glossary: string,
+): Promise<string | null> {
+  if (!enTitle || !glossary) return null;
+
+  const system =
+    "You are a professional scientific translator. You translate English academic article titles into formal, precise Chinese using standard domain terminology.";
+
+  const prompt = `Translate the following English scientific article title into Chinese.
+
+REQUIREMENTS:
+1. Use the STANDARD Chinese translation used in Chinese scientific literature for every domain term in the DOMAIN TERM GLOSSARY below — never a literal word-by-word or invented rendering.
+2. Keep gene/protein names and widely-used technical abbreviations (DNA, CRISPR, ER, etc.) untranslated.
+3. Faithful, natural, journal-grade Chinese — no preamble, no quotes, no trailing punctuation.
+4. Output ONLY the Chinese title on a single line, nothing else.
+
+${glossary}
+
+ENGLISH TITLE:
+${enTitle}`;
+
+  try {
+    const raw = await Promise.race([
+      chat(prompt, { system, temperature: 0.2, maxTokens: 200 }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 30_000)),
+    ]);
+    if (!raw) return null;
+    const cleaned = stripReasoning(raw).trim().replace(/^["“”'《«]+|["“”'》»]+$/g, "").replace(/^(中文标题|TITLE_ZH)\s*[:：]\s*/i, "").trim();
+    if (!cleaned || !hasCJKText(cleaned) || cleaned.length > 120) return null;
+    return cleaned;
+  } catch {
+    return null;
   }
 }

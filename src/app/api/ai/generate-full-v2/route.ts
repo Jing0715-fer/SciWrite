@@ -19,7 +19,7 @@ import { webSearch } from "@/lib/ai";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
 import { countWords, sanitizeSectionContent } from "@/lib/writing";
-import { generateArticleTitle } from "@/lib/article-title";
+import { generateArticleTitle, retranslateTitleZhWithGlossary } from "@/lib/article-title";
 import { translateSectionTitles } from "@/lib/section-title-zh";
 import {
   buildAuditReport,
@@ -2575,17 +2575,13 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           // English half keeps its own titles). Null entries fall back to the
           // English title — a heading-translation failure never blocks
           // generation.
+          // round-62: the glossary is built FIRST (moved up from below the
+          // batch call) and injected into it, so the HEADINGS obey the same
+          // anchored terminology as the body (round-61 shipped headings and
+          // a titleZh that drifted from the body's standard translations).
           const sectionTitles = generatedParagraphs.map(
             (gp: any, i: number) => gp?.title || sections[i]?.title || "",
           );
-          let titleZhs: (string | null)[] = [];
-          try {
-            titleZhs = await translateSectionTitles(sectionTitles);
-            const got = titleZhs.filter(Boolean).length;
-            log(`translate: section titles ${got}/${sectionTitles.length} translated`);
-          } catch (titleErr: any) {
-            log(`translate: section-title batch FAILED (keeping English headings): ${titleErr?.message?.slice(0, 80) || "unknown"}`);
-          }
 
           const translatedContents: string[] = [];
 
@@ -2594,7 +2590,9 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           // STANDARD Chinese translations (通行译名). Injected into every
           // section prompt so "prime editing" becomes 先导编辑 consistently,
           // not 初级编辑 (the round-60 article mistranslated the title term
-          // because each section translated in isolation).
+          // because each section translated in isolation). round-62: now
+          // ALSO feeds the section-heading batch and the article title
+          // re-anchoring below.
           let termGlossary = "";
           try {
             const glossarySystem =
@@ -2630,6 +2628,39 @@ ${articleContent.slice(0, 3500)}`;
             }
           } catch (glossErr: any) {
             log(`translate: glossary generation failed (proceeding without): ${glossErr?.message?.slice(0, 80) || "unknown"}`);
+          }
+
+          let titleZhs: (string | null)[] = [];
+          try {
+            titleZhs = await translateSectionTitles(sectionTitles, { glossary: termGlossary });
+            const got = titleZhs.filter(Boolean).length;
+            log(`translate: section titles ${got}/${sectionTitles.length} translated${termGlossary ? " (glossary-anchored)" : ""}`);
+          } catch (titleErr: any) {
+            log(`translate: section-title batch FAILED (keeping English headings): ${titleErr?.message?.slice(0, 80) || "unknown"}`);
+          }
+
+          // round-62: re-anchor the ARTICLE title translation on the glossary.
+          // The original titleZh was produced at compose time (before the
+          // glossary existed) — a small follow-up call re-renders the SAME
+          // English title with the anchored terms so the bilingual title pair
+          // matches the body's terminology. Best-effort: on failure the
+          // compose-time titleZh stands.
+          if (articleTitleZh && termGlossary && article?.id) {
+            try {
+              const anchoredTitleZh = await retranslateTitleZhWithGlossary(articleTitle, termGlossary);
+              if (anchoredTitleZh) {
+                articleTitleZh = anchoredTitleZh;
+                await db.article.update({
+                  where: { id: article.id },
+                  data: { titleZh: anchoredTitleZh },
+                });
+                log(`translate: article titleZh re-anchored on glossary: ${anchoredTitleZh.slice(0, 60)}`);
+              } else {
+                log(`translate: titleZh re-anchor returned no result (keeping compose-time titleZh)`);
+              }
+            } catch (titleAnchorErr: any) {
+              log(`translate: titleZh re-anchor FAILED (keeping compose-time titleZh): ${titleAnchorErr?.message?.slice(0, 80) || "unknown"}`);
+            }
           }
           for (let i = 0; i < generatedParagraphs.length; i++) {
             const p = generatedParagraphs[i];

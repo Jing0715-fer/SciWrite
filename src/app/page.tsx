@@ -324,6 +324,9 @@ function Home() {
           className="rounded-xl border border-border/60 bg-card overflow-hidden h-full shadow-lg"
         >
           {/* Left: projects */}
+          {/* round-62 (P2-低): defaultSize total must be exactly 100 — 22+52+30
+              =104 made react-resizable-panels log "Invalid layout total size"
+              on every mount. Normalized to 22+48+30=100 (bounds unaffected). */}
           <ResizablePanel defaultSize={22} minSize={18} maxSize={32} className="bg-sidebar/40">
             <ProjectsSidebar
               projects={projects}
@@ -341,7 +344,7 @@ function Home() {
           <ResizableHandle withHandle />
 
           {/* Center: writing workspace */}
-          <ResizablePanel defaultSize={52} minSize={35} className="min-w-0">
+          <ResizablePanel defaultSize={48} minSize={35} className="min-w-0">
             <WritingWorkspace
               project={project}
               paragraphs={paragraphs}
