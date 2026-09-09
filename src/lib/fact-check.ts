@@ -73,6 +73,19 @@ export interface FactCheckFinding {
   evidenceQuote: string;
   evidenceUrls: string[];
   confidence: number;
+  /** round-61 (P0-A): which evidence chain produced the verdict.
+   * "cited-abstract" = the abstract of a paper the sentence itself cites
+   * (zero web-search cost, and the authoritative check for "does the
+   * citation faithfully report its source"). "web" = open-web results.
+   * "cited-abstract+web" = abstract was silent, web decided. */
+  evidenceSource?: "cited-abstract" | "web" | "cited-abstract+web";
+}
+
+/** One cited source's abstract, keyed by its citation number. */
+export interface RefAbstractEvidence {
+  num: number;
+  title: string;
+  abstract: string;
 }
 
 export interface FactCheckReport {
@@ -277,11 +290,14 @@ async function searchForClaim(claim: FactCheckClaim): Promise<WebSearchItem[]> {
  * 3. LLM arbitration
  * ------------------------------------------------------------------ */
 
-const ARBITER_SYSTEM = `You are a forensic fact-checker for scientific manuscripts. For each CHECK you receive ONE claim sentence, WEB SEARCH RESULTS from the open web, and (when the sentence carries inline citations) the article's own CITED SOURCES. Adjudicate the claim strictly against this EVIDENCE.
+const ARBITER_SYSTEM = `You are a forensic fact-checker for scientific manuscripts. For each CHECK you receive ONE claim sentence and EVIDENCE in up to two forms:
+- [A#] blocks — ABSTRACTS of the paper(s) the sentence itself cites. These are AUTHORITATIVE for whether the citation faithfully reports its source: a claim cited to [n] whose substance appears in [A#] (the abstract of [n]) is VERIFIED — the citation supports the claim. A claim cited to [n] that [A#] directly refutes is CONTRADICTED — the citation misreports its source.
+- [E#] blocks — WEB SEARCH results (independent external evidence).
+Adjudicate the claim strictly against this EVIDENCE.
 
 VERDICT RULES (apply exactly):
-- VERIFIED — external evidence literally corroborates the claim. For QUANTITATIVE claims the specific number/value must appear in the evidence (literal match or trivial unit conversion). "completely absent" does NOT verify "shifted by 180°"; a different number does not verify this number.
-- CONTRADICTED — external evidence directly refutes the claim. HARD RULE: when the claim asserts a positive finding, a specific value, or the existence of something, while the evidence explicitly reports its ABSENCE (phrases like "completely absent", "no … has been reported", "remains unresolved/unknown"), the verdict is CONTRADICTED even when other parts of the sentence match the evidence.
+- VERIFIED — evidence literally corroborates the claim. For QUANTITATIVE claims the specific number/value must appear in the evidence (literal match or trivial unit conversion). "completely absent" does NOT verify "shifted by 180°"; a different number does not verify this number. A cited-abstract [A#] match ("we performed more than 175 edits…" in the abstract of the paper cited for "over 175 edits") IS literal corroboration.
+- CONTRADICTED — evidence directly refutes the claim. HARD RULE: when the claim asserts a positive finding, a specific value, or the existence of something, while the evidence explicitly reports its ABSENCE (phrases like "completely absent", "no … has been reported", "remains unresolved/unknown"), the verdict is CONTRADICTED even when other parts of the sentence match the evidence. This applies to [A#] too: the sentence says "X, [n]" while [A#] (the abstract of [n]) reports the opposite — that is a misreported citation, CONTRADICTED.
 - UNVERIFIABLE — the evidence is topical but silent on the claim, or off-topic. Absence of corroboration is NOT contradiction. Do not guess.
 - COMPOSITE SENTENCES: adjudicate the WHOLE sentence by its weakest factual component. One contradicted component ⇒ CONTRADICTED. A merely-unfound component ⇒ UNVERIFIABLE.
 - ATTRIBUTION claims ("X et al. demonstrated …"): check whether the evidence attributes that work/finding to that group. Wrong group ⇒ CONTRADICTED with reason "attribution error".
@@ -295,7 +311,8 @@ async function arbitrate(
   projectId: string,
   claim: FactCheckClaim,
   evidence: WebSearchItem[],
-  citedRefs: RefMeta[]
+  citedRefs: RefMeta[],
+  abstracts: RefAbstractEvidence[] = []
 ): Promise<FactCheckFinding> {
   const evidenceBlock =
     evidence.length > 0
@@ -306,7 +323,17 @@ async function arbitrate(
               `[E${i + 1}] ${String(e.name || "").slice(0, 120)} — ${String(e.snippet || "").slice(0, 260)} (${e.host_name || e.url || ""})`,
           )
           .join("\n")
-      : "(search returned no results)";
+      : "(no web evidence provided)";
+
+  const abstractBlock =
+    abstracts.length > 0
+      ? abstracts
+          .map(
+            (a, i) =>
+              `[A${i + 1}] ABSTRACT OF CITED SOURCE [${a.num}] "${a.title.slice(0, 140)}" (the paper this sentence cites):\n${a.abstract.slice(0, 1800)}`,
+          )
+          .join("\n\n")
+      : "";
 
   const citedBlock =
     citedRefs.length > 0
@@ -321,6 +348,8 @@ ${citedRefs.length > 0 ? `SENTENCE CITES: [${claim.citedNums.join(", ")}]` : "UN
 
 CITED SOURCES OF THIS SENTENCE (the article's own references):
 ${citedBlock}
+${abstractBlock ? `\nCITED SOURCE ABSTRACTS (what the cited papers themselves report — authoritative for whether the citation supports the claim):
+${abstractBlock}` : ""}
 
 WEB SEARCH RESULTS (external evidence):
 ${evidenceBlock}
@@ -362,26 +391,56 @@ Adjudicate CHECK ${claim.id}. Respond as STRICT JSON:
   };
 }
 
+/** Abstracts available for a claim's cited numbers (round-61 P0-A). */
+function abstractsForClaim(
+  claim: FactCheckClaim,
+  refAbstracts?: Map<number, { title: string; abstract: string }>
+): RefAbstractEvidence[] {
+  if (!refAbstracts || refAbstracts.size === 0) return [];
+  const out: RefAbstractEvidence[] = [];
+  for (const n of claim.citedNums) {
+    const a = refAbstracts.get(n);
+    if (a && a.abstract && a.abstract.length > 80) {
+      out.push({ num: n, title: a.title, abstract: a.abstract });
+    }
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ *
  * 4. Public entry point
  * ------------------------------------------------------------------ */
 
 /**
- * Fact-check an article: extract high-risk claims, web-search each, let an
- * LLM arbiter adjudicate against the evidence. Best-effort — failures
- * degrade to `ran: false` or per-claim ERROR verdicts, never throw.
+ * Fact-check an article. Evidence chain per claim (round-61 P0-A):
+ *   1. If the sentence cites [n] and the abstract of [n] is available
+ *      (opts.refAbstracts), arbitrate against THE CITED SOURCE'S OWN
+ *      ABSTRACT first — zero web-search cost, and the authoritative check
+ *      for "does the citation faithfully report its source" (the 175-edits
+ *      class: the claim is true and the abstract proves it). A decisive
+ *      VERIFIED/CONTRADICTED ends the check.
+ *   2. Otherwise (or when the abstract is silent), fall back to a web
+ *      search and arbitrate against web results (+ any abstract evidence).
+ * Best-effort — failures degrade to `ran: false` or per-claim ERROR
+ * verdicts, never throw.
  *
  * @param projectId  for the LLM session (rate limiting + context)
  * @param content    the FULL article markdown (references section included;
  *                   it is stripped internally and parsed for cited-ref
  *                   metadata)
- * @param opts.maxClaims  budget cap (default 8, hard cap 12)
- * @param opts.topic      research topic, improves search recall
+ * @param opts.maxClaims     budget cap (default 8, hard cap 12)
+ * @param opts.topic         research topic, improves search recall
+ * @param opts.refAbstracts  citation number → { title, abstract } for the
+ *                   article's own references (DB pool or in-memory globalRefs)
  */
+function summary0(findings: FactCheckFinding[], verdict: FactVerdict): number {
+  return findings.filter((f) => f.verdict === verdict).length;
+}
+
 export async function factCheckArticle(
   projectId: string,
   content: string,
-  opts: { maxClaims?: number; topic?: string } = {}
+  opts: { maxClaims?: number; topic?: string; refAbstracts?: Map<number, { title: string; abstract: string }> } = {}
 ): Promise<FactCheckReport> {
   const maxClaims = Math.min(Math.max(opts.maxClaims ?? 8, 1), 12);
   const { body, referencesText } = splitBodyAndReferences(content);
@@ -400,18 +459,35 @@ export async function factCheckArticle(
   }
 
   const findings: FactCheckFinding[] = [];
-  let searchSuccesses = 0;
+  let searchSuccesses = 0; // telemetry: how many claims needed the web fallback
 
   for (const claim of claims) {
-    // Search (sequential — web search shares external quota; a burst of 8
-    // concurrent searches is a 429 storm).
+    const citedRefs = claim.citedNums
+      .map((n) => refsByNumber.get(n))
+      .filter(Boolean) as RefMeta[];
+    const abstracts = abstractsForClaim(claim, opts.refAbstracts);
+
+    // ---- Pass 1 (round-61 P0-A): cited-abstract arbitration, no web search.
+    if (abstracts.length > 0) {
+      try {
+        const finding = await arbitrate(projectId, claim, [], citedRefs, abstracts);
+        if (finding.verdict === "VERIFIED" || finding.verdict === "CONTRADICTED") {
+          finding.evidenceSource = "cited-abstract";
+          findings.push(finding);
+          continue; // decisive — the web search quota stays untouched
+        }
+        // UNVERIFIABLE from the abstract alone → escalate to web evidence.
+      } catch {
+        // arbitration failure → fall through to the web path
+      }
+    }
+
+    // ---- Pass 2: web search (sequential — external quota courtesy).
     const evidence = await searchForClaim(claim);
     if (evidence.length > 0) searchSuccesses++;
-    if (evidence.length === 0) {
-      // No evidence to arbitrate against — could be tool failure or a
-      // genuinely empty result set. If the tool is alive (other claims got
-      // results) mark UNVERIFIABLE via the arbiter with empty evidence;
-      // cheap path: record ERROR and move on — the summary distinguishes.
+    if (evidence.length === 0 && abstracts.length === 0) {
+      // No evidence of any kind to arbitrate against — could be tool failure
+      // or a genuinely empty result set. Record ERROR and move on.
       findings.push({
         claimId: claim.id,
         category: claim.category,
@@ -426,10 +502,14 @@ export async function factCheckArticle(
       continue;
     }
     try {
-      const citedRefs = claim.citedNums
-        .map((n) => refsByNumber.get(n))
-        .filter(Boolean) as RefMeta[];
-      findings.push(await arbitrate(projectId, claim, evidence, citedRefs));
+      const finding = await arbitrate(projectId, claim, evidence, citedRefs, abstracts);
+      finding.evidenceSource =
+        abstracts.length > 0 && evidence.length > 0
+          ? "cited-abstract+web"
+          : evidence.length > 0
+            ? "web"
+            : "cited-abstract";
+      findings.push(finding);
     } catch {
       findings.push({
         claimId: claim.id,
@@ -447,12 +527,22 @@ export async function factCheckArticle(
     await new Promise((r) => setTimeout(r, 250));
   }
 
-  // Wholesale failure: every search came back empty ⇒ the tool layer is
-  // down or rate-limited to death — report ran:false so the caller falls
-  // back to the pre-fact-check review behavior instead of presenting a
-  // wall of ERRORs as if the article were uncheckable.
-  if (searchSuccesses === 0) {
+  // Wholesale failure: nothing resolved at all (no abstract verdicts, no
+  // successful searches, every finding ERROR) ⇒ the tool layer is down or
+  // rate-limited to death — report ran:false so the caller falls back to
+  // the pre-fact-check review behavior instead of presenting a wall of
+  // ERRORs as if the article were uncheckable.
+  const resolved = findings.filter((f) => f.verdict !== "ERROR").length;
+  if (resolved === 0) {
     return { ...empty, claims };
+  }
+  // Telemetry: how many claims were settled by their own cited abstracts
+  // (round-61 P0-A — these cost zero web-search quota).
+  const abstractSettled = findings.filter((f) => f.evidenceSource === "cited-abstract").length;
+  if (abstractSettled > 0 || searchSuccesses > 0) {
+    console.log(
+      `[fact-check] claims=${claims.length} abstractSettled=${abstractSettled} webSearched=${searchSuccesses} v=${summary0(findings, "VERIFIED")} c=${summary0(findings, "CONTRADICTED")} u=${summary0(findings, "UNVERIFIABLE")} e=${summary0(findings, "ERROR")}`,
+    );
   }
 
   const summary = {

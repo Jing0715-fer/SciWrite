@@ -14,6 +14,46 @@ import {
   reviseArticleCore,
   type RevisionFeedback,
 } from "@/lib/review-engine";
+import { splitBodyAndReferences } from "@/lib/citation-audit";
+import { parseReferenceBlock } from "@/lib/fact-check";
+
+/**
+ * round-61 (P0-A): abstracts of the article's own references, keyed by the
+ * article's citation numbers. The article's "## References" lines carry
+ * title/authors/year but NOT abstracts — join them against the project's
+ * Reference rows by normalized title so the fact-check layer can corroborate
+ * cited claims against the cited source's own abstract before (or instead
+ * of) a web search. Best-effort: an empty map just means web-only checking.
+ */
+async function loadArticleRefAbstracts(
+  projectId: string,
+  content: string
+): Promise<Map<number, { title: string; abstract: string }>> {
+  const map = new Map<number, { title: string; abstract: string }>();
+  try {
+    const { referencesText } = splitBodyAndReferences(content);
+    if (!referencesText || !referencesText.trim()) return map;
+    const refsByNumber = parseReferenceBlock(referencesText);
+    if (refsByNumber.size === 0) return map;
+    const dbRefs = await db.reference.findMany({
+      where: { projectId },
+      select: { title: true, abstract: true },
+    });
+    const normKey = (s: string) =>
+      (s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const byTitle = new Map<string, string>();
+    for (const r of dbRefs) {
+      if (r.abstract && r.abstract.length > 80 && r.title) {
+        byTitle.set(normKey(r.title), r.abstract);
+      }
+    }
+    for (const [n, meta] of refsByNumber) {
+      const abs = byTitle.get(normKey(meta.title));
+      if (abs) map.set(n, { title: meta.title, abstract: abs });
+    }
+  } catch {}
+  return map;
+}
 
 export const runtime = "nodejs";
 // round-57: was 180s — the fact-check layer adds up to ~12 searches + ~12
@@ -94,10 +134,14 @@ async function runReview(article: any) {
     topic = project?.topic || "";
   } catch {}
 
+  // round-61 (P0-A): the abstracts of the article's own references —
+  // cited claims are first checked against the cited source's abstract.
+  const refAbstracts = await loadArticleRefAbstracts(article.projectId, article.content);
+
   const core = await reviewArticleCore(
     article.projectId,
     { title: article.title, abstract: article.abstract, content: article.content },
-    { topic, maxClaims: 8 },
+    { topic, maxClaims: 8, refAbstracts },
   );
 
   if (core.factReport?.ran && core.factReport.findings.length > 0) {

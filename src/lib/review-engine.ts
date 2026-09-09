@@ -105,16 +105,28 @@ export interface Actionability {
 
 /**
  * Run the full review stack on an article WITHOUT touching the database:
- * external fact-check (web-searched adjudication of high-risk claims) →
- * structured LLM peer review → force-merge the fact findings into the
- * weaknesses. Mirrors the review route's runReview exactly (same prompts,
- * same merge logic) so persisted reviews are indistinguishable whether they
- * came from the endpoint or the pipeline loop.
+ * external fact-check (cited-abstract-first, then web-searched, adjudication
+ * of high-risk claims) → structured LLM peer review → force-merge the fact
+ * findings into the weaknesses. Mirrors the review route's runReview
+ * exactly (same prompts, same merge logic) so persisted reviews are
+ * indistinguishable whether they came from the endpoint or the pipeline loop.
+ *
+ * round-61 (P0-A): opts.refAbstracts supplies the abstracts of the article's
+ * own references — the fact-check layer then corroborates cited claims
+ * against the cited source's own abstract BEFORE burning web-search quota
+ * (eliminates the false-positive UNVERIFIABLE class seen in the round-60
+ * production, where 6/6 flagged claims were actually faithful paraphrases
+ * of their cited abstracts).
  */
 export async function reviewArticleCore(
   projectId: string,
   article: ReviewCoreInput,
-  opts: { topic?: string; maxClaims?: number } = {}
+  opts: {
+    topic?: string;
+    maxClaims?: number;
+    /** citation number → abstract of that reference (the article's own pool) */
+    refAbstracts?: Map<number, { title: string; abstract: string }>;
+  } = {}
 ): Promise<ReviewCoreResult> {
   // ---- external fact-check (best-effort, never throws) ----
   let factBlock = "";
@@ -124,6 +136,7 @@ export async function reviewArticleCore(
     const report = await factCheckArticle(projectId, article.content, {
       maxClaims: opts.maxClaims ?? 8,
       topic: opts.topic || "",
+      ...(opts.refAbstracts ? { refAbstracts: opts.refAbstracts } : {}),
     });
     if (report.ran && report.findings.length > 0) {
       factBlock = factFindingsPromptBlock(report.findings);
@@ -307,13 +320,33 @@ export async function reviseArticleCore(
   article: { title: string; content: string },
   feedback: RevisionFeedback,
   mode: "surgical" | "full" = "full",
-  opts: { maxTokens?: number } = {}
+  opts: { maxTokens?: number; retryFeedback?: string } = {}
 ): Promise<string> {
   const feedbackBlock = buildFeedbackBlock(feedback);
 
   let system: string;
   let prompt: string;
   if (mode === "surgical") {
+    // round-61 (P0-B): STRUCTURAL CONTRACT — derive the exact section
+    // headings from the input and pin them in the prompt. The round-60
+    // production showed an LLM "surgical" revision merging 9 sections into
+    // 7 (guard caught it, but the revision budget was wasted). The contract
+    // makes the constraint explicit instead of implicit.
+    const contractTitles: string[] = [];
+    {
+      const split = splitBodyAndReferences(article.content);
+      const headingRe = /^##\s+(.+)$/gm;
+      let hm: RegExpExecArray | null;
+      while ((hm = headingRe.exec(split.body)) !== null) contractTitles.push(hm[1].trim());
+    }
+    const structuralContract =
+      contractTitles.length > 0
+        ? `\nSTRUCTURAL CONTRACT (NON-NEGOTIABLE — any violation rejects your revision):\nThe article has EXACTLY ${contractTitles.length} "## " section headings. Your output must contain EXACTLY ${contractTitles.length} "## " headings, in this exact order, with this exact wording:\n${contractTitles.map((t, i) => `${i + 1}. ## ${t}`).join("\n")}\nDo NOT merge, split, add, remove, reword, or reorder sections. Edit section CONTENTS only.\n`
+        : "";
+    const retryBlock =
+      opts.retryFeedback
+        ? `\n⚠ YOUR PREVIOUS REVISION ATTEMPT WAS REJECTED by the mechanical guard for these exact violations:\n${opts.retryFeedback}\nFix ONLY these structural violations and produce the full revised article again.\n`
+        : "";
     system =
       "You are a meticulous scientific editor who repairs review articles before publication. " +
       "You make the MINIMAL set of precise edits that resolve verified factual problems and " +
@@ -324,9 +357,9 @@ CURRENT ARTICLE (markdown):
 ${article.content}
 
 ${feedbackBlock}
-
+${structuralContract}${retryBlock}
 REVISION RULES (STRICT — violating any of these rejects your revision):
-1. FACT-CHECK entries in the weaknesses describe claims that were externally verified against independent web evidence:
+1. FACT-CHECK entries in the weaknesses describe claims that were externally verified against independent evidence:
    - "CONTRADICTED" → the claim conflicts with independent evidence. Remove the claim, or rewrite it to say only what the evidence supports. If two cited sources genuinely conflict, either remove the statement or explicitly acknowledge the discrepancy.
    - "UNVERIFIABLE" → no independent evidence was found. Soften the sentence with attribution or hedging ("has been reported to", "one study suggested", "according to [n]") or remove it if it is load-bearing. Never leave it as an unqualified definitive assertion.
    - Claims the fact-check marked VERIFIED must NOT be altered.
@@ -334,7 +367,7 @@ REVISION RULES (STRICT — violating any of these rejects your revision):
 3. Do NOT add new facts, numbers, or claims that are not already in the article.
 4. Preserve every inline citation marker [n] EXACTLY as-is (same numbers, attached to the same statements they currently support).
 5. Keep the "## References" list at the end EXACTLY as-is (same entries, same order, same numbering).
-6. Keep every "## " section heading text EXACTLY as-is.
+6. Keep every "## " section heading text EXACTLY as-is (see the STRUCTURAL CONTRACT above).
 7. Address the remaining (non-fact-check) reviewer weaknesses ONLY where they concern factual accuracy, citation usage, or unsupported statements — ignore stylistic preferences.
 
 Output the complete revised article in Markdown. Do NOT add commentary — output only the revised article.`;
@@ -364,6 +397,157 @@ Output the revised article in Markdown. Do NOT add commentary — output only th
     metadata: { mode: `revise-${mode}`, round: feedback.round },
   });
   return stripRevisionWrappers(revised);
+}
+
+/* ------------------------------------------------------------------ *
+ * 3b. Section-scoped revision (round-61 P1)
+ * ------------------------------------------------------------------ */
+
+export interface ScopedRevisionResult {
+  ok: boolean;
+  /** the reassembled full article (body + references) — null when !ok */
+  content: string | null;
+  /** 0-based indices of sections that were revised */
+  revisedSections: number[];
+  /** per-section finding counts (diagnostics) */
+  findingsPerSection: Record<number, number>;
+  reason?: string;
+}
+
+const normText = (s: string) =>
+  (s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/**
+ * SECTION-SCOPED surgical revision (round-61 P1): instead of rewriting the
+ * whole article (which the round-60 production showed collapses the section
+ * structure 9→7), locate ONLY the sections containing flagged claims / named
+ * suggestions, revise each section's content in an isolated LLM call, and
+ * reassemble with every heading and the reference block byte-preserved.
+ * Structurally safe by construction — headings never enter an LLM prompt as
+ * rewritable material.
+ *
+ * Falls back (ok:false) when nothing locates into a section, so the caller
+ * can drop to the whole-article surgical mode.
+ */
+export async function reviseArticleScoped(
+  projectId: string,
+  article: { title: string; content: string },
+  feedback: RevisionFeedback,
+  hardFindings: FactCheckFinding[] = []
+): Promise<ScopedRevisionResult> {
+  const split = splitBodyAndReferences(article.content);
+  const sec = splitBodySections(split.body);
+  if (!sec || sec.headings.length === 0) {
+    return { ok: false, content: null, revisedSections: [], findingsPerSection: {}, reason: "no sections found" };
+  }
+
+  // 1. Locate hard findings (sentence containment, first 60 normalized chars).
+  const affected = new Map<number, string[]>();
+  for (const f of hardFindings) {
+    const key = normText(f.sentence).slice(0, 60);
+    if (!key) continue;
+    let matched = -1;
+    for (let i = 0; i < sec.contents.length; i++) {
+      if (normText(sec.contents[i]).includes(key)) { matched = i; break; }
+    }
+    if (matched < 0) continue;
+    const line = `FACT-CHECK ${f.verdict} (${f.category}): "${f.sentence.slice(0, 300)}" — ${f.reason || "no reason given"}${f.evidenceQuote ? ` | evidence: "${f.evidenceQuote.slice(0, 160)}"` : ""}`;
+    if (!affected.has(matched)) affected.set(matched, []);
+    affected.get(matched)!.push(line);
+  }
+
+  // 2. Locate reviewer suggestions by section-title matching (only factual /
+  // citation-flavored ones — the surgical contract ignores pure style).
+  for (const s of feedback.suggestions || []) {
+    const target = String(s?.section || "").trim().toLowerCase();
+    const issue = String(s?.issue || "").trim();
+    const fix = String(s?.fix || "").trim();
+    if (!target || (!issue && !fix)) continue;
+    const idx = sec.headings.findIndex(
+      (h) => h.toLowerCase().includes(target) || target.includes(h.toLowerCase().slice(0, 30))
+    );
+    if (idx < 0) continue;
+    const line = `REVIEWER SUGGESTION for this section: issue — ${issue} → fix — ${fix}`;
+    if (!affected.has(idx)) affected.set(idx, []);
+    affected.get(idx)!.push(line);
+  }
+
+  if (affected.size === 0) {
+    return { ok: false, content: null, revisedSections: [], findingsPerSection: {}, reason: "no findings located in any section" };
+  }
+
+  // Cap: at most 5 sections per round (budget + focus).
+  const sectionIdxs = [...affected.keys()].sort((a, b) => a - b).slice(0, 5);
+  const revisedContents = [...sec.contents];
+  const revisedDone: number[] = [];
+  const findingsPerSection: Record<number, number> = {};
+
+  const scoresLine = (() => {
+    const s = feedback.scores || {};
+    return `verdict=${feedback.verdict}, overall=${s.overall ?? "?"}/10, citations=${s.citations ?? "?"}/10`;
+  })();
+
+  for (const idx of sectionIdxs) {
+    const findingsBlock = affected.get(idx)!.join("\n");
+    findingsPerSection[idx] = affected.get(idx)!.length;
+    const system =
+      "You are a meticulous scientific editor who repairs ONE section of a review article. " +
+      "You make the MINIMAL set of precise edits that resolve the verified factual problems " +
+      "listed for this section. You never invent new facts, never add citations, and never " +
+      "touch anything outside this section.";
+    const prompt = `ARTICLE TITLE: ${article.title}
+SECTION HEADING (context only — do NOT output it): "## ${sec.headings[idx]}"
+REVIEW CONTEXT (whole article): ${scoresLine}
+
+CURRENT SECTION TEXT (revise ONLY this):
+${sec.contents[idx]}
+
+FINDINGS TO RESOLVE IN THIS SECTION:
+${findingsBlock}
+
+REVISION RULES (STRICT — violating any of these rejects your revision):
+1. FACT-CHECK entries:
+   - "CONTRADICTED" → the claim conflicts with evidence. Remove the claim, or rewrite it to say only what the evidence supports. If two cited sources genuinely conflict, either remove the statement or explicitly acknowledge the discrepancy.
+   - "UNVERIFIABLE" (unhedged) → soften the sentence with attribution or hedging ("has been reported to", "one study suggested", "according to [n]") or remove it if it is load-bearing. Never leave it as an unqualified definitive assertion.
+   - Claims the fact-check marked VERIFIED must NOT be altered.
+2. MINIMAL edits — every paragraph without a finding stays byte-identical. Do not polish style.
+3. Do NOT add new facts, numbers, or claims that are not already in this section.
+4. Inline citation markers [n] stay attached to the same statements; remove a marker ONLY together with removing its flagged claim.
+5. Output ONLY the revised section body text — no heading, no commentary, no markdown fences, no "here is" preamble.
+
+Output the revised section text now.`;
+
+    try {
+      const raw = await chatWithSession(projectId, prompt, {
+        system,
+        temperature: 0.3,
+        taskType: "revise",
+        maxTokens: 8192,
+        metadata: { mode: "revise-scoped", round: feedback.round, section: idx + 1 },
+      });
+      let revised = stripRevisionWrappers(raw);
+      // Strip a leading "## heading" echo if the model added one.
+      revised = revised.replace(/^##\s+[^\n]*\n+/, "").trim();
+      if (revised.length < 40) continue; // degenerate output — keep original
+      revisedContents[idx] = revised;
+      revisedDone.push(idx);
+    } catch {
+      // one failed section does not sink the round — its content stays as-is
+    }
+  }
+
+  if (revisedDone.length === 0) {
+    return { ok: false, content: null, revisedSections: [], findingsPerSection: {}, reason: "all section revisions failed or degenerated" };
+  }
+
+  // 3. Reassemble — headings and references byte-preserved.
+  let out = "";
+  for (let i = 0; i < sec.headings.length; i++) {
+    out += `## ${sec.headings[i]}\n\n${revisedContents[i]}`;
+    if (i < sec.headings.length - 1) out += "\n\n";
+  }
+  const content = out.trimEnd() + "\n\n" + split.referencesText.trim();
+  return { ok: true, content, revisedSections: revisedDone, findingsPerSection };
 }
 
 /* ------------------------------------------------------------------ *

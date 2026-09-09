@@ -50,7 +50,7 @@ const body = refMatch ? article.content.slice(0, refMatch.index) : article.conte
 const cited = citedNums(body);
 const refCount = refLines.length;
 const oor = [...cited].filter((n) => n < 1 || n > refCount);
-const orphans = [];
+const orphans: number[] = [];
 for (let i = 1; i <= refCount; i++) if (!cited.has(i)) orphans.push(i);
 const words = body.split(/\s+/).filter(Boolean).length;
 console.log(`body words: ${words} | refs: ${refCount} | distinct cited: ${cited.size}`);

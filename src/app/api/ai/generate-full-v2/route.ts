@@ -64,6 +64,7 @@ import {
   restoreOriginalHeadings,
   revisionGuard,
   reviseArticleCore,
+  reviseArticleScoped,
   reviewArticleCore,
   splitBodySections,
 } from "@/lib/review-engine";
@@ -317,6 +318,183 @@ export async function POST(req: NextRequest) {
         });
         log(`init: language=${requestedLanguage}, bothMode=${isBothMode}, targetWords=${targetWords}`);
 
+        // ============ round-61 (P2): RESUME an interrupted run ============
+        // If the latest checkpoint set for this project matches the CURRENT
+        // topic, the in-memory pipeline state (citation pool / plan /
+        // completed sections) is restored and gather→allocate are skipped —
+        // a provider outage mid-run no longer restarts from zero. Checkpoints
+        // are deleted on successful completion and purged when the topic
+        // changes, so a "resumable" state never leaks into a different article.
+        let curatedRefs: any[] = [];
+        let fullTexts: Map<string, string> = new Map();
+        let sections: any[] = [];
+        let allocations: any[] = [];
+        let previousSectionsDigest = "";
+        const sectionsCheckpointData: { title: string; content: string; refs: any[] }[] = [];
+        // round-61: hoisted from STEP 1 (fresh-run scope) — the complete-event
+        // stats read .length even on a resumed run.
+        const savedDataSources: any[] = [];
+        const savedReferences: any[] = [];
+        let resume: {
+          runId: string;
+          pool: { curatedRefs: any[]; fullTexts: [string, string][]; sections: any[]; allocations: any[] };
+          sectionsDone: { title: string; content: string; refs: any[] }[] | null;
+        } | null = null;
+        try {
+          const latestCp = await db.pipelineCheckpoint.findFirst({
+            where: { projectId },
+            orderBy: { updatedAt: "desc" },
+          });
+          if (
+            latestCp &&
+            (latestCp.topic || "").trim().toLowerCase() === project.topic.trim().toLowerCase()
+          ) {
+            const poolCp = await db.pipelineCheckpoint.findUnique({
+              where: { runId_stage: { runId: latestCp.runId, stage: "pool" } },
+            });
+            if (poolCp) {
+              const pool = JSON.parse(poolCp.payload);
+              let sectionsDone: any[] | null = null;
+              const secCp = await db.pipelineCheckpoint.findUnique({
+                where: { runId_stage: { runId: latestCp.runId, stage: "sections" } },
+              });
+              if (secCp) {
+                const parsed = JSON.parse(secCp.payload);
+                if (Array.isArray(parsed) && parsed.length > 0) sectionsDone = parsed;
+              }
+              resume = { runId: latestCp.runId, pool, sectionsDone };
+            }
+          }
+        } catch (resumeErr: any) {
+          log(`resume: checkpoint load failed — fresh run: ${String(resumeErr?.message ?? resumeErr).slice(0, 120)}`);
+        }
+        const activeRunId = resume?.runId || crypto.randomUUID();
+
+        if (resume) {
+          // ---- RESTORE PATH: rebuild the in-memory state + DB paragraphs ----
+          send("step", {
+            step: "gather",
+            status: "skipped",
+            resumed: true,
+            message:
+              `Resuming the interrupted run — the citation pool and plan are restored from the last checkpoint` +
+              `${resume.sectionsDone ? `, plus ${resume.sectionsDone.length} completed section(s)` : ""}. Gather → allocate skipped.`,
+          });
+          log(
+            `resume: run ${activeRunId.slice(0, 8)} — pool=${resume.pool.curatedRefs.length} refs, ${resume.pool.sections.length} sections planned, ${resume.sectionsDone?.length ?? 0} section(s) done`,
+          );
+
+          await clearSession(projectId);
+
+          // Snapshot for THIS resumed run's rollback hygiene (same shape as
+          // STEP 1's fresh-run snapshot).
+          snapshot = {
+            paragraphs: await db.paragraph.findMany({
+              where: { projectId },
+              include: { references: true, annotations: true },
+            }),
+            dataSources: await db.dataSource.findMany({ where: { projectId } }),
+            articleParagraphs: await db.articleParagraph.findMany({
+              where: { paragraph: { projectId } },
+            }),
+          };
+          hadPriorWork = snapshot.paragraphs.length > 0 || snapshot.dataSources.length > 0;
+
+          // The checkpoint is the AUTHORITATIVE state for sections — clear
+          // whatever partial paragraphs exist (a failed run may have KEPT
+          // its partial work) and re-create them from the checkpoint so the
+          // compose stage and the workspace stay consistent. Data sources
+          // are NOT cleared: they are real gathered data, only cosmetic here.
+          await db.$transaction([
+            db.annotation.deleteMany({ where: { paragraph: { projectId } } }),
+            db.articleParagraph.deleteMany({ where: { paragraph: { projectId } } }),
+            db.paragraph.deleteMany({ where: { projectId } }),
+            db.reference.deleteMany({ where: { projectId } }),
+          ]);
+
+          // (gather stats: the gather itself ran in the interrupted run —
+          // count what it left in the DB so the completion stats stay honest)
+          try {
+            savedDataSources.push(
+              ...(await db.dataSource.findMany({ where: { projectId }, select: { id: true } })),
+            );
+            savedReferences.push(
+              ...(await db.reference.findMany({ where: { projectId }, select: { id: true } })),
+            );
+          } catch {}
+
+          if (resume.sectionsDone) {
+            for (let i = 0; i < resume.sectionsDone.length; i++) {
+              const sd = resume.sectionsDone[i];
+              const paragraph = await db.$transaction(async (tx) => {
+                const p = await tx.paragraph.create({
+                  data: {
+                    projectId,
+                    title: sd.title,
+                    content: sd.content,
+                    format: inferFormat(sd.title, i, resume!.pool.sections.length),
+                    scenario: "literature-review",
+                    status: "draft",
+                    order: i,
+                    wordCount: countWords(sd.content),
+                  },
+                });
+                if (sd.refs?.length > 0) {
+                  await tx.reference.createMany({
+                    data: sd.refs.map((ref: any, idx: number) => ({
+                      type: ref.type || "pubmed",
+                      externalId: ref.externalId,
+                      title: ref.title,
+                      authors: ref.authors,
+                      journal: ref.journal,
+                      year: ref.year,
+                      url: ref.url,
+                      doi: ref.doi,
+                      abstract: ref.abstract,
+                      projectId,
+                      paragraphId: p.id,
+                      citationOrder: idx,
+                    })),
+                  });
+                }
+                return p;
+              });
+              generatedParagraphs.push({
+                id: paragraph.id,
+                title: sd.title,
+                wordCount: paragraph.wordCount,
+              });
+              sectionsCheckpointData.push({ title: sd.title, content: sd.content, refs: sd.refs || [] });
+            }
+            // Rebuild the continuity digest with the same mechanical logic
+            // the generate loop uses (claim-level, last 24 lines).
+            for (let i = 0; i < resume.sectionsDone.length; i++) {
+              const sd = resume.sectionsDone[i];
+              const claimSentences = sd.content
+                .split(/(?<=[.!?])\s+/)
+                .filter((s: string) => /\[\d/.test(s))
+                .slice(0, 6)
+                .map((s: string) => s.replace(/\s+/g, " ").replace(/^[-•*]\s*/, "").slice(0, 150));
+              const digestEntry =
+                `§${i + 1} "${sd.title}" established:\n` +
+                (claimSentences.length > 0
+                  ? claimSentences.map((s: string) => `- ${s}`).join("\n")
+                  : `- (opening: ${sd.content.slice(0, 140).replace(/\n+/g, " ")}...)`);
+              previousSectionsDigest = (previousSectionsDigest + "\n" + digestEntry)
+                .split("\n")
+                .filter(Boolean)
+                .slice(-24)
+                .join("\n");
+            }
+          }
+        } else {
+          // Fresh run: purge stale checkpoints from older interrupted runs.
+          try {
+            await db.pipelineCheckpoint.deleteMany({ where: { projectId } });
+          } catch {}
+        }
+
+        if (!resume) {
         // ============ STEP 1: FORCE re-gather data sources ============
         send("step", {
           step: "gather",
@@ -541,8 +719,9 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           return score(b) - score(a);
         });
 
-        const savedDataSources: any[] = [];
-        const savedReferences: any[] = [];
+        // (savedDataSources / savedReferences are declared in the round-61
+        // hoisted block above — populated here during gather, or from the DB
+        // on resume — the complete-event stats read .length in both cases.)
         let skippedTitleless = 0;
         for (const item of uniqueItems) {
           // round-51 junk guard: an item with no real title (missing, or just
@@ -830,7 +1009,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
             onProgress: (m) => send("step", { step: "curate", status: "progress", message: m }),
           }
         );
-        let curatedRefs = smart.refs;
+        curatedRefs = smart.refs;
         let curatedScores = smart.scores;
         stats.citationPlanned = smart.plannedCount;
         stats.citationLLMDriven = smart.llmDriven;
@@ -889,7 +1068,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           status: "progress",
           message: `Fetching full texts for the highest-priority sources (enables deeper discussion)...`,
         });
-        const fullTexts = await fetchFullTextsForRefs(curatedRefs, fullTextProfiles, {
+        fullTexts = await fetchFullTextsForRefs(curatedRefs, fullTextProfiles, {
           maxCount: 8,
           maxChars: 15000,
           onProgress: (m, extra) => send("step", { step: "curate", status: "progress", message: m, ...extra }),
@@ -954,7 +1133,7 @@ Output JSON only.`;
           metadata: { step: "plan", targetWords },
         });
         const planParsed = safeParseJSON(planRaw, { sections: [] });
-        let sections: any[] = (planParsed.sections || []).filter((s: any) => s.title && s.targetWords);
+        sections = (planParsed.sections || []).filter((s: any) => s.title && s.targetWords);
 
         if (sections.length === 0) {
           const fallbackCount = Math.max(5, Math.ceil(targetWords / 300));
@@ -1153,7 +1332,7 @@ Output JSON only.`;
           Array.isArray(s.refIndices) ? s.refIndices : []
         );
         const hasPreallocation = preallocatedRefs.some((a) => a.length > 0);
-        const allocations = await allocateEvidenceToSections(
+        allocations = await allocateEvidenceToSections(
           projectId,
           sections,
           curatedRefs as EvidenceRefInput[],
@@ -1174,6 +1353,40 @@ Output JSON only.`;
           detail: allocations.map((a, i) => `§${i + 1}: ${a.refIndices.length} refs, ${a.evidence.length} claims (${a.rationale})`).join("\n"),
         });
         log(`allocate: ${JSON.stringify(allocations.map(a => a.refIndices.length))}${hasPreallocation ? " (plan-preallocated)" : ""}`);
+        } // end fresh-run phase block (round-61 resume wrap)
+
+        // round-61 (P2): pool checkpoint — everything the generate loop needs,
+        // serialized after allocate. Written only on fresh runs (a resumed
+        // run already has it). Best-effort: a checkpoint failure must never
+        // fail the run.
+        if (!resume) {
+          try {
+            await db.pipelineCheckpoint.upsert({
+              where: { runId_stage: { runId: activeRunId, stage: "pool" } },
+              create: {
+                projectId,
+                runId: activeRunId,
+                stage: "pool",
+                topic: project.topic,
+                payload: JSON.stringify({
+                  curatedRefs,
+                  fullTexts: [...fullTexts.entries()],
+                  sections,
+                  allocations,
+                }),
+              },
+              update: { payload: JSON.stringify({
+                curatedRefs,
+                fullTexts: [...fullTexts.entries()],
+                sections,
+                allocations,
+              }), updatedAt: new Date() },
+            });
+            log(`checkpoint: pool saved (${curatedRefs.length} refs, ${sections.length} sections, ${fullTexts.size} full texts)`);
+          } catch (cpErr: any) {
+            log(`checkpoint: pool save FAILED (run continues, resume unavailable): ${String(cpErr?.message ?? cpErr).slice(0, 100)}`);
+          }
+        }
 
         // ============ STEP 6: Generate sections with keyed citations ============
         send("step", {
@@ -1184,7 +1397,6 @@ Output JSON only.`;
 
         preFlightQuotaCheck("generate-full-v2:pre-flight");
 
-        let previousSectionsDigest = "";
         let abortedDueToRateLimit = false;
 
         for (let i = 0; i < sections.length; i++) {
@@ -1598,6 +1810,29 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             wordCount: paragraph.wordCount,
           });
 
+          // round-61 (P2): incremental section checkpoint — after EVERY
+          // saved section, so an interruption at §7 of 9 only re-runs §7-9.
+          sectionsCheckpointData.push({
+            title: section.title,
+            content: sectionContent,
+            refs: citedRefs,
+          });
+          try {
+            await db.pipelineCheckpoint.upsert({
+              where: { runId_stage: { runId: activeRunId, stage: "sections" } },
+              create: {
+                projectId,
+                runId: activeRunId,
+                stage: "sections",
+                topic: project.topic,
+                payload: JSON.stringify(sectionsCheckpointData),
+              },
+              update: { payload: JSON.stringify(sectionsCheckpointData), updatedAt: new Date() },
+            });
+          } catch {
+            // best-effort — a failed checkpoint write never fails the run
+          }
+
           // ★ round-15: claim-level digest. The old digest (first 160 chars)
           // carried style but not substance — the TMC regression repeated the
           // dimer/TMEM16 and cysteine-mutagenesis claims verbatim across three
@@ -1898,6 +2133,19 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           );
           let currentContent = articleContent;
           let revisionsDone = 0;
+          // round-61 (P0-A): abstracts of the article's own references, keyed
+          // by the CURRENT citation numbering (globalRefs order ↔ refList).
+          // Cited claims are fact-checked against the cited source's own
+          // abstract BEFORE any web search — the round-60 production flagged
+          // 6/6 faithful claims as UNVERIFIABLE purely because web search
+          // couldn't surface those papers' content while the abstracts sat
+          // in the pool the whole time.
+          let abstractMap = new Map<number, { title: string; abstract: string }>();
+          globalRefs.forEach((r: any, i: number) => {
+            if (r?.abstract && String(r.abstract).length > 80) {
+              abstractMap.set(i + 1, { title: String(r.title || ""), abstract: String(r.abstract) });
+            }
+          });
           for (let round = 1; round <= REPAIR_MAX_REVISIONS + 1; round++) {
             if (clientDisconnected) {
               repairTelemetry.stopReason = "client disconnected";
@@ -1906,7 +2154,7 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             const rc = await reviewArticleCore(
               projectId,
               { title: articleTitle, content: currentContent },
-              { topic: project.topic, maxClaims: 8 },
+              { topic: project.topic, maxClaims: 8, refAbstracts: abstractMap },
             );
             repairTelemetry.reviews++;
             repairTelemetry.finalVerdict = rc.parsed.verdict || "";
@@ -1949,35 +2197,94 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
               break;
             }
 
-            // Surgical revision against THIS round's findings.
-            const revised = await reviseArticleCore(
-              projectId,
-              { title: articleTitle, content: currentContent },
-              {
-                round,
-                verdict: rc.parsed.verdict || "major-revision",
-                summary: rc.parsed.summary || "",
-                scores: rc.parsed.scores,
-                strengths: rc.parsed.strengths || [],
-                weaknesses: rc.mergedWeaknesses,
-                suggestions: rc.parsed.suggestions || [],
-              },
-              "surgical",
-            );
+            // --- Produce a candidate revision against THIS round's findings ---
+            const feedback = {
+              round,
+              verdict: rc.parsed.verdict || "major-revision",
+              summary: rc.parsed.summary || "",
+              scores: rc.parsed.scores,
+              strengths: rc.parsed.strengths || [],
+              weaknesses: rc.mergedWeaknesses,
+              suggestions: rc.parsed.suggestions || [],
+            };
 
-            // Mechanical guard — an LLM revision that collapses the article,
-            // strips its citations, or restructures it is rejected and the
-            // pre-revision article stands.
-            const guard = revisionGuard(currentContent, revised);
-            if (!guard.ok) {
+            let candidate: string | null = null;
+            let candidateMode = "";
+
+            // round-61 (P1): SECTION-SCOPED revision first — only the sections
+            // containing flagged claims get an isolated LLM call; headings and
+            // the reference block are byte-preserved by construction. The
+            // round-60 production showed the whole-article "surgical" mode
+            // merging 9 sections into 7 — scoped mode is structurally immune.
+            if (act.hardFindings.length > 0 || (feedback.suggestions || []).length > 0) {
+              try {
+                const scoped = await reviseArticleScoped(
+                  projectId,
+                  { title: articleTitle, content: currentContent },
+                  feedback,
+                  act.hardFindings,
+                );
+                if (scoped.ok && scoped.content) {
+                  const scopedGuard = revisionGuard(currentContent, scoped.content);
+                  if (scopedGuard.ok) {
+                    candidate = scoped.content;
+                    candidateMode = `scoped (§${scoped.revisedSections.map((i) => i + 1).join(",")})`;
+                    roundEntry.scopedSections = scoped.revisedSections.map((i) => i + 1);
+                    log(
+                      `repair: round ${round} scoped revision ready — sections §${roundEntry.scopedSections.join(",")} (${Object.values(scoped.findingsPerSection).join("/")} findings each), guard ok`,
+                    );
+                  } else {
+                    roundEntry.guardRejected = scopedGuard.reasons;
+                    repairTelemetry.guardRejections++;
+                    log(`repair: round ${round} scoped revision REJECTED by guard: ${scopedGuard.reasons.join("; ")}`);
+                  }
+                } else {
+                  log(`repair: round ${round} scoped revision unavailable (${scoped.reason}) — whole-article fallback`);
+                }
+              } catch (scopedErr: any) {
+                log(`repair: round ${round} scoped revision failed: ${String(scopedErr?.message ?? scopedErr).slice(0, 100)} — whole-article fallback`);
+              }
+            }
+
+            // round-61 (P0-B): whole-article surgical with the STRUCTURAL
+            // CONTRACT pinned in the prompt + ONE feedback retry after a
+            // guard rejection (round-60 wasted the whole budget on a single
+            // structure-collapsing attempt followed by a hard break).
+            let lastRejectReasons: string[] = [];
+            for (let attempt = 1; candidate === null && attempt <= 2; attempt++) {
+              const surgical = await reviseArticleCore(
+                projectId,
+                { title: articleTitle, content: currentContent },
+                feedback,
+                "surgical",
+                attempt > 1 && lastRejectReasons.length > 0
+                  ? { retryFeedback: lastRejectReasons.join("; ") }
+                  : {},
+              );
+              const guard = revisionGuard(currentContent, surgical);
+              if (guard.ok) {
+                candidate = surgical;
+                candidateMode = attempt > 1 ? "surgical (retry)" : "surgical";
+                break;
+              }
+              lastRejectReasons = guard.reasons;
               roundEntry.guardRejected = guard.reasons;
               repairTelemetry.guardRejections++;
-              repairTelemetry.stopReason = "revision failed the mechanical guard";
-              log(`repair: round ${round} revision REJECTED by guard: ${guard.reasons.join("; ")}`);
+              log(`repair: round ${round} surgical attempt ${attempt} REJECTED by guard: ${guard.reasons.join("; ")}`);
               send("step", {
                 step: "repair",
                 status: "progress",
-                message: `Round ${round} revision rejected by mechanical guard (${guard.reasons[0]}) — keeping the pre-revision article.`,
+                round,
+                message: `Round ${round} revision attempt ${attempt} rejected by mechanical guard (${guard.reasons[0]})${attempt === 1 ? " — retrying with structural feedback..." : ""}`,
+              });
+            }
+
+            if (candidate === null) {
+              repairTelemetry.stopReason = "revision failed the mechanical guard (all attempts)";
+              send("step", {
+                step: "repair",
+                status: "progress",
+                message: `Round ${round}: every revision attempt failed the mechanical guard — keeping the pre-revision article.`,
               });
               break;
             }
@@ -1986,7 +2293,7 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             // renumber), then pin the ORIGINAL section headings — the ZH
             // compose stage builds its half from paragraph titles, so a
             // reworded EN heading would structurally diverge the halves.
-            const norm = renormalizeArticleCitations(revised);
+            const norm = renormalizeArticleCitations(candidate);
             const revSplit = splitBodyAndReferences(norm.content);
             const pinnedBody = restoreOriginalHeadings(revSplit.body, originalSectionTitles);
             if (!pinnedBody) {
@@ -2003,16 +2310,27 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             repairTelemetry.strippedNumbers += norm.strippedNumbers;
             stats.outOfRangeCitationsStripped += norm.strippedNumbers;
             roundEntry.revisedContent = currentContent;
+            roundEntry.mode = candidateMode;
+            // round-61 (P0-A): keep the abstract map aligned with the CURRENT
+            // numbering after the deterministic renumber (survivors only).
+            if (norm.renumbered && norm.oldToNew.size > 0) {
+              const remapped = new Map<number, { title: string; abstract: string }>();
+              for (const [oldN, newN] of norm.oldToNew) {
+                const a = abstractMap.get(oldN);
+                if (a) remapped.set(newN, a);
+              }
+              abstractMap = remapped;
+            }
             send("step", {
               step: "repair",
               status: "progress",
               round,
               message:
-                `Round ${round} revision applied${act.hardFindings.length > 0 ? `: ${act.hardFindings.length} flagged claim(s) repaired` : ""}` +
+                `Round ${round} revision applied [${candidateMode}]${act.hardFindings.length > 0 ? `: ${act.hardFindings.length} flagged claim(s) repaired` : ""}` +
                 `${norm.droppedRefs > 0 ? `, ${norm.droppedRefs} orphaned reference(s) dropped` : ""}. Re-reviewing...`,
             });
             log(
-              `repair: round ${round} revision APPLIED (guard ok; droppedRefs=${norm.droppedRefs} stripped=${norm.strippedNumbers} renumbered=${norm.renumbered})`,
+              `repair: round ${round} revision APPLIED [${candidateMode}] (guard ok; droppedRefs=${norm.droppedRefs} stripped=${norm.strippedNumbers} renumbered=${norm.renumbered})`,
             );
           }
 
@@ -2270,6 +2588,49 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           }
 
           const translatedContents: string[] = [];
+
+          // round-61: terminology anchor — ONE glossary call before the
+          // section loop extracts the article's key domain terms + their
+          // STANDARD Chinese translations (通行译名). Injected into every
+          // section prompt so "prime editing" becomes 先导编辑 consistently,
+          // not 初级编辑 (the round-60 article mistranslated the title term
+          // because each section translated in isolation).
+          let termGlossary = "";
+          try {
+            const glossarySystem =
+              "You are a bilingual (English–Chinese) scientific terminology expert. " +
+              "You know the STANDARD Chinese translations (通行译名) used in Chinese scientific " +
+              "literature for domain terms, and you never invent literal-sounding alternatives.";
+            const glossaryPrompt = `Extract the 10-20 MOST IMPORTANT domain-specific terms from this scientific article (methods, molecules, technologies, techniques, disease names). For each, give the STANDARD Chinese translation used in Chinese scientific literature — e.g. "prime editing" → "先导编辑", "cryo-EM" → "冷冻电镜", "base editing" → "碱基编辑". Prefer established 通行译名 over literal word-by-word renderings; keep widely-used acronyms (DNA, CRISPR, PE) untranslated.
+
+Respond as STRICT JSON only:
+{"glossary":[{"en":"term","zh":"通行译名"}]}
+
+ARTICLE TITLE: ${articleTitle}
+
+ARTICLE EXCERPT (first sections):
+${articleContent.slice(0, 3500)}`;
+            const glossaryRaw = await chatWithSession(projectId, glossaryPrompt, {
+              system: glossarySystem,
+              temperature: 0.1,
+              thinking: false,
+              taskType: "translate",
+              maxTokens: 2000,
+              metadata: { step: "translate-glossary" },
+            });
+            const glossaryParsed = safeParseJSON(glossaryRaw, { glossary: [] });
+            const entries = (glossaryParsed.glossary || [])
+              .filter((g: any) => g?.en && g?.zh)
+              .slice(0, 20);
+            if (entries.length > 0) {
+              termGlossary =
+                "DOMAIN TERM GLOSSARY (use these EXACT translations consistently everywhere):\n" +
+                entries.map((g: any) => `- ${g.en} → ${g.zh}`).join("\n");
+              log(`translate: glossary anchored (${entries.length} terms)`);
+            }
+          } catch (glossErr: any) {
+            log(`translate: glossary generation failed (proceeding without): ${glossErr?.message?.slice(0, 80) || "unknown"}`);
+          }
           for (let i = 0; i < generatedParagraphs.length; i++) {
             const p = generatedParagraphs[i];
             const sectionNum = i + 1;
@@ -2310,11 +2671,11 @@ REQUIREMENTS:
 1. Preserve ALL inline citations [n] EXACTLY (e.g. [1], [2,3], [4-6] — keep the numbers unchanged).
 2. Preserve ALL markdown formatting (## headings, **bold**, *italic*, lists, etc.).
 3. Use formal, precise academic Chinese (书面语，第三人称，结果/方法部分使用过去时).
-4. Use domain-correct terminology. Translate technical terms using standard Chinese scientific equivalents.
+4. Use domain-correct terminology. Translate technical terms using standard Chinese scientific equivalents — the DOMAIN TERM GLOSSARY below lists the exact translations you MUST use where a term appears.
 5. Do NOT add any preamble like "以下是翻译" or "翻译如下". Output ONLY the translated text.
 6. Do NOT translate citation numbers, DOIs, URLs, or [SOURCE:ID] markers.
 7. Maintain the same paragraph structure and flow.
-
+${termGlossary ? "\n" + termGlossary + "\n" : ""}
 ENGLISH SECTION (section ${sectionNum} of ${generatedParagraphs.length}):
 
 ${cleanEn}`;
@@ -2633,6 +2994,13 @@ ${cleanEn}`;
 
         const totalMs = Date.now() - t0;
         const articleWordCount = countWords(articleContent);
+        // round-61 (P2): the run completed — the checkpoints have served
+        // their purpose; delete them so the next launch is a fresh run.
+        try {
+          await db.pipelineCheckpoint.deleteMany({ where: { projectId } });
+          log("checkpoint: cleared (run complete)");
+        } catch {}
+
         send("complete", {
           articleId: article.id,
           wordCount: articleWordCount,
@@ -2713,9 +3081,10 @@ ${cleanEn}`;
         //   - 0 sections and no prior work → nothing to protect; plain error.
         if (generatedParagraphs.length > 0) {
           send("error", {
-            error: `v2 pipeline failed after ${generatedParagraphs.length} section(s) were saved: ${errMsg.slice(0, 200)}. Partial work was KEPT — regenerate to fill in the missing sections.`,
+            error: `v2 pipeline failed after ${generatedParagraphs.length} section(s) were saved: ${errMsg.slice(0, 200)}. Partial work was KEPT and checkpointed — relaunch the same topic to RESUME from the last completed section automatically.`,
             partial: true,
             savedSections: generatedParagraphs.length,
+            resumable: true,
           });
         } else if (hadPriorWork && snapshot) {
           try {

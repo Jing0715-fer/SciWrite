@@ -355,3 +355,23 @@ model Comment {
   @@index([paragraphId])
   @@index([parentId])
 }
+
+// round-61 (P2): pipeline stage checkpoints — an interrupted v2 run can
+// resume from its last completed stage instead of restarting from gather.
+// Written after allocate ("pool": curatedRefs + fullTexts + sections +
+// allocations) and incrementally after each generated section ("sections").
+// Deleted on successful completion; kept across FATAL rollbacks so the next
+// launch of the same project+topic resumes automatically.
+model PipelineCheckpoint {
+  id        String   @id @default(cuid())
+  projectId String
+  runId     String
+  stage     String
+  topic     String
+  payload   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([runId, stage])
+  @@index([projectId])
+}
