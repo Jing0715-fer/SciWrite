@@ -3126,3 +3126,20 @@ Stage Summary:
 - "一键高完成度"闭环达成：生成→摘要佐证 fact-check→review→（需要时 scoped/surgical 修复）→术语锚定翻译→完成，全程零人工干预
 - 对比 round-60：引用密度 22→23（全 PubMed）、词数 2566→2694+、ZH 11604→11953、修复循环从"护栏拒绝+预算浪费"到"正确免修"
 - 后续改进候选：① 标题批量翻译接入术语表（titleZh 目前保留 "Prime"）② react-resizable-panels 布局警告归一化 ③ 24 条 topicality warnings 的可见性优化
+
+---
+Task ID: 62
+Agent: main (Z.ai Code)
+Task: 修复 round-61 四项遗留小项（P2-小 标题术语表 / P1-小 topicality 可见性 / P2-中 续跑 UI / P2-低 布局警告）→ 铁死亡结构生物学 full 生产测试 → 改进计划
+
+Work Log:
+- P2-小 标题术语锚定：v2 translate 阶段重构——术语表生成前置到 translateSectionTitles 批量调用之前并注入其 prompt（标题遵守与正文相同的通行译名）；新增 retranslateTitleZhWithGlossary（article-title.ts，~200 token 小调用）在术语表就绪后重译文章 titleZh 并原地 update DB article 行（round-61 titleZh 保留 "Prime编辑" 而正文用先导/引导编辑的根治）；失败回退 compose 期 titleZh
+- P1-小 topicality 可见性：EmbeddedReview（Review tab）新增 article-topicality useQuery——POST /api/articles/[id]/audit-citations（deep=false 纯计算零 LLM），suspect/unsupported 告警按 overlap 分数升序取 top 6 渲染为琥珀色"Topicality watch-list"警示卡（[n]+原因+重叠率），不再只藏在 citation health 面板；zh/en i18n
+- P2-中 续跑 UI：新增 GET /api/projects/[id]/pipeline-checkpoint（只读，复刻后端 pool+sections checkpoint 读取 + topic 匹配判定）；FullArticleTab 30s 轮询 + 运行结束 refetch；resumable 且 topic 匹配时渲染"恢复上次运行"横幅（N/M 章节 + 引用数插值），按钮直达 doGenerate（后端从 checkpoint 重建章节，清库确认对话框在此场景会误导故绕过）
+- P2-低 布局警告归一化：page.tsx 三面板 defaultSize 22+52+30=104→22+48+30=100；projects-sidebar 单面板（articles 条件渲染缺失时）45/60→100；动态面板补 id/order props——浏览器 console 布局警告从 3 类归零
+- 三层验证：tsc 0 错误 / lint 0 error 162 warning（=基线）；checkpoint API 三分支（无可续跑 false / 造 4/9 章节+25 引用测试数据→resumable true 正确插值 / 清理后 false）；topicality 卡片在 round-61 文章渲染（17 条告警 top offenders）；恢复横幅渲染+清理后消失；console 零警告零错误；截图 /tmp/round62-topicality-card.png、/tmp/round62-resume-banner.png
+- 提交 35ec132 并推送 origin/main
+
+Stage Summary:
+- round-61 四项遗留全部闭环；"一键高完成度"闭环的可见性补强（断点续跑前置可见、机械告警就地呈现、标题术语与正文一致、前端零布局噪音）
+- 铁死亡结构生物学生产测试发射（08:26 UTC，双语 3000 词）：gather 241 源（PubMed 直连不受限流影响）→ 08:28 起提供方账号级 429 风暴（chat 探针 45ms 即拒）→ 全阶段降级爬行（knowledge 21 批全失败跳过、score 6 批全启发式回退、curate 机械回退 25/119）→ 10:05 plan 阶段 429 致命（无大纲）→ FATAL，无 pool checkpoint（在 allocate 之后才写）→ 转入轮询即发射模式等待限流解除
