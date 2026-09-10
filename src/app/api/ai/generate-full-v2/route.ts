@@ -400,6 +400,31 @@ export async function POST(req: NextRequest) {
           };
           hadPriorWork = snapshot.paragraphs.length > 0 || snapshot.dataSources.length > 0;
 
+          // round-63 (resume bug fix): RESTORE the pipeline's working state
+          // from the checkpoint pool. The round-61 resume path logged
+          // "pool=25 refs, 9 sections planned" but never ASSIGNED the pool
+          // back into the route's working variables — a resumed run
+          // proceeded with curatedRefs/sections/allocations all EMPTY
+          // ("Generating 0 sections" → "All sections failed to generate").
+          // The checkpoint write/lifecycle was verified in round-61 but the
+          // RESTORE path was never actually exercised until now.
+          curatedRefs = Array.isArray(resume.pool.curatedRefs)
+            ? resume.pool.curatedRefs
+            : [];
+          fullTexts = new Map<string, string>(
+            Array.isArray(resume.pool.fullTexts) ? resume.pool.fullTexts : [],
+          );
+          sections = (Array.isArray(resume.pool.sections) ? resume.pool.sections : [])
+            .filter((s: any) => s?.title && s?.targetWords);
+          allocations = Array.isArray(resume.pool.allocations)
+            ? resume.pool.allocations
+            : [];
+          // The generate loop reads allocations[i].refIndices — a checkpoint
+          // saved before allocation completed (or a hand-edited payload) may
+          // be short; pad with empty allocations so the loop's top-up path
+          // (sectionRefs from curated list) handles it.
+          while (allocations.length < sections.length) allocations.push({ refIndices: [] });
+
           // The checkpoint is the AUTHORITATIVE state for sections — clear
           // whatever partial paragraphs exist (a failed run may have KEPT
           // its partial work) and re-create them from the checkpoint so the
@@ -1125,13 +1150,40 @@ Respond as STRICT JSON:
 }
 Output JSON only.`;
 
-        const planRaw = await chatWithSession(projectId, planPrompt, {
+        // round-63 (storm-proofing): the plan call is the KEYSTONE of the
+        // whole pipeline — everything before the pool checkpoint (gather →
+        // knowledge → score → curate → plan) is unrecoverable work, and the
+        // provider's account-level 429 storms (rounds 60/62/63: they hit
+        // mid-run and last minutes-to-hours) used to make this single call
+        // FATAL after only the rate limiter's 5×≤30s retries. The storm
+        // wrapper waits out the storm instead: up to 6 attempts with 4-min
+        // waits (the rate limiter's abort flag self-expires after 2 min, so
+        // each retry starts clean).
+        const stormRetry = async <T,>(label: string, fn: () => Promise<T>, attempts = 6, waitMs = 4 * 60_000): Promise<T> => {
+          for (let a = 1; ; a++) {
+            try {
+              return await fn();
+            } catch (e: any) {
+              const msg = String(e?.message ?? e);
+              if (!/429|too many|rate.?limit|quota/i.test(msg) || a >= attempts) throw e;
+              log(`${label}: provider throttled (attempt ${a}/${attempts}) — waiting 4 min for the storm to pass`);
+              send("step", {
+                step: "plan",
+                status: "progress",
+                message: `${label}: provider rate-limited (attempt ${a}/${attempts}) — waiting out the 429 storm before retrying...`,
+              });
+              await new Promise((r) => setTimeout(r, waitMs));
+            }
+          }
+        };
+
+        const planRaw = await stormRetry("plan", () => chatWithSession(projectId, planPrompt, {
           system: planSystem,
           temperature: 0.5,
           taskType: "plan",
           maxTokens,
           metadata: { step: "plan", targetWords },
-        });
+        }));
         const planParsed = safeParseJSON(planRaw, { sections: [] });
         sections = (planParsed.sections || []).filter((s: any) => s.title && s.targetWords);
 
@@ -1869,6 +1921,10 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
         }
 
         if (generatedParagraphs.length === 0) {
+          // round-63: this silent exit had NO log line — a run that died
+          // here (all sections skipped on client disconnect / rate abort)
+          // left no trace in dev.log at all.
+          log(`generate: ALL ${sections.length} sections failed/skipped — run aborted (checkpoint kept for resume)`);
           send("error", { error: "All sections failed to generate." });
           safeClose();
           return;
