@@ -129,9 +129,27 @@ for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
       : "no resumable checkpoint";
   } catch {}
   const throttled = /429|rate|throttl|storm/i.test(streamError || "");
-  const waitMs = throttled ? 5 * 60_000 : 30_000;
-  log(`retry in ${waitMs / 1000}s (${cpInfo}; err=${streamError ? "throttle-ish" : "stream-drop-ish"})`);
-  await sleep(waitMs);
+  if (throttled) {
+    // Wait for the provider to actually recover before burning an attempt —
+    // probe every 60s for up to 15 min, then fire regardless.
+    log(`throttled — probing provider recovery before next attempt (${cpInfo})`);
+    const deadline = Date.now() + 15 * 60_000;
+    let healthy = false;
+    while (Date.now() < deadline) {
+      await sleep(60_000);
+      try {
+        const r = await fetch(`${BASE}/api/health/llm-probe`, { signal: AbortSignal.timeout(15_000) });
+        if (r.ok) {
+          const j: any = await r.json().catch(() => null);
+          if (j?.healthy) { healthy = true; break; }
+        }
+      } catch {}
+    }
+    log(healthy ? "provider recovered — firing next attempt" : "probe window expired — firing attempt anyway");
+  } else {
+    log(`retry in 30s (${cpInfo}; stream-drop-ish)`);
+    await sleep(30_000);
+  }
 }
 log("FAILED after all attempts — inspect dev.log + checkpoint manually");
 process.exit(1);
