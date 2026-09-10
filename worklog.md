@@ -3205,3 +3205,22 @@ Stage Summary:
 - 进行中：TMC1/2 独立再生成等待 429 风暴解除（checkpoint 4/9 节 + 25 refs 完好，probe-gated 启动器在轨）
 - 已固化：resume 重复生成缺陷修复（a66cf36）+ llm-probe 端点（58aadcc）+ 后台进程正确脱离姿势（setsid --fork）入档
 - 基线数据就绪：round-59 同主题文章的 9 类缺陷机械审计结果（4 sparse/2 overcited/URL 混杂/非学术源）作为"修改前"，终稿将跑同一审计脚本对比
+
+---
+Task ID: round-65 (completion)
+Agent: main (Z.ai Code)
+Task: TMC1/2 独立再生成完成 + 9 类缺陷复发核验 + 三处数据修复 + 管线防再犯
+
+Work Log:
+- 429 风暴 09:24→16:00（6.5h，与 round-60 历史同量级）：probe-gated 启动器共 21 次尝试全部 checkpoint 递增无损；16:00 风暴解除后 §5-9 全速生成（~1 min/节）→compose→修复循环 3 轮（round1 major 6.0 scoped §1,2,9 → round2 major 6.0 scoped §2,3,9 → round3 minor 7.0 收敛，结构审计每轮注入 1 条 overcited-ref）→术语表翻译 9/9→relationships 5 主题；16:19 完成（3030 词/9 节/20 refs/双语 10210 字）
+- 9 类缺陷核验（对照铁死亡审读）：②机制区分/③章节冗余(5-gram 1%)/④物种限定(3/3 突变带 "In mouse models")/⑤内容章零引用(sparse 4→0 对比 round-59 同主题基线)/⑥引言单源(6×[1]→[3]×5/[2]×4/[1]×3)/**⑨链接统一(pubmed-canonical 19/20)**——全部未复发
+- 复发 3 处（均较铁死亡轻微）：⑧[C8] ref [4] 为 Google-Scholar 抓取的 [5] 重复条目（作者凭空"Zhang X, Nam J, Woo J"、年份 2021、裸 nature.com URL、摘要即 Scholar 片段"by H Jeong · 2022 · Cited by 150"）——dedupe Rule 2 以一作姓氏为键故失效；①[S1] §2 把 C. elegans TMC-1 复合物第三组分写成 "unidentified transmembrane protein"（Jeong 摘要明确为 TMIE——证据抽取截断+作者层脑补）；⑦[C7] §4 TMC1 成熟/TMC2 未成熟表达声明引 [9] Jiang 2024（内容不匹配）；另 §8 overcited [20] 67%（引擎每轮标记、scoped 修订未再分配，警告级留存）
+- 科学抽验 12 条声明 vs 引用摘要全部忠实（T416K/M412K/D569N→P21 耳聋+P6 有 MET+凋亡标志、TM4/TM6 门控、CIB2 静电互补、scramblase PS 外排、PCDH15-Tmc2a 结合、C. elegans 二重对称复合物等）；双语文档 9/9 奇偶、titleZh 自然
+- 数据修复（scripts/fix-tmc-round65.ts + 段落 part2 同步——round-64 教训复现：viewer 渲染 paragraph 行）：[4]→[5] 合并+全文重编号 20→19（EN/ZH/9 段落/7 条假引用行删除）、TMIE 措辞修正（EN+ZH）、§4 重锚 [2,3]（EN+ZH）、2 条假 DataSource 池行删除；验证 19/19 distinct cited、0 越界 0 孤儿、浏览器 EN/ZH 双半区确认、0 console 错误
+- 管线防再犯：dedupePreprintVersions Rule 3（scrape fragment：无 PMID/DOI+裸域名 URL 或 Scholar 片段摘要 → ≥80% 标题词包含即同作品合并；preferredOver 真实标识条目恒胜）+ malformed-ref 审计扩展（裸域名无 PMID/DOI → malformed-ref 警告，进修复循环硬触发）；单元测试 6 用例全过（双序合并/截断标题合并/相似不同论文不合并/preprint 回归不破坏）
+- 质量门：tsc 0 / lint 0 errors；提交 930c4b1 推送；过程中 dev server 8h 后被收割一次（重启无损，DB 持久）
+
+Stage Summary:
+- 用户问题的答案：9 类缺陷中 6 类未复发（含全部结构性引用缺陷——round-64 机械引擎在生成期即拦截），3 类以更轻微、更隐蔽的变体复发：Scholar 抓取条目（⑧根因=dedupe 键失效）、证据截断致作者层脑补（①）、真声明错锚（⑦）
+- 本轮净产出：3 处数据修复 + Rule 3 dedupe + malformed-ref 扩展（6 用例验证）+ resume 重复生成修复（a66cf36，风暴期间实弹发现）+ llm-probe 端点（58aadcc）+ setsid --fork 脱离姿势入档
+- 遗留：§8 overcited 67% 警告级留存（scoped 修订不重分配引用——下轮候选：修订 prompt 显式要求引用再分布）；§9 展望章含 2 条 UNVERIFIABLE 声明被评审如实披露（fact-check 工作正常）；管线自身的 fact-check 未捕获 ①（摘要明明写着 TMIE——abstract 仲裁的声明-摘要词面匹配盲区，下轮候选）
