@@ -1468,6 +1468,28 @@ Output JSON only.`;
             continue;
           }
 
+          // ★ round-65: a resumed run must NOT regenerate sections already
+          // restored from the sections checkpoint. The round-63 resume fix
+          // restored the pool AND re-created completed sections as paragraphs,
+          // but this loop still re-ran EVERY section index — a resume with
+          // N done sections produced N restored + 9 regenerated paragraphs
+          // (duplicate sections in the composed article + duplicated
+          // sections-checkpoint entries). Round-63 never saw it because its
+          // interrupted run aborted with sectionsDone=0. Index-based: the
+          // restore block re-creates sectionsDone in plan order, so entry i
+          // IS sections[i].
+          if (resume?.sectionsDone && i < resume.sectionsDone.length) {
+            send("step", {
+              step: "generate",
+              status: "progress",
+              section: sectionNum,
+              total: sections.length,
+              message: `Section ${sectionNum} restored from checkpoint — regeneration skipped.`,
+            });
+            log(`generate: section ${sectionNum} restored from checkpoint — regeneration skipped`);
+            continue;
+          }
+
           send("step", {
             step: "generate",
             status: "started",
