@@ -2,6 +2,9 @@
 
 One section per round (newest first). metrics.json = machine-readable baseline; last-good.txt = last clean-outcome commit. Scheduled by mini-services/iterate-scheduler — every 6h, throttled-provider retry every 45 min. Manual trigger: `bun scripts/auto-iterate/iterate.ts`.
 
+## Round 2 — 2026-09-10T14:26:15Z
+- outcome: **degraded-provider** · head `3f284eb6`
+- mechanical: tsc 0 errors · lint 0 errors · duration 30.5 min
 ## Round 1 — 2026-09-10T01:37:01Z
 - outcome: **regressed** · head `f9402e50`
 - canary error: `project-create: project create failed: {"error":"Failed to create project."}`

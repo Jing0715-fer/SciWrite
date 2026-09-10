@@ -488,13 +488,22 @@ export function structuralCitationFindings(
     }
   }
 
-  // 10. malformed reference entries: raw PDB records / bare database URLs
+  // 10. malformed reference entries: raw PDB records / bare database URLs /
+  //     scrape fragments (round-65: no PMID/DOI + bare-domain URL — the
+  //     Google-Scholar-scrape variant whose authors/year are confabulated)
   for (const [num, ref] of parsedRefs) {
     const title = ref.title || "";
     const url = ref.url || "";
     const rawPdbTitle = /^[0-9A-Za-z]{4}:\s+\S/.test(title);
     const bareRcsb = /rcsb\.org/i.test(url) && !/pubmed|doi\.org|\/structure\//i.test(url);
-    if (rawPdbTitle || bareRcsb) {
+    const hasPmidOrDoi =
+      /pubmed\.ncbi\.nlm\.nih\.gov\/\d+/.test(url) ||
+      /doi\.org\//.test(url) ||
+      /^\d{5,9}$/.test(String(ref.externalId || "")) ||
+      !!String(ref.doi || "").trim() ||
+      /PMID:?\s*\d{5,9}/i.test(title);
+    const bareDomainUrl = /^https?:\/\/[^/\s]+\/?$/i.test(url.trim());
+    if (rawPdbTitle || bareRcsb || (bareDomainUrl && !hasPmidOrDoi)) {
       findings.push({
         n: num,
         marker: `[${num}]`,
@@ -502,7 +511,7 @@ export function structuralCitationFindings(
         sentence: title.slice(0, 240),
         verdict: "malformed-ref",
         reason:
-          `Reference [${num}] is a raw database record (${rawPdbTitle ? "PDB-entry title" : "bare rcsb.org URL"}) rather than a publication. ` +
+          `Reference [${num}] is a raw database record or web-scrape fragment (${rawPdbTitle ? "PDB-entry title" : bareRcsb ? "bare rcsb.org URL" : "bare-domain URL without PMID/DOI"}) rather than a verifiable publication. ` +
           "Cite the associated primary paper instead (authors, journal, year, title, PubMed/DOI link), consistent with the rest of the list.",
         refIdentity: refIdentity(ref),
       });

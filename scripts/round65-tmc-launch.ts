@@ -20,7 +20,10 @@ const PROJECT_TITLE = "TMC1/TMC2 Structural Biology Round-65 Regeneration";
 const TOPIC =
   "TMC1 and TMC2 proteins as components of the hair cell mechanotransduction channel: structure, function, and disease";
 const FIELD = "structural biology";
-const ATTEMPTS = 12; // ride out multi-wave 429 storms (each abort keeps its checkpoint)
+// Ride out multi-wave account-level 429 storms (each abort keeps its
+// checkpoint; the probe gate avoids burning attempts while throttled).
+// Global cap ~10h so a truly wedged run still terminates.
+const ATTEMPTS = 40;
 const ROUND_TIMEOUT_MS = 100 * 60_000; // 100 min hard cap per attempt
 
 const log = (msg: string) => console.log(`[${new Date().toISOString()}] ${msg}`);

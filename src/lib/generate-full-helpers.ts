@@ -76,6 +76,28 @@ function refYear(r: any): number {
 }
 
 /**
+ * round-65: degenerate web-scrape fragment — no PMID and no DOI, AND a
+ * bare-domain URL (no article path) and/or a Google-Scholar-snippet abstract
+ * ("by X · 2024 · Cited by N —"). The round-65 production run admitted a
+ * "Structures of the TMC-1 complex illuminate" entry whose authors were
+ * confabulated from a citing-author panel ("Zhang X, Nam J, Woo J" for the
+ * Jeong 2022 paper), year off by one, URL https://www.nature.com — it evaded
+ * every dedupe rule because Rule 2 keys on first-author surname.
+ */
+function isScrapeFragment(r: any): boolean {
+  const ext = String(r?.externalId || "").trim();
+  const url = String(r?.url || "").trim();
+  const hasPmid = /^\d{5,9}$/.test(ext) || /pubmed\.ncbi\.nlm\.nih\.gov\/\d+/.test(url);
+  const hasDoi = !!String(r?.doi || "").trim() || /doi\.org\//.test(url);
+  if (hasPmid || hasDoi) return false;
+  const bareDomainUrl = /^https?:\/\/[^/\s]+\/?$/.test(url);
+  const scholarSnippet = /^by\s+\S+.*·\s*(19|20)\d{2}\s*·\s*Cited by\s+\d+/i.test(
+    String(r?.abstract || "").slice(0, 160),
+  );
+  return bareDomainUrl || scholarSnippet;
+}
+
+/**
  * True when two reference entries describe the SAME work (a preprint and its
  * published version, or a straight duplicate entry).
  *
@@ -86,11 +108,26 @@ function refYear(r: any): number {
  * pair, whose preprint title was reworded for publication). When neither is a
  * preprint we deliberately do NOT fuzzy-merge: two distinct published papers
  * can legitimately share title tokens.
+ * Rule 3 — round-65: one entry is a scrape fragment (no PMID/DOI, bare URL /
+ * Scholar-snippet abstract → its authors and year are confabulated and
+ * cannot be keyed on) AND its title tokens are ≥80% contained in the other
+ * entry's title (truncated scrape titles are near-subsets of the real one).
  */
 function isSameWork(a: any, b: any): boolean {
   const na = normalizeTitle(a?.title);
   const nb = normalizeTitle(b?.title);
   if (na && na === nb) return true;
+  if (isScrapeFragment(a) || isScrapeFragment(b)) {
+    const ta = titleTokens(a?.title);
+    const tb = titleTokens(b?.title);
+    const minLen = Math.min(ta.size, tb.size);
+    if (minLen >= 4) {
+      let inter = 0;
+      for (const w of ta) if (tb.has(w)) inter++;
+      if (inter / minLen >= 0.8) return true;
+    }
+    return false;
+  }
   const aPre = isPreprintRef(a);
   const bPre = isPreprintRef(b);
   if (!aPre && !bPre) return false;
@@ -103,6 +140,11 @@ function isSameWork(a: any, b: any): boolean {
 
 /** True → keep `a` over `b`: published beats preprint, then newer beats older. */
 function preferredOver(a: any, b: any): boolean {
+  // round-65: an entry with real identifiers (PMID/DOI) always beats a
+  // scrape fragment — the fragment's authors/year are confabulated.
+  const aFrag = isScrapeFragment(a);
+  const bFrag = isScrapeFragment(b);
+  if (aFrag !== bFrag) return !aFrag;
   const aPre = isPreprintRef(a);
   const bPre = isPreprintRef(b);
   if (aPre !== bPre) return !aPre;
