@@ -1,0 +1,23 @@
+{
+  "round": 1,
+  "stamp": "2026-09-10T01:37:01.008Z",
+  "gitHead": "f9402e508f2a0292c0ab56b6198891b65e1ae24c",
+  "outcome": "regressed",
+  "produced": false,
+  "wordsEn": 0,
+  "wordsZh": 0,
+  "refsTotal": 0,
+  "distinctCited": 0,
+  "citationDensity": 0,
+  "blockingErrors": 0,
+  "topicalityWarnings": 0,
+  "parityMismatches": 0,
+  "hasChinese": false,
+  "repairRounds": 0,
+  "reviewVerdict": "none",
+  "reviewOverall": -1,
+  "factCheckWeaknesses": 0,
+  "tscErrors": 10,
+  "lintErrors": 13,
+  "durationMs": 40863
+}
