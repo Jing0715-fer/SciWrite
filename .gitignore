@@ -61,3 +61,8 @@ server.log
 # user-uploaded files (exported PDFs sent for review etc.)
 /upload/
 .tmp-*
+
+# auto-iterate runtime artifacts (metrics/reports/last-good ARE tracked)
+iteration-state/round.lock
+iteration-state/round-console.log
+iteration-state/scheduler-heartbeat.json

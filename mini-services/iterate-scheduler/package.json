@@ -1,0 +1,10 @@
+{
+  "name": "iterate-scheduler",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cron replacement for the auto-iterate loop — triggers scripts/auto-iterate/iterate.ts every 6h (throttle retry 45min), port 3040",
+  "scripts": {
+    "dev": "bun --hot index.ts",
+    "start": "bun index.ts"
+  }
+}
