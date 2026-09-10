@@ -66,3 +66,6 @@ server.log
 iteration-state/round.lock
 iteration-state/round-console.log
 iteration-state/scheduler-heartbeat.json
+iteration-state/scheduler-console.log
+iteration-state/console-heartbeat.json
+iteration-state/scheduler.json
