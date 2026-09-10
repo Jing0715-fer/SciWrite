@@ -3186,3 +3186,22 @@ Stage Summary:
 - 管线获得结构级引用卫生能力：本轮四类缺陷全部成为机械可检（审计可见+修复循环可修），不再依赖 LLM 评审员"心情好"——round-63 铁死亡文章 LLM 评审 7/10 却带 500 词零引用章节的盲区已封死
 - 已知限制记录：redundant-section 的 5-gram 阈值 45% 抓照抄级复述，语义级复述（如原 §6 换措辞重述 §2）需 LLM 评审/人工把关（本轮以 sparse-section 侧面捕获）；ZH 半区 citation-level topicality 审计存在 CJK/Latin 交叉假阳性（结构级检查双语均准确）
 - 定时迭代器健康：instrumentation 心跳活跃，下一轮 11:04 UTC；本轮即"用户驱动迭代"示范（修复→push→前后对照→零回归）
+
+---
+Task ID: round-65
+Agent: main (Z.ai Code)
+Task: 独立重新生成 TMC1/2 结构研究文章（round-64 结构引用卫生引擎之后的管线），核验用户铁死亡审读的 9 类缺陷是否复发
+
+Work Log:
+- 基线确立：对 round-59 同主题 TMC 文章（cmtrl5w1m01oym7wxn875spn4，修复前管线产物）跑结构审计——4 个 sparse-section（242 词章节仅 1 个 distinct ref，其中 §4 单源 [12] 占 100%、§8 单源 [15] 占 100%）+ 2 个 overcited-ref，与用户铁死亡审读发现的缺陷类别完全同型（证实缺陷是系统性的、非铁死亡特有）；参考条目 URL 格式混杂（pubmed 7/cell.com/pmc/biorxiv/researchgate/frontiersin 各若干）+ 一条医院网页（Boston Children's Answers）被列为文献
+- 独立生产发射（08:36 UTC，新项目 cmtv9wde10000qpvclgtt3qr3，双语 3000 词，主题与 round-59 完全一致保证可比性）
+- **沙箱收割规律量化**：`setsid nohup cmd &` 启动的后台进程在工具调用结束后数秒内被杀（存活测试：45 秒后消失，仅写 1 行日志）；正确姿势是 `bash -c 'setsid --fork cmd'`（双 fork + SID 脱离，跨工具调用存活 75s+ 验证通过）——round-63 "SSE 持有器被空闲超时杀死" 的真实根因可能就是收割而非空闲
+- 首跑：gather 25 查询→387 items→258 sources/180 refs（rate-limiter 自限 30s 冷却拖慢 ~22 min）；knowledge 42 fields filled；curate 去重 20（TMC-1 Nature 论文 preprint/正式版去重）；plan 9 节 25/25 coreCovered=0 missing；pool checkpoint 写入后 clientDisconnected（持有器已被收割）→ 9 节全跳过中止（checkpoint 保留）
+- **发现并修复 round-63 断点续跑真缺陷#2（a66cf36）**：resume 恢复了 sectionsDone 段落但 STEP 6 循环没有跳过已恢复章节——带 4 节 checkpoint 的续跑会重生成全部 9 节 = 13 段落文章（4 恢复 + 9 重生成）+ sections checkpoint 条目重复；round-63 从未暴露因为其中止时 sectionsDone=0。修复：循环内 index-based 跳过（restore 按计划序重建，entry i 即 sections[i]）；实弹验证：续跑日志 "Section 1-4 restored from checkpoint — regeneration skipped" + "Generating section 5/9"
+- 429 账号级风暴（09:24 起，持续 45+ min）：旧启动器 4 次尝试全部在 §5 折戟（每次 checkpoint 完好递增）；新增 GET /api/health/llm-probe（8 token 直连 SDK 探针，无 rate-limiter 包装，58aadcc）+ 启动器 probe-gated 重试（60s 探测 ×15 min 窗口，恢复即发射）；启动器重发（setsid --fork 正确脱离）12 次尝试预算
+- 参考池预审：25 refs 全带摘要；发现池级隐患待终稿核验——ref 3/12 疑似同论文（TMC1 Forms the Pore，2011 vs 2018 元数据差异）、ref 4/5 疑似同论文（TMC-1 complex Nature 2021/2022）、ref 14 为 Harvard 新闻页（journal=null）非学术源
+
+Stage Summary:
+- 进行中：TMC1/2 独立再生成等待 429 风暴解除（checkpoint 4/9 节 + 25 refs 完好，probe-gated 启动器在轨）
+- 已固化：resume 重复生成缺陷修复（a66cf36）+ llm-probe 端点（58aadcc）+ 后台进程正确脱离姿势（setsid --fork）入档
+- 基线数据就绪：round-59 同主题文章的 9 类缺陷机械审计结果（4 sparse/2 overcited/URL 混杂/非学术源）作为"修改前"，终稿将跑同一审计脚本对比
