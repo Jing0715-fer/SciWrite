@@ -3143,3 +3143,25 @@ Work Log:
 Stage Summary:
 - round-61 四项遗留全部闭环；"一键高完成度"闭环的可见性补强（断点续跑前置可见、机械告警就地呈现、标题术语与正文一致、前端零布局噪音）
 - 铁死亡结构生物学生产测试发射（08:26 UTC，双语 3000 词）：gather 241 源（PubMed 直连不受限流影响）→ 08:28 起提供方账号级 429 风暴（chat 探针 45ms 即拒）→ 全阶段降级爬行（knowledge 21 批全失败跳过、score 6 批全启发式回退、curate 机械回退 25/119）→ 10:05 plan 阶段 429 致命（无大纲）→ FATAL，无 pool checkpoint（在 allocate 之后才写）→ 转入轮询即发射模式等待限流解除
+
+---
+Task ID: 63
+Agent: main (Z.ai Code)
+Task: 创建定时迭代任务（每轮 push + 前后效果对比 + 变差即矫正）+ 完成铁死亡结构生物学 full 生产测试 + 改进计划
+
+Work Log:
+- 定时迭代基础设施（f9402e5）：scripts/auto-iterate/iterate.ts 轮次执行器（lockfile 防并发→dev server 健康检查自愈→提供方探测 30 分钟等待→tsc/lint 机械门→金丝雀生产测试（4 主题轮换、双语 3000 词、SSE 消费至 complete、≤100 分钟）→指标提取（词数/引用/密度/越界/孤儿/双语奇偶/修复轮次/评审/FactCheck）→硬回归自动矫正（revert last-good 以来代码提交≤3 个并复验）→报告前置 rounds.md + metrics.json + last-good 钉定→每轮必 push
+- 调度器架构演进：mini-service 版启动 1 分钟后触发 round 1（01:37）——**真实检测到环境退化并推送报告**（夜间沙箱还原：node_modules 的 Prisma 客户端过期 tsc=10/lint=13 + dev server 只读 DB 连接）→人工定位修复（prisma generate + dev server 重启）→发现 mini-service ~2h 后被环境收割→**调度权移入 dev server 进程内**（src/instrumentation.ts，115ae3e）：60s 心跳、6h 常规、限流 45min 重试、启动补跑（>7h 陈旧）、detached 子进程防 dev 重启误杀、lockfile 单一并发真相；mini-service 降级为 /status /trigger 状态台
+- 铁死亡生产测试（用户上轮指令）：01:42 发射→02:00 提供方账号级 429 风暴重现（gather 期自身调用密度触发）→管线降级爬行（knowledge 21 批全失败/评分启发式/精选机械回退）→02:24 plan 顶住风暴成功（9 节+25/25 引用图）→02:26 pool checkpoint 写入→SSE 持有器（bun fetch）在静默期被空闲超时杀死→clientDisconnected 静默跳过全部章节退出（无日志——顺手补了日志）
+- **发现并修复 round-61 断点续跑真缺陷**（02ca639）：resume 块从未把 pool 赋回管线变量（curatedRefs/sections/allocations 保持空初始化）→恢复运行"Generating 0 sections"静默死亡；round-61 只验证了 checkpoint 写入生命周期、从未走过恢复路径。修复+防御性过滤+allocations 补齐；另加 plan 关键节点 stormRetry（6 次×4 分钟等待熬风暴）
+- 修复后重发（02:50:53→03:21:02，30 分钟，真实恢复路径）：9 节生成（风暴间隙全速 20-60s/节）→compose 去重 8 处→**修复循环历史首次真正落地**：round 1（major 6.0、fact v7 c1 u0、1 条 CONTRADICTED）→scoped 修订 §1,2,5,7 应用（guard ok）→round 2（又 1 条 CONTRADICTED）→scoped 修订 §1,2,7 应用→round 3（minor 7.0、v8 c0 u0 全部 VERIFIED、clean 收敛）；3 轮评审 2 次修订 0 拒绝
+- round-62 修复实弹验证：术语表 16 词、9/9 标题 glossary-anchored、titleZh 重锚定"铁死亡调控因子的结构见解：GPX4、系统Xc-与铁代谢"（标准译名铁死亡）
+- 四组验证：20/20 distinct cited、零越界零孤儿、numberingIntegrityOk、ref domains 19 PubMed+1 RCSB（PDB 一级库）；双语 9/9 标题 20/20 引用零分叉；评审 3 行（含 2 FACT-CHECK CONTRADICTED 均为真实引用错误——[1] 综述被引作结构论文、ferritin 1.8Å 错引 ACSL4 论文 [19]，修复后文章零 ferritin 残留）；最终审计 0 blocking、18 topicality 机械告警
+- 外部交叉核验 5/5：1.0Å human GPX4（Moosmayer 2021 原文精确）、ML162 复合物 1.54Å、mouse GPx4 细胞质异构体 1.8Å Sec46Cys（Janowski 2016 摘要逐字——物种/异构体/突变体全对）、FSP1-FAD-NAD 晶体结构（Feng 2024 MedComm）、erastin-xCT-4F2hc 冷冻电镜（Yan 2022 Cell Research）——零捏造零科学错误
+- 浏览器 E2E：EN/ZH 双半区渲染、Review tab 3 轮+7/10+topicality 警示卡、console 零错误（截图 /tmp/round63-ferroptosis-en.png、round63-ferroptosis-zh.png、round63-review-tab.png）
+- DB 随代码提交（115ae3e）防沙箱还原清库
+
+Stage Summary:
+- 用户三项要求全部落地：定时迭代（instrumentation 调度器，dev server 存活即调度存活，下轮 09:29 UTC 自动运行金丝雀主题 2=CMA 结构生物学）、每轮必 push（round 1 已示范）、前后效果对比+变差矫正（metrics.json 基线+last-good 钉定+硬回归自动 revert）
+- 铁死亡生产测试在真实故障条件下完成：429 风暴→SSE 断连→断点续跑修复→30 分钟完成；引用/双语/科学性全绿，修复循环首次实战修复 2 处真实引用错误
+- 本轮净产出：4 个真缺陷修复（resume 空池、plan 风暴致命、静默退出无日志、调度器易收割）+ 生产级验证 1 篇铁死亡双语文章
