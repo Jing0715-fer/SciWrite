@@ -1575,7 +1575,11 @@ ${promptInstruction ? `\nCUSTOM INSTRUCTION:\n${promptInstruction}` : ""}`;
           const system = `You are a senior scientific research writer and domain expert (${project.field || "life sciences"}).
 Write in English using formal, precise academic prose.
 Compose ONE cohesive section. Start the body with actual content, NOT a restatement of the title.
-You cite ONLY with {{Rn}} keys — never numeric [n] citations.`;
+You cite ONLY with {{Rn}} keys — never numeric [n] citations.
+Scientific precision rules (round-64):
+- Enzyme/reaction descriptions MUST state the direction explicitly with substrates and product class, e.g. "catalyzes the esterification of coenzyme A with long-chain fatty acids to form acyl-CoA thioesters" — never "esterifies coenzyme A into fatty acids".
+- When citing residue numbers, state the species/numbering once per section (e.g. "Sec46 (human numbering)"); when several species' structures are discussed, note whether the numbering is conserved.
+- Do NOT restate mechanistic or structural content already covered by other sections; each section must introduce NEW information, cross-referencing earlier sections briefly instead of repeating them.`;
 
           let chunkContent = "";
           let lastStreamEmit = 0;
@@ -2215,7 +2219,50 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             repairTelemetry.reviews++;
             repairTelemetry.finalVerdict = rc.parsed.verdict || "";
             repairTelemetry.finalOverall = rc.parsed.scores?.overall ?? null;
-            const act = actionableFindings(rc);
+            let act = actionableFindings(rc);
+
+            // ★ round-64: article-level STRUCTURAL citation hygiene. The
+            // ferroptosis production run (round-63) shipped with a 500-word
+            // zero-citation section, a near-verbatim redundant section, an
+            // introduction citing [1] six times, and a raw RCSB PDB entry in
+            // the reference list — none visible to the per-citation checks,
+            // and the LLM reviewer rated that article 7/10 anyway. These pure
+            // mechanical findings are injected as review weaknesses (the
+            // reviser sees them verbatim); sparse-section and malformed-ref
+            // additionally escalate to a hard revision trigger because they
+            // are objective defects, not style preferences.
+            const structuralAudit = buildAuditReport(currentContent, []);
+            const structuralFindings = structuralAudit.findings.filter(
+              (f: any) =>
+                f.verdict === "sparse-section" ||
+                f.verdict === "redundant-section" ||
+                f.verdict === "overcited-ref" ||
+                f.verdict === "malformed-ref",
+            );
+            const structuralWeaknesses = structuralFindings.map(
+              (f: any) => `[STRUCTURAL ${f.verdict}] ${f.reason}`,
+            );
+            if (structuralFindings.length > 0) {
+              const kinds = structuralFindings.map((f: any) => f.verdict).join(", ");
+              log(`repair: round ${round} structural citation audit: ${kinds}`);
+              send("step", {
+                step: "repair",
+                status: "progress",
+                round,
+                message: `Structural citation audit: ${structuralFindings.length} issue(s) (${kinds}).`,
+              });
+              const hardStructural = structuralFindings.some(
+                (f: any) => f.verdict === "sparse-section" || f.verdict === "malformed-ref",
+              );
+              if (hardStructural && !act.actionable) {
+                act = {
+                  ...act,
+                  actionable: true,
+                  trigger: "fact",
+                  reason: `structural citation hygiene (${kinds})`,
+                };
+              }
+            }
             const roundEntry: any = {
               round,
               core: rc,
@@ -2260,7 +2307,7 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
               summary: rc.parsed.summary || "",
               scores: rc.parsed.scores,
               strengths: rc.parsed.strengths || [],
-              weaknesses: rc.mergedWeaknesses,
+              weaknesses: [...rc.mergedWeaknesses, ...structuralWeaknesses],
               suggestions: rc.parsed.suggestions || [],
             };
 

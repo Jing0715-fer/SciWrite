@@ -201,8 +201,12 @@ Where N is the citation number. YES = supports, NO = does not support, PARTIAL =
     // Recompute summary after upgrades.
     const count = (v: string) =>
       report.findings.filter((f) => f.verdict === v).length;
+    // round-64: structural verdicts are article-level, not per-citation —
+    // keep them out of the per-citation "ok" arithmetic.
+    const structuralCount = count("sparse-section") + count("redundant-section") +
+      count("overcited-ref") + count("malformed-ref");
     report.summary = {
-      ok: report.totalCitations - report.findings.length,
+      ok: report.totalCitations - (report.findings.length - structuralCount),
       outOfRange: count("out-of-range"),
       missing: count("missing"),
       suspect: count("suspect"),
@@ -212,6 +216,10 @@ Where N is the citation number. YES = supports, NO = does not support, PARTIAL =
       mismatch: count("mismatch"),
       blockingErrors:
         count("out-of-range") + count("missing") + count("mismatch"),
+      sparseSection: count("sparse-section"),
+      redundantSection: count("redundant-section"),
+      overcitedRef: count("overcited-ref"),
+      malformedRef: count("malformed-ref"),
     };
   }
 

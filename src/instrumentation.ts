@@ -1,3 +1,10 @@
+
+import { spawn as _spawn } from "child_process";
+/** Sync child_process access — the round trigger runs in a non-async closure. */
+function nodeChildProcess(): typeof import("child_process") {
+  return { spawn: _spawn } as typeof import("child_process");
+}
+
 /**
  * Next.js instrumentation hook — the auto-iterate scheduler lives INSIDE the
  * dev server process.
@@ -89,7 +96,7 @@ export async function register() {
       // child_process (not Bun.spawn) — the hook must work under any Node
       // runtime, and `detached` keeps an in-flight round alive across dev-
       // server restarts.
-      const { spawn } = require("child_process") as typeof import("child_process");
+      const { spawn } = nodeChildProcess();
       const child = spawn("bun", [ITERATE_SCRIPT], {
         cwd: "/home/z/my-project",
         stdio: ["ignore", out, out],

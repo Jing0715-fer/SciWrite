@@ -23,6 +23,13 @@
  *   5. numberingIntegrity — body [n] → ## References [n] → DB reference[n-1]
  *                          all refer to the SAME paper (type:externalId)
  *   6. duplicateRefCheck  — duplicate entries inside the reference list
+ *   7. sparseSectionCheck (round-64) — a long body section citing <2 distinct
+ *                          references (every claim must be attributed)
+ *   8. redundantSectionCheck (round-64) — near-verbatim section overlap
+ *   9. singleSourceDominance (round-64) — one reference supplying most of a
+ *                          section's (or the whole article's) citations
+ *  10. malformedRefCheck (round-64) — raw PDB-entry titles / bare rcsb.org
+ *                          URLs instead of the primary publication
  *
  * The LLM adversarial check (does this reference plausibly support this
  * specific claim?) lives in the audit-citations route, not here, because it
@@ -50,7 +57,14 @@ export type AuditVerdict =
   | "unsupported"
   | "orphan"
   | "duplicate"
-  | "mismatch";
+  | "mismatch"
+  // round-64: article-level STRUCTURAL checks. Warning severity — they are
+  // visible in the audit banner / topicality watch-list and injected into the
+  // repair loop's review feedback, but never counted as blockingErrors.
+  | "sparse-section"
+  | "redundant-section"
+  | "overcited-ref"
+  | "malformed-ref";
 
 export interface CitationFinding {
   /** The citation number, e.g. 3 for "[3]". */
@@ -85,6 +99,11 @@ export interface AuditReport {
     duplicate: number;
     mismatch: number;
     blockingErrors: number;
+    /** round-64 structural checks (warning severity). */
+    sparseSection: number;
+    redundantSection: number;
+    overcitedRef: number;
+    malformedRef: number;
   };
   /** True when the article body and ## References disagree on numbering. */
   numberingIntegrityOk: boolean;
@@ -272,6 +291,225 @@ export function topicalityScore(textA: string, textB: string): number {
   }
   const union = setA.size + setB.size - intersection;
   return union > 0 ? intersection / union : 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * round-64: article-level STRUCTURAL citation-hygiene checks.
+ *
+ * The ferroptosis production run (round-63) shipped four structural
+ * defects that the per-citation checks above could never see:
+ *   - a 500-word "Iron Storage and Trafficking" section with ZERO
+ *     citations (textbook facts, none attributed)
+ *   - a "Lipid Peroxide Repair Enzymes" section restating §2's GPX4
+ *     content near-verbatim (redundant, wasted space in a review)
+ *   - an Introduction citing [1] six times (single-source dominance)
+ *   - a References entry that was a raw RCSB PDB record ("8WIK: ...",
+ *     bare rcsb.org URL) instead of its primary publication
+ * All functions are PURE and bilingual (Latin tokens + CJK chars).
+ * ------------------------------------------------------------------ */
+
+/** Verdicts produced by the structural checks below (not per-citation). */
+const STRUCTURAL_VERDICTS = new Set<AuditVerdict>([
+  "sparse-section",
+  "redundant-section",
+  "overcited-ref",
+  "malformed-ref",
+]);
+
+/** Word-count that also works for CJK text (1 token ≈ 2 CJK chars). */
+function countTokensMixed(text: string): number {
+  const latin = (text || "").match(/[A-Za-z0-9][A-Za-z0-9'-]*/g) || [];
+  const cjk = (text || "").match(/[\u4e00-\u9fff]/g) || [];
+  return latin.length + Math.floor(cjk.length / 2);
+}
+
+/** 5-gram shingles over citation-stripped text (bilingual tokens). */
+export function sectionShingles(text: string, n = 5): Set<string> {
+  const words = (text || "")
+    .toLowerCase()
+    .replace(/\[\d+(?:[,\-–\s]\d+)*\]/g, " ")
+    .replace(/[^\w\s\u4e00-\u9fff]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const out = new Set<string>();
+  for (let i = 0; i + n <= words.length; i++) {
+    out.add(words.slice(i, i + n).join(" "));
+  }
+  return out;
+}
+
+/** |A∩B| / |A| — how much of A is contained in B. */
+function shingleContainment(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let hit = 0;
+  for (const s of a) if (b.has(s)) hit++;
+  return hit / a.size;
+}
+
+/** Split a body into `## Title` sections (falls back to one whole-body section). */
+function splitSectionsLite(body: string): { title: string; body: string }[] {
+  const secRe = /^##\s+(.+)$/gm;
+  const marks: { title: string; start: number; end: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = secRe.exec(body))) {
+    marks.push({ title: m[1].trim(), start: m.index, end: m.index + m[0].length });
+  }
+  if (marks.length === 0) return [{ title: "(body)", body }];
+  const out: { title: string; body: string }[] = [];
+  for (let i = 0; i < marks.length; i++) {
+    const contentEnd = i + 1 < marks.length ? marks[i + 1].start : body.length;
+    const text = body.slice(marks[i].end, contentEnd);
+    if (text.trim()) out.push({ title: marks[i].title, body: text });
+  }
+  return out;
+}
+
+const SPARSE_SECTION_MIN_TOKENS = 120;
+const REDUNDANT_CONTAINMENT_THRESHOLD = 0.45;
+const SECTION_DOMINANCE_THRESHOLD = 0.6;
+const GLOBAL_DOMINANCE_THRESHOLD = 0.35;
+/**
+ * Perspective/outlook sections are exempt from the sparse-section check:
+ * forward-looking prose states opinions and methodological projections,
+ * not checkable factual claims — the community norm allows them to carry
+ * few or no citations. (Learned from the ferroptosis article: §9 "Future
+ * Directions and Perspectives" is legitimately citation-free.)
+ */
+const PERSPECTIVE_SECTION_RE =
+  /\b(future|perspectives?|outlook|conclusions?|directions?)\b|未来|展望|结论|方向/i;
+
+/**
+ * The four round-64 structural checks. Exported for reuse by the repair
+ * loop (route.ts) and by tests. Pure; never throws.
+ */
+export function structuralCitationFindings(
+  body: string,
+  parsedRefs: Map<number, AuditRef>
+): CitationFinding[] {
+  const findings: CitationFinding[] = [];
+  const sections = splitSectionsLite(body);
+  if (sections.length === 0) return findings;
+
+  const globalMarkerCount = new Map<number, number>();
+  let totalMarkers = 0;
+
+  for (const sec of sections) {
+    const secCites: number[] = [];
+    const re = /\[(\d{1,3}(?:[,\-–]\s*\d{1,3})*)\]/g;
+    let mm: RegExpExecArray | null;
+    while ((mm = re.exec(sec.body))) {
+      for (const n of expandCitationRange(mm[1])) {
+        secCites.push(n);
+        globalMarkerCount.set(n, (globalMarkerCount.get(n) || 0) + 1);
+        totalMarkers++;
+      }
+    }
+    const distinct = new Set(secCites);
+    const tokens = countTokensMixed(sec.body);
+
+    // 7. sparse-section: a long section grounded in <2 distinct references
+    //    (perspective/outlook sections are exempt — see PERSPECTIVE_SECTION_RE)
+    if (
+      tokens >= SPARSE_SECTION_MIN_TOKENS &&
+      distinct.size < 2 &&
+      !PERSPECTIVE_SECTION_RE.test(sec.title)
+    ) {
+      findings.push({
+        n: secCites[0] ?? 0,
+        marker: distinct.size === 1 ? `§${sec.title}` : `§${sec.title}`,
+        index: 0,
+        sentence: sec.title,
+        verdict: "sparse-section",
+        reason:
+          `Section "${sec.title}" (~${tokens} words) cites ${distinct.size === 0 ? "NO" : "only 1"} distinct reference(s). ` +
+          "Every factual claim in a review section must be attributed to pool references — add citations or reframe unsupported claims as open questions.",
+      });
+    }
+
+    // 9a. single-source dominance within one section
+    const secCount = new Map<number, number>();
+    for (const n of secCites) secCount.set(n, (secCount.get(n) || 0) + 1);
+    if (secCites.length >= 5) {
+      for (const [n, c] of secCount) {
+        if (c / secCites.length > SECTION_DOMINANCE_THRESHOLD) {
+          findings.push({
+            n,
+            marker: `[${n}]`,
+            index: 0,
+            sentence: sec.title,
+            verdict: "overcited-ref",
+            reason:
+              `Reference [${n}] supplies ${Math.round((100 * c) / secCites.length)}% of section "${sec.title}"'s citations (${c}/${secCites.length}). ` +
+              "A section resting on one source is over-reliant — distribute the claims across the primary literature in the pool.",
+          });
+          break; // one finding per section suffices
+        }
+      }
+    }
+  }
+
+  // 9b. global single-source dominance
+  if (totalMarkers >= 12) {
+    for (const [n, c] of globalMarkerCount) {
+      if (c / totalMarkers > GLOBAL_DOMINANCE_THRESHOLD) {
+        findings.push({
+          n,
+          marker: `[${n}]`,
+          index: 0,
+          sentence: "(whole article)",
+          verdict: "overcited-ref",
+          reason:
+            `Reference [${n}] accounts for ${Math.round((100 * c) / totalMarkers)}% of all ${totalMarkers} citation markers in the article — the review is effectively anchored to a single source. Diversify the citation base.`,
+        });
+      }
+    }
+  }
+
+  // 8. redundant-section: later section near-contained in an earlier one
+  const secShingles = sections.map((s) => sectionShingles(s.body));
+  for (let j = 1; j < sections.length; j++) {
+    let best = { i: -1, score: 0 };
+    for (let i = 0; i < j; i++) {
+      const score = shingleContainment(secShingles[j], secShingles[i]);
+      if (score > best.score) best = { i, score };
+    }
+    if (best.score > REDUNDANT_CONTAINMENT_THRESHOLD) {
+      findings.push({
+        n: 0,
+        marker: `§${sections[j].title}`,
+        index: 0,
+        sentence: sections[j].title,
+        verdict: "redundant-section",
+        score: best.score,
+        reason:
+          `Section "${sections[j].title}" overlaps "${sections[best.i].title}" by ${Math.round(best.score * 100)}% (5-gram containment) — it largely restates earlier content instead of adding new information. ` +
+          "Replace it with content not covered elsewhere, or merge it into the earlier section.",
+      });
+    }
+  }
+
+  // 10. malformed reference entries: raw PDB records / bare database URLs
+  for (const [num, ref] of parsedRefs) {
+    const title = ref.title || "";
+    const url = ref.url || "";
+    const rawPdbTitle = /^[0-9A-Za-z]{4}:\s+\S/.test(title);
+    const bareRcsb = /rcsb\.org/i.test(url) && !/pubmed|doi\.org|\/structure\//i.test(url);
+    if (rawPdbTitle || bareRcsb) {
+      findings.push({
+        n: num,
+        marker: `[${num}]`,
+        index: 0,
+        sentence: title.slice(0, 240),
+        verdict: "malformed-ref",
+        reason:
+          `Reference [${num}] is a raw database record (${rawPdbTitle ? "PDB-entry title" : "bare rcsb.org URL"}) rather than a publication. ` +
+          "Cite the associated primary paper instead (authors, journal, year, title, PubMed/DOI link), consistent with the rest of the list.",
+        refIdentity: refIdentity(ref),
+      });
+    }
+  }
+
+  return findings;
 }
 
 /**
@@ -637,11 +875,20 @@ export function buildAuditReport(
     }
   }
 
+  // --- round-64: structural citation-hygiene checks (warning severity) ---
+  const structural = structuralCitationFindings(body, parsedRefs);
+  findings.push(...structural);
+
   // --- Summary ---
   const count = (v: AuditVerdict) =>
     findings.filter((f) => f.verdict === v).length;
+  // ok counts only per-citation verdicts; structural findings are article-level
+  // and must not be subtracted from the per-citation total.
+  const citationLevelFindings = findings.filter(
+    (f) => !STRUCTURAL_VERDICTS.has(f.verdict)
+  );
   const summary = {
-    ok: bodyCitations.length - findings.length,
+    ok: bodyCitations.length - citationLevelFindings.length,
     outOfRange: count("out-of-range"),
     missing: count("missing"),
     suspect: count("suspect"),
@@ -650,6 +897,10 @@ export function buildAuditReport(
     duplicate: duplicates.length,
     mismatch: count("mismatch"),
     blockingErrors: count("out-of-range") + count("missing") + count("mismatch"),
+    sparseSection: count("sparse-section"),
+    redundantSection: count("redundant-section"),
+    overcitedRef: count("overcited-ref"),
+    malformedRef: count("malformed-ref"),
   };
 
   return {

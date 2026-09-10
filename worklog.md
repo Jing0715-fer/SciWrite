@@ -3165,3 +3165,24 @@ Stage Summary:
 - 用户三项要求全部落地：定时迭代（instrumentation 调度器，dev server 存活即调度存活，下轮 09:29 UTC 自动运行金丝雀主题 2=CMA 结构生物学）、每轮必 push（round 1 已示范）、前后效果对比+变差矫正（metrics.json 基线+last-good 钉定+硬回归自动 revert）
 - 铁死亡生产测试在真实故障条件下完成：429 风暴→SSE 断连→断点续跑修复→30 分钟完成；引用/双语/科学性全绿，修复循环首次实战修复 2 处真实引用错误
 - 本轮净产出：4 个真缺陷修复（resume 空池、plan 风暴致命、静默退出无日志、调度器易收割）+ 生产级验证 1 篇铁死亡双语文章
+
+---
+Task ID: round-64
+Agent: main (Z.ai Code)
+Task: 修复用户对铁死亡生产文章的 9 项审查发现（4 科学性 + 5 引用）——本文数据级修复 + 管线级防再犯
+
+Work Log:
+- 用户审查发现全部 9 项在文中确认（另发现第 6 章标题 "Lid"→"Lipid" 拼写错误）
+- PubMed eutils 核实全部替换/补引文献（零凭记忆）：Lawson 1991 Nature human H ferritin（PMID 1992356）、Lawrence 1999 Science TFR1（10531064）、Hentze 2004 Cell IRP（15109490）、Dixon 2012 Cell（22632970）、Hou 2016 Autophagy ferritinophagy（27245739）、Lagal 2024 Biochem J PRDX6-ferroptosis（39601357）、Chowhan 2020 Sci Rep Prdx6 催化循环（33060708）；关键更正：原 [15] "Doll, S. et al (2021) Nature Chemical Biology. 8WIK:..."为错误条目——真实论文是 Doll S et al. 2019 Nature "FSP1 is a glutathione-independent ferroptosis suppressor"（PMID 31634899，期刊+年份+标题全错）
+- 管线级修复（防再犯）：citation-audit.ts 新增 4 个纯机械结构检查（sparse-section 长章节 <2 distinct refs、redundant-section 5-gram containment >45%、overcited-ref 单源占比>60% 节/>35% 全局、malformed-ref PDB 条目标题/裸 rcsb.org URL），warning 级进审计横幅+watch-list，不进 blockingErrors；展望/结论章节豁免（PERSPECTIVE_SECTION_RE，未来|展望|结论|方向）；STEP 8.5 修复循环每轮 review 后跑结构审计并把 findings 以 [STRUCTURAL verdict] 前缀注入 reviser feedback weaknesses，sparse-section/malformed-ref 额外升级为硬修订触发；writer system prompt 增 3 条科学严谨规则（反应方向显式声明+物种残基编号说明+章节内容不重复）；audit-citations route summary 补 4 字段并保持 ok 口径仅计 per-citation
+- 本文数据级修复（scripts/fix-ferroptosis-round64.ts，23 处精确锚定替换全部命中）：§5 ACSL4 改"catalyzing the esterification of coenzyme A with … to form the arachidonoyl- and adrenoyl-CoA thioesters"（EN+ZH）；§2 Sec46 补 "human numbering"+人鼠均 46 号保守说明；§1 引言 [1]×6 重分配（[1,24]/[24]/[2]/[3]/[13]，剩 2 处合理保留）；§3 [11] Parker 2021 重锚到人源转运体 cryo-EM 结构句、癌细胞上调声明改引 [12]；§4 [13,14]→[13,15]/[15,16]→[16]；§6 全文重写为 PRDX6 双功能酶（1-Cys/PLA2/催化循环结构 [27]/缺失致铁死亡敏感 [26]），标题拼写修正；§7 补 7 处引用（[21]×2/[22]/[23]/[24]/[25]）；§8 428 增加与 ML162/氯乙酰胺/丙炔酰胺共价抑制剂的机制对比+Sec46 结合方式未决声明；References [15] 替换为 Doll 2019 Nature 完整格式+追加 [21]-[27]（PubMed 链接统一，格式与其他条目一致）
+- paragraph 行同步（fix-ferroptosis-round64-part2.ts，对齐管线 compose 回写行为）：§6 title Lid→Lipid、9 节 content/contentZh/wordCount 按修复后 article.content 拆分回写、每节全局编号 references 重建（deleteMany+createMany，citationOrder=globalNum-1）；修复导致 Full Article 章节导航"06 Lid"残留与段落编辑视图旧文问题
+- 清理：删除冗余 8WIK DataSource 池行（其 primary 论文 Feng 2024 PMID 38414669 已独立在池）；保留合法 RCSB 结构源（title 为论文名+extra.pmid）
+- lint 门禁修复（每轮必过要求）：round-63 auto-iterate 基础设施的 13 处 require() 迁移 ESM（iterate.ts/iterate-scheduler/instrumentation.ts），lint 从 13 errors→0 errors/165 warnings（基线 162+3 无害新增）
+- 验证：tsc 0 错误；修复前→后结构审计对照 sparse 3→0、overcited 1→0、malformed 1→0、blocking 0→0、orphan 0→0、引用 53→60 markers/20→27 refs、引言 [1] 6→2、正文 2139→2319 词；浏览器 E2E 双语全绿（Lipid/PRDX6/thioesters/Doll/sec46 human numbering/contrast/中文五项全命中，8WIK 零残留，§6 按钮标题同步，console 零错误）；截图 /tmp/round64-ferro-en-fixed.png、round64-ferro-zh-fixed.png、round64-review-tab.png
+
+Stage Summary:
+- 用户 9 项审查发现全部闭环：4 项科学性（ACSL4 反应方向、428 机制区分、§6 冗余重写、Sec46 物种说明）+5 项引用（§7 补引 7 处、引言去单源化、[11] 重锚、[15] 换真实论文、链接统一 PubMed）
+- 管线获得结构级引用卫生能力：本轮四类缺陷全部成为机械可检（审计可见+修复循环可修），不再依赖 LLM 评审员"心情好"——round-63 铁死亡文章 LLM 评审 7/10 却带 500 词零引用章节的盲区已封死
+- 已知限制记录：redundant-section 的 5-gram 阈值 45% 抓照抄级复述，语义级复述（如原 §6 换措辞重述 §2）需 LLM 评审/人工把关（本轮以 sparse-section 侧面捕获）；ZH 半区 citation-level topicality 审计存在 CJK/Latin 交叉假阳性（结构级检查双语均准确）
+- 定时迭代器健康：instrumentation 心跳活跃，下一轮 11:04 UTC；本轮即"用户驱动迭代"示范（修复→push→前后对照→零回归）

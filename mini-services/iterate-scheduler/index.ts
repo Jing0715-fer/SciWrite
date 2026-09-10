@@ -16,12 +16,16 @@
  * into iteration-state/console-heartbeat.json).
  */
 
+import fs from "fs";
+
 const PORT = 3040;
 const STATE_DIR = "/home/z/my-project/iteration-state";
 const ITERATE_SCRIPT = "/home/z/my-project/scripts/auto-iterate/iterate.ts";
 
+import fs from "fs";
+
 function readJson(path: string): any | null {
-  try { return JSON.parse(require("fs").readFileSync(path, "utf8")); } catch { return null; }
+  try { return JSON.parse(fs.readFileSync(path, "utf8")); } catch { return null; }
 }
 
 function lockHeld(): boolean {
@@ -33,7 +37,6 @@ function lockHeld(): boolean {
 function triggerRound(): { triggered: boolean; note: string } {
   if (lockHeld()) return { triggered: false, note: "a round is already running (lock held)" };
   try {
-    const fs = require("fs");
     fs.mkdirSync(STATE_DIR, { recursive: true });
     const out = fs.openSync(`${STATE_DIR}/round-console.log`, "a");
     const child = Bun.spawn(["bun", ITERATE_SCRIPT], {
@@ -74,7 +77,6 @@ Bun.serve({
 
 setInterval(() => {
   try {
-    const fs = require("fs");
     fs.mkdirSync(STATE_DIR, { recursive: true });
     fs.writeFileSync(`${STATE_DIR}/console-heartbeat.json`, JSON.stringify({
       alive: true, lastTickAt: new Date().toISOString(), port: PORT,

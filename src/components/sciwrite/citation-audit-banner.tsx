@@ -103,6 +103,31 @@ const VERDICT_META: Record<
     color: "text-amber-600 dark:text-amber-400",
     bg: "bg-amber-50/50 dark:bg-amber-950/15",
   },
+  // round-64 structural checks (article-level citation hygiene)
+  "sparse-section": {
+    label: "Sparse section",
+    icon: CircleAlert,
+    color: "text-amber-600 dark:text-amber-400",
+    bg: "bg-amber-50/50 dark:bg-amber-950/15",
+  },
+  "redundant-section": {
+    label: "Redundant section",
+    icon: CircleAlert,
+    color: "text-amber-600 dark:text-amber-400",
+    bg: "bg-amber-50/50 dark:bg-amber-950/15",
+  },
+  "overcited-ref": {
+    label: "Over-relied source",
+    icon: CircleAlert,
+    color: "text-amber-600 dark:text-amber-400",
+    bg: "bg-amber-50/50 dark:bg-amber-950/15",
+  },
+  "malformed-ref": {
+    label: "Malformed entry",
+    icon: CircleAlert,
+    color: "text-amber-600 dark:text-amber-400",
+    bg: "bg-amber-50/50 dark:bg-amber-950/15",
+  },
 };
 
 /**

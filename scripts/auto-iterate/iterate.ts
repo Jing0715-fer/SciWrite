@@ -41,6 +41,8 @@
  * scheduler (the lockfile is PID+staleness checked).
  */
 import { db } from "@/lib/db";
+import fs from "fs";
+import path from "path";
 import ZAI from "z-ai-web-dev-sdk";
 import { countWords } from "@/lib/writing";
 
@@ -78,22 +80,22 @@ function log(msg: string) {
 
 function readJson<T>(path: string): T | null {
   try {
-    return JSON.parse(require("fs").readFileSync(path, "utf8")) as T;
+    return JSON.parse(fs.readFileSync(path, "utf8")) as T;
   } catch {
     return null;
   }
 }
 
 function writeText(path: string, text: string) {
-  require("fs").mkdirSync(require("path").dirname(path), { recursive: true });
-  require("fs").writeFileSync(path, text);
+  fs.mkdirSync(path.dirname(path), { recursive: true });
+  fs.writeFileSync(path, text);
 }
 
 // ---------- lockfile ----------
 
 function acquireLock(): boolean {
   try {
-    const fs = require("fs");
+    
     const old = readJson<{ pid: number; started: string }>(LOCK_FILE);
     if (old) {
       const alive = Bun.spawnSync(["bash", "-c", `kill -0 ${old.pid} 2>/dev/null && echo alive`]).stdout
@@ -115,7 +117,7 @@ function acquireLock(): boolean {
 }
 
 function releaseLock() {
-  try { require("fs").unlinkSync(LOCK_FILE); } catch {}
+  try { fs.unlinkSync(LOCK_FILE); } catch {}
 }
 
 // ---------- health ----------
@@ -414,7 +416,7 @@ function buildReportLines(cur: RoundMetrics, prev: RoundMetrics | null, canary: 
 }
 
 function prependReport(text: string) {
-  const fs = require("fs");
+  
   const HEADER = "# Auto-Iterate Round Reports\n\nOne section per round (newest first). metrics.json = machine-readable baseline; last-good.txt = last clean-outcome commit. Scheduled by mini-services/iterate-scheduler — every 6h, throttled-provider retry every 45 min. Manual trigger: `bun scripts/auto-iterate/iterate.ts`.\n\n";
   let old = "";
   try { old = fs.readFileSync(REPORT_FILE, "utf8"); } catch {}
@@ -422,7 +424,7 @@ function prependReport(text: string) {
   if (old.startsWith("# Auto-Iterate")) {
     body = old.slice(HEADER.length);
   }
-  fs.mkdirSync(require("path").dirname(REPORT_FILE), { recursive: true });
+  fs.mkdirSync(path.dirname(REPORT_FILE), { recursive: true });
   fs.writeFileSync(REPORT_FILE, HEADER + text + body);
 }
 
@@ -433,7 +435,7 @@ async function main() {
   const prevMetrics = readJson<RoundMetrics>(METRICS_FILE);
   const roundNo = (prevMetrics?.round || 0) + 1;
   let lastGood = "";
-  try { lastGood = require("fs").readFileSync(LAST_GOOD_FILE, "utf8").trim(); } catch {}
+  try { lastGood = fs.readFileSync(LAST_GOOD_FILE, "utf8").trim(); } catch {}
   const headBefore = sh("git rev-parse HEAD").out.trim();
 
   log(`=== ROUND ${roundNo} start (head ${headBefore.slice(0, 8)}) ===`);
