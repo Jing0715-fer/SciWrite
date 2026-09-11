@@ -1,38 +1,49 @@
 "use client";
 
 import { useI18n } from "@/lib/i18n";
+import { Command } from "lucide-react";
 
+/**
+ * Footer — redesigned as a slim status rail.
+ *
+ * Architectural changes:
+ * 1. Reduced to a single line of high-signal status: the live AI indicator
+ *    on the left, the database roster on the right. The verbose
+ *    citation-syntax help moved into a tooltip.
+ * 2. The command palette trigger is now a proper kbd-chip, not a button
+ *    masquerading as text.
+ */
 export function Footer({ onOpenPalette }: { onOpenPalette?: () => void }) {
   const { t } = useI18n();
   return (
-    <footer className="glass-toolbar glass-footer shrink-0 px-4 py-2 flex items-center justify-between text-[10px] text-foreground/75 relative z-20">
-      <div className="flex items-center gap-2">
-        <span className="inline-flex items-center gap-1 font-medium">
-          <span className="relative inline-flex h-2 w-2">
+    <footer className="atlas-statusbar shrink-0 h-7 px-4 sm:px-6 flex items-center justify-between text-[10px] relative z-20">
+      <div className="flex items-center gap-3">
+        <span className="inline-flex items-center gap-1.5 font-medium text-foreground/80">
+          <span className="relative inline-flex h-1.5 w-1.5">
             <span className="absolute inline-flex h-full w-full rounded-full bg-primary/60 animate-ping" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
           </span>
           {t("footer.aiPowered")}
         </span>
-        <span className="hidden sm:inline opacity-40">·</span>
-        <span className="hidden sm:inline text-muted-foreground">
-          {t("footer.citations")} <code className="font-mono text-[9px] text-foreground/60">[n]</code> / <code className="font-mono text-[9px] text-foreground/60">[SOURCE:ID]</code>
-        </span>
-      </div>
-      <div className="flex items-center gap-2">
         {onOpenPalette && (
           <button
             onClick={onOpenPalette}
-            className="hidden md:inline-flex items-center gap-1 px-1 py-1 rounded-md border border-border/60 bg-card/50 hover:bg-muted/60 hover:border-border transition-colors"
+            className="hidden sm:inline-flex items-center gap-1 atlas-kbd-chip focus-ring"
             title={t("footer.openPaletteTitle")}
           >
-            <kbd className="font-mono text-[9px] font-semibold text-foreground/80 bg-muted rounded px-1 py-px leading-none">⌘K</kbd>
-            <span className="text-muted-foreground">{t("footer.commands")}</span>
+            <Command className="h-2.5 w-2.5" />
+            <kbd className="font-mono">K</kbd>
           </button>
         )}
-        <span className="hidden md:inline text-muted-foreground/80">RCSB · UniProt · PubMed · NCBI · BLAST</span>
-        <span className="opacity-40">·</span>
-        <span className="font-medium">{t("app.title")}</span>
+      </div>
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <span className="hidden md:inline tracking-wide">
+          RCSB · UniProt · PubMed · NCBI · BLAST
+        </span>
+        <span className="opacity-30">·</span>
+        <span className="font-mono text-[9px]">
+          [n] · [SOURCE:ID]
+        </span>
       </div>
     </footer>
   );

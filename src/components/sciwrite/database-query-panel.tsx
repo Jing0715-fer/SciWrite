@@ -128,20 +128,13 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
           on the right. The header sits at the same vertical position
           as ProjectsSidebar's header (QA #2 fix).
           ============================================================ */}
-      <div className="glass-subtle panel-section-header flex items-center justify-between gap-2 shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="brand-tile h-6 w-6 rounded-md flex items-center justify-center shrink-0">
-            <Database className="h-3 w-3 text-primary-foreground" />
-          </div>
-          <span className="eyebrow flex items-center gap-2 truncate">
-            {t("db.title")}
+      <div className="atlas-data-header shrink-0">
+        <div className="atlas-data-section-title">
+          <span className="atlas-data-section-title-icon">
+            <Database className="h-3 w-3" />
           </span>
+          {t("db.title")}
         </div>
-        {/* Source picker — compact h-7 so the header matches the height of
-            ProjectsSidebar's header (which also fits h-7 chips). The small
-            colored dot reuses the same .badge-* semantic hue that appears on
-            each result card, so the dropdown entry and the result-card badge
-            share the same color identity. */}
         <Select value={source} onValueChange={setSource}>
           <SelectTrigger className="h-7 w-[140px] text-xs shrink-0">
             <SelectValue />
@@ -150,10 +143,6 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
             {DATABASE_SOURCES.map((s) => (
               <SelectItem key={s.id} value={s.id} className="text-xs">
                 <span className="flex items-center gap-2">
-                  {/* Tiny source-type chip reuses the same .badge-* hue that
-                      appears on each result card, so the dropdown entry and
-                      the result-card badge share the same color identity.
-                      A single-letter chip is more visible than a pale dot. */}
                   <span
                     className={`inline-flex items-center justify-center h-3 min-w-3 px-1 rounded text-[9px] font-bold leading-none ${SOURCE_BADGE[s.id] || "badge-slate"}`}
                   >

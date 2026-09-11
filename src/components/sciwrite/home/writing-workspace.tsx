@@ -116,23 +116,21 @@ export function WritingWorkspace({
 
   return (
     <div className="flex flex-col h-full relative">
-      {/* Header — project title + field badge + topic, aligned with the
-          other panels via .glass-subtle .panel-section-header (same rhythm
-          as ProjectsSidebar / DatabaseQueryPanel / KnowledgePanel). */}
-      <div className="glass-subtle panel-section-header shrink-0">
+      {/* Workspace header — Atlas structural class with title + field badge */}
+      <div className="atlas-workspace-header shrink-0">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1">
-              <h2 className="text-base sm:text-xl font-semibold tracking-tight truncate font-serif-text leading-tight">
+              <h2 className="atlas-workspace-title truncate">
                 {project.title}
               </h2>
               {project.field && (
-                <span className="h-5 px-1 inline-flex items-center rounded-md text-[10px] font-semibold uppercase tracking-wide shrink-0 bg-primary/10 text-primary">
+                <span className="atlas-project-field-tag shrink-0">
                   {String(project.field).replace(/-/g, " ")}
                 </span>
               )}
             </div>
-            <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+            <p className="atlas-workspace-topic">
               {project.topic}
             </p>
           </div>
@@ -183,23 +181,18 @@ export function WritingWorkspace({
         <CitationHealthDashboard projectId={activeProjectId} onJumpParagraph={jumpToParagraph} />
       )}
 
-      {/* Workspace tabs — transparent strip; the filled tab pills carry
-          the activation state, so no background band is needed. */}
-      <div className="flex items-center gap-1 px-4 py-2 border-b hairline shrink-0 overflow-x-auto">
+      {/* Workspace tabs — Atlas structural tab strip */}
+      <div className="atlas-tabs shrink-0">
         <button
           onClick={() => setWorkspaceTab("paragraphs")}
-          className={`text-[11px] px-3 py-1 rounded-md font-medium transition-all whitespace-nowrap flex items-center gap-1 ${
-            workspaceTab === "paragraphs" ? "tab-pill" : "tab-pill-inactive"
-          }`}
+          className={`atlas-tab ${workspaceTab === "paragraphs" ? "atlas-tab-active" : ""}`}
         >
           <PenLine className="h-3 w-3" />
           {t("workspace.paragraphsTabLabel", { n: paragraphs.length })}
         </button>
         <button
           onClick={() => setWorkspaceTab("article")}
-          className={`text-[11px] px-3 py-1 rounded-md font-medium transition-all whitespace-nowrap flex items-center gap-1 ${
-            workspaceTab === "article" ? "tab-pill" : "tab-pill-inactive"
-          }`}
+          className={`atlas-tab ${workspaceTab === "article" ? "atlas-tab-active" : ""}`}
         >
           <Layers className="h-3 w-3" />
           {t("workspace.articleTab")}
@@ -207,18 +200,14 @@ export function WritingWorkspace({
         </button>
         <button
           onClick={() => setWorkspaceTab("review")}
-          className={`text-[11px] px-3 py-1 rounded-md font-medium transition-all whitespace-nowrap flex items-center gap-1 ${
-            workspaceTab === "review" ? "tab-pill" : "tab-pill-inactive"
-          }`}
+          className={`atlas-tab ${workspaceTab === "review" ? "atlas-tab-active" : ""}`}
         >
           <Gavel className="h-3 w-3" />
           {t("workspace.reviewTab")}
         </button>
         <button
           onClick={() => setWorkspaceTab("relationships")}
-          className={`text-[11px] px-3 py-1 rounded-md font-medium transition-all whitespace-nowrap flex items-center gap-1 ${
-            workspaceTab === "relationships" ? "tab-pill" : "tab-pill-inactive"
-          }`}
+          className={`atlas-tab ${workspaceTab === "relationships" ? "atlas-tab-active" : ""}`}
         >
           <Network className="h-3 w-3" />
           {t("workspace.relationshipsTab")}

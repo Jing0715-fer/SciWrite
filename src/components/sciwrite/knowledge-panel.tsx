@@ -84,21 +84,14 @@ export function KnowledgePanel({
             + eyebrow on the left, primary CTA on the right. Sits at the
             same vertical position so the right column reads as siblings.
             ============================================================ */}
-        <div className="glass-subtle panel-section-header flex items-center justify-between gap-2 shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="brand-tile h-6 w-6 rounded-md flex items-center justify-center shrink-0">
-              <DatabaseIcon className="h-3 w-3 text-primary-foreground" />
-            </div>
-            <span className="eyebrow truncate">{t("knowledge.sources")}</span>
-            {/* Source count — stat-tile (metric chip) */}
-            <div className="stat-tile inline-flex items-center gap-1 px-2 py-1 shrink-0">
-              <FileStack className="h-3 w-3 text-primary" aria-hidden="true" />
-              <span className="font-mono text-[11px] tabular-nums font-semibold text-primary">
-                {dataSources.length}
-              </span>
-            </div>
+        <div className="atlas-data-header shrink-0">
+          <div className="atlas-data-section-title">
+            <span className="atlas-data-section-title-icon">
+              <DatabaseIcon className="h-3 w-3" />
+            </span>
+            {t("knowledge.sources")}
+            <span className="atlas-rail-count">{dataSources.length}</span>
           </div>
-          {/* Add Reference — primary CTA (.btn-gradient-primary) */}
           <Button
             size="sm"
             className="btn-gradient-primary h-7 px-3 gap-1 text-xs font-medium text-primary-foreground shrink-0 focus-ring"
