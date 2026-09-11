@@ -3269,3 +3269,23 @@ Stage Summary:
 - codebuddy -p 模式认证注意（UI 琥珀提示已有）：模型调用用 CODEBUDDY_API_KEY env 认证，交互登录 token 不生效
 - 设计决策：CODEBUDDY_MODEL env 优先级保留在存储覆盖之下（用户显式配置恒胜）；旧默认 deepseek-v4-pro 保留在 datalist 可选；沙箱无法验证真实 WorkBuddy 联调（无桌面应用），假 shim 已验证协议层（--version 探测 / -p -y --output-format json 信封 / session_id 解析）
 - 遗留（沿袭 round-66）：llm-cache 键不含 role 维度（taskType 已天然区分）；模型分离后的真实审查捕获率对比测试待用户提供 minimax key + WorkBuddy 环境后进行（可用 TMC1/2 同主题三跑对比：同模型自审 vs minimax+WorkBuddy 分工）
+---
+Task ID: round-68
+Agent: main (Z.ai Code)
+Task: 回答用户提问"审查的弱点自动修正了吗？Review 里还能看到的弱点是未修正的问题？"→ 除答疑外落地 UI 披露层 + 一键续修
+
+Work Log:
+- 机制核实（数据驱动）：STEP 8.5 每轮评审后仅对硬性发现自动修订——CONTRADICTED 引用、未 hedge 的 UNVERIFIABLE（actionableFindings：fact/verdict 触发），修订预算 REPAIR_MAX_REVISIONS=2；TMC run 实况：R1 修订 §1,2,9、R2 修订 §2,3,9（两处真实引用错误被修掉），R3 又发现 2 条未 hedge UNVERIFIABLE（§9 展望章"not yet determined at high resolution"/"could reveal novel targets"两句）+ citations 5/10 → 预算用尽停止，stopReason="revision budget exhausted — remaining issues are disclosed in the Review tab"；DB 复核最终文章确实仍含这两句（真实未修正）；铁死亡 run：R3 clean 收敛，弱点为风格级故意不修。Review tab 只显示末轮（orderBy round desc 取第一条）→ 用户看到的弱点=当前文章真实快照，但 UI 从不解释这一切（allReviews 返回未渲染、stopReason 只在 SSE 流闪过）
+- Prisma：Article.repairSummary Json?（reviews/revisions/guardRejections/stopReason/finalVerdict/finalOverall/scoped[]/at）
+- generate-full-v2：评审行持久化后追加 article.repairSummary 更新（失败仅日志）
+- /api/reviews GET：查询 article 行返回 repairSummary
+- EmbeddedReview 披露层：①Auto-repair loop 卡（N 轮·M 修订·终评分·scoped 章节芯片 R1 §1/§2/§9…·停止原因 i18n·轮次 verdict 历史芯片）②弱点区标注 "unresolved — present in the current article"（verdict≠accept 时）+ 琥珀解释行点名停止原因——用户问题的答案直接写进 UI ③"Fix remaining weaknesses" 按钮→既有 mode=revise 核心（round-59 成熟路径），成功后失效 saved-review/article-paragraphs/project/topicality 查询，zhCleared 以警告 toast 呈现（中英分叉提示重译）④reviewMut 改经 saved-review 查询重载（响应形态更全）
+- 回填：铁死亡（stop=clean）/TMC（stop=budget exhausted）两篇 repairSummary 按运行日志重建，立即有意义的披露
+- 踩坑记录：db:push 后 dev server 进程持有旧 Prisma client → /api/reviews 的 select { repairSummary } 抛错被 catch 吞掉静默返回旧形态（round-63 教训重演）；重启 dev server 解决，但 nohup&disown 启动的进程被沙箱收割、`next` 不在裸 shell PATH——最终以 setsid --fork + ./node_modules/.bin/next 绝对路径稳定拉起；浏览器侧 chunk 已含新代码但 UI 未变的原因是误开了 home review-workspace（主面板）而非文章查看器 Review tab（需先开文章查看器对话框再点其内部 Review 标签）
+- 验证：tsc 0 / lint 0 errors（166 warnings=基线）；浏览器 E2E 双场景——TMC（budget exhausted + outstanding 标注 + fix 按钮 + R1§1,2,9/R2§2,3,9 芯片 + 三轮 verdict 历史）与铁死亡（clean 停止 + 同样 UI）；console 零错误；截图 /tmp/round68-review-tab-outstanding.png、round68-review-tab-clean.png；DB 随代码提交
+- 提交 996208d 并推送 origin/main
+
+Stage Summary:
+- 用户问题的准确答案已固化为 UI 能力：末轮弱点=当前文章未修正问题（停止原因可见），硬性发现已自动修复（scoped 芯片可见），遗留可一键续修（复用成熟 revise 核心，含中英分叉警示）
+- 设计边界澄清：循环故意不无限烧 token——budget 2 次修订后披露而非继续；风格级弱点不自动润色（防降级）；Fix remaining 是用户显式选择才触发
+- 新生成文章自动获得 repairSummary；存量两篇已回填；一键续修按钮未实弹触发（会真实改库清 contentZh，留待用户自行使用）
