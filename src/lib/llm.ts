@@ -50,6 +50,12 @@ export interface LlmConfig {
   system?: string;
   temperature?: number;
   maxTokens?: number;
+  /** round-66 (generation/review split): when true, ONLY the requested
+   *  provider is attempted — no fallback walk. Used for review-role calls
+   *  with a DISTINCT provider selection: silently substituting another
+   *  model (e.g. the generation provider) for the reviewer would defeat the
+   *  whole point of the split. Callers' degradation logic handles the throw. */
+  strict?: boolean;
 }
 
 export interface LlmResult {
@@ -1240,7 +1246,7 @@ async function callAnyLlm(
   opts: { sessionId?: string } = {},
 ): Promise<LlmResult> {
   const probes = await probeAll();
-  const order = decideProviderOrder(cfg.resolvedProvider, cfg.model);
+  const order = decideProviderOrder(cfg.resolvedProvider, cfg.model, cfg.strict);
   // If a session id was passed in, only feed it to adapters that declared a
   // `resumeArg`. Other adapters get undefined and behave as before.
   const sessionId = opts.sessionId;
@@ -1428,7 +1434,7 @@ interface OrderedProvider {
   fallback: boolean;
 }
 
-function decideProviderOrder(requested: string, _model?: string): OrderedProvider[] {
+function decideProviderOrder(requested: string, _model?: string, strict?: boolean): OrderedProvider[] {
   const cliIds = CLI_ADAPTERS.map((a) => `cli:${a.id}`);
   const auto: OrderedProvider[] = [];
   for (const id of cliIds) auto.push({ id, via: "native", fallback: requested !== id });
@@ -1449,6 +1455,13 @@ function decideProviderOrder(requested: string, _model?: string): OrderedProvide
 
   if (!requested || requested === "auto") {
     return auto.map((p) => ({ ...p, fallback: false }));
+  }
+  // round-66 strict mode: single-candidate order. A failed call then
+  // surfaces the provider's REAL error instead of being silently answered
+  // by a substitute model.
+  if (strict) {
+    const requestedProvider = auto.find((p) => p.id === requested);
+    return [{ ...(requestedProvider ?? { id: requested, fallback: false }), fallback: false }];
   }
   const requestedProvider = auto.find((p) => p.id === requested);
   const rest = auto.filter((p) => p.id !== requested);

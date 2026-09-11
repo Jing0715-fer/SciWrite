@@ -37,6 +37,9 @@ import {
   Hexagon,
   Users,
   Server,
+  GitBranch,
+  PenLine,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -122,6 +125,7 @@ const PROVIDER_ICONS: Record<string, LucideIcon> = {
   hexagon: Hexagon,
   users: Users,
   server: Server,
+  "shield-check": ShieldCheck,
 };
 
 function ProviderIcon({ name, className }: { name: string; className?: string }) {
@@ -148,12 +152,30 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
   const [apiDefault, setApiDefault] = React.useState<string>("");
   const [apiLoading, setApiLoading] = React.useState(false);
 
+  // round-66 generation/review role-split selections (from GET /api/llm-config/select).
+  // roles.review === null → review FOLLOWS the generate selection.
+  const [roleSel, setRoleSel] = React.useState<{
+    generate: { provider: string; model: string };
+    review: { provider: string; model: string } | null;
+  } | null>(null);
+
   const loadSelection = React.useCallback(async () => {
     try {
       const r = await fetch("/api/llm-config/select");
       const d = await r.json();
       if (d?.provider) setSelected(d.provider);
       if (typeof d?.model === "string") setModelOverride(d.model);
+      if (d?.roles?.generate) {
+        setRoleSel({
+          generate: {
+            provider: d.roles.generate.provider ?? "zai-sdk",
+            model: d.roles.generate.model ?? "",
+          },
+          review: d.roles.review && typeof d.roles.review.provider === "string"
+            ? { provider: d.roles.review.provider, model: d.roles.review.model ?? "" }
+            : null,
+        });
+      }
     } catch {
       /* server not reachable; keep default */
     }
@@ -357,6 +379,14 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
               )}
             </div>
 
+            {/* round-66: generation / review model split */}
+            <RoleSplitSection
+              detected={config?.detected ?? []}
+              apiProviders={apiProviders}
+              roles={roleSel}
+              onSaved={() => { void loadSelection(); }}
+            />
+
             {/* Detected CLIs (original agent detection — kept) */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -556,6 +586,296 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─── Generation / Review role split (round-66) ───────────────────────────────
+
+const FOLLOW_SENTINEL = "__follow_generate__";
+
+/**
+ * Configure WHICH provider/model writes content vs WHICH audits it.
+ *
+ * Motivation (TMC1/2 external audit): the pipeline's own reviewers missed
+ * the same error classes an external model caught — a model auditing its
+ * own output shares its blind spots. Splitting the roles (e.g. generate =
+ * MiniMax, review = WorkBuddy / Deepseek-V4.1-Flash) yields genuinely
+ * independent verification.
+ *
+ * Server side: /api/llm-config/select { provider, model, role } →
+ * src/lib/llm-selection.ts (role-scoped selections) → src/lib/ai.ts routes
+ * every chat() call by role. The pipeline needs no changes — review
+ * taskTypes ("review" / "verify" / "adversarial-review" / "fact-check" /
+ * "topicality") are auto-derived.
+ */
+function RoleSplitSection({
+  detected,
+  apiProviders,
+  roles,
+  onSaved,
+}: {
+  detected: any[];
+  apiProviders: ApiProviderInfo[];
+  roles: {
+    generate: { provider: string; model: string };
+    review: { provider: string; model: string } | null;
+  } | null;
+  onSaved: () => void;
+}) {
+  const { t } = useI18n();
+  const [genProvider, setGenProvider] = React.useState("zai-sdk");
+  const [genModel, setGenModel] = React.useState("");
+  const [revProvider, setRevProvider] = React.useState(""); // "" = follow generate
+  const [revModel, setRevModel] = React.useState("");
+  const [saving, setSaving] = React.useState<"generate" | "review" | null>(null);
+
+  React.useEffect(() => {
+    if (!roles) return;
+    setGenProvider(roles.generate.provider || "zai-sdk");
+    setGenModel(roles.generate.model ?? "");
+    setRevProvider(roles.review?.provider ?? "");
+    setRevModel(roles.review?.model ?? "");
+  }, [roles]);
+
+  // Selectable providers: zai-sdk + detected CLIs + configured API providers.
+  const providerOptions = React.useMemo(() => {
+    const opts: Array<{
+      value: string;
+      label: string;
+      models: string[];
+      defaultModel: string;
+    }> = [
+      {
+        value: "zai-sdk",
+        label: "Z.ai (GLM)",
+        models: ["glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4-flash"],
+        defaultModel: "glm-4.6",
+      },
+    ];
+    for (const cli of detected ?? []) {
+      const provId = CLI_PROVIDER_MAP[cli.name] ?? cli.name;
+      if (provId === "zai-sdk" || provId.startsWith("api:")) continue;
+      opts.push({
+        value: provId,
+        label: cli.label ?? provId,
+        models: Array.isArray(cli.models) ? cli.models.slice(0, 8) : [],
+        defaultModel: "",
+      });
+    }
+    for (const p of apiProviders) {
+      if (!(p.hasApiKey || p.apiKeyOptional)) continue;
+      opts.push({
+        value: `api:${p.id}`,
+        label: p.displayName,
+        models: p.models.map((m) => m.id),
+        defaultModel: p.effectiveModel,
+      });
+    }
+    return opts;
+  }, [detected, apiProviders]);
+
+  const findOpt = (v: string) => providerOptions.find((o) => o.value === v);
+  const genOpt = findOpt(genProvider);
+  const revOpt = findOpt(revProvider);
+
+  const reviewFollows = !revProvider;
+  const sameRouting =
+    !reviewFollows && revProvider === genProvider && revModel === genModel;
+
+  const save = async (role: "generate" | "review") => {
+    setSaving(role);
+    try {
+      const provider = role === "generate" ? genProvider : revProvider;
+      const model = role === "generate" ? genModel : revModel;
+      const r = await fetch("/api/llm-config/select", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // model travels as "" (clear → provider default), never undefined —
+        // undefined would KEEP the previously stored override server-side.
+        body: JSON.stringify({
+          provider: provider || (role === "review" ? "" : "zai-sdk"),
+          model,
+          role,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d?.ok) {
+        toast.error(d?.error || "Failed to save role routing");
+        return;
+      }
+      toast.success(t("llmConfig.roleSplit.saved"));
+      onSaved();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-border/60 bg-muted/10 p-3 space-y-2.5">
+      <div className="flex items-center gap-2">
+        <GitBranch className="h-3.5 w-3.5 text-primary shrink-0" />
+        <span className="text-xs font-semibold">{t("llmConfig.roleSplit.title")}</span>
+        {!reviewFollows && (
+          <Badge variant="outline" className="text-[8px] h-3.5 uppercase ml-auto text-emerald-600 dark:text-emerald-400 border-emerald-300/60 dark:border-emerald-700/60">
+            split
+          </Badge>
+        )}
+      </div>
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        {t("llmConfig.roleSplit.desc")}
+      </p>
+
+      {/* ── Generation row ── */}
+      <div className="rounded-md border border-border/50 bg-background/60 p-2 space-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <Badge className="text-[9px] h-4 gap-0.5 bg-primary/10 text-primary border border-primary/30">
+            <PenLine className="h-2.5 w-2.5" />
+            {t("llmConfig.roleSplit.generateRole")}
+          </Badge>
+          <span className="text-[9px] text-muted-foreground truncate">
+            {t("llmConfig.roleSplit.generateHint")}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Select
+            value={genProvider || "zai-sdk"}
+            onValueChange={(v) => {
+              setGenProvider(v);
+              setGenModel(""); // provider switch → clear stale model override
+            }}
+          >
+            <SelectTrigger className="w-40 h-7 text-[11px] shrink-0" aria-label={t("llmConfig.roleSplit.generateRole")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-h-64">
+              {providerOptions.map((o) => (
+                <SelectItem key={o.value} value={o.value} className="text-xs">
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Input
+            value={genModel}
+            onChange={(e) => setGenModel(e.target.value)}
+            placeholder={
+              genOpt?.defaultModel ||
+              genOpt?.models?.[0] ||
+              t("llmConfig.roleSplit.modelPlaceholder")
+            }
+            className="h-7 text-[11px] font-mono flex-1 min-w-0 bg-background/60"
+            list="role-split-gen-models"
+          />
+          {genOpt && genOpt.models.length > 0 && (
+            <datalist id="role-split-gen-models">
+              {genOpt.models.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-[10px] px-2 shrink-0"
+            disabled={saving === "generate"}
+            onClick={() => void save("generate")}
+          >
+            {saving === "generate" ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              t("llmConfig.saveModel")
+            )}
+          </Button>
+        </div>
+      </div>
+
+      {/* ── Review row ── */}
+      <div className="rounded-md border border-border/50 bg-background/60 p-2 space-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <Badge className="text-[9px] h-4 gap-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+            <ShieldCheck className="h-2.5 w-2.5" />
+            {t("llmConfig.roleSplit.reviewRole")}
+          </Badge>
+          <span className="text-[9px] text-muted-foreground truncate">
+            {t("llmConfig.roleSplit.reviewHint")}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Select
+            value={revProvider || FOLLOW_SENTINEL}
+            onValueChange={(v) => {
+              const next = v === FOLLOW_SENTINEL ? "" : v;
+              setRevProvider(next);
+              setRevModel(""); // provider switch → clear stale model override
+            }}
+          >
+            <SelectTrigger className="w-40 h-7 text-[11px] shrink-0" aria-label={t("llmConfig.roleSplit.reviewRole")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-h-64">
+              <SelectItem value={FOLLOW_SENTINEL} className="text-xs">
+                {t("llmConfig.roleSplit.followGenerate")}
+              </SelectItem>
+              {providerOptions.map((o) => (
+                <SelectItem key={o.value} value={o.value} className="text-xs">
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Input
+            value={revModel}
+            onChange={(e) => setRevModel(e.target.value)}
+            disabled={reviewFollows}
+            placeholder={
+              reviewFollows
+                ? t("llmConfig.roleSplit.followGenerate")
+                : revOpt?.defaultModel ||
+                  revOpt?.models?.[0] ||
+                  t("llmConfig.roleSplit.modelPlaceholder")
+            }
+            className="h-7 text-[11px] font-mono flex-1 min-w-0 bg-background/60 disabled:opacity-60"
+            list="role-split-rev-models"
+          />
+          {revOpt && revOpt.models.length > 0 && (
+            <datalist id="role-split-rev-models">
+              {revOpt.models.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-[10px] px-2 shrink-0"
+            disabled={saving === "review"}
+            onClick={() => void save("review")}
+          >
+            {saving === "review" ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : reviewFollows ? (
+              t("llmConfig.roleSplit.clear")
+            ) : (
+              t("llmConfig.saveModel")
+            )}
+          </Button>
+        </div>
+        {reviewFollows ? (
+          <p className="text-[9px] text-muted-foreground leading-relaxed">
+            {t("llmConfig.roleSplit.followHint")}
+          </p>
+        ) : sameRouting ? (
+          <div className="flex items-start gap-1.5 rounded-md border border-amber-300/50 dark:border-amber-700/50 bg-amber-50/60 dark:bg-amber-950/20 px-2 py-1">
+            <AlertCircle className="h-2.5 w-2.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <p className="text-[9px] leading-relaxed text-amber-800 dark:text-amber-300">
+              {t("llmConfig.roleSplit.sameProviderHint")}
+            </p>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

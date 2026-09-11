@@ -51,6 +51,33 @@ async function withAbortWaitout<T>(fn: () => Promise<T>, label: string): Promise
   }
 }
 
+/**
+ * round-66: should this dispatch be STRICT (single-provider, no fallback
+ * walk)? True only for review-role calls whose resolved selection differs
+ * from the generate selection — i.e. the generation/review split is active.
+ * A fallback would silently have the generation model (or any other)
+ * answer for the reviewer, defeating the split; review-step callers
+ * already degrade gracefully on throw.
+ */
+async function reviewSplitStrict(
+  role: "generate" | "review",
+  selected: string,
+  selectedModel: string,
+): Promise<boolean> {
+  if (role !== "review") return false;
+  try {
+    const { hasReviewOverride, getSelectedProvider, getSelectedModel } =
+      await import("@/lib/llm-selection");
+    if (!hasReviewOverride()) return false;
+    return (
+      selected !== getSelectedProvider("generate") ||
+      selectedModel !== getSelectedModel("generate")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export interface ChatOptions {
   system?: string;
   temperature?: number;
@@ -59,6 +86,12 @@ export interface ChatOptions {
    *  it needs more (e.g. very long section generation) or less (short JSON
    *  responses to save tokens). */
   maxTokens?: number;
+  /** Pipeline role for provider routing (round-66 generation/review split).
+   *  "generate" (default) → the generation provider/model selection;
+   *  "review" → the review selection, falling back to generate when unset.
+   *  Lets the user run e.g. MiniMax for content + WorkBuddy/Deepseek for
+   *  verification so the reviewer doesn't share the writer's blind spots. */
+  role?: "generate" | "review";
 }
 
 /**
@@ -168,12 +201,15 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
   // the dialog. Any other selected provider (cli:hermes, cli:codex, api:deepseek,
   // ...) routes through `generateText()` in `@/lib/llm`, which performs its own
   // probe + fallback chain.
+  // round-66: the selection is ROLE-scoped — opts.role "review" resolves the
+  // review provider/model (falls back to the generate selection when unset).
+  const role = opts.role ?? "generate";
   let selected = "zai-sdk";
   let selectedModel = "";
   try {
     const { getSelectedProvider, getSelectedModel } = await import("@/lib/llm-selection");
-    selected = getSelectedProvider();
-    selectedModel = getSelectedModel();
+    selected = getSelectedProvider(role);
+    selectedModel = getSelectedModel(role);
   } catch {
     selected = "zai-sdk";
   }
@@ -225,6 +261,10 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
   // hermes, ...), do NOT silently fall back to zai-sdk on failure — that
   // produces the misleading "z-ai-config not found" error and violates the
   // user's explicit choice. Surface the original error instead.
+  //
+  // round-66 STRICT review path: pin the provider when the generation/review
+  // split is active (see reviewSplitStrict for the rationale).
+  const reviewSplitActive = await reviewSplitStrict(role, selected, selectedModel);
   const { generateText } = await import("@/lib/llm");
   // NOTE: pass compressedPrompt, not the raw prompt — CLI providers spawn with
   // the prompt on the argv, and long prompts can exceed the OS argv limit
@@ -237,6 +277,7 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
       provider: selected,
       model: selectedModel || undefined,
       temperature: opts.temperature,
+      ...(reviewSplitActive ? { strict: true } : {}),
     },
     maxChars: 32000,
   });
@@ -263,12 +304,13 @@ export async function chatWithSessionId(
   sessionId?: string,
 ): Promise<{ text: string; cliSessionId: string | null }> {
   const compressedPrompt = compressPrompt(prompt, opts.system);
+  const role = opts.role ?? "generate";
   let selected = "zai-sdk";
   let selectedModel = "";
   try {
     const { getSelectedProvider, getSelectedModel } = await import("@/lib/llm-selection");
-    selected = getSelectedProvider();
-    selectedModel = getSelectedModel();
+    selected = getSelectedProvider(role);
+    selectedModel = getSelectedModel(role);
   } catch {
     selected = "zai-sdk";
   }
@@ -278,8 +320,16 @@ export async function chatWithSessionId(
   }
   const { generateText } = await import("@/lib/llm");
   // compressedPrompt — see note in chat() about the CLI argv limit.
+  // round-66: strict pinning for review-role calls with a distinct selection
+  // (see reviewSplitStrict for the rationale).
+  const reviewSplitActive = await reviewSplitStrict(role, selected, selectedModel);
   const r = await generateText(opts.system ?? "", compressedPrompt, {
-    llm: { provider: selected, model: selectedModel || undefined, temperature: opts.temperature },
+    llm: {
+      provider: selected,
+      model: selectedModel || undefined,
+      temperature: opts.temperature,
+      ...(reviewSplitActive ? { strict: true } : {}),
+    },
     maxChars: 32000,
     sessionId,
   });
@@ -312,10 +362,11 @@ export async function chatStream(
   // Compress the prompt if it exceeds the safe size limit.
   const compressedPrompt = compressPrompt(prompt, opts.system);
 
+  const role = opts.role ?? "generate";
   let selected = "zai-sdk";
   try {
     const { getSelectedProvider } = await import("@/lib/llm-selection");
-    selected = getSelectedProvider();
+    selected = getSelectedProvider(role);
   } catch {
     selected = "zai-sdk";
   }
@@ -463,7 +514,9 @@ export async function webSearch(
   // Non-zai providers don't ship a native web-search tool. Returning [] keeps
   // the pipeline alive (gather/compose will still run with database queries)
   // and avoids throwing the misleading "z-ai-config not found" error.
-  if (!(await isZaiSelected())) {
+  // Web search is a gathering (generate-role) capability — checked against
+  // the generate selection.
+  if (!(await isZaiSelected("generate"))) {
     warnNoZaiTools("webSearch");
     return [];
   }
@@ -587,8 +640,9 @@ export function trimLeadingBoilerplate(text: string): string {
 
 export async function readPage(url: string): Promise<PageReadResult> {
   // Page reading is a z-ai-sdk hosted tool. Non-zai providers don't ship it;
-  // return empty rather than throwing "z-ai-config not found".
-  if (!(await isZaiSelected())) {
+  // return empty rather than throwing "z-ai-config not found". Gathering-
+  // role capability — checked against the generate selection.
+  if (!(await isZaiSelected("generate"))) {
     warnNoZaiTools("readPage");
     return {};
   }
@@ -645,10 +699,10 @@ function warnNoZaiTools(fn: "webSearch" | "readPage") {
   );
 }
 
-async function isZaiSelected(): Promise<boolean> {
+async function isZaiSelected(role: "generate" | "review" = "generate"): Promise<boolean> {
   try {
     const { getSelectedProvider } = await import("@/lib/llm-selection");
-    const sel = getSelectedProvider();
+    const sel = getSelectedProvider(role);
     return !sel || sel === "zai-sdk" || sel === "auto";
   } catch {
     return true; // default to zai when we can't determine the selection

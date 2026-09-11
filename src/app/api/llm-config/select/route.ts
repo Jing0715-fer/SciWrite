@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { setSelectedProvider, getSelectedProvider, getSelectedModel } from "@/lib/llm-selection";
+import {
+  setSelectedProvider,
+  getSelectedProvider,
+  getSelectedModel,
+  getRoleSelections,
+  hasReviewOverride,
+  type LlmRole,
+} from "@/lib/llm-selection";
 import { inspectProviders } from "@/lib/llm";
 import { getProviderProfile } from "@/lib/provider-catalog";
 import { isApiProviderAvailable } from "@/lib/api-provider-config";
@@ -9,18 +16,37 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET /api/llm-config/select
- *   Returns the currently selected provider id + model override.
- *   { provider: "cli:hermes" | "api:deepseek" | "zai-sdk" | ..., model: "" }
+ *   Returns the currently selected provider id + model override — for BOTH
+ *   pipeline roles (round-66 generation/review split):
+ *   {
+ *     provider: "api:minimax",           // generate role (legacy field kept)
+ *     model: "MiniMax-M2",
+ *     roles: {
+ *       generate: { provider: "api:minimax", model: "MiniMax-M2" },
+ *       review:   { provider: "api:workbuddy", model: "Deepseek-V4.1-Flash" } | null
+ *     },
+ *     reviewOverride: true
+ *   }
+ *   `roles.review === null` means the review role FOLLOWS the generate
+ *   selection (legacy single-provider behavior).
  */
 export async function GET() {
-  return NextResponse.json({ provider: getSelectedProvider(), model: getSelectedModel() });
+  const roles = getRoleSelections();
+  return NextResponse.json({
+    provider: getSelectedProvider("generate"),
+    model: getSelectedModel("generate"),
+    roles,
+    reviewOverride: hasReviewOverride(),
+  });
 }
 
 /**
  * POST /api/llm-config/select
- *   Body: { provider: string, model?: string }
- *   Persists the user's choice so subsequent LLM calls in `src/lib/ai.ts`
- *   dispatch through the matching adapter in `@/lib/llm`.
+ *   Body: { provider: string, model?: string, role?: "generate" | "review" }
+ *   Persists the user's choice (default role "generate") so subsequent LLM
+ *   calls in `src/lib/ai.ts` dispatch through the matching adapter in
+ *   `@/lib/llm`. Passing `provider: ""` with `role: "review"` CLEARS the
+ *   review override — review goes back to following the generate selection.
  *
  * Validates the provider id against `inspectProviders()` so a stale UI
  * choice (e.g. uninstalled CLI) falls back to "zai-sdk" automatically.
@@ -35,6 +61,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
   const provider = (body?.provider ?? "").toString().trim();
+  const roleRaw = (body?.role ?? "generate").toString().trim();
+  const role: LlmRole = roleRaw === "review" ? "review" : "generate";
+
+  // Clearing the review override: provider "" (or "follow"/"inherit") + role review.
+  if (role === "review" && (!provider || provider === "follow" || provider === "inherit")) {
+    setSelectedProvider("", undefined, "review");
+    return NextResponse.json({
+      ok: true,
+      provider: getSelectedProvider("generate"),
+      model: getSelectedModel("generate"),
+      roles: getRoleSelections(),
+      reviewOverride: false,
+    });
+  }
+
   if (!provider) {
     return NextResponse.json({ error: "Missing 'provider'." }, { status: 400 });
   }
@@ -70,8 +111,14 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
-    setSelectedProvider(provider, model);
-    return NextResponse.json({ ok: true, provider: getSelectedProvider(), model: getSelectedModel() });
+    setSelectedProvider(provider, model, role);
+    return NextResponse.json({
+      ok: true,
+      provider: getSelectedProvider(role),
+      model: getSelectedModel(role),
+      roles: getRoleSelections(),
+      reviewOverride: hasReviewOverride(),
+    });
   }
 
   if (!KNOWN.has(provider)) {
@@ -104,6 +151,12 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  setSelectedProvider(provider, model);
-  return NextResponse.json({ ok: true, provider: getSelectedProvider(), model: getSelectedModel() });
+  setSelectedProvider(provider, model, role);
+  return NextResponse.json({
+    ok: true,
+    provider: getSelectedProvider(role),
+    model: getSelectedModel(role),
+    roles: getRoleSelections(),
+    reviewOverride: hasReviewOverride(),
+  });
 }

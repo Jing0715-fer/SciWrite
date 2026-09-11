@@ -6,7 +6,7 @@ import {
   deleteApiProviderConfig,
   resolveApiKey,
 } from "@/lib/api-provider-config";
-import { getSelectedProvider, setSelectedProvider } from "@/lib/llm-selection";
+import { getSelectedProvider, setSelectedProvider, getRoleSelections } from "@/lib/llm-selection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -107,6 +107,12 @@ export async function DELETE(req: NextRequest) {
   deleteApiProviderConfig(providerId);
   if (getSelectedProvider() === `api:${providerId}`) {
     setSelectedProvider("zai-sdk");
+  }
+  // round-66: also clear a dangling REVIEW-role selection pointing at the
+  // deleted provider — review falls back to the generate selection.
+  const roles = getRoleSelections();
+  if (roles.review?.provider === `api:${providerId}`) {
+    setSelectedProvider("", undefined, "review");
   }
   return NextResponse.json({ ok: true });
 }

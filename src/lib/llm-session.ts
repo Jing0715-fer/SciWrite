@@ -24,6 +24,12 @@ export interface ChatSessionOptions {
   maxTokens?: number;
   /** Task type for categorization (gather, curate, plan, generate, etc.) */
   taskType: string;
+  /** Pipeline role for provider routing (round-66 generation/review split).
+   *  When omitted the role is DERIVED from taskType — verification tasks
+   *  ("review", "verify", "adversarial-review", "fact-check",
+   *  "topicality") route to the review provider/model, everything else to
+   *  the generate selection. Explicit override wins over the derivation. */
+  role?: "generate" | "review";
   /** Max number of previous messages to include as context (default 20) */
   maxContextMessages?: number;
   /** Max approximate tokens for context (default 8000) */
@@ -131,6 +137,24 @@ export async function saveSessionMessage(
 }
 
 /**
+ * Derive the pipeline role (generate vs review) for a taskType.
+ * round-66: verification task types route to the review provider/model so
+ * a different model can audit what the generation model wrote. Kept as an
+ * async wrapper around llm-selection's sync mapping for dynamic-import
+ * symmetry with the other selection lookups in this file.
+ */
+async function resolveRoleForTaskType(
+  taskType: string,
+): Promise<"generate" | "review"> {
+  try {
+    const { roleForTaskType } = await import("@/lib/llm-selection");
+    return roleForTaskType(taskType);
+  } catch {
+    return "generate";
+  }
+}
+
+/**
  * Chat with session context — loads previous conversation history for the project,
  * appends the new user message, calls the LLM, saves both the user message and
  * the assistant response to the session.
@@ -233,11 +257,15 @@ export async function chatWithSession(
   // versa) would either fail or, worse, silently start a new session while
   // the caller thinks it's resuming. When the user switches provider mid-
   // project the new provider simply starts fresh.
+  // round-66: the provider is resolved for this call's ROLE (generate vs
+  // review) so review calls on a different provider never resume a
+  // generation session and vice versa.
+  const role = opts.role ?? (await resolveRoleForTaskType(opts.taskType));
   let resumeSessionId: string | undefined;
   let activeProvider: string | undefined;
   try {
     const { getSelectedProvider } = await import("@/lib/llm-selection");
-    activeProvider = getSelectedProvider();
+    activeProvider = getSelectedProvider(role);
   } catch {
     activeProvider = undefined;
   }
@@ -268,6 +296,7 @@ export async function chatWithSession(
         temperature: opts.temperature,
         thinking: opts.thinking,
         maxTokens: opts.maxTokens,
+        role,
       },
       resumeSessionId,
     );
@@ -410,10 +439,14 @@ export async function chatWithSessionStream(
   //    going through chatWithSessionId — and we GAIN session resume.
   //  - z-ai-sdk (default): use chatStream() for true token-by-token streaming.
   //    z-ai-sdk has no CLI session concept, so resume doesn't apply.
+  //  round-66: the provider is resolved for this call's ROLE (generate vs
+  //  review) — review calls on a different provider take the non-zai branch
+  //  and never resume a generation session.
+  const role = opts.role ?? (await resolveRoleForTaskType(opts.taskType));
   let activeProvider: string | undefined;
   try {
     const { getSelectedProvider } = await import("@/lib/llm-selection");
-    activeProvider = getSelectedProvider();
+    activeProvider = getSelectedProvider(role);
   } catch {
     activeProvider = undefined;
   }
@@ -453,6 +486,7 @@ export async function chatWithSessionStream(
         temperature: opts.temperature,
         thinking: opts.thinking,
         maxTokens: opts.maxTokens,
+        role,
       },
       resumeSessionId,
     );
@@ -477,12 +511,13 @@ export async function chatWithSessionStream(
         temperature: opts.temperature,
         thinking: opts.thinking,
         maxTokens: opts.maxTokens,
+        role,
       },
       onChunk,
     );
     console.log(
       `[chatWithSessionStream] +${Date.now() - _t0}ms chatStream returned ` +
-        `(assistantContent=${assistantContent.length} chars, taskType=${opts.taskType}, provider=zai-sdk)`,
+        `(assistantContent=${assistantContent.length} chars, taskType=${opts.taskType}, provider=${activeProvider ?? "zai-sdk"}, role=${role})`,
     );
   }
 

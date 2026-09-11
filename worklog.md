@@ -3224,3 +3224,26 @@ Stage Summary:
 - 用户问题的答案：9 类缺陷中 6 类未复发（含全部结构性引用缺陷——round-64 机械引擎在生成期即拦截），3 类以更轻微、更隐蔽的变体复发：Scholar 抓取条目（⑧根因=dedupe 键失效）、证据截断致作者层脑补（①）、真声明错锚（⑦）
 - 本轮净产出：3 处数据修复 + Rule 3 dedupe + malformed-ref 扩展（6 用例验证）+ resume 重复生成修复（a66cf36，风暴期间实弹发现）+ llm-probe 端点（58aadcc）+ setsid --fork 脱离姿势入档
 - 遗留：§8 overcited 67% 警告级留存（scoped 修订不重分配引用——下轮候选：修订 prompt 显式要求引用再分布）；§9 展望章含 2 条 UNVERIFIABLE 声明被评审如实披露（fact-check 工作正常）；管线自身的 fact-check 未捕获 ①（摘要明明写着 TMIE——abstract 仲裁的声明-摘要词面匹配盲区，下轮候选）
+
+---
+Task ID: round-66
+Agent: main (Z.ai Code)
+Task: 生成/审查模型分离配置（TMC1/2 外部审计反馈 → 用户指令：minimax 生成 + workbuddy 审查，workbuddy 默认模型 Deepseek-V4.1-Flash）
+
+Work Log:
+- 背景：用户用其他 AI 审读 TMC1/2 文章再发现 8 类问题（结构过度延伸/预印本依赖/未来方向章零引用/引用-推断错配/CIB2-CIB3 表述简化等），确认 round-65 后仍有残留——自审模型与生成模型同源是根因之一；用户提出"生成和审查用不同的模型"
+- provider-catalog：新增 workbuddy 条目（OpenAI 兼容、WORKBUDDY_API_KEY、默认模型 Deepseek-V4.1-Flash、模型表含 V4.1/V3.2-Flash）；minimax 模型表扩充 M2/M1（默认 MiniMax-M2）
+- llm-selection 全面角色化：存储升级为 {roles:{generate,review|null}}（旧 flat 格式自动迁移为 generate 角色）；getSelectedProvider/Model(role) 带 review→generate 回退；新增 hasReviewOverride/getRoleSelections/roleForTaskType（review/verify/adversarial-review/fact-check/topicality → review 角色，其余全为 generate）
+- ai.ts：ChatOptions.role 三入口（chat/chatWithSessionId/chatStream）按角色解析选区；isZaiSelected(role) 供 webSearch/readPage 使用（生成侧能力）
+- llm-session.ts：ChatSessionOptions.role + taskType 自动推导（opts.role 缺省时 resolveRoleForTaskType）；CLI session resume 查找按角色解析 provider——审查会话绝不 resume 生成会话；日志补 role 字段
+- 严格审查路径（防静默顶替）：llm.ts LlmConfig.strict → decideProviderOrder 单候选序；ai.ts reviewSplitStrict()（仅当 review 显式覆盖且与 generate 选区不同时激活）——审查供应商失败时抛错由既有降级矩阵处理（"Peer review skipped (timeout or LLM error)"），而不是让生成模型悄悄替班审查
+- API：/api/llm-config/select GET 返回双角色+reviewOverride，POST 接受 role（provider:"" + role:review = 清除覆盖）；/api/llm-config/providers DELETE 同步清理悬空审查选区
+- UI：llm-config-dialog 新增 RoleSplitSection 卡（生成/审查两行：供应商 Select+模型 datalist+保存；审查含"跟随生成模型"选项、SPLIT 徽标、同供应商琥珀提示）；i18n en+zh 13 键
+- resolveBaseURL 增加 <PROVIDER>_BASE_URL 环境变量回退（WORKBUDDY_BASE_URL 可不经 UI 指向自建网关）
+- 修复实施中误注释 chatWithSession 的 ASSISTANT: 后缀（立即恢复）
+
+Stage Summary:
+- 质量门：tsc 0 错误 / lint 0 错误（166 警告全为存量）；浏览器全流程验证通过（分工卡渲染→审查选独立模型→API 持久化→SPLIT 徽标→清除恢复默认→零 console 错误）；旧格式存储迁移实测通过（cli:codebuddy flat → generate 角色）
+- 用户使用路径：LLM 配置 → API 供应商区配置 MiniMax/WorkBuddy 密钥 → 分工卡设 生成=api:minimax、审查=api:workbuddy（默认 Deepseek-V4.1-Flash）→ 管线零改动自动生效（review/verify/adversarial-review 类调用全部路由到审查模型，STEP 8.5 修复循环的 revise 仍走生成模型）
+- 设计决策：review 角色未显式配置时完全保持旧行为（跟随 generate）；严格模式仅在分工激活时生效，避免破坏既有回退语义；沙箱内无 minimax/workbuddy 密钥，真实联调待用户提供 key 后进行（409 校验已验证密钥门槛）
+- 遗留：llm-cache 键不含 role（taskType 已天然区分，无实际碰撞）；审查模型切换后旧缓存 review 结果会命中（可接受，后续可加 role 维度）
