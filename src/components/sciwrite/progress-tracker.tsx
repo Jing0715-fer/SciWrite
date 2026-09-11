@@ -6,7 +6,6 @@ import {
   Type,
   Quote,
   Target,
-  TrendingUp,
   MessageSquare,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
@@ -61,133 +60,178 @@ export function ProgressTracker({
   };
 
   return (
-    <div className="glass-subtle px-5 py-2.5 border-b hairline">
-      <div className="flex items-center gap-4 flex-wrap">
-        {/* Word count goal tracker */}
-        <div className="flex-1 min-w-[200px]">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="eyebrow flex items-center gap-1">
-              <Type className="h-3 w-3" />
-              {t("progress.writingProgress")}
-            </span>
-            <button
-              onClick={() => setShowGoalSelector((v) => !v)}
-              className="text-[10px] font-mono text-muted-foreground hover:text-primary transition-colors tabular-nums hover:underline underline-offset-2"
-              title={t("progress.setWordGoalTitle")}
-            >
-              {fmt(totalWords)} / {fmt(wordGoal)}w
-              {goalMet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">✓</span>}
-            </button>
-          </div>
-          <Progress
-            value={wordProgress}
-            className={`h-1.5 bg-primary/15 progress-glow${goalMet ? " progress-done" : ""}`}
-          />
-          {showGoalSelector && (
-            <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-              <span className="text-[9px] text-muted-foreground">{t("progress.goal")}</span>
-              {WORD_GOAL_PRESETS.map((g) => (
-                <button
-                  key={g}
-                  onClick={() => {
-                    onWordGoalChange?.(g);
-                    setShowGoalSelector(false);
-                  }}
-                  className={`text-[9px] px-1.5 py-0.5 rounded transition-all tabular-nums ${
-                    wordGoal === g
-                      ? "tab-pill"
-                      : "tab-pill-inactive"
-                  }`}
-                >
-                  {fmt(g)}
-                </button>
-              ))}
-              <span className="flex items-center gap-0.5">
-                <input
-                  value={customGoal}
-                  onChange={(e) => setCustomGoal(e.target.value.replace(/[^\d]/g, ""))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") applyCustomGoal();
-                  }}
-                  placeholder={t("progress.customGoalPlaceholder")}
-                  inputMode="numeric"
-                  aria-label={t("progress.customGoalPlaceholder")}
-                  className="w-16 text-[9px] px-1.5 py-0.5 rounded border border-border/60 bg-background text-foreground tabular-nums focus:outline-none focus:ring-1 focus:ring-primary/40"
-                />
-                <button
-                  onClick={applyCustomGoal}
-                  className="text-[9px] px-1.5 py-0.5 rounded tab-pill-inactive transition-all hover:text-primary"
-                >
-                  {t("progress.setCustomGoal")}
-                </button>
-              </span>
-            </div>
-          )}
-        </div>
+    <div className="glass-subtle border-b hairline shrink-0">
+      {/* Section header — eyebrow label + editable word-goal trigger.
+          Clicking the count opens the goal-presets selector below the bar. */}
+      <div className="panel-section-header flex items-center justify-between gap-2">
+        <span className="eyebrow flex items-center gap-1">
+          <Type className="h-3 w-3" />
+          {t("progress.writingProgress")}
+        </span>
+        <button
+          onClick={() => setShowGoalSelector((v) => !v)}
+          className="text-[10px] font-mono text-muted-foreground hover:text-primary transition-colors tabular-nums hover:underline underline-offset-2 flex items-center gap-1 focus-ring rounded-sm px-1"
+          title={t("progress.setWordGoalTitle")}
+        >
+          <span className="text-foreground font-semibold">{fmt(totalWords)}</span>
+          <span aria-hidden>/</span>
+          <span>{fmt(wordGoal)}w</span>
+          {goalMet && <span className="text-primary">✓</span>}
+        </button>
+      </div>
 
-        {/* Stat strip — one calm chip row instead of competing pills */}
-        <div className="surface-card rounded-lg flex items-center divide-x divide-border/60 text-[10px] shrink-0">
-          <StatPill
-            icon={<PenLine className="h-3 w-3" />}
-            label={t("progress.paragraphsPill")}
-            value={totalParagraphs}
-            color="primary"
+      {/* Progress bar — animated gradient fill via .progress-glow. */}
+      <div className="px-4 pb-3 space-y-2">
+        <Progress
+          value={wordProgress}
+          className={`h-2 bg-primary/10 progress-glow${goalMet ? " progress-done" : ""}`}
+        />
+        {showGoalSelector && (
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className="eyebrow mr-1">{t("progress.goal")}</span>
+            {WORD_GOAL_PRESETS.map((g) => (
+              <button
+                key={g}
+                onClick={() => {
+                  onWordGoalChange?.(g);
+                  setShowGoalSelector(false);
+                }}
+                className={`text-[10px] px-2 py-1 rounded-md tabular-nums transition-all ${
+                  wordGoal === g ? "tab-pill" : "tab-pill-inactive"
+                }`}
+              >
+                {fmt(g)}
+              </button>
+            ))}
+            <span className="flex items-center gap-1 ml-1">
+              <input
+                value={customGoal}
+                onChange={(e) => setCustomGoal(e.target.value.replace(/[^\d]/g, ""))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") applyCustomGoal();
+                }}
+                placeholder={t("progress.customGoalPlaceholder")}
+                inputMode="numeric"
+                aria-label={t("progress.customGoalPlaceholder")}
+                className="w-16 text-[10px] px-2 py-1 rounded-md border hairline bg-background text-foreground tabular-nums focus-ring"
+              />
+              <button
+                onClick={applyCustomGoal}
+                className="text-[10px] px-2 py-1 rounded-md tab-pill-inactive transition-all hover:text-primary"
+              >
+                {t("progress.setCustomGoal")}
+              </button>
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Stat tile grid — responsive metric chips.
+          2 cols mobile, 3 cols sm, 5 cols lg so the row reads as a calm
+          metric ladder instead of competing pills. */}
+      <div className="px-4 pb-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+        <StatTile
+          icon={<Type className="h-3.5 w-3.5" />}
+          label={t("insights.wordsLabel")}
+          value={fmt(totalWords)}
+          hint={`${fmt(totalWords)} / ${fmt(wordGoal)}w · ${t("progress.setWordGoalTitle")}`}
+          onClick={() => setShowGoalSelector((v) => !v)}
+        />
+        <StatTile
+          icon={<PenLine className="h-3.5 w-3.5" />}
+          label={t("workspace.paragraphs")}
+          value={fmt(totalParagraphs)}
+        />
+        <StatTile
+          icon={<Quote className="h-3.5 w-3.5" />}
+          label={t("insights.citationsLabel")}
+          value={fmt(totalCitations)}
+          accent="amber"
+        />
+        <StatTile
+          icon={<Target className="h-3.5 w-3.5" />}
+          label={t("structure.coverage")}
+          value={`${citationCoverage}%`}
+        />
+        {(unresolvedAnnotations > 0 || resolvedAnnotations > 0) && (
+          <StatTile
+            icon={<MessageSquare className="h-3.5 w-3.5" />}
+            label={t("para.annotations")}
+            value={`${unresolvedAnnotations}/${resolvedAnnotations}`}
+            accent={unresolvedAnnotations > 0 ? "rose" : "emerald"}
+            hint={`${unresolvedAnnotations} unresolved · ${resolvedAnnotations} resolved`}
           />
-          <StatPill
-            icon={<Quote className="h-3 w-3" />}
-            label={t("progress.citationsPill")}
-            value={totalCitations}
-            color="amber"
-          />
-          <StatPill
-            icon={<Target className="h-3 w-3" />}
-            label={t("progress.coveragePill")}
-            value={`${citationCoverage}%`}
-            color="primary"
-          />
-          {(unresolvedAnnotations > 0 || resolvedAnnotations > 0) && (
-            <StatPill
-              icon={<MessageSquare className="h-3 w-3" />}
-              label={t("progress.annotationsPill")}
-              value={`${unresolvedAnnotations}!/${resolvedAnnotations}✓`}
-              color={unresolvedAnnotations > 0 ? "rose" : "emerald"}
-            />
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
 }
 
-function StatPill({
+function StatTile({
   icon,
   label,
   value,
-  color,
+  accent,
+  hint,
+  onClick,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string | number;
-  color: string;
+  accent?: "amber" | "rose" | "emerald";
+  hint?: string;
+  onClick?: () => void;
 }) {
-  const colorMap: Record<string, string> = {
-    primary: "text-primary",
-    emerald: "text-emerald-600 dark:text-emerald-400",
-    amber: "text-amber-600 dark:text-amber-400",
-    rose: "text-rose-600 dark:text-rose-400",
-  };
+  // Theme-aware icon-chip tint. Default = primary token; semantic accents
+  // use the sanctioned .badge-* hue families (amber=rcsb/citations,
+  // rose=unresolved alerts, emerald=resolved/healthy).
+  const accentClass = !accent
+    ? "bg-primary/10 text-primary"
+    : accent === "amber"
+      ? "badge-amber"
+      : accent === "rose"
+        ? "badge-rose"
+        : "badge-emerald";
+
+  const inner = (
+    <div className={`flex items-center gap-2 ${onClick ? "cursor-pointer" : ""}`}>
+      <span
+        className={`h-7 w-7 rounded-md flex items-center justify-center shrink-0 ${accentClass}`}
+      >
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="eyebrow truncate">{label}</div>
+        <div className="text-sm font-semibold tabular-nums text-foreground leading-tight">
+          {value}
+        </div>
+      </div>
+    </div>
+  );
+
+  const tile = (
+    <div className="stat-tile p-2 acad-fade-in">{inner}</div>
+  );
+
   return (
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 cursor-help">
-            <span className={`shrink-0 ${colorMap[color] || "text-muted-foreground"}`}>{icon}</span>
-            <span className="font-semibold tabular-nums text-foreground">{value}</span>
-            <span className="text-muted-foreground hidden sm:inline">{label}</span>
-          </div>
+          {onClick ? (
+            <button
+              type="button"
+              onClick={onClick}
+              className="block text-left w-full focus-ring rounded-md"
+              aria-label={hint || label}
+            >
+              {tile}
+            </button>
+          ) : (
+            <div className="cursor-help">{tile}</div>
+          )}
         </TooltipTrigger>
         <TooltipContent side="bottom" className="text-[10px]">
-          {label}
+          {hint || label}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

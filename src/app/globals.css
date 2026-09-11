@@ -3,14 +3,32 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ============================================================
+   SciWrite — Design System v2 ("Atelier")
+   A complete redesign built on four pillars:
+   1. STRICT 4px spacing scale — every gap, padding, margin pulls
+      from the same rhythm so panels never drift out of alignment.
+   2. Unified elevation ladder — five named shadow levels, applied
+      consistently via utility classes (no ad-hoc shadow-* utilities).
+   3. Per-theme component character — themes are no longer just color
+      swaps. Each theme redefines radii, border weights, surface
+      treatments and motion so the whole app changes personality:
+        · Emerald  (Academic) — crisp hairlines, paper texture, classic
+        · Ocean    (Aqua)     — soft glassmorphism, gradient mesh, pills
+        · Sunset   (Warm)     — thick borders, hard offset shadows, solid
+        · Violet   (Noir)     — glowing rings, premium gradients, luxe
+   4. Token-driven — every surface derives from CSS custom properties,
+      so theme switching is instant and complete.
+   All legacy utility class names are preserved so the 70+ existing
+   components keep working while inheriting the new look.
+   ============================================================ */
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans), var(--font-zh-sans), "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif;
-  --font-mono: var(--font-geist-mono), "SF Mono", ui-monospace, monospace;
-  --font-serif: var(--font-serif), var(--font-zh-serif), "Songti SC",
-    "SimSun", "STSong", serif;
+  --font-sans: var(--font-sans-stack);
+  --font-mono: var(--font-mono-stack);
+  --font-serif: var(--font-serif-stack);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -44,31 +62,60 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+}
+
+/* ── System font stacks (no external fetch — sandbox-safe) ── */
+:root {
+  --font-sans-stack: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif;
+  --font-mono-stack: "SF Mono", ui-monospace, "Cascadia Code",
+    "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-serif-stack: "Iowan Old Style", "Palatino Linotype", Palatino,
+    Georgia, "Songti SC", "SimSun", "STSong", "Noto Serif", serif;
 }
 
 /* ============================================================
-   SciWrite — Refined Academic Studio design system
-   A warmer, deeper paper palette with a richer emerald primary,
-   layered soft shadows, frosted-glass toolbars and a refined
-   typographic rhythm. All legacy utility class names are
-   preserved so the 60+ existing components keep working.
+   Base palette — Emerald "Academic" theme.
+   A warm parchment background, deeper emerald primary, teal accent.
    ============================================================ */
-
 :root {
-  --radius: 0.75rem;
+  /* Spacing & radius rhythm — the single source of truth. */
+  --space-1: 0.25rem;   /* 4px  */
+  --space-2: 0.5rem;    /* 8px  */
+  --space-3: 0.75rem;   /* 12px */
+  --space-4: 1rem;      /* 16px */
+  --space-5: 1.25rem;   /* 20px */
+  --space-6: 1.5rem;    /* 24px */
+  --space-8: 2rem;      /* 32px */
+  --space-10: 2.5rem;   /* 40px */
+  --space-12: 3rem;     /* 48px */
 
-  /* Paper neutrals — the app chrome sits on a warm parchment grey so
-     pure-white cards and the writing canvas visibly LIFT off the page
-     (the single biggest cure for the "flatland" look). */
-  --background: oklch(0.966 0.007 95);
+  --radius: 0.75rem;
+  /* Component character tokens — overridden per theme. */
+  --card-radius: 0.75rem;
+  --card-border-width: 1px;
+  --card-border-color-mix: 1;        /* multiplied into border opacity  */
+  --surface-tint: 0;                 /* 0..1 — extra tint wash on cards */
+  --glass-blur: 14px;
+  --glass-sat: 1.4;
+  --glass-opacity: 0.78;
+  --paper-texture: 1;                 /* 0..1 — dot grid opacity multiplier */
+  --shadow-offset-y: 0px;             /* used by Sunset's hard-shadow mode */
+  --shadow-offset-x: 0px;
+  --ring-glow: 0;                     /* 0..1 — primary ring glow strength */
+  --gradient-mesh: 0;                 /* 0..1 — background mesh intensity */
+
+  /* Paper neutrals — warm parchment so white cards visibly lift. */
+  --background: oklch(0.968 0.006 95);
   --foreground: oklch(0.22 0.018 150);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.22 0.018 150);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.22 0.018 150);
 
-  /* Emerald primary — deeper and more saturated for a confident,
-     premium feel, while staying within accessible contrast. */
+  /* Emerald primary — deeper, saturated, confident. */
   --primary: oklch(0.48 0.14 164);
   --primary-foreground: oklch(0.99 0.012 150);
   --secondary: oklch(0.955 0.012 150);
@@ -76,7 +123,7 @@
   --muted: oklch(0.952 0.008 95);
   --muted-foreground: oklch(0.49 0.024 150);
 
-  /* Teal accent — slightly cooler for a complementary highlight. */
+  /* Teal accent. */
   --accent: oklch(0.94 0.038 178);
   --accent-foreground: oklch(0.3 0.065 178);
   --destructive: oklch(0.577 0.245 27.325);
@@ -84,19 +131,16 @@
   --input: oklch(0.908 0.012 150);
   --ring: oklch(0.48 0.14 164);
 
-  /* Layered soft shadow system — the single biggest perceived-quality
-     upgrade. Surfaces now lift gently instead of sitting flat. */
+  /* Elevation ladder — five named levels. */
   --shadow-2xs: 0 1px 1px oklch(0.28 0.05 162 / 0.04);
-  --shadow-xs: 0 1px 2px oklch(0.28 0.05 162 / 0.06), 0 1px 1px oklch(0.28 0.05 162 / 0.04);
-  --shadow-sm: 0 1px 3px oklch(0.28 0.05 162 / 0.07), 0 1px 2px oklch(0.28 0.05 162 / 0.05);
-  --shadow-md: 0 4px 8px oklch(0.28 0.05 162 / 0.08), 0 2px 4px oklch(0.28 0.05 162 / 0.05);
-  --shadow-lg: 0 8px 20px oklch(0.28 0.05 162 / 0.1), 0 3px 6px oklch(0.28 0.05 162 / 0.06);
-  --shadow-xl: 0 14px 34px oklch(0.28 0.05 162 / 0.12), 0 6px 12px oklch(0.28 0.05 162 / 0.07);
+  --shadow-xs:  0 1px 2px oklch(0.28 0.05 162 / 0.06), 0 1px 1px oklch(0.28 0.05 162 / 0.04);
+  --shadow-sm:  0 1px 3px oklch(0.28 0.05 162 / 0.07), 0 1px 2px oklch(0.28 0.05 162 / 0.05);
+  --shadow-md:  0 4px 8px oklch(0.28 0.05 162 / 0.08), 0 2px 4px oklch(0.28 0.05 162 / 0.05);
+  --shadow-lg:  0 8px 20px oklch(0.28 0.05 162 / 0.1), 0 3px 6px oklch(0.28 0.05 162 / 0.06);
+  --shadow-xl:  0 14px 34px oklch(0.28 0.05 162 / 0.12), 0 6px 12px oklch(0.28 0.05 162 / 0.07);
   --shadow-glow: 0 0 0 1px color-mix(in oklch, var(--primary) 18%, transparent),
     0 6px 18px color-mix(in oklch, var(--primary) 12%, transparent);
 
-  /* Motion — a single set of easing tokens so transitions feel
-     consistent across the whole app. */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-snap: cubic-bezier(0.4, 0, 0.2, 1);
@@ -106,8 +150,7 @@
   --chart-3: oklch(0.7 0.14 85);
   --chart-4: oklch(0.58 0.18 30);
   --chart-5: oklch(0.55 0.16 300);
-  /* Sidebar sits one step deeper than the canvas zone — a quiet
-     "bookshelf" behind the white workspace. */
+
   --sidebar: oklch(0.954 0.008 150);
   --sidebar-foreground: oklch(0.22 0.018 150);
   --sidebar-primary: oklch(0.48 0.14 164);
@@ -119,13 +162,10 @@
 }
 
 /* ============================================================
-   Custom themes — applied via data-theme attribute on <html>.
-   Each theme overrides the primary/accent colors while keeping
-   the neutral palette (background, foreground, muted, etc.)
-   unchanged for readability consistency.
+   THEME: Ocean ("Aqua")
+   Personality: soft, fluid, glassy. Larger radii, heavier blur,
+   a living gradient mesh behind everything, pill-shaped accents.
    ============================================================ */
-
-/* Ocean — deep blue-teal primary */
 [data-theme="ocean"] {
   --primary: oklch(0.52 0.14 230);
   --primary-foreground: oklch(0.99 0.01 230);
@@ -133,11 +173,29 @@
   --sidebar-primary: oklch(0.52 0.14 230);
   --sidebar-primary-foreground: oklch(0.99 0.01 230);
   --sidebar-ring: oklch(0.52 0.14 230);
-  --accent: oklch(0.94 0.035 200);
+  --accent: oklch(0.92 0.045 200);
   --accent-foreground: oklch(0.32 0.06 200);
-  --sidebar-accent: oklch(0.94 0.035 200);
+  --sidebar-accent: oklch(0.92 0.045 200);
   --sidebar-accent-foreground: oklch(0.32 0.06 200);
   --chart-1: oklch(0.6 0.15 230);
+  --chart-2: oklch(0.62 0.14 195);
+  --chart-3: oklch(0.66 0.13 170);
+
+  /* Aqua character: rounder, glassier, meshy. */
+  --card-radius: 1rem;
+  --radius: 1rem;
+  --glass-blur: 20px;
+  --glass-sat: 1.6;
+  --glass-opacity: 0.7;
+  --paper-texture: 0.4;
+  --gradient-mesh: 1;
+  --surface-tint: 0.04;
+  --background: oklch(0.972 0.008 230);
+  --muted: oklch(0.958 0.012 220);
+  --border: oklch(0.89 0.014 220);
+  --input: oklch(0.91 0.014 220);
+  --sidebar: oklch(0.965 0.01 225);
+  --sidebar-border: oklch(0.905 0.014 225);
 }
 
 [data-theme="ocean"].dark {
@@ -151,9 +209,20 @@
   --sidebar-accent-foreground: oklch(0.85 0.04 220);
   --sidebar-ring: oklch(0.7 0.14 230);
   --chart-1: oklch(0.68 0.13 230);
+  --background: oklch(0.15 0.018 230);
+  --card: oklch(0.22 0.02 230);
+  --popover: oklch(0.23 0.02 230);
+  --muted: oklch(0.26 0.018 225);
+  --sidebar: oklch(0.18 0.018 230);
+  --sidebar-border: oklch(1 0 0 / 12%);
 }
 
-/* Sunset — warm amber-rose primary */
+/* ============================================================
+   THEME: Sunset ("Warm")
+   Personality: warm, solid, hand-crafted. Thicker 1.5px borders,
+   hard offset drop shadows (neo-brutalist warmth), solid color
+   blocks instead of glassy tints.
+   ============================================================ */
 [data-theme="sunset"] {
   --primary: oklch(0.58 0.18 30);
   --primary-foreground: oklch(0.99 0.01 30);
@@ -161,27 +230,74 @@
   --sidebar-primary: oklch(0.58 0.18 30);
   --sidebar-primary-foreground: oklch(0.99 0.01 30);
   --sidebar-ring: oklch(0.58 0.18 30);
-  --accent: oklch(0.94 0.04 50);
-  --accent-foreground: oklch(0.35 0.07 50);
-  --sidebar-accent: oklch(0.94 0.04 50);
-  --sidebar-accent-foreground: oklch(0.35 0.07 50);
+  --accent: oklch(0.93 0.05 55);
+  --accent-foreground: oklch(0.38 0.08 55);
+  --sidebar-accent: oklch(0.93 0.05 55);
+  --sidebar-accent-foreground: oklch(0.38 0.08 55);
   --chart-1: oklch(0.6 0.18 30);
+  --chart-2: oklch(0.62 0.16 55);
+  --chart-3: oklch(0.58 0.15 15);
+
+  /* Warm character: thick borders, hard shadows, solid surfaces. */
+  --card-radius: 0.625rem;
+  --radius: 0.625rem;
+  --card-border-width: 1.5px;
+  --card-border-color-mix: 1.4;
+  --glass-blur: 8px;
+  --glass-sat: 1.1;
+  --glass-opacity: 0.92;
+  --paper-texture: 0.5;
+  --shadow-offset-x: 3px;
+  --shadow-offset-y: 3px;
+  --surface-tint: 0;
+  --background: oklch(0.974 0.008 60);
+  --muted: oklch(0.956 0.012 55);
+  --border: oklch(0.84 0.022 50);
+  --input: oklch(0.9 0.018 50);
+  --sidebar: oklch(0.966 0.012 55);
+  --sidebar-border: oklch(0.88 0.02 50);
+
+  /* Hard-shadow elevation — offset, no blur, warm-tinted. */
+  --shadow-2xs: 0 1px 0 oklch(0.4 0.04 40 / 0.12);
+  --shadow-xs:  1px 1px 0 oklch(0.4 0.04 40 / 0.16);
+  --shadow-sm:  2px 2px 0 oklch(0.4 0.04 40 / 0.2);
+  --shadow-md:  3px 3px 0 oklch(0.38 0.05 40 / 0.24);
+  --shadow-lg:  4px 4px 0 oklch(0.36 0.05 40 / 0.28);
+  --shadow-xl:  6px 6px 0 oklch(0.34 0.06 40 / 0.32);
+  --shadow-glow: 0 0 0 1.5px var(--primary), 3px 3px 0 color-mix(in oklch, var(--primary) 40%, transparent);
 }
 
 [data-theme="sunset"].dark {
-  --primary: oklch(0.7 0.16 30);
+  --primary: oklch(0.72 0.16 35);
   --primary-foreground: oklch(0.16 0.02 30);
-  --ring: oklch(0.7 0.16 30);
-  --sidebar-primary: oklch(0.7 0.16 30);
-  --accent: oklch(0.34 0.07 40);
-  --accent-foreground: oklch(0.87 0.05 40);
-  --sidebar-accent: oklch(0.34 0.07 40);
-  --sidebar-accent-foreground: oklch(0.87 0.05 40);
-  --sidebar-ring: oklch(0.7 0.16 30);
-  --chart-1: oklch(0.7 0.15 30);
+  --ring: oklch(0.72 0.16 35);
+  --sidebar-primary: oklch(0.72 0.16 35);
+  --accent: oklch(0.36 0.08 45);
+  --accent-foreground: oklch(0.88 0.05 45);
+  --sidebar-accent: oklch(0.36 0.08 45);
+  --sidebar-accent-foreground: oklch(0.88 0.05 45);
+  --sidebar-ring: oklch(0.72 0.16 35);
+  --chart-1: oklch(0.72 0.15 35);
+  --background: oklch(0.158 0.012 45);
+  --card: oklch(0.224 0.014 45);
+  --popover: oklch(0.234 0.014 45);
+  --muted: oklch(0.262 0.014 45);
+  --sidebar: oklch(0.184 0.012 45);
+  --sidebar-border: oklch(1 0 0 / 14%);
+  --shadow-2xs: 0 1px 0 oklch(0 0 0 / 0.3);
+  --shadow-xs:  1px 1px 0 oklch(0 0 0 / 0.4);
+  --shadow-sm:  2px 2px 0 oklch(0 0 0 / 0.5);
+  --shadow-md:  3px 3px 0 oklch(0 0 0 / 0.55);
+  --shadow-lg:  4px 4px 0 oklch(0 0 0 / 0.6);
+  --shadow-xl:  6px 6px 0 oklch(0 0 0 / 0.66);
+  --shadow-glow: 0 0 0 1.5px var(--primary), 3px 3px 0 color-mix(in oklch, var(--primary) 50%, transparent);
 }
 
-/* Violet — purple primary */
+/* ============================================================
+   THEME: Violet ("Noir")
+   Personality: premium, elegant, glowing. Subtle gradient overlays,
+   luminous primary rings, deeper shadows with primary glow.
+   ============================================================ */
 [data-theme="violet"] {
   --primary: oklch(0.55 0.22 300);
   --primary-foreground: oklch(0.99 0.01 300);
@@ -189,11 +305,34 @@
   --sidebar-primary: oklch(0.55 0.22 300);
   --sidebar-primary-foreground: oklch(0.99 0.01 300);
   --sidebar-ring: oklch(0.55 0.22 300);
-  --accent: oklch(0.94 0.04 300);
-  --accent-foreground: oklch(0.35 0.07 300);
-  --sidebar-accent: oklch(0.94 0.04 300);
-  --sidebar-accent-foreground: oklch(0.35 0.07 300);
+  --accent: oklch(0.94 0.045 300);
+  --accent-foreground: oklch(0.35 0.08 300);
+  --sidebar-accent: oklch(0.94 0.045 300);
+  --sidebar-accent-foreground: oklch(0.35 0.08 300);
   --chart-1: oklch(0.6 0.2 300);
+  --chart-2: oklch(0.6 0.16 330);
+  --chart-3: oklch(0.62 0.18 270);
+
+  /* Noir character: glowing rings, premium gradient overlays. */
+  --card-radius: 0.875rem;
+  --radius: 0.875rem;
+  --card-border-width: 1px;
+  --glass-blur: 16px;
+  --glass-sat: 1.5;
+  --glass-opacity: 0.74;
+  --paper-texture: 0.2;
+  --ring-glow: 1;
+  --gradient-mesh: 0.6;
+  --surface-tint: 0.02;
+  --background: oklch(0.968 0.006 300);
+  --muted: oklch(0.954 0.01 300);
+  --border: oklch(0.886 0.016 295);
+  --input: oklch(0.906 0.016 295);
+  --sidebar: oklch(0.962 0.008 300);
+  --sidebar-border: oklch(0.9 0.016 295);
+  --shadow-glow: 0 0 0 1px color-mix(in oklch, var(--primary) 30%, transparent),
+    0 8px 24px color-mix(in oklch, var(--primary) 22%, transparent),
+    0 0 32px color-mix(in oklch, var(--primary) 14%, transparent);
 }
 
 [data-theme="violet"].dark {
@@ -207,13 +346,20 @@
   --sidebar-accent-foreground: oklch(0.86 0.05 300);
   --sidebar-ring: oklch(0.7 0.2 300);
   --chart-1: oklch(0.66 0.18 300);
+  --background: oklch(0.148 0.018 300);
+  --card: oklch(0.22 0.02 300);
+  --popover: oklch(0.232 0.02 300);
+  --muted: oklch(0.258 0.018 295);
+  --sidebar: oklch(0.178 0.018 300);
+  --sidebar-border: oklch(1 0 0 / 13%);
+  --shadow-glow: 0 0 0 1px color-mix(in oklch, var(--primary) 36%, transparent),
+    0 8px 28px color-mix(in oklch, var(--primary) 28%, transparent),
+    0 0 40px color-mix(in oklch, var(--primary) 18%, transparent);
 }
 
-/* Dark mode — a native night studio, not an inverted light mode.
-   Key moves: near-black base with a cool emerald undertone, cards
-   two full steps brighter than the chrome so elevation reads,
-   text lifted to ~0.98 for AA contrast on long reading sessions,
-   and borders reinforced from 10% to 13% so hairlines survive. */
+/* ============================================================
+   Dark mode base (Emerald) — native night studio.
+   ============================================================ */
 .dark {
   --background: oklch(0.146 0.014 162);
   --foreground: oklch(0.978 0.006 150);
@@ -248,36 +394,42 @@
   --sidebar-ring: oklch(0.72 0.14 164);
 
   --shadow-2xs: 0 1px 1px oklch(0 0 0 / 0.2);
-  --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.28), 0 1px 1px oklch(0 0 0 / 0.2);
-  --shadow-sm: 0 1px 3px oklch(0 0 0 / 0.3), 0 1px 2px oklch(0 0 0 / 0.22);
-  --shadow-md: 0 4px 10px oklch(0 0 0 / 0.32), 0 2px 4px oklch(0 0 0 / 0.24);
-  --shadow-lg: 0 10px 24px oklch(0 0 0 / 0.36), 0 3px 8px oklch(0 0 0 / 0.26);
-  --shadow-xl: 0 18px 40px oklch(0 0 0 / 0.4), 0 6px 14px oklch(0 0 0 / 0.3);
+  --shadow-xs:  0 1px 2px oklch(0 0 0 / 0.28), 0 1px 1px oklch(0 0 0 / 0.2);
+  --shadow-sm:  0 1px 3px oklch(0 0 0 / 0.3), 0 1px 2px oklch(0 0 0 / 0.22);
+  --shadow-md:  0 4px 10px oklch(0 0 0 / 0.32), 0 2px 4px oklch(0 0 0 / 0.24);
+  --shadow-lg:  0 10px 24px oklch(0 0 0 / 0.36), 0 3px 8px oklch(0 0 0 / 0.26);
+  --shadow-xl:  0 18px 40px oklch(0 0 0 / 0.4), 0 6px 14px oklch(0 0 0 / 0.3);
   --shadow-glow: 0 0 0 1px color-mix(in oklch, var(--primary) 24%, transparent),
     0 8px 22px color-mix(in oklch, var(--primary) 16%, transparent);
 }
 
+/* ============================================================
+   @layer base — global element styling.
+   ============================================================ */
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    border-color: color-mix(in oklch, var(--border) calc(var(--card-border-color-mix) * 100%), transparent);
   }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "ss01", "cv01", "cv03";
-    /* A faint radial wash behind everything — gives the app a subtle
-       "studio" depth instead of a flat sheet of paper. Built from the
-       live theme tokens so custom color themes (data-theme) recolor it. */
+    /* Living background — theme-aware. */
     background-image:
-      radial-gradient(ellipse 80% 50% at 50% -10%, color-mix(in oklch, var(--primary) 6%, transparent), transparent 70%),
-      radial-gradient(ellipse 60% 40% at 100% 0%, color-mix(in oklch, var(--chart-2) 5%, transparent), transparent 60%);
+      radial-gradient(ellipse 80% 50% at 50% -10%, color-mix(in oklch, var(--primary) calc(6% + var(--gradient-mesh) * 8%), transparent), transparent 70%),
+      radial-gradient(ellipse 60% 40% at 100% 0%, color-mix(in oklch, var(--chart-2) calc(5% + var(--gradient-mesh) * 10%), transparent), transparent 60%),
+      radial-gradient(ellipse 70% 50% at 0% 100%, color-mix(in oklch, var(--chart-3) calc(3% + var(--gradient-mesh) * 8%), transparent), transparent 60%);
     background-attachment: fixed;
+  }
+  [data-theme="sunset"] body {
+    background-image:
+      radial-gradient(ellipse 90% 50% at 50% 0%, color-mix(in oklch, var(--primary) 4%, transparent), transparent 70%);
   }
   .dark body {
     background-image:
-      radial-gradient(ellipse 80% 50% at 50% -10%, color-mix(in oklch, var(--primary) 9%, transparent), transparent 70%),
+      radial-gradient(ellipse 80% 50% at 50% -10%, color-mix(in oklch, var(--primary) calc(9% + var(--gradient-mesh) * 8%), transparent), transparent 70%),
       radial-gradient(ellipse 60% 40% at 100% 0%, color-mix(in oklch, var(--chart-5) 5%, transparent), transparent 60%);
   }
-  /* Selection — tinted with the live primary so it follows custom themes. */
   ::selection {
     background: color-mix(in oklch, var(--primary) 22%, transparent);
     color: var(--foreground);
@@ -286,19 +438,23 @@
     background: color-mix(in oklch, var(--primary) 32%, transparent);
     color: var(--background);
   }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-serif-stack);
+    font-weight: 600;
+    letter-spacing: -0.012em;
+  }
 }
 
-/* ---------- Academic typography ---------- */
+/* ============================================================
+   Typography utilities.
+   ============================================================ */
 .font-serif-text {
-  font-family: var(--font-serif), var(--font-zh-serif), "Iowan Old Style",
-    "Palatino Linotype", "URW Palladio L", P052, Palatino, Georgia,
-    "Songti SC", "SimSun", "STSong", serif;
+  font-family: var(--font-serif-stack);
   font-feature-settings: "onum" 1, "liga" 1, "kern" 1;
 }
 
 .prose-academic {
-  font-family: var(--font-serif), var(--font-zh-serif), Georgia,
-    "Times New Roman", "Songti SC", "SimSun", "STSong", serif;
+  font-family: var(--font-serif-stack);
   font-size: 1.0125rem;
   line-height: 1.78;
   color: oklch(0.24 0.02 150);
@@ -310,70 +466,51 @@
 .dark .prose-academic {
   color: oklch(0.9 0.005 150);
 }
-
-/* ---------- Chinese typography polish ---------- */
 :lang(zh),
 .prose-academic:lang(zh),
 .prose-academic:-webkit-any(:lang(zh)) {
   line-height: 1.85;
   letter-spacing: 0;
 }
-
 .prose-academic {
   text-spacing: trim-start allow-end;
   -ms-text-spacing: trim-start allow-end;
 }
 
-/* Headings — refined tracking & weight for a more editorial feel. */
-h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-serif), var(--font-zh-serif), Georgia,
-    "Songti SC", "SimSun", serif;
-  font-weight: 600;
-  letter-spacing: -0.012em;
-}
-
 /* ============================================================
-   NEW surface utilities — the visual backbone of the redesign.
-   These are consumed by the shell + cards so elevation is
-   consistent across the whole app.
+   SURFACE UTILITIES — the visual backbone. Each theme reinterprets
+   these via the character tokens above so the whole app changes
+   personality on theme switch, not just color.
    ============================================================ */
 
-/* Frosted-glass toolbar — for the top header and bottom footer.
-   Sits over the body's radial wash with a blur + subtle tint. */
 .glass-toolbar {
-  background-color: oklch(1 0 0 / 0.78);
-  backdrop-filter: blur(14px) saturate(1.4);
-  -webkit-backdrop-filter: blur(14px) saturate(1.4);
-  box-shadow: inset 0 -1px 0 oklch(0.888 0.012 150 / 0.9), 0 1px 3px oklch(0.28 0.05 162 / 0.06);
+  background-color: color-mix(in oklch, var(--card) calc(var(--glass-opacity) * 100%), transparent);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  box-shadow: inset 0 -1px 0 color-mix(in oklch, var(--border) calc(var(--card-border-color-mix) * 90%), transparent),
+    var(--shadow-xs);
 }
 .dark .glass-toolbar {
-  background-color: oklch(0.217 0.016 162 / 0.75);
-  box-shadow: inset 0 -1px 0 oklch(1 0 0 / 0.1), 0 1px 3px oklch(0 0 0 / 0.24);
+  background-color: color-mix(in oklch, var(--card) calc(var(--glass-opacity) * 100%), transparent);
+  box-shadow: inset 0 -1px 0 oklch(1 0 0 / 0.1), var(--shadow-xs);
 }
-/* Footer variant — mirror of .glass-toolbar: the hairline sits on the TOP
-   edge (separating the footer from the content above it) instead of the
-   bottom edge. Colors follow the theme like the header variant. */
 .glass-footer {
-  box-shadow: inset 0 1px 0 oklch(0.905 0.012 150 / 0.8), 0 -1px 3px oklch(0.28 0.05 162 / 0.05);
+  box-shadow: inset 0 1px 0 color-mix(in oklch, var(--border) calc(var(--card-border-color-mix) * 80%), transparent),
+    0 -1px 3px color-mix(in oklch, var(--primary) calc(var(--gradient-mesh) * 5% + 4%), transparent);
 }
 .dark .glass-footer {
   box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.08), 0 -1px 3px oklch(0 0 0 / 0.2);
 }
 
-/* A lighter glass variant for sub-panels (workspace header, panel
-   headers) where the full-strength toolbar would feel heavy. */
 .glass-subtle {
-  background-color: oklch(1 0 0 / 0.62);
-  backdrop-filter: blur(8px) saturate(1.25);
-  -webkit-backdrop-filter: blur(8px) saturate(1.25);
+  background-color: color-mix(in oklch, var(--card) calc(var(--glass-opacity) * 0.78 * 100%), transparent);
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.55)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.55)) saturate(var(--glass-sat));
 }
 .dark .glass-subtle {
-  background-color: oklch(0.217 0.016 162 / 0.55);
+  background-color: color-mix(in oklch, var(--card) calc(var(--glass-opacity) * 0.7 * 100%), transparent);
 }
 
-/* Eyebrow — the micro-label above titled sections ("WRITING PROGRESS",
-   "PARAGRAPHS", "SCIENTIFIC DATABASES"). One consistent voice replaces
-   the dozens of ad-hoc text-[10px] uppercase spans. */
 .eyebrow {
   font-size: 0.625rem;
   line-height: 1;
@@ -383,9 +520,6 @@ h1, h2, h3, h4, h5, h6 {
   color: color-mix(in oklch, var(--muted-foreground) 88%, var(--foreground));
 }
 
-/* Gradient progress fill — the word-goal bar gets a living gradient +
-   glow derived from the live primary, plus a moving sheen while active.
-   Apply `.progress-glow` on the shadcn <Progress> root. */
 .progress-glow [data-slot="progress-indicator"] {
   background-image: linear-gradient(
     90deg,
@@ -393,18 +527,13 @@ h1, h2, h3, h4, h5, h6 {
     var(--primary) 55%,
     color-mix(in oklch, var(--primary), white 18%)
   );
-  box-shadow: 0 0 8px color-mix(in oklch, var(--primary) 38%, transparent);
+  box-shadow: 0 0 8px color-mix(in oklch, var(--primary) calc(38% + var(--ring-glow) * 20%), transparent);
 }
 .progress-glow [data-slot="progress-indicator"]::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    100deg,
-    transparent 20%,
-    oklch(1 0 0 / 0.28) 50%,
-    transparent 80%
-  );
+  background: linear-gradient(100deg, transparent 20%, oklch(1 0 0 / 0.28) 50%, transparent 80%);
   transform: translateX(-100%);
   animation: progress-sheen 2.6s var(--ease-snap) infinite;
 }
@@ -412,74 +541,57 @@ h1, h2, h3, h4, h5, h6 {
   to { transform: translateX(100%); }
 }
 .dark .progress-glow [data-slot="progress-indicator"] {
-  box-shadow: 0 0 10px color-mix(in oklch, var(--primary) 45%, transparent);
+  box-shadow: 0 0 10px color-mix(in oklch, var(--primary) calc(45% + var(--ring-glow) * 20%), transparent);
 }
-.dark .progress-glow [data-slot="progress-indicator"]::after {
-  background: linear-gradient(
-    100deg,
-    transparent 20%,
-    oklch(1 0 0 / 0.16) 50%,
-    transparent 80%
-  );
-}
-/* Completed state — no sheen, calm success. */
 .progress-glow.progress-done [data-slot="progress-indicator"]::after {
   animation: none;
   opacity: 0;
 }
 
-/* Canvas paper — the long-form reading/writing surface. Slightly warmer
-   than card white with the faint dot texture and a top inset hairline,
-   so the document reads as its own "sheet" laid on the desk. */
 .canvas-paper {
   background-color: oklch(0.995 0.005 95);
-  background-image: radial-gradient(
-      circle at 1px 1px,
-      oklch(0.5 0.02 150 / 0.03) 1px,
-      transparent 0
-    );
+  background-image: radial-gradient(circle at 1px 1px, oklch(0.5 0.02 150 / calc(0.03 * var(--paper-texture))) 1px, transparent 0);
   background-size: 22px 22px;
   box-shadow: inset 0 1px 0 oklch(1 0 0), var(--shadow-sm);
-  border-width: 1px;
+  border-width: var(--card-border-width);
   border-style: solid;
-  border-color: var(--border);
+  border-radius: var(--card-radius);
 }
 .dark .canvas-paper {
   background-color: oklch(0.198 0.014 162);
-  background-image: radial-gradient(
-      circle at 1px 1px,
-      oklch(0.9 0.02 150 / 0.035) 1px,
-      transparent 0
-    );
+  background-image: radial-gradient(circle at 1px 1px, oklch(0.9 0.02 150 / calc(0.035 * var(--paper-texture))) 1px, transparent 0);
   box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.04), var(--shadow-sm);
 }
-
-/* Elevated card surface — used by content cards. Sets border-width/style
-   only (not border-color) so the base `* { border-border }` color applies
-   and Tailwind's `border-primary/40` / `hover:border-primary/30` utilities
-   can override it cleanly without an unlayered-vs-layered cascade fight. */
-.surface-card {
-  background-color: var(--card);
-  box-shadow: var(--shadow-xs);
-  border-width: 1px;
-  border-style: solid;
+[data-theme="sunset"] .canvas-paper {
+  background-image: none;
+  background-color: oklch(0.992 0.008 60);
 }
-/* round-38: paper-stock variant for the paragraph cards. The Article tab
-   renders its reading sheet on .canvas-paper (light: 0.995 warm parchment,
-   dark: 0.198 deep studio green) while paragraph cards sat on var(--card)
-   (pure white / 0.217) — switching tabs visibly swapped the paper stock.
-   This variant keeps surface-card's border/shadow model (border-color is
-   still left to Tailwind utilities) but tints the whole card interior the
-   article canvas color, so the glass header/footer strips blend over the
-   same paper the body sits on. :hover is defined here because unlayered
-   CSS beats layered Tailwind utilities — a `hover:shadow-md` utility on
-   the element could never win against this class's box-shadow (the lift
-   had been silently dead), so the elevation ramp lives here instead. */
+[data-theme="sunset"].dark .canvas-paper {
+  background-image: none;
+  background-color: oklch(0.2 0.014 45);
+}
+[data-theme="ocean"] .canvas-paper {
+  background-color: oklch(0.994 0.006 220);
+  background-image: radial-gradient(circle at 1px 1px, oklch(0.5 0.04 220 / calc(0.025 * var(--paper-texture))) 1px, transparent 0);
+}
+[data-theme="violet"] .canvas-paper {
+  background-color: oklch(0.994 0.006 300);
+  background-image: linear-gradient(180deg, color-mix(in oklch, var(--primary) 2%, transparent), transparent 40%);
+}
+
+.surface-card {
+  background-color: color-mix(in oklch, var(--card) 100%, color-mix(in oklch, var(--primary) calc(var(--surface-tint) * 100%), transparent));
+  box-shadow: var(--shadow-xs);
+  border-width: var(--card-border-width);
+  border-style: solid;
+  border-radius: var(--card-radius);
+}
 .surface-paper-card {
   background-color: oklch(0.995 0.005 95);
   box-shadow: var(--shadow-xs);
-  border-width: 1px;
+  border-width: var(--card-border-width);
   border-style: solid;
+  border-radius: var(--card-radius);
 }
 .surface-paper-card:hover:not(.ring-academic) {
   box-shadow: var(--shadow-md);
@@ -487,62 +599,95 @@ h1, h2, h3, h4, h5, h6 {
 .dark .surface-paper-card {
   background-color: oklch(0.198 0.014 162);
 }
-/* Lifted surface for hover / active focus states — box-shadow only, so it
-   composes cleanly with Tailwind border-color utilities. */
+[data-theme="sunset"] .surface-paper-card,
+[data-theme="sunset"] .surface-card {
+  background-color: oklch(0.994 0.006 60);
+}
+[data-theme="sunset"].dark .surface-paper-card,
+[data-theme="sunset"].dark .surface-card {
+  background-color: oklch(0.21 0.014 45);
+}
+[data-theme="ocean"] .surface-paper-card,
+[data-theme="ocean"] .surface-card {
+  background-color: oklch(0.996 0.005 220);
+}
+[data-theme="ocean"].dark .surface-paper-card,
+[data-theme="ocean"].dark .surface-card {
+  background-color: oklch(0.224 0.016 225);
+}
+[data-theme="violet"] .surface-paper-card,
+[data-theme="violet"] .surface-card {
+  background-color: oklch(0.996 0.005 300);
+}
+[data-theme="violet"].dark .surface-paper-card,
+[data-theme="violet"].dark .surface-card {
+  background-color: oklch(0.226 0.018 300);
+}
 .surface-raised {
   box-shadow: var(--shadow-md);
 }
 
-/* Hairline divider — softer than border-border. */
 .hairline {
-  border-color: oklch(0.888 0.012 150 / 0.75);
+  border-color: color-mix(in oklch, var(--border) calc(var(--card-border-color-mix) * 85%), transparent);
 }
 .dark .hairline {
   border-color: oklch(1 0 0 / 0.09);
 }
 
-
-/* Brand mark — the logo tile gradient. Built from var(--primary) so
-   custom color themes (data-theme) recolor the brand automatically. */
 .brand-tile {
   background-image: linear-gradient(135deg, color-mix(in oklch, var(--primary), white 14%), color-mix(in oklch, var(--primary), black 10%));
-  box-shadow: 0 2px 6px color-mix(in oklch, var(--primary) 32%, transparent), inset 0 1px 0 oklch(1 0 0 / 0.25);
+  box-shadow: 0 2px 6px color-mix(in oklch, var(--primary) calc(32% + var(--ring-glow) * 18%), transparent), inset 0 1px 0 oklch(1 0 0 / 0.25);
+  border-radius: var(--card-radius);
+}
+[data-theme="sunset"] .brand-tile {
+  box-shadow: 3px 3px 0 color-mix(in oklch, var(--primary) 45%, transparent), inset 0 1px 0 oklch(1 0 0 / 0.25);
+}
+[data-theme="violet"] .brand-tile {
+  box-shadow: 0 2px 8px color-mix(in oklch, var(--primary) 40%, transparent), 0 0 24px color-mix(in oklch, var(--primary) 28%, transparent), inset 0 1px 0 oklch(1 0 0 / 0.3);
 }
 
-/* Primary gradient button — for the headline CTA. var(--primary)-based
-   so it follows custom color themes in both light and dark mode. */
 .btn-gradient-primary {
   background-image: linear-gradient(135deg, color-mix(in oklch, var(--primary), white 10%), color-mix(in oklch, var(--primary), black 6%));
-  box-shadow: 0 2px 6px color-mix(in oklch, var(--primary) 28%, transparent), inset 0 1px 0 oklch(1 0 0 / 0.18);
+  box-shadow: 0 2px 6px color-mix(in oklch, var(--primary) calc(28% + var(--ring-glow) * 12%), transparent), inset 0 1px 0 oklch(1 0 0 / 0.18);
   transition: box-shadow 0.18s var(--ease-out), transform 0.18s var(--ease-out), filter 0.18s var(--ease-out);
+  border-radius: var(--card-radius);
 }
 .btn-gradient-primary:hover {
   filter: brightness(1.06);
-  box-shadow: 0 4px 12px color-mix(in oklch, var(--primary) 34%, transparent), inset 0 1px 0 oklch(1 0 0 / 0.22);
+  box-shadow: 0 4px 12px color-mix(in oklch, var(--primary) calc(34% + var(--ring-glow) * 16%), transparent), inset 0 1px 0 oklch(1 0 0 / 0.22);
 }
 .btn-gradient-primary:active {
   transform: translateY(0.5px);
 }
+[data-theme="sunset"] .btn-gradient-primary {
+  box-shadow: 3px 3px 0 color-mix(in oklch, var(--primary) 35%, transparent), inset 0 1px 0 oklch(1 0 0 / 0.2);
+}
+[data-theme="sunset"] .btn-gradient-primary:hover {
+  box-shadow: 2px 2px 0 color-mix(in oklch, var(--primary) 45%, transparent), inset 0 1px 0 oklch(1 0 0 / 0.22);
+  transform: translate(1px, 1px);
+}
+[data-theme="violet"] .btn-gradient-primary {
+  box-shadow: 0 4px 14px color-mix(in oklch, var(--primary) 34%, transparent), 0 0 20px color-mix(in oklch, var(--primary) 22%, transparent), inset 0 1px 0 oklch(1 0 0 / 0.22);
+}
 
-/* Refined tab indicator — filled primary-tinted pill so the active tab
-   reads instantly at any theme; inactive tabs stay quiet and gain a
-   gentle hover tint. Border set per-property so layered Tailwind
-   utilities like `border-primary/40` can still override the color. */
 .tab-pill {
   background-color: color-mix(in oklch, var(--primary) 12%, var(--card));
-  box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 26%, transparent),
-    var(--shadow-xs);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) calc(26% + var(--ring-glow) * 14%), transparent), var(--shadow-xs);
   color: var(--primary);
   font-weight: 600;
+  border-radius: calc(var(--card-radius) - 2px);
 }
 .dark .tab-pill {
   background-color: color-mix(in oklch, var(--primary) 20%, var(--card));
-  box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 34%, transparent),
-    var(--shadow-xs);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) calc(34% + var(--ring-glow) * 14%), transparent), var(--shadow-xs);
+}
+[data-theme="ocean"] .tab-pill {
+  border-radius: 999px;
 }
 .tab-pill-inactive {
   color: var(--muted-foreground);
   transition: color 0.15s var(--ease-out), background-color 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out);
+  border-radius: calc(var(--card-radius) - 2px);
 }
 .tab-pill-inactive:hover {
   color: var(--foreground);
@@ -551,17 +696,16 @@ h1, h2, h3, h4, h5, h6 {
 .dark .tab-pill-inactive:hover {
   background-color: oklch(1 0 0 / 0.06);
 }
+[data-theme="ocean"] .tab-pill-inactive {
+  border-radius: 999px;
+}
 
 /* ============================================================
-   Legacy utility classes — preserved & enhanced.
+   Citation markers — signature product element.
    ============================================================ */
-
-/* Citation markers — signature product element, colored with the live
-   theme tokens (primary text on an accent tint) so custom themes recolor
-   them instead of staying emerald. */
 .cite-marker {
   display: inline;
-  font-family: var(--font-mono), ui-monospace, monospace;
+  font-family: var(--font-mono-stack);
   font-size: 0.72em;
   vertical-align: super;
   line-height: 0;
@@ -572,8 +716,7 @@ h1, h2, h3, h4, h5, h6 {
   margin: 0 0.04em;
   font-weight: 600;
   cursor: help;
-  transition: background 0.15s var(--ease-out), color 0.15s var(--ease-out), transform 0.15s var(--ease-out),
-    box-shadow 0.15s var(--ease-out);
+  transition: background 0.15s var(--ease-out), color 0.15s var(--ease-out), transform 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out);
 }
 .cite-marker:hover {
   background: color-mix(in oklch, var(--accent) 95%, transparent);
@@ -585,18 +728,13 @@ h1, h2, h3, h4, h5, h6 {
   outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
-
-/* Adversarial citation-audit marker states */
 .cite-marker-unresolved {
   color: oklch(0.42 0.11 75);
   background: oklch(0.92 0.06 85 / 0.65);
   text-decoration: underline dotted oklch(0.55 0.12 75);
   text-underline-offset: 2px;
 }
-.cite-marker-unresolved:hover {
-  background: oklch(0.87 0.09 80);
-  color: oklch(0.35 0.1 75);
-}
+.cite-marker-unresolved:hover { background: oklch(0.87 0.09 80); color: oklch(0.35 0.1 75); }
 .cite-marker-missing {
   color: oklch(0.45 0.18 25);
   background: oklch(0.9 0.1 25 / 0.6);
@@ -609,130 +747,50 @@ h1, h2, h3, h4, h5, h6 {
   text-decoration: underline dotted oklch(0.48 0.14 40);
   text-underline-offset: 2px;
 }
-.cite-marker-suspect {
-  color: oklch(0.42 0.12 75);
-  background: oklch(0.92 0.06 85 / 0.6);
-}
-.cite-audit-icon {
-  font-size: 0.85em;
-  margin-left: 0.1em;
-  color: oklch(0.45 0.15 40);
-}
-.dark .cite-marker-unresolved,
-.dark .cite-marker-missing {
-  color: oklch(0.82 0.1 75);
-  background: oklch(0.34 0.08 75 / 0.5);
-  text-decoration-color: oklch(0.75 0.12 75);
-}
-.dark .cite-marker-unsupported {
-  color: oklch(0.8 0.13 40);
-  background: oklch(0.33 0.1 40 / 0.45);
-}
-.dark .cite-marker-suspect {
-  color: oklch(0.82 0.1 75);
-  background: oklch(0.34 0.08 75 / 0.45);
-}
-.dark .cite-audit-icon {
-  color: oklch(0.8 0.14 40);
-}
+.cite-marker-suspect { color: oklch(0.42 0.12 75); background: oklch(0.92 0.06 85 / 0.6); }
+.cite-audit-icon { font-size: 0.85em; margin-left: 0.1em; color: oklch(0.45 0.15 40); }
+.dark .cite-marker-unresolved, .dark .cite-marker-missing { color: oklch(0.82 0.1 75); background: oklch(0.34 0.08 75 / 0.5); text-decoration-color: oklch(0.75 0.12 75); }
+.dark .cite-marker-unsupported { color: oklch(0.8 0.13 40); background: oklch(0.33 0.1 40 / 0.45); }
+.dark .cite-marker-suspect { color: oklch(0.82 0.1 75); background: oklch(0.34 0.08 75 / 0.45); }
+.dark .cite-audit-icon { color: oklch(0.8 0.14 40); }
 
-/* Annotation highlights — amber annotation identity, with explicit dark
-   variants so highlighted spans stay readable on dark surfaces. */
 .ann-highlight {
-  background: linear-gradient(
-    120deg,
-    oklch(0.92 0.13 85 / 0.45),
-    oklch(0.9 0.12 70 / 0.5)
-  );
+  background: linear-gradient(120deg, oklch(0.92 0.13 85 / 0.45), oklch(0.9 0.12 70 / 0.5));
   border-bottom: 2px solid oklch(0.7 0.15 70 / 0.7);
   border-radius: 2px;
   padding: 0 1px;
   cursor: pointer;
   transition: background 0.15s var(--ease-out);
 }
-.ann-highlight:hover {
-  background: linear-gradient(
-    120deg,
-    oklch(0.88 0.15 85 / 0.6),
-    oklch(0.85 0.14 70 / 0.7)
-  );
-}
-.dark .ann-highlight {
-  background: linear-gradient(
-    120deg,
-    oklch(0.5 0.12 85 / 0.45),
-    oklch(0.48 0.12 70 / 0.5)
-  );
-  border-bottom-color: oklch(0.62 0.15 70 / 0.85);
-}
-.dark .ann-highlight:hover {
-  background: linear-gradient(
-    120deg,
-    oklch(0.56 0.13 85 / 0.55),
-    oklch(0.53 0.13 70 / 0.62)
-  );
-}
-.ann-highlight-critical {
-  background: linear-gradient(
-    120deg,
-    oklch(0.88 0.12 25 / 0.4),
-    oklch(0.86 0.13 15 / 0.5)
-  );
-  border-bottom-color: oklch(0.62 0.2 25);
-}
+.ann-highlight:hover { background: linear-gradient(120deg, oklch(0.88 0.15 85 / 0.6), oklch(0.85 0.14 70 / 0.7)); }
+.dark .ann-highlight { background: linear-gradient(120deg, oklch(0.5 0.12 85 / 0.45), oklch(0.48 0.12 70 / 0.5)); border-bottom-color: oklch(0.62 0.15 70 / 0.85); }
+.dark .ann-highlight:hover { background: linear-gradient(120deg, oklch(0.56 0.13 85 / 0.55), oklch(0.53 0.13 70 / 0.62)); }
+.ann-highlight-critical { background: linear-gradient(120deg, oklch(0.88 0.12 25 / 0.4), oklch(0.86 0.13 15 / 0.5)); border-bottom-color: oklch(0.62 0.2 25); }
 
-/* Pending annotation selection */
 .pending-selection {
-  background: linear-gradient(
-    120deg,
-    oklch(0.85 0.13 200 / 0.35),
-    oklch(0.82 0.12 220 / 0.4)
-  );
+  background: linear-gradient(120deg, oklch(0.85 0.13 200 / 0.35), oklch(0.82 0.12 220 / 0.4));
   border-radius: 2px;
   padding: 0 1px;
   box-shadow: 0 0 0 1px oklch(0.7 0.1 200 / 0.3);
   color: inherit;
 }
-.dark .pending-selection {
-  background: linear-gradient(
-    120deg,
-    oklch(0.65 0.13 200 / 0.35),
-    oklch(0.6 0.12 220 / 0.4)
-  );
-  box-shadow: 0 0 0 1px oklch(0.5 0.1 200 / 0.4);
-}
+.dark .pending-selection { background: linear-gradient(120deg, oklch(0.65 0.13 200 / 0.35), oklch(0.6 0.12 220 / 0.4)); box-shadow: 0 0 0 1px oklch(0.5 0.1 200 / 0.4); }
 
-/* Paper texture for writing surfaces — round-38: exact match with
-   .canvas-paper (same stock, same dot grid + opacity) so the paragraph
-   body and the Article sheet are visually one continuous paper. */
 .paper-surface {
   background-color: oklch(0.995 0.005 95);
-  background-image:
-    radial-gradient(
-      circle at 1px 1px,
-      oklch(0.5 0.02 150 / 0.03) 1px,
-      transparent 0
-    );
+  background-image: radial-gradient(circle at 1px 1px, oklch(0.5 0.02 150 / calc(0.03 * var(--paper-texture))) 1px, transparent 0);
   background-size: 22px 22px;
 }
 .dark .paper-surface {
   background-color: oklch(0.198 0.014 162);
-  background-image:
-    radial-gradient(
-      circle at 1px 1px,
-      oklch(0.9 0.02 150 / 0.035) 1px,
-      transparent 0
-    );
+  background-image: radial-gradient(circle at 1px 1px, oklch(0.9 0.02 150 / calc(0.035 * var(--paper-texture))) 1px, transparent 0);
 }
+[data-theme="sunset"] .paper-surface { background-image: none; background-color: oklch(0.992 0.008 60); }
+[data-theme="ocean"] .paper-surface { background-color: oklch(0.994 0.006 220); background-image: radial-gradient(circle at 1px 1px, oklch(0.5 0.04 220 / calc(0.025 * var(--paper-texture))) 1px, transparent 0); }
+[data-theme="violet"] .paper-surface { background-color: oklch(0.994 0.006 300); background-image: linear-gradient(180deg, color-mix(in oklch, var(--primary) 2%, transparent), transparent 40%); }
 
-/* Custom scrollbar — refined thumb with subtle gradient. */
-.scroll-academic::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-.scroll-academic::-webkit-scrollbar-track {
-  background: transparent;
-}
+.scroll-academic::-webkit-scrollbar { width: 10px; height: 10px; }
+.scroll-academic::-webkit-scrollbar-track { background: transparent; }
 .scroll-academic::-webkit-scrollbar-thumb {
   background: oklch(0.82 0.02 150);
   border-radius: 999px;
@@ -744,97 +802,50 @@ h1, h2, h3, h4, h5, h6 {
   background-clip: padding-box;
   border: 2px solid transparent;
 }
-.dark .scroll-academic::-webkit-scrollbar-thumb {
-  background: oklch(0.35 0.02 150);
-  background-clip: padding-box;
-  border: 2px solid transparent;
-}
-.dark .scroll-academic::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in oklch, var(--primary) 45%, oklch(0.35 0.02 150));
-  background-clip: padding-box;
-}
+.dark .scroll-academic::-webkit-scrollbar-thumb { background: oklch(0.35 0.02 150); background-clip: padding-box; border: 2px solid transparent; }
+.dark .scroll-academic::-webkit-scrollbar-thumb:hover { background: color-mix(in oklch, var(--primary) 45%, oklch(0.35 0.02 150)); background-clip: padding-box; }
 
-/* round-34, generalized round-36: Radix ScrollArea wraps viewport content
-   in a display:table / min-width:100% div. Tables shrink-wrap to their
-   content's min-content width, and — measured in round-36 — a table sized
-   for a wider layout does NOT re-shrink when the viewport narrows
-   (resizable panel dragged / window resized): viewport 498px kept a stale
-   843px table, so overflow-x:hidden clipped the canvas-paper's right
-   border off-screen (the article-tab "box wider than the window" bug).
-   Note: a plain max-width:100% does NOT clamp a display:table box
-   (measured, round-34), so we override the display itself — block keeps
-   the min-width:100% stretch behavior for short content, always tracks
-   the viewport width, and long tokens wrap at the text level via
-   break-words. Audited round-36: no ScrollArea in this app uses
-   horizontal orientation, so the table layout is never needed. */
-[data-radix-scroll-area-viewport] > div {
-  display: block !important;
-}
+[data-radix-scroll-area-viewport] > div { display: block !important; }
 
-/* round-34: thin horizontal scrollbar for overflow-x rows (type tab
-   bars). Previously referenced by className but never defined — the
-   browser default 15px bar was rendered instead. */
-.scrollbar-thin::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
-}
-.scrollbar-thin::-webkit-scrollbar-track {
-  background: transparent;
-}
-.scrollbar-thin::-webkit-scrollbar-thumb {
-  background: oklch(0.82 0.02 150);
-  border-radius: 999px;
-}
-.dark .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: oklch(0.35 0.02 150);
-}
+.scrollbar-thin::-webkit-scrollbar { width: 5px; height: 5px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: oklch(0.82 0.02 150); border-radius: 999px; }
+.dark .scrollbar-thin::-webkit-scrollbar-thumb { background: oklch(0.35 0.02 150); }
 
-/* Subtle fade-in for generated content */
 @keyframes acad-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-.acad-fade-in {
-  animation: acad-fade-in 0.45s var(--ease-out) both;
-}
+.acad-fade-in { animation: acad-fade-in 0.45s var(--ease-out) both; }
 
-/* Typing cursor for streaming */
-@keyframes blink-caret {
-  0%, 49% { opacity: 1; }
-  50%, 100% { opacity: 0; }
-}
-.typing-caret::after {
-  content: "▌";
-  margin-left: 1px;
-  color: var(--primary);
-  animation: blink-caret 1s steps(1) infinite;
-}
-.dark .typing-caret::after {
-  color: var(--primary);
-}
+@keyframes blink-caret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+.typing-caret::after { content: "▌"; margin-left: 1px; color: var(--primary); animation: blink-caret 1s steps(1) infinite; }
+.dark .typing-caret::after { color: var(--primary); }
 
-/* Gradient ring for active states — derives from --primary so the active
-   project card glow follows the active theme color. */
 .ring-academic {
   box-shadow:
-    0 0 0 1px color-mix(in oklch, var(--primary) 28%, transparent),
+    0 0 0 1px color-mix(in oklch, var(--primary) calc(28% + var(--ring-glow) * 20%), transparent),
     0 1px 2px oklch(0.3 0.05 162 / 0.08),
-    0 4px 14px color-mix(in oklch, var(--primary) 8%, transparent);
+    0 4px 14px color-mix(in oklch, var(--primary) calc(8% + var(--ring-glow) * 14%), transparent);
 }
 .dark .ring-academic {
   box-shadow:
-    0 0 0 1px color-mix(in oklch, var(--primary) 30%, transparent),
+    0 0 0 1px color-mix(in oklch, var(--primary) calc(30% + var(--ring-glow) * 20%), transparent),
     0 1px 2px oklch(0 0 0 / 0.2),
-    0 4px 16px color-mix(in oklch, var(--primary) 10%, transparent);
+    0 4px 16px color-mix(in oklch, var(--primary) calc(10% + var(--ring-glow) * 18%), transparent);
+}
+[data-theme="sunset"] .ring-academic {
+  box-shadow:
+    0 0 0 1.5px var(--primary),
+    3px 3px 0 color-mix(in oklch, var(--primary) 30%, transparent);
+}
+[data-theme="violet"] .ring-academic {
+  box-shadow:
+    0 0 0 1px color-mix(in oklch, var(--primary) 50%, transparent),
+    0 0 24px color-mix(in oklch, var(--primary) 30%, transparent),
+    0 4px 18px color-mix(in oklch, var(--primary) 16%, transparent);
 }
 
-/* Source badge gradients */
 .badge-emerald { background: oklch(0.92 0.06 162); color: oklch(0.34 0.09 162); }
 .badge-teal    { background: oklch(0.92 0.05 185); color: oklch(0.32 0.08 185); }
 .badge-amber   { background: oklch(0.93 0.07 80);  color: oklch(0.38 0.09 65);  }
@@ -850,37 +861,67 @@ h1, h2, h3, h4, h5, h6 {
 .dark .badge-sky     { background: oklch(0.34 0.07 230); color: oklch(0.88 0.09 230);  }
 .dark .badge-slate   { background: oklch(0.32 0.015 250); color: oklch(0.85 0.02 250); }
 
-/* Hairline divider with dot */
 .divider-academic {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
   color: oklch(0.6 0.02 150);
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
 }
-.divider-academic::before,
-.divider-academic::after {
+.divider-academic::before, .divider-academic::after {
   content: "";
   flex: 1;
   height: 1px;
-  background: linear-gradient(
-    to right,
-    transparent,
-    oklch(0.82 0.02 150),
-    transparent
-  );
+  background: linear-gradient(to right, transparent, oklch(0.82 0.02 150), transparent);
 }
-.dark .divider-academic::before,
-.dark .divider-academic::after {
-  background: linear-gradient(
-    to right,
-    transparent,
-    oklch(0.35 0.02 150),
-    transparent
-  );
+.dark .divider-academic::before, .dark .divider-academic::after {
+  background: linear-gradient(to right, transparent, oklch(0.35 0.02 150), transparent);
 }
 
+/* ============================================================
+   Theme-aware panel wrapper — gives the ResizablePanelGroup its
+   outer character per theme.
+   ============================================================ */
+.shell-frame {
+  border-radius: var(--card-radius);
+  border-width: var(--card-border-width);
+  border-style: solid;
+  border-color: color-mix(in oklch, var(--border) calc(var(--card-border-color-mix) * 90%), transparent);
+  background-color: var(--card);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+[data-theme="sunset"] .shell-frame {
+  box-shadow: var(--shadow-lg), 0 0 0 1px oklch(0.5 0.03 40 / 0.08);
+}
+[data-theme="violet"] .shell-frame {
+  box-shadow: var(--shadow-lg), 0 0 40px color-mix(in oklch, var(--primary) 8%, transparent);
+}
 
+.panel-tint {
+  background-color: color-mix(in oklch, var(--sidebar) 60%, transparent);
+}
+.dark .panel-tint {
+  background-color: color-mix(in oklch, var(--sidebar) 70%, transparent);
+}
 
+.panel-section-header {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid color-mix(in oklch, var(--border) calc(var(--card-border-color-mix) * 75%), transparent);
+}
+
+.stat-tile {
+  background-color: color-mix(in oklch, var(--card) 100%, color-mix(in oklch, var(--primary) calc(var(--surface-tint) * 100%), transparent));
+  border-width: var(--card-border-width);
+  border-style: solid;
+  border-radius: calc(var(--card-radius) - 2px);
+  padding: var(--space-3);
+  box-shadow: var(--shadow-2xs);
+}
+
+.focus-ring:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}

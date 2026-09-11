@@ -75,7 +75,7 @@ export function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: 
             <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto mb-4">
               {t("workspace.peerReviewDesc")}
             </p>
-            <Button size="sm" className="gap-1.5 text-xs" onClick={() => reviewMut.mutate()} disabled={!articleId}>
+            <Button size="sm" className="gap-1 text-xs" onClick={() => reviewMut.mutate()} disabled={!articleId}>
               <Gavel className="h-3.5 w-3.5" /> {t("workspace.runReviewBtn")}
             </Button>
           </div>
@@ -96,7 +96,7 @@ export function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: 
             <p className="text-xs text-destructive mb-4 max-w-sm mx-auto">
               {(reviewMut.error as Error)?.message?.slice(0, 200)}
             </p>
-            <Button size="sm" className="gap-1.5 text-xs" onClick={() => reviewMut.mutate()} disabled={!articleId}>
+            <Button size="sm" className="gap-1 text-xs" onClick={() => reviewMut.mutate()} disabled={!articleId}>
               <Gavel className="h-3.5 w-3.5" /> {t("workspace.retryBtn") || "Retry"}
             </Button>
           </div>
@@ -138,7 +138,7 @@ export function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: 
                 </div>
               </div>
             )}
-            <Button size="sm" variant="outline" className="gap-1.5 text-xs w-full" onClick={() => reviewMut.mutate()} disabled={reviewMut.isPending}>
+            <Button size="sm" variant="outline" className="gap-1 text-xs w-full" onClick={() => reviewMut.mutate()} disabled={reviewMut.isPending}>
               {reviewMut.isPending && !displayData && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {t("workspace.rerunReviewBtn")}
             </Button>

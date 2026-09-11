@@ -29,6 +29,11 @@ import type { DatabaseQueryResponse, DatabaseResultItem } from "@/lib/types";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useI18n } from "@/lib/i18n";
 
+/** Semantic source-type badge → design-system .badge-* class.
+ *  These ARE the source-type indicators the design system sanctions
+ *  (pubmed=emerald, uniprot=teal, rcsb=amber, ncbi=rose, blast=violet,
+ *  web=sky). The same hues appear on result cards and on the small dot
+ *  in the source dropdown so users read source-type at a glance. */
 const SOURCE_BADGE: Record<string, string> = {
   pubmed: "badge-emerald",
   uniprot: "badge-teal",
@@ -36,15 +41,6 @@ const SOURCE_BADGE: Record<string, string> = {
   ncbi: "badge-rose",
   blast: "badge-violet",
   web: "badge-sky",
-};
-
-const SOURCE_DOT: Record<string, string> = {
-  emerald: "bg-emerald-500",
-  teal: "bg-teal-500",
-  amber: "bg-amber-500",
-  rose: "bg-rose-500",
-  violet: "bg-violet-500",
-  sky: "bg-sky-500",
 };
 
 export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) {
@@ -125,50 +121,74 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="glass-subtle px-4 pt-4 pb-3 border-b border-border/60 space-y-3 shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="h-6 w-6 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-            <Database className="h-3.5 w-3.5 text-primary" />
+      {/* ============================================================
+          Row 1 — header (.glass-subtle .panel-section-header)
+          Mirrors ProjectsSidebar's header rhythm so the two panels read
+          as siblings: brand-tile + eyebrow on the left, source picker
+          on the right. The header sits at the same vertical position
+          as ProjectsSidebar's header (QA #2 fix).
+          ============================================================ */}
+      <div className="glass-subtle panel-section-header flex items-center justify-between gap-2 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="brand-tile h-6 w-6 rounded-md flex items-center justify-center shrink-0">
+            <Database className="h-3 w-3 text-primary-foreground" />
           </div>
-          <h3 className="text-[15px] font-semibold tracking-tight font-serif-text">
+          <span className="eyebrow flex items-center gap-2 truncate">
             {t("db.title")}
-          </h3>
+          </span>
         </div>
+        {/* Source picker — compact h-7 so the header matches the height of
+            ProjectsSidebar's header (which also fits h-7 chips). The small
+            colored dot reuses the same .badge-* semantic hue that appears on
+            each result card, so the dropdown entry and the result-card badge
+            share the same color identity. */}
         <Select value={source} onValueChange={setSource}>
-          <SelectTrigger className="h-9 text-xs">
+          <SelectTrigger className="h-7 w-[140px] text-xs shrink-0">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {DATABASE_SOURCES.map((s) => (
               <SelectItem key={s.id} value={s.id} className="text-xs">
                 <span className="flex items-center gap-2">
+                  {/* Tiny source-type chip reuses the same .badge-* hue that
+                      appears on each result card, so the dropdown entry and
+                      the result-card badge share the same color identity.
+                      A single-letter chip is more visible than a pale dot. */}
                   <span
-                    className={`inline-block h-2 w-2 rounded-full ${SOURCE_DOT[s.color] || "bg-muted-foreground/60"}`}
-                  />
+                    className={`inline-flex items-center justify-center h-3 min-w-3 px-1 rounded text-[9px] font-bold leading-none ${SOURCE_BADGE[s.id] || "badge-slate"}`}
+                  >
+                    {s.shortName[0]}
+                  </span>
                   {s.shortName}
                 </span>
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          {srcMeta.description}
-        </p>
       </div>
 
-      <div className="px-4 py-3 border-b border-border/60 space-y-2 shrink-0">
+      {/* ============================================================
+          Row 2 — search row (.panel-section-header)
+          Sits at exactly the same vertical position as ProjectsSidebar's
+          search Input (QA #2 fix). Query Input on the left, primary
+          gradient CTA on the right. BLAST swaps the Input for a
+          Textarea + program picker + BLAST button. The CTA uses
+          .btn-gradient-primary so the only saturated color on the panel
+          is the brand primary (QA #4 fix — no competing amber/orange).
+          ============================================================ */}
+      <div className="panel-section-header shrink-0 border-b hairline">
         {source === "blast" ? (
-          <div className="surface-card rounded-lg p-2 space-y-2">
+          <div className="space-y-2">
             <Textarea
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={srcMeta.queryPlaceholder}
-              className="font-mono text-[11px] min-h-[88px] resize-y"
+              className="font-mono text-[11px] min-h-[96px] resize-y"
             />
             <div className="flex items-center gap-2">
               <Select
                 value={blastProgram}
-                onValueChange={(v) => setBlastProgram(v as any)}
+                onValueChange={(v) => setBlastProgram(v as "blastp" | "blastn")}
               >
                 <SelectTrigger className="h-8 text-xs flex-1">
                   <SelectValue />
@@ -182,14 +202,14 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
                 size="sm"
                 onClick={() => searchMut.mutate()}
                 disabled={searchMut.isPending}
-                className="h-8"
+                className="btn-gradient-primary h-8 px-3 gap-1 text-primary-foreground font-medium"
               >
                 {searchMut.isPending ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
                   <Dna className="h-3.5 w-3.5" />
                 )}
-                <span className="ml-1">{t("db.blast")}</span>
+                <span>{t("db.blast")}</span>
               </Button>
             </div>
           </div>
@@ -199,49 +219,81 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
               e.preventDefault();
               searchMut.mutate();
             }}
-            className="surface-card rounded-lg p-2 flex items-center gap-2"
+            className="flex items-center gap-2"
           >
             <div className="relative flex-1">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/80 pointer-events-none" />
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={srcMeta.queryPlaceholder}
-                className="h-8 pl-7 text-xs"
+                className="h-8 pl-8 text-xs bg-card border-border/70 focus-visible:border-primary/50 focus-visible:ring-primary/30"
               />
             </div>
             <Button
               type="submit"
               size="sm"
               disabled={searchMut.isPending}
-              className="h-8 px-2.5"
+              className="btn-gradient-primary h-8 px-3 gap-1 text-primary-foreground font-medium"
             >
               {searchMut.isPending ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <Search className="h-3.5 w-3.5" />
               )}
+              <span className="hidden xs:inline">{t("db.search")}</span>
             </Button>
           </form>
         )}
+      </div>
+
+      {/* ============================================================
+          Row 3 — hint row (description + Try example)
+          Not a .panel-section-header — it doesn't claim the search-row
+          alignment; just a thin 4px-scale strip below the search.
+          ============================================================ */}
+      <div className="px-4 py-2 border-b hairline shrink-0 flex items-center justify-between gap-2 min-w-0">
+        <p className="text-[10px] leading-relaxed text-muted-foreground truncate">
+          {srcMeta.description}
+        </p>
         {srcMeta.example && (
           <button
             type="button"
             onClick={() => setQuery(srcMeta.example)}
-            className="text-[10px] text-muted-foreground hover:text-primary transition-colors"
+            className="text-[10px] text-primary hover:underline shrink-0"
           >
             {t("db.try")} {srcMeta.example}
           </button>
         )}
       </div>
 
+      {/* ============================================================
+          Row 4 — result count stat-tile (only when results are present)
+          Uses .stat-tile so the count reads as a metric chip, matching
+          the rest of the design system's stat tiles.
+          ============================================================ */}
+      {results && (
+        <div className="px-4 py-2 border-b hairline shrink-0 flex items-center justify-between gap-2">
+          <div className="stat-tile inline-flex items-center gap-2 px-2 py-1">
+            <Database className="h-3 w-3 text-primary" />
+            <span className="font-mono text-[11px] tabular-nums font-semibold text-primary">
+              {results.total}
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {t("db.resultFrom")} {srcMeta.shortName}
+            </span>
+          </div>
+          <span className="eyebrow">{srcMeta.shortName}</span>
+        </div>
+      )}
+
       {/* round-36: the Radix display:table wrapper is killed globally in
           globals.css ([data-radix-scroll-area-viewport] > div), so long
           unbreakable tokens can never push cards off-screen. */}
       <ScrollArea className="flex-1 min-h-0 scroll-academic">
-        <div className="px-4 py-3 space-y-2.5">
+        <div className="px-4 py-3 space-y-2">
           {error && (
-            <div className="text-xs text-destructive bg-destructive/5 border border-destructive/20 rounded-md p-2.5">
+            <div className="text-xs text-destructive bg-destructive/5 border border-destructive/20 rounded-md p-2">
               {error}
             </div>
           )}
@@ -250,31 +302,31 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
               <div className="ring-academic h-11 w-11 rounded-xl flex items-center justify-center mb-3 bg-card">
                 <FlaskConical className="h-5 w-5 text-primary/70" />
               </div>
-              <p className="text-xs font-serif-text font-medium tracking-tight">
+              <p className="text-xs font-medium tracking-tight">
                 {t("db.noResults")}
               </p>
             </div>
           )}
           {searchMut.isPending && (
-            <div className="space-y-2.5">
+            <div className="space-y-2">
               {[0, 1, 2].map((i) => (
                 <div
                   key={i}
                   className="surface-card rounded-lg p-3 space-y-2 overflow-hidden"
                 >
                   <div className="flex items-start gap-2">
-                    <div className="h-2 w-4 bg-muted/60 rounded animate-pulse mt-0.5" />
+                    <div className="h-4 w-5 bg-muted/60 rounded animate-pulse shrink-0" />
                     <div className="flex-1 space-y-1">
                       <div className="h-3 bg-muted/60 rounded animate-pulse w-full" />
                       <div className="h-3 bg-muted/40 rounded animate-pulse w-3/4" />
                     </div>
                   </div>
-                  <div className="flex gap-1 pl-6">
+                  <div className="flex gap-1 pl-7">
                     <div className="h-3 w-12 bg-muted/40 rounded animate-pulse" />
                     <div className="h-3 w-10 bg-muted/30 rounded animate-pulse" />
                   </div>
                   <div className="h-5 bg-muted/30 rounded animate-pulse w-full" />
-                  <div className="flex gap-1 pt-1 border-t border-border/30">
+                  <div className="flex gap-1 pt-1 border-t hairline">
                     <div className="h-4 w-14 bg-muted/40 rounded animate-pulse" />
                     <div className="h-4 w-16 bg-muted/40 rounded animate-pulse" />
                   </div>
@@ -286,9 +338,9 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
               (TMC1 / TMC-1 / TMC 1 / full-name aliases) and which entries the
               LLM relevance filter removed as being about a different protein. */}
           {results && !searchMut.isPending && (results.variants || results.filteredOut) && (
-            <div className="text-[11px] surface-card rounded-lg p-2.5 space-y-1.5 acad-fade-in">
+            <div className="text-[11px] surface-card rounded-lg p-2 space-y-1 acad-fade-in">
               {results.variants && results.variants.length > 1 && (
-                <div className="flex items-start gap-1.5 flex-wrap">
+                <div className="flex items-start gap-1 flex-wrap">
                   <span className="text-muted-foreground shrink-0">
                     {t("db.variantsUsed", { n: results.variants.length })}:
                   </span>
@@ -296,7 +348,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
                     {results.variants.map((v) => (
                       <span
                         key={v}
-                        className="inline-block px-1.5 py-px rounded bg-primary/8 text-primary border border-primary/15 font-mono leading-4"
+                        className="inline-block px-1 py-0 rounded bg-primary/10 text-primary border border-primary/15 font-mono leading-4"
                       >
                         {v}
                       </span>
@@ -310,7 +362,7 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
                     <ChevronDown className="h-3 w-3 shrink-0 transition-transform group-open:rotate-180" />
                     {t("db.filteredOut", { n: results.filteredOut.length })}
                   </summary>
-                  <div className="mt-1.5 space-y-1 pl-4 max-h-40 overflow-y-auto">
+                  <div className="mt-1 space-y-1 pl-4 max-h-40 overflow-y-auto">
                     {results.filteredOut.map((f, i) => (
                       <div key={`${f.externalId ?? f.title}-${i}`} className="leading-relaxed">
                         <span className="text-muted-foreground line-through">
@@ -376,10 +428,10 @@ function ResultCard({
   const [expanded, setExpanded] = React.useState(false);
   const badgeClass = SOURCE_BADGE[item.source] || "badge-slate";
   return (
-    <div className="surface-card rounded-lg hover:shadow-md hover:border-primary/30 transition-all overflow-hidden">
-      <div className="p-3 space-y-1.5">
+    <div className="surface-card rounded-lg hover:shadow-md hover:border-primary/30 transition-all overflow-hidden acad-fade-in">
+      <div className="p-3 space-y-2">
         <div className="flex items-start gap-2">
-          <span className="badge-slate px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold shrink-0 mt-0.5">
+          <span className="badge-slate inline-flex items-center justify-center min-w-5 h-4 px-1 rounded text-[9px] font-mono font-semibold shrink-0 mt-1">
             {String(index + 1).padStart(2, "0")}
           </span>
           <div className="flex-1 min-w-0">
@@ -390,13 +442,13 @@ function ResultCard({
               className="text-xs font-medium leading-snug hover:text-primary inline-flex items-start gap-1"
             >
               <span className="line-clamp-2 break-words">{item.title}</span>
-              <ExternalLink className="h-3 w-3 shrink-0 mt-0.5 opacity-60" />
+              <ExternalLink className="h-3 w-3 shrink-0 mt-1 opacity-60" />
             </a>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-1 pl-6">
+        <div className="flex flex-wrap items-center gap-1 pl-7">
           <span
-            className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide max-w-full truncate ${badgeClass}`}
+            className={`inline-flex items-center px-1 h-4 rounded text-[9px] font-semibold uppercase tracking-wide max-w-full truncate ${badgeClass}`}
           >
             {item.source}
             {item.externalId ? `:${item.externalId}` : ""}
@@ -411,13 +463,13 @@ function ResultCard({
           )}
         </div>
         {item.authors && (
-          <p className="text-[10px] text-muted-foreground pl-6 line-clamp-1 break-words">
+          <p className="text-[10px] text-muted-foreground pl-7 line-clamp-1 break-words">
             {item.authors}
           </p>
         )}
         {item.abstract && (
           <p
-            className={`text-[11px] text-foreground/80 pl-6 leading-relaxed break-words ${
+            className={`text-[11px] text-foreground/80 pl-7 leading-relaxed break-words ${
               expanded ? "" : "line-clamp-2"
             }`}
           >
@@ -425,30 +477,46 @@ function ResultCard({
           </p>
         )}
       </div>
-      <div className="flex items-center gap-1 px-3 py-1.5 bg-muted/20 border-t hairline">
+      {/* Action row — secondary actions use variant="outline" with
+          border-primary/40 text-primary (QA #4 fix: no raw amber/orange on
+          action buttons). The More/Less expand is a tertiary ghost.
+          The saving spinner replaces the Plus icon while the per-item
+          mutation is in flight, so the user sees exactly which row is
+          being saved. */}
+      <div className="flex items-center gap-1 px-3 py-2 bg-muted/20 border-t hairline">
         <Button
-          variant="ghost"
+          variant="outline"
           size="sm"
-          className="h-6 text-[10px] px-2"
+          className="h-7 text-[10px] px-2 border-primary/40 text-primary hover:bg-primary/5"
           onClick={onAddSource}
           disabled={savingSource}
         >
-          <Plus className="h-3 w-3" /> {t("db.source")}
+          {savingSource ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Plus className="h-3 w-3" />
+          )}
+          {t("db.source")}
         </Button>
         <Button
-          variant="ghost"
+          variant="outline"
           size="sm"
-          className="h-6 text-[10px] px-2"
+          className="h-7 text-[10px] px-2 border-primary/40 text-primary hover:bg-primary/5"
           onClick={onAddRef}
           disabled={savingRef}
         >
-          <Plus className="h-3 w-3" /> {t("db.reference")}
+          {savingRef ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Plus className="h-3 w-3" />
+          )}
+          {t("db.reference")}
         </Button>
         {item.abstract && (
           <Button
             variant="ghost"
             size="sm"
-            className="h-6 text-[10px] px-2 ml-auto"
+            className="h-7 text-[10px] px-2 ml-auto"
             onClick={() => setExpanded((v) => !v)}
           >
             {expanded ? t("common.less") : t("common.more")}

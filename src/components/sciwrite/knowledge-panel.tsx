@@ -15,7 +15,6 @@ import {
   ChevronDown,
   FileStack,
   Languages,
-  ArrowRight,
   Box,
   Layers,
   FileText,
@@ -29,7 +28,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AddReferenceDialog } from "./add-reference-dialog";
 import { ProteinStructureAnalysisDialog } from "./protein-structure-analysis-dialog";
@@ -79,46 +77,63 @@ export function KnowledgePanel({
   const [addRefOpen, setAddRefOpen] = React.useState(false);
   return (
     <>
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Header — refined floating strip with glass-subtle + icon tile */}
-      <div className="glass-subtle flex items-center justify-between px-3 py-2 mt-2 mb-1 shrink-0 rounded-lg border border-border/40">
-        <div className="flex items-center gap-2">
-          <div className="flex items-center justify-center h-6 w-6 rounded-md bg-primary/10 text-primary shrink-0">
-            <DatabaseIcon className="h-3.5 w-3.5" />
+      <div className="flex flex-col h-full overflow-hidden">
+        {/* ============================================================
+            Row 1 — header (.glass-subtle .panel-section-header)
+            Mirrors DatabaseQueryPanel's row 1 rhythm exactly: brand-tile
+            + eyebrow on the left, primary CTA on the right. Sits at the
+            same vertical position so the right column reads as siblings.
+            ============================================================ */}
+        <div className="glass-subtle panel-section-header flex items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="brand-tile h-6 w-6 rounded-md flex items-center justify-center shrink-0">
+              <DatabaseIcon className="h-3 w-3 text-primary-foreground" />
+            </div>
+            <span className="eyebrow truncate">{t("knowledge.sources")}</span>
+            {/* Source count — stat-tile (metric chip) */}
+            <div className="stat-tile inline-flex items-center gap-1 px-2 py-1 shrink-0">
+              <FileStack className="h-3 w-3 text-primary" aria-hidden="true" />
+              <span className="font-mono text-[11px] tabular-nums font-semibold text-primary">
+                {dataSources.length}
+              </span>
+            </div>
           </div>
-          <h3 className="text-[13px] font-semibold tracking-tight font-serif-text text-foreground">
-            {t("knowledge.sources")}
-          </h3>
-          {dataSources.length > 0 && (
-            <Badge variant="outline" className="text-[9px] h-4 px-1.5 gap-0.5 font-mono">
-              {dataSources.length}
-            </Badge>
-          )}
-          {references.length > 0 && (
-            <Badge variant="outline" className="text-[9px] h-4 px-1.5 gap-0.5 text-primary border-primary/40 bg-primary/5">
-              {references.length} refs
-            </Badge>
-          )}
+          {/* Add Reference — primary CTA (.btn-gradient-primary) */}
+          <Button
+            size="sm"
+            className="btn-gradient-primary h-7 px-3 gap-1 text-xs font-medium text-primary-foreground shrink-0 focus-ring"
+            onClick={() => setAddRefOpen(true)}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t("knowledge.addReference")}
+          </Button>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-6 text-[10px] gap-1 px-2 border-dashed hover:border-solid transition-all"
-          onClick={() => setAddRefOpen(true)}
-        >
-          <Plus className="h-3 w-3" />
-          {t("knowledge.addReference")}
-        </Button>
+
+        {/* ============================================================
+            Sources section — takes the majority of the panel.
+            SourcesList owns its own tab-bar sub-header (Row 2 rhythm,
+            same .panel-section-header padding as DQP Row 2) + the card
+            scroll area.
+            ============================================================ */}
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <SourcesList projectId={projectId} items={dataSources} />
+        </div>
+
+        {/* ============================================================
+            References section — capped at 280px so SourcesList keeps
+            the lion's share of the panel. Same .panel-section-header
+            rhythm as the sources sub-header so the two sections read
+            as siblings within the same right-column panel.
+            ============================================================ */}
+        <div className="shrink-0 max-h-[280px] min-h-[120px] flex flex-col overflow-hidden border-t hairline">
+          <ReferencesList projectId={projectId} items={references} />
+        </div>
       </div>
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <SourcesList projectId={projectId} items={dataSources} />
-      </div>
-    </div>
-    <AddReferenceDialog
-      open={addRefOpen}
-      onOpenChange={setAddRefOpen}
-      projectId={projectId}
-    />
+      <AddReferenceDialog
+        open={addRefOpen}
+        onOpenChange={setAddRefOpen}
+        projectId={projectId}
+      />
     </>
   );
 }
@@ -240,8 +255,8 @@ function SourcesList({
 
   if (items.length === 0) {
     return (
-      <ScrollArea className="h-full scroll-academic">
-        <div className="px-3 py-2">
+      <ScrollArea className="flex-1 min-h-0 scroll-academic">
+        <div className="p-4">
           <EmptyState
             icon={<DatabaseIcon className="h-5 w-5" />}
             title={t("knowledge.noSources")}
@@ -253,39 +268,38 @@ function SourcesList({
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Horizontal type tab bar — shows ALL types + counts at a glance */}
-      <div className="px-2 pt-1.5 pb-2 border-b border-border/40 shrink-0 bg-muted/15">
-        <div className="flex items-center gap-1 overflow-x-auto scrollbar-thin pb-1">
+    <>
+      {/* ============================================================
+          Row 2 — type tab bar (.panel-section-header)
+          Sits at exactly the same vertical position as the
+          ProjectsSidebar search Input and DatabaseQueryPanel search
+          row (QA #2 fix). Two stacked rows: (a) filter tabs +
+          Structure Dashboard outline action, (b) result-count eyebrow +
+          Batch Analyze outline action.
+          ============================================================ */}
+      <div className="panel-section-header border-b hairline shrink-0 space-y-2">
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-thin">
           {/* "All" tab */}
           <button
             onClick={() => setActiveType("all")}
-            className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide transition-all whitespace-nowrap ${
-              activeType === "all"
-                ? "tab-pill"
-                : "tab-pill-inactive"
+            className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap transition-all focus-ring ${
+              activeType === "all" ? "tab-pill" : "tab-pill-inactive"
             }`}
           >
             <FileStack className="h-3 w-3 shrink-0" aria-hidden="true" />
             <span>All</span>
-            <span className={`text-[9px] px-1 rounded-full ${
-              activeType === "all" ? "bg-primary/20 text-primary" : "bg-muted-foreground/15"
-            }`}>
+            <span
+              className={`inline-flex items-center justify-center h-3 min-w-3 px-1 rounded-full text-[9px] ${
+                activeType === "all"
+                  ? "bg-primary/20 text-primary"
+                  : "bg-muted-foreground/15"
+              }`}
+            >
               {items.length}
             </span>
           </button>
-          {/* Molcraft fusion: structure dashboard button */}
-          {projectId && items.some((d) => d.source === "rcsb") && (
-            <button
-              onClick={() => setDashboardOpen(true)}
-              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide transition-all whitespace-nowrap bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-300 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-950/50"
-              title={t("structure.dashboardTitleFull")}
-            >
-              <Layers className="h-3 w-3" />
-              <span>{t("structure.dashboard")}</span>
-            </button>
-          )}
-          {/* Per-type tabs */}
+
+          {/* Per-type tabs — each carries its sanctioned .badge-* hue */}
           {sourceTypes.map((st) => {
             const count = items.filter((d) => d.source === st).length;
             const isActive = activeType === st;
@@ -293,49 +307,77 @@ function SourcesList({
               <button
                 key={st}
                 onClick={() => setActiveType(st)}
-                className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide transition-all whitespace-nowrap ${
+                className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap transition-all focus-ring ${
                   isActive
                     ? `tab-pill ${TYPE_BADGE[st] || "badge-slate"}`
                     : "tab-pill-inactive"
                 }`}
               >
                 <span className="inline-flex items-center">
-                  {React.createElement(SOURCE_TYPE_ICONS[st] ?? SOURCE_TYPE_FALLBACK_ICON, {
-                    className: "h-3 w-3",
-                    "aria-hidden": true,
-                  })}
+                  {React.createElement(
+                    SOURCE_TYPE_ICONS[st] ?? SOURCE_TYPE_FALLBACK_ICON,
+                    {
+                      className: "h-3 w-3",
+                      "aria-hidden": true,
+                    }
+                  )}
                 </span>
                 <span>{st}</span>
-                <span className={`text-[9px] px-1 rounded-full ${
-                  isActive ? "bg-foreground/15" : "bg-muted-foreground/15"
-                }`}>
+                <span
+                  className={`inline-flex items-center justify-center h-3 min-w-3 px-1 rounded-full text-[9px] ${
+                    isActive ? "bg-foreground/15" : "bg-muted-foreground/15"
+                  }`}
+                >
                   {count}
                 </span>
               </button>
             );
           })}
+
+          {/* Structure Dashboard — secondary outline action (QA #4 fix:
+              was raw bg-amber-50/text-amber-700; now on-brand outline
+              with border-primary/40 + text-primary). The amber source-type
+              identity still appears on the rcsb tab + PDB:{id} chip. */}
+          {projectId && items.some((d) => d.source === "rcsb") && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0 h-6 ml-auto px-2 text-[10px] gap-1 border-primary/40 text-primary hover:bg-primary/5 focus-ring"
+              onClick={() => setDashboardOpen(true)}
+              title={t("structure.dashboardTitleFull")}
+            >
+              <Layers className="h-3 w-3" />
+              <span className="uppercase tracking-wide font-semibold">
+                {t("structure.dashboard")}
+              </span>
+            </Button>
+          )}
         </div>
-        {/* Active filter indicator + batch analyze button */}
-        <div className="flex items-center justify-between mt-1 px-0.5 gap-1">
-          <span className="text-[9px] text-muted-foreground shrink-0">
+
+        {/* Active-filter count + Batch Analyze secondary action */}
+        <div className="flex items-center justify-between gap-2">
+          <span className="eyebrow shrink-0">
             {activeType === "all"
               ? `${filteredItems.length} sources`
-              : `${filteredItems.length} ${activeType} sources`}
+              : `${filteredItems.length} ${activeType}`}
           </span>
-          <div className="flex items-center gap-1 ml-auto">
-            {/* Molcraft fusion: batch-analyze all RCSB structures */}
+          <div className="flex items-center gap-2 ml-auto">
+            {/* Batch Analyze — secondary outline action (QA #4 fix:
+                was raw border-amber-300/text-amber-700; now on-brand
+                outline). The amber hue still shows on the rcsb tab +
+                analyzed-structure chip below. */}
             {items.some((d) => d.source === "rcsb" && d.externalId) && projectId && (
               <Button
                 variant="outline"
                 size="sm"
-                className="h-5 text-[9px] gap-1 px-1.5 border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400 dark:hover:bg-amber-950/30"
+                className="h-6 px-2 text-[10px] gap-1 border-primary/40 text-primary hover:bg-primary/5 focus-ring"
                 onClick={() => batchAnalyzeMut.mutate()}
                 disabled={batchAnalyzeMut.isPending || batchProgress.active}
                 title={t("structure.batchAnalyzeTitle")}
               >
                 {batchAnalyzeMut.isPending || batchProgress.active ? (
                   <>
-                    <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                    <Loader2 className="h-3 w-3 animate-spin" />
                     {t("structure.batchAnalyzing", {
                       done: batchProgress.done,
                       total: batchProgress.total,
@@ -343,7 +385,7 @@ function SourcesList({
                   </>
                 ) : (
                   <>
-                    <Layers className="h-2.5 w-2.5" />
+                    <Layers className="h-3 w-3" />
                     {t("structure.batchAnalyze")}
                   </>
                 )}
@@ -352,7 +394,7 @@ function SourcesList({
             {activeType !== "all" && (
               <button
                 onClick={() => setActiveType("all")}
-                className="text-[9px] text-primary hover:underline"
+                className="text-[10px] text-primary hover:underline focus-ring rounded"
               >
                 show all
               </button>
@@ -360,12 +402,15 @@ function SourcesList({
           </div>
         </div>
       </div>
-      {/* Source cards for the active type.
-          round-36: the Radix display:table wrapper is killed globally in
-          globals.css ([data-radix-scroll-area-viewport] > div), so long
-          unbreakable tokens can never push cards off-screen. */}
+
+      {/* ============================================================
+          Source cards.
+          round-36: the Radix display:table wrapper is killed globally
+          in globals.css ([data-radix-scroll-area-viewport] > div), so
+          long unbreakable tokens can never push cards off-screen.
+          ============================================================ */}
       <ScrollArea className="flex-1 min-h-0 scroll-academic">
-        <div className="px-3 py-2 space-y-2">
+        <div className="p-3 space-y-2">
           {filteredItems.length === 0 ? (
             <div className="text-center py-6 text-[10px] text-muted-foreground">
               No {activeType} sources.
@@ -381,7 +426,9 @@ function SourcesList({
                 onPin={(id, pinned) => togglePin.mutate({ id, pinned })}
                 onDelete={(id) => del.mutate(id)}
                 onDeepRead={(id) => deepReadMut.mutate(id)}
-                deepReadPending={deepReadMut.isPending && deepReadMut.variables === d.id}
+                deepReadPending={
+                  deepReadMut.isPending && deepReadMut.variables === d.id
+                }
                 onAnalyzeStructure={(id, pdbId) =>
                   setStructureDialog({ open: true, pdbId, dataSourceId: id })
                 }
@@ -394,6 +441,7 @@ function SourcesList({
           )}
         </div>
       </ScrollArea>
+
       {/* Molcraft fusion: protein structure analysis dialog */}
       <ProteinStructureAnalysisDialog
         open={structureDialog.open}
@@ -409,7 +457,7 @@ function SourcesList({
           projectId={projectId}
         />
       )}
-    </div>
+    </>
   );
 }
 
@@ -445,24 +493,50 @@ function SourceCard({
   }
   const isRcsb = d.source === "rcsb" && d.externalId;
   const analyzed = isRcsb && extraObj?.analyzed === true;
+
+  const SourceIcon = SOURCE_TYPE_ICONS[d.source] ?? SOURCE_TYPE_FALLBACK_ICON;
+  const badgeClass = TYPE_BADGE[d.source] || "badge-slate";
+
   return (
-    <div className="surface-card rounded-lg p-2.5 space-y-1 transition-all hover:border-primary/30 hover:shadow-md">
-      <div className="flex items-start gap-1.5">
-        {/* round-36: externalId can be a full URL for web sources (545/615
-            rows measured) — truncate + min-w-0 so the ID slot never pushes
-            the action buttons (or the card border) past the panel width. */}
-        {d.externalId && (
-          <span className="text-[9px] font-mono text-muted-foreground truncate min-w-0">
-            {d.externalId}
-          </span>
-        )}
-        <div className="ml-auto flex items-center gap-0.5 shrink-0">
-          {/* Molcraft fusion: Analyze 3D structure button (RCSB sources only) */}
+    <div className="surface-card rounded-lg p-3 space-y-2 transition-all hover:border-primary/30 hover:shadow-md acad-fade-in">
+      {/* Row 1: source-type icon chip + externalId + action buttons.
+          round-36: externalId can be a full URL for web sources (545/615
+          rows measured) — truncate + min-w-0 so the ID slot never pushes
+          the action buttons (or the card border) past the panel width. */}
+      <div className="flex items-start gap-2">
+        {/* Source-type icon chip — sanctioned .badge-* semantic hue.
+            Reads the source type at a glance; the same hue appears on
+            the tab pill and the source-type dots elsewhere in the UI. */}
+        <span
+          className={`inline-flex items-center justify-center h-5 w-5 rounded-md ${badgeClass} shrink-0 mt-1`}
+        >
+          <SourceIcon className="h-3 w-3" aria-hidden="true" />
+        </span>
+
+        <div className="flex-1 min-w-0 space-y-1">
+          {/* External ID (mono) */}
+          {d.externalId && (
+            <span className="block text-[10px] font-mono text-muted-foreground truncate min-w-0">
+              {d.externalId}
+            </span>
+          )}
+
+          {/* Title */}
+          <p className="text-xs font-medium leading-snug line-clamp-2 break-words">
+            {d.title || d.query}
+          </p>
+        </div>
+
+        {/* Action buttons — pin toggle uses bg-primary/10 + text-primary
+            when active (per the design system's sanctioned active state).
+            All other actions are ghost + text-primary / text-destructive. */}
+        <div className="flex items-center gap-1 shrink-0">
+          {/* Molcraft fusion: Analyze 3D structure button (RCSB only) */}
           {isRcsb && (
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+              className="h-6 w-6 text-primary hover:bg-primary/10 focus-ring"
               onClick={() => onAnalyzeStructure(d.id, d.externalId!)}
               disabled={analyzeStructurePending}
               title={t("knowledge.analyzeStructureTitle")}
@@ -478,7 +552,7 @@ function SourceCard({
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 text-primary"
+              className="h-6 w-6 text-primary hover:bg-primary/10 focus-ring"
               onClick={() => onDeepRead(d.id)}
               disabled={deepReadPending}
               title={t("knowledge.deepReadTitle")}
@@ -490,10 +564,15 @@ function SourceCard({
               )}
             </Button>
           )}
+          {/* Pin toggle: bg-primary/10 text-primary when active */}
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6"
+            className={`h-6 w-6 transition-colors focus-ring ${
+              d.pinned
+                ? "bg-primary/10 text-primary hover:bg-primary/15"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
             onClick={() => onPin(d.id, !d.pinned)}
             title={d.pinned ? t("knowledge.unpin") : t("knowledge.pin")}
           >
@@ -506,91 +585,146 @@ function SourceCard({
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6 text-destructive"
+            className="h-6 w-6 text-destructive hover:bg-destructive/10 focus-ring"
             onClick={() => onDelete(d.id)}
+            title={t("knowledge.sources")}
           >
             <Trash2 className="h-3 w-3" />
           </Button>
         </div>
       </div>
-      <p className="text-[11px] font-medium leading-snug line-clamp-2 break-words">
-        {d.title || d.query}
-      </p>
-      {/* Show PDB structure association for RCSB sources */}
+
+      {/* Show PDB structure association for RCSB sources.
+          The amber accent is sanctioned by the design system
+          (rcsb → badge-amber) — used here for the PDB:{id} chip and the
+          "linked publication" indicator (emerald = verified). */}
       {d.source === "rcsb" && d.externalId && (() => {
         let extra: any = null;
-        try { extra = d.extra ? JSON.parse(d.extra) : null; } catch {}
+        try {
+          extra = d.extra ? JSON.parse(d.extra) : null;
+        } catch {
+          extra = null;
+        }
         return extra ? (
-          <div className="flex flex-wrap gap-1 mt-0.5">
-            <span className="badge-amber px-1 py-0.5 rounded text-[8px] font-semibold uppercase">
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="badge-amber inline-flex items-center justify-center h-4 px-1 rounded text-[9px] font-semibold uppercase tracking-wider">
               PDB:{d.externalId}
             </span>
             {extra.resolution && (
-              <span className="text-[8px] text-muted-foreground">
+              <span className="text-[9px] text-muted-foreground">
                 {extra.resolution}Å
               </span>
             )}
             {extra.method && (
-              <span className="text-[8px] text-muted-foreground">
+              <span className="text-[9px] text-muted-foreground">
                 {extra.method}
               </span>
             )}
             {extra.hasPublication && (
-              <span className="text-[8px] text-emerald-600 dark:text-emerald-400 font-medium">
+              <span className="badge-emerald inline-flex items-center justify-center h-4 px-1 rounded text-[9px] font-semibold uppercase tracking-wider">
                 {t("knowledge.linkedPublication")}
               </span>
             )}
           </div>
         ) : null;
       })()}
-      {/* Molcraft fusion: show computed structural metrics when analyzed */}
+
+      {/* Molcraft fusion: show computed structural metrics when analyzed.
+          Theme-neutral muted background + sanctioned badge-amber chip for
+          the "structure analyzed" label — amber stays the rcsb/structure
+          identity hue, the rest is theme tokens. */}
       {analyzed && extraObj && (
-        <div className="mt-1 rounded-md bg-amber-50/60 dark:bg-amber-950/25 border border-amber-200/50 dark:border-amber-900/40 px-1.5 py-1 space-y-0.5">
-          <div className="flex items-center gap-1 text-[8px] font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider">
-            <Box className="h-2.5 w-2.5" />
+        <div className="rounded-md bg-muted/40 border hairline px-2 py-1 space-y-1">
+          <span className="badge-amber inline-flex items-center gap-1 justify-center h-4 px-1 rounded text-[9px] font-semibold uppercase tracking-wider">
+            <Box className="h-2.5 w-2.5" aria-hidden="true" />
             {t("knowledge.structureAnalyzed")}
-          </div>
-          <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[8px] text-muted-foreground">
+          </span>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[9px] text-muted-foreground">
             {extraObj.chainCount != null && (
-              <span><span className="font-semibold text-foreground">{extraObj.chainCount}</span> ch</span>
+              <span>
+                <span className="font-semibold text-foreground">
+                  {extraObj.chainCount}
+                </span>{" "}
+                ch
+              </span>
             )}
             {extraObj.residueCount != null && (
-              <span><span className="font-semibold text-foreground">{extraObj.residueCount}</span> res</span>
+              <span>
+                <span className="font-semibold text-foreground">
+                  {extraObj.residueCount}
+                </span>{" "}
+                res
+              </span>
             )}
             {extraObj.ligandCount != null && extraObj.ligandCount > 0 && (
-              <span><span className="font-semibold text-foreground">{extraObj.ligandCount}</span> lig</span>
+              <span>
+                <span className="font-semibold text-foreground">
+                  {extraObj.ligandCount}
+                </span>{" "}
+                lig
+              </span>
             )}
             {extraObj.ramachandranFavouredPct != null && (
-              <span><span className="font-semibold text-foreground">{extraObj.ramachandranFavouredPct}%</span> Ramach.</span>
+              <span>
+                <span className="font-semibold text-foreground">
+                  {extraObj.ramachandranFavouredPct}%
+                </span>{" "}
+                Ramach.
+              </span>
             )}
             {extraObj.bfactorMean != null && (
-              <span>B̄=<span className="font-semibold text-foreground">{Math.round(extraObj.bfactorMean)}</span></span>
+              <span>
+                B̄=
+                <span className="font-semibold text-foreground">
+                  {Math.round(extraObj.bfactorMean)}
+                </span>
+              </span>
             )}
             {extraObj.pI != null && (
-              <span>pI=<span className="font-semibold text-foreground">{extraObj.pI.toFixed(1)}</span></span>
+              <span>
+                pI=
+                <span className="font-semibold text-foreground">
+                  {extraObj.pI.toFixed(1)}
+                </span>
+              </span>
             )}
             {extraObj.netCharge != null && (
-              <span>q=<span className="font-semibold text-foreground">{extraObj.netCharge > 0 ? "+" : ""}{extraObj.netCharge.toFixed(0)}</span></span>
+              <span>
+                q=
+                <span className="font-semibold text-foreground">
+                  {extraObj.netCharge > 0 ? "+" : ""}
+                  {extraObj.netCharge.toFixed(0)}
+                </span>
+              </span>
             )}
           </div>
         </div>
       )}
+
+      {/* Authors / year / journal */}
       {(d.authors || d.journal || d.year) && (
-        <p className="text-[9px] text-muted-foreground break-words">
+        <p className="text-[10px] text-muted-foreground break-words">
           {d.authors && <span>{d.authors}</span>}
           {d.authors && d.year && <span>, </span>}
           {d.year && <span>{d.year}</span>}
-          {d.journal && <span> · <em>{d.journal}</em></span>}
+          {d.journal && (
+            <span>
+              {" · "}
+              <em>{d.journal}</em>
+            </span>
+          )}
         </p>
       )}
+
       {/* round-33/35: provenance badges from the LLM-knowledge cross-check.
           Registry-verified gap fills are citable (emerald — PubMed or
           Crossref channel; promoted rows were previously amber unverified
-          suggestions); unconfirmed suggestions stay amber and never enter
-          the reference pool. */}
+          suggestions); unconfirmed suggestions stay amber and never
+          enter the reference pool. All badges use the sanctioned .badge-*
+          classes so they pick up theme-aware colors automatically. */}
       {extraObj?.llmSuggested && !extraObj?.unverified && (
-        <span className="inline-flex items-center gap-1 text-[8px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
-          <BookCheck className="h-2.5 w-2.5" />
+        <span className="badge-emerald inline-flex items-center gap-1 justify-center h-4 px-1 rounded text-[9px] font-semibold uppercase tracking-wider">
+          <BookCheck className="h-2.5 w-2.5" aria-hidden="true" />
           {extraObj?.promotedFrom === "unverified"
             ? t("knowledge.badgePromoted")
             : d.source === "crossref"
@@ -598,69 +732,250 @@ function SourceCard({
               : t("knowledge.badgePubmedVerified")}
         </span>
       )}
-      {extraObj?.dbFilled && Array.isArray(extraObj.dbFilled) && extraObj.dbFilled.length > 0 && !extraObj?.llmSuggested && (
-        <span className="inline-flex items-center gap-1 text-[8px] font-semibold text-muted-foreground uppercase tracking-wider">
-          <DatabaseIcon className="h-2.5 w-2.5" />
-          {t("knowledge.badgeDbBackfilled", { fields: extraObj.dbFilled.join("/") })}
-        </span>
-      )}
+      {extraObj?.dbFilled &&
+        Array.isArray(extraObj.dbFilled) &&
+        extraObj.dbFilled.length > 0 &&
+        !extraObj?.llmSuggested && (
+          <span className="badge-slate inline-flex items-center gap-1 justify-center h-4 px-1 rounded text-[9px] font-semibold uppercase tracking-wider">
+            <DatabaseIcon className="h-2.5 w-2.5" aria-hidden="true" />
+            {t("knowledge.badgeDbBackfilled", {
+              fields: extraObj.dbFilled.join("/"),
+            })}
+          </span>
+        )}
       {extraObj?.unverified && (
-        <div className="mt-0.5 rounded-md bg-amber-50/60 dark:bg-amber-950/25 border border-amber-200/50 dark:border-amber-900/40 px-1.5 py-1 space-y-0.5">
-          <div className="flex items-center gap-1 text-[8px] font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider">
-            <BookCheck className="h-2.5 w-2.5" /> {t("knowledge.badgeUnverified")}
-          </div>
+        <div className="rounded-md bg-muted/40 border hairline px-2 py-1 space-y-1">
+          <span className="badge-amber inline-flex items-center gap-1 justify-center h-4 px-1 rounded text-[9px] font-semibold uppercase tracking-wider">
+            <BookCheck className="h-2.5 w-2.5" aria-hidden="true" />{" "}
+            {t("knowledge.badgeUnverified")}
+          </span>
           {extraObj.llmReason && (
-            <p className="text-[8px] text-muted-foreground leading-snug break-words">
+            <p className="text-[9px] text-muted-foreground leading-snug break-words">
               {String(extraObj.llmReason).slice(0, 140)}
             </p>
           )}
         </div>
       )}
-      <p className="text-[9px] text-muted-foreground font-mono truncate">
+
+      {/* Query */}
+      <p className="text-[10px] text-muted-foreground font-mono truncate">
         {t("knowledge.queryLabel")} {d.query}
       </p>
+
+      {/* URL */}
       {d.url && (
         <a
           href={d.url}
           target="_blank"
           rel="noreferrer"
-          className="text-[9px] text-primary hover:underline inline-flex items-center gap-0.5 min-w-0"
+          className="text-[10px] text-primary hover:underline inline-flex items-center gap-1 min-w-0 focus-ring rounded"
         >
-          <ExternalLink className="h-2.5 w-2.5" /> {d.url.replace(/^https?:\/\//, "").slice(0, 40)}
+          <ExternalLink className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+          <span className="truncate min-w-0">
+            {d.url.replace(/^https?:\/\//, "").slice(0, 40)}
+          </span>
         </a>
       )}
+
+      {/* Deep-read summary */}
       {d.summary && (
-        <div className="mt-1.5">
+        <div className="space-y-1">
           <button
             onClick={() =>
-              setExpandedSource(
-                expandedSource === d.id ? null : d.id
-              )
+              setExpandedSource(expandedSource === d.id ? null : d.id)
             }
-            className="text-[9px] uppercase tracking-wider text-primary font-semibold flex items-center gap-1 hover:text-primary/80"
+            className="text-[10px] uppercase tracking-wider text-primary font-semibold flex items-center gap-1 hover:text-primary/80 focus-ring rounded"
           >
-            <Microscope className="h-2.5 w-2.5" />
+            <Microscope className="h-2.5 w-2.5" aria-hidden="true" />
             {t("knowledge.deepRead")}
             {expandedSource === d.id ? (
-              <ChevronUp className="h-2.5 w-2.5" />
+              <ChevronUp className="h-2.5 w-2.5" aria-hidden="true" />
             ) : (
-              <ChevronDown className="h-2.5 w-2.5" />
+              <ChevronDown className="h-2.5 w-2.5" aria-hidden="true" />
             )}
           </button>
           {/* break-words so long unbreakable tokens inside the deep-read
               text (URLs, sequence strings) wrap instead of widening the
               card past the panel edge (round-34). */}
           {expandedSource === d.id && (
-            <div className="mt-1 rounded-md bg-primary/5 dark:bg-primary/10 border border-primary/20 dark:border-primary/20 p-2 text-[10px] leading-relaxed whitespace-pre-wrap break-words font-sans">
+            <div className="rounded-md bg-primary/5 border border-primary/20 p-2 text-[10px] leading-relaxed whitespace-pre-wrap break-words">
               {d.summary}
             </div>
           )}
         </div>
       )}
+
+      {/* Pinned indicator — primary-tinted label */}
       {d.pinned && (
-        <span className="inline-flex items-center gap-0.5 text-[8px] text-amber-600 dark:text-amber-400 font-medium">
-          <Pin className="h-2 w-2" /> {t("knowledge.pinned")}
+        <span className="inline-flex items-center gap-1 text-[9px] text-primary font-medium">
+          <Pin className="h-2 w-2" aria-hidden="true" /> {t("knowledge.pinned")}
         </span>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   ReferencesList — the citation library sub-section.
+   Mirrors the SourcesList rhythm (sub-header + card scroll area)
+   so both halves of the panel read as siblings.
+   ============================================================ */
+function ReferencesList({
+  projectId,
+  items,
+}: {
+  projectId: string | null;
+  items: Reference[];
+}) {
+  const { t } = useI18n();
+  void projectId; // projectId reserved for future per-reference actions.
+
+  // Sort: by citationOrder when present (matches document order),
+  // otherwise fall back to createdAt.
+  const sorted = React.useMemo(() => {
+    return [...items].sort((a, b) => {
+      const ao = a.citationOrder ?? Number.MAX_SAFE_INTEGER;
+      const bo = b.citationOrder ?? Number.MAX_SAFE_INTEGER;
+      if (ao !== bo) return ao - bo;
+      const ac = String(a.createdAt ?? "");
+      const bc = String(b.createdAt ?? "");
+      return ac.localeCompare(bc);
+    });
+  }, [items]);
+
+  if (items.length === 0) {
+    return (
+      <>
+        {/* Sub-header — .panel-section-header, mirrors DQP Row 2 rhythm */}
+        <div className="panel-section-header border-b hairline shrink-0 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center justify-center h-6 w-6 rounded-md bg-primary/10 text-primary shrink-0">
+              <Languages className="h-3 w-3" />
+            </div>
+            <span className="eyebrow truncate">{t("knowledge.refs")}</span>
+          </div>
+          <div className="stat-tile inline-flex items-center gap-1 px-2 py-1 shrink-0">
+            <span className="font-mono text-[11px] tabular-nums font-semibold text-primary">
+              {items.length}
+            </span>
+          </div>
+        </div>
+        <ScrollArea className="flex-1 min-h-0 scroll-academic">
+          <div className="p-4">
+            <EmptyState
+              icon={<Languages className="h-5 w-5" />}
+              title={t("knowledge.noRefs")}
+              hint={t("knowledge.noRefsHint")}
+            />
+          </div>
+        </ScrollArea>
+      </>
+    );
+  }
+
+  return (
+    <>
+      {/* Sub-header — .panel-section-header, same rhythm as the sources
+          sub-header so both halves of the panel align. */}
+      <div className="panel-section-header border-b hairline shrink-0 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center justify-center h-6 w-6 rounded-md bg-primary/10 text-primary shrink-0">
+            <Languages className="h-3 w-3" />
+          </div>
+          <span className="eyebrow truncate">{t("knowledge.refs")}</span>
+        </div>
+        <div className="stat-tile inline-flex items-center gap-1 px-2 py-1 shrink-0">
+          <span className="font-mono text-[11px] tabular-nums font-semibold text-primary">
+            {items.length}
+          </span>
+        </div>
+      </div>
+
+      {/* Reference cards — same .surface-card p-3 space-y-2 rhythm as
+          SourceCard so the two sections read at the same density. */}
+      <ScrollArea className="flex-1 min-h-0 scroll-academic">
+        <div className="p-3 space-y-2">
+          {sorted.map((r) => (
+            <ReferenceCard key={r.id} r={r} t={t} />
+          ))}
+        </div>
+      </ScrollArea>
+    </>
+  );
+}
+
+function ReferenceCard({
+  r,
+  t,
+}: {
+  r: Reference;
+  t: (key: any, opts?: any) => string;
+}) {
+  void t; // reserved for future per-reference actions (e.g. copy citation).
+  const Icon = SOURCE_TYPE_ICONS[r.type] ?? SOURCE_TYPE_FALLBACK_ICON;
+  const badge = TYPE_BADGE[r.type] || "badge-slate";
+  const href = r.url || (r.doi ? `https://doi.org/${r.doi}` : null);
+
+  return (
+    <div className="surface-card rounded-lg p-3 space-y-2 transition-all hover:border-primary/30 hover:shadow-md acad-fade-in">
+      {/* Row 1: type chip + citation key + order */}
+      <div className="flex items-center gap-2">
+        <span
+          className={`inline-flex items-center justify-center h-5 w-5 rounded-md ${badge} shrink-0`}
+        >
+          <Icon className="h-3 w-3" aria-hidden="true" />
+        </span>
+        {r.citationKey ? (
+          <span className="text-[10px] font-mono text-muted-foreground truncate min-w-0 flex-1">
+            [{r.citationKey}]
+          </span>
+        ) : (
+          <span className="text-[10px] font-mono text-muted-foreground truncate min-w-0 flex-1">
+            {r.externalId || r.type}
+          </span>
+        )}
+        {r.citationOrder != null && (
+          <span className="badge-slate inline-flex items-center justify-center h-5 min-w-5 px-1 rounded text-[10px] font-mono shrink-0">
+            {r.citationOrder}
+          </span>
+        )}
+      </div>
+
+      {/* Title */}
+      <p className="text-xs font-medium leading-snug line-clamp-2 break-words">
+        {r.title}
+      </p>
+
+      {/* Authors / year / journal */}
+      {(r.authors || r.journal || r.year) && (
+        <p className="text-[10px] text-muted-foreground break-words">
+          {r.authors && <span>{r.authors}</span>}
+          {r.authors && r.year && <span>, </span>}
+          {r.year && <span>{r.year}</span>}
+          {r.journal && (
+            <span>
+              {" · "}
+              <em>{r.journal}</em>
+            </span>
+          )}
+        </p>
+      )}
+
+      {/* DOI / URL — primary-tinted external link */}
+      {href && (
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[10px] text-primary hover:underline inline-flex items-center gap-1 min-w-0 focus-ring rounded"
+        >
+          <ExternalLink className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+          <span className="truncate min-w-0">
+            {r.doi
+              ? `doi:${r.doi}`
+              : href.replace(/^https?:\/\//, "").slice(0, 40)}
+          </span>
+        </a>
       )}
     </div>
   );
@@ -676,11 +991,11 @@ function EmptyState({
   hint: string;
 }) {
   return (
-    <div className="acad-fade-in flex flex-col items-center text-center py-12 text-muted-foreground px-4">
+    <div className="acad-fade-in flex flex-col items-center text-center py-8 text-muted-foreground px-4">
       <div className="ring-academic h-11 w-11 rounded-xl flex items-center justify-center mb-3 bg-card text-primary/70">
         {icon}
       </div>
-      <p className="text-xs font-serif-text font-medium tracking-tight">{title}</p>
+      <p className="text-xs font-medium tracking-tight">{title}</p>
       <p className="text-[10px] mt-1 leading-relaxed">{hint}</p>
     </div>
   );

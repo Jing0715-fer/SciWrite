@@ -22,7 +22,7 @@ export function EmptyWorkspace() {
       <h2 className="text-[1.75rem] font-semibold font-serif-text tracking-tight">
         {t("workspace.emptyTitle")}
       </h2>
-      <p className="text-sm text-muted-foreground mt-2.5 max-w-md leading-relaxed">
+      <p className="text-sm text-muted-foreground mt-2 max-w-md leading-relaxed">
         {t("workspace.emptyDesc")}
       </p>
       <div className="mt-8 grid grid-cols-3 gap-3 max-w-lg text-[11px]">
@@ -35,7 +35,7 @@ export function EmptyWorkspace() {
             key={n}
             className="surface-card rounded-xl p-4 text-left hover:-translate-y-0.5 hover:shadow-md! transition-all duration-200"
           >
-            <div className="flex items-center gap-1.5 mb-1.5">
+            <div className="flex items-center gap-1 mb-1">
               <span className="h-6 w-6 rounded-lg bg-primary/12 text-primary text-[10px] font-bold flex items-center justify-center">
                 {n}
               </span>

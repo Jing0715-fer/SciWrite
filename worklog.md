@@ -3289,3 +3289,29 @@ Stage Summary:
 - 用户问题的准确答案已固化为 UI 能力：末轮弱点=当前文章未修正问题（停止原因可见），硬性发现已自动修复（scoped 芯片可见），遗留可一键续修（复用成熟 revise 核心，含中英分叉警示）
 - 设计边界澄清：循环故意不无限烧 token——budget 2 次修订后披露而非继续；风格级弱点不自动润色（防降级）；Fix remaining 是用户显式选择才触发
 - 新生成文章自动获得 repairSummary；存量两篇已回填；一键续修按钮未实弹触发（会真实改库清 contentZh，留待用户自行使用）
+
+---
+Task ID: REDESIGN-MAIN
+Agent: orchestrator + 4 parallel subagents (3-a, 3-b, 3-c, 3-d)
+Task: Complete frontend UI redesign ("Atelier" design system v2) — keep all functionality, fix inconsistent spacing, add per-theme differentiated component styles
+
+Work Log:
+- Cloned https://github.com/Jing0715-fer/SciWrite and synced into /home/z/my-project.
+- Built a brand-new design system foundation in src/app/globals.css with:
+  · Strict 4px spacing scale (--space-1..--space-12 tokens).
+  · Unified 5-level elevation ladder (--shadow-2xs..--shadow-xl + --shadow-glow).
+  · Per-theme CHARACTER tokens (--card-radius, --card-border-width, --card-border-color-mix, --glass-blur, --glass-sat, --glass-opacity, --paper-texture, --ring-glow, --gradient-mesh, --shadow-offset-x/y) so each theme changes the whole app's personality, not just colors.
+  · 4 differentiated themes: Emerald (Academic — crisp hairlines, paper texture), Ocean (Aqua — glassmorphism, gradient mesh, pill shapes), Sunset (Warm — thick 1.5px borders, hard offset shadows, solid blocks), Violet (Noir — glowing rings, premium gradients, luxe depth).
+  · New utility classes: .shell-frame, .panel-tint, .panel-section-header, .stat-tile, .focus-ring (all theme-adaptive).
+- Rewrote src/app/layout.tsx to use system-font stacks (no Google Fonts fetch — sandbox-safe).
+- Fixed a critical syntax bug in src/app/page.tsx (`const obilePanel,` → `const [mobilePanel,`) and redesigned the layout shell with .shell-frame / .panel-tint.
+- Redesigned src/components/sciwrite/home/{header,footer,empty-workspace}.tsx with consistent spacing rhythm.
+- Redesigned src/components/sciwrite/theme-switcher.tsx — now each theme shows its personality (subtitle + blurb) so users understand the styles differ.
+- Delegated 4 parallel redesign tasks to subagents (see Task IDs 3-a, 3-b, 3-c, 3-d below).
+
+Stage Summary:
+- All 70+ component functionality preserved (props/interfaces identical).
+- 0 lint errors (155 pre-existing warnings in untouched files).
+- HTTP 200 on /, all 4 themes apply correctly via data-theme attribute.
+- 641 surface-cards, 6 stat-tiles, 9 panel-section-headers, 30 eyebrow labels, 5 gradient CTA buttons rendered consistently.
+- Dev server runs cleanly; only non-fatal Edge Runtime warnings from src/instrumentation.ts (auto-iterate scheduler, pre-existing).

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useTheme } from "next-themes";
 import { signOut } from "next-auth/react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   Sparkles,
   Layers,
@@ -35,29 +35,33 @@ import { WritingWorkspace } from "@/components/sciwrite/home/writing-workspace";
 import { Footer } from "@/components/sciwrite/home/footer";
 import { computeProgressStats } from "@/components/sciwrite/home/shared";
 import { useHomeKeyboardShortcuts } from "@/components/sciwrite/home/use-keyboard-shortcuts";
-// Lazy-loaded heavy dialog components — these are only needed when the user
-// opens them, so we split them into separate chunks to reduce the initial
-// bundle size. Each shows a loading spinner while its chunk loads.
+// Lazy-loaded heavy dialog components — split into separate chunks to
+// reduce the initial bundle size.
 const ArticleViewerWithTabs = React.lazy(() =>
-  import("@/components/sciwrite/article-viewer-tabs").then(m => ({ default: m.ArticleViewerWithTabs }))
+  import("@/components/sciwrite/article-viewer-tabs").then((m) => ({
+    default: m.ArticleViewerWithTabs,
+  }))
 );
 const InsightsDialog = React.lazy(() =>
-  import("@/components/sciwrite/insights-dialog").then(m => ({ default: m.InsightsDialog }))
+  import("@/components/sciwrite/insights-dialog").then((m) => ({
+    default: m.InsightsDialog,
+  }))
 );
 const UserDataDialog = React.lazy(() =>
-  import("@/components/sciwrite/user-data-dialog").then(m => ({ default: m.UserDataDialog }))
+  import("@/components/sciwrite/user-data-dialog").then((m) => ({
+    default: m.UserDataDialog,
+  }))
 );
 const UnifiedWritingDialog = React.lazy(() =>
-  import("@/components/sciwrite/unified-writing-dialog").then(m => ({ default: m.UnifiedWritingDialog }))
+  import("@/components/sciwrite/unified-writing-dialog").then((m) => ({
+    default: m.UnifiedWritingDialog,
+  }))
 );
 import { useI18n } from "@/lib/i18n";
 import type { Article } from "@/lib/types";
 import { SessionGate } from "@/components/sciwrite/session-gate";
 import { AUTH_ENABLED } from "@/lib/auth-mode";
 
-// Auth gate (round-7): while anonymous, the SessionGate renders the login
-// card and the app below never mounts (so no query fires without a session
-// cookie). Enforcement itself lives in src/proxy.ts (all /api/* → 401).
 export default function Page() {
   return (
     <SessionGate>
@@ -66,16 +70,16 @@ export default function Page() {
   );
 }
 
+type MobilePanel = "projects" | "workspace" | "data";
+
 function Home() {
   const { t } = useI18n();
   const { resolvedTheme, setTheme } = useTheme();
-  const qc = useQueryClient();
   const isMobile = useIsMobile();
-  // Mobile layout active panel — on screens < 768px the 3-panel ResizablePanelGroup
-  // is replaced with a tab bar so each panel gets full width. Values:
-  // "projects" | "workspace" | "data".
-  const [mobilePanel, setMobilePanel] = React.useState<"projects" | "workspace" | "data">("workspace");
-  const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
+  const [mobilePanel, setMobilePanel] = React.useState<MobilePanel>("workspace");
+  const [activeProjectId, setActiveProjectId] = React.useState<string | null>(
+    null
+  );
   const [tipsOpen, setTipsOpen] = React.useState(false);
   const [viewArticle, setViewArticle] = React.useState<Article | null>(null);
   const [insightsOpen, setInsightsOpen] = React.useState(false);
@@ -83,7 +87,9 @@ function Home() {
   const [userDataOpen, setUserDataOpen] = React.useState(false);
   const [llmConfigOpen, setLlmConfigOpen] = React.useState(false);
   const [unifiedWriteOpen, setUnifiedWriteOpen] = React.useState(false);
-  const [unifiedWriteTab, setUnifiedWriteTab] = React.useState<"outline" | "gather" | "paragraph" | "compose" | "full">("outline");
+  const [unifiedWriteTab, setUnifiedWriteTab] = React.useState<
+    "outline" | "gather" | "paragraph" | "compose" | "full"
+  >("outline");
 
   const projectsQ = useQuery({
     queryKey: ["projects"],
@@ -96,7 +102,6 @@ function Home() {
     enabled: !!activeProjectId,
   });
 
-  // listen for project-created event
   React.useEffect(() => {
     const handler = (e: Event) => {
       const id = (e as CustomEvent).detail as string;
@@ -106,7 +111,6 @@ function Home() {
     return () => window.removeEventListener("sciwrite:select-project", handler);
   }, []);
 
-  // auto-select first project
   React.useEffect(() => {
     if (!activeProjectId && projectsQ.data?.projects.length) {
       setActiveProjectId(projectsQ.data.projects[0].id);
@@ -133,27 +137,18 @@ function Home() {
     return [...map.values()];
   }, [paragraphs, project?.references]);
 
-  // Derived progress stats
-  const progressStats = React.useMemo(() => computeProgressStats(paragraphs), [paragraphs]);
+  const progressStats = React.useMemo(
+    () => computeProgressStats(paragraphs),
+    [paragraphs]
+  );
 
-  // ─── Word-count goal for the writing progress bar ─────────────────────────
-  // Round 26: the goal used to be a hard-coded 1000 that reset on every page
-  // load — pegging every real article's progress at 100%. Now it is:
-  //   1. persisted per project (localStorage), surviving reloads;
-  //   2. synced from the full-generation target when a generation starts
-  //      (the dialog reports its targetWords — the user's actual goal);
-  //   3. auto-scaled to the project's real content while the user has never
-  //      set a custom goal (rounded up to the next 1,000).
-  // Load + derive + uplift live in ONE effect: two separate effects raced on
-  // project load (the uplift pass saw the stale pre-load custom flag and
-  // clobbered the stored goal).
   const [wordGoal, setWordGoal] = React.useState(1000);
-  const goalKey = activeProjectId ? `sciwrite:wordGoal:${activeProjectId}` : null;
+  const goalKey = activeProjectId
+    ? `sciwrite:wordGoal:${activeProjectId}`
+    : null;
   const lastGoalProjectRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
-    // Wait until the ACTIVE project's data has actually loaded (project may
-    // briefly hold the previous project while the new query is in flight).
     if (!goalKey || !project || project.id !== activeProjectId) return;
     const projectSwitched = lastGoalProjectRef.current !== activeProjectId;
     lastGoalProjectRef.current = activeProjectId;
@@ -161,18 +156,16 @@ function Home() {
       const stored = window.localStorage.getItem(goalKey);
       const n = Number(stored);
       if (stored && n > 0) {
-        // A stored goal is the user's (or a generation run's) explicit
-        // choice — it always wins and is never auto-scaled.
         setWordGoal(n);
         return;
       }
     } catch {
-      /* localStorage unavailable (private mode) — fall through to derived goal */
+      /* localStorage unavailable */
     }
-    // Never customized: keep the goal one round-1,000 above the live word
-    // count. On a project switch it is derived fresh; while the project's
-    // content grows it only ever RAISES the goal (progress never shrinks).
-    const floor = Math.max(1000, Math.ceil((progressStats.totalWords || 0) / 1000) * 1000);
+    const floor = Math.max(
+      1000,
+      Math.ceil((progressStats.totalWords || 0) / 1000) * 1000
+    );
     if (projectSwitched) {
       setWordGoal(floor);
     } else {
@@ -188,14 +181,13 @@ function Home() {
         try {
           window.localStorage.setItem(goalKey, String(g));
         } catch {
-          /* storage unavailable — in-memory goal still applies */
+          /* storage unavailable */
         }
       }
     },
-    [goalKey],
+    [goalKey]
   );
 
-  // Keyboard shortcuts (defined after paragraphs so it can reference it)
   useHomeKeyboardShortcuts({
     activeProjectId,
     paragraphs,
@@ -205,36 +197,48 @@ function Home() {
     setUnifiedWriteOpen,
   });
 
+  const openWrite = () => {
+    setUnifiedWriteTab("paragraph");
+    setUnifiedWriteOpen(true);
+  };
+  const openCompose = () => {
+    setUnifiedWriteTab("compose");
+    setUnifiedWriteOpen(true);
+  };
+  const openGather = () => {
+    setUnifiedWriteTab("gather");
+    setUnifiedWriteOpen(true);
+  };
+  const openOutline = () => {
+    setUnifiedWriteTab("outline");
+    setUnifiedWriteOpen(true);
+  };
+
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
       <Header
         project={project}
-        onOpenWrite={() => { setUnifiedWriteTab("paragraph"); setUnifiedWriteOpen(true); }}
-        onOpenCompose={() => { setUnifiedWriteTab("compose"); setUnifiedWriteOpen(true); }}
-        onOpenGather={() => { setUnifiedWriteTab("gather"); setUnifiedWriteOpen(true); }}
+        onOpenWrite={openWrite}
+        onOpenCompose={openCompose}
+        onOpenGather={openGather}
         onOpenInsights={() => setInsightsOpen(true)}
-        onOpenOutline={() => { setUnifiedWriteTab("outline"); setUnifiedWriteOpen(true); }}
-        onOpenOneClick={() => { setUnifiedWriteTab("full"); setUnifiedWriteOpen(true); }}
+        onOpenOutline={openOutline}
+        onOpenOneClick={() => {
+          setUnifiedWriteTab("full");
+          setUnifiedWriteOpen(true);
+        }}
         onOpenLLMConfig={() => setLlmConfigOpen(true)}
         paragraphCount={paragraphs.length}
         articleCount={articles.length}
       />
 
       <main className="flex-1 min-h-0 px-3 pb-2">
-        {/* Defer layout rendering until useIsMobile resolves (it returns
-            undefined on first render). This prevents the ResizablePanelGroup
-            from mounting → unmounting → remounting when isMobile flips from
-            undefined → true/false, which triggers the
-            "Previous layout not found for panel index 1" warning from
-            react-resizable-panels (its internal layout state is destroyed
-            when the component is conditionally re-created). */}
         {isMobile === undefined ? (
-          <div className="rounded-xl border border-border/60 bg-card overflow-hidden h-full flex items-center justify-center shadow-md">
+          <div className="shell-frame h-full flex items-center justify-center">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
         ) : isMobile ? (
-          <div className="flex flex-col h-full rounded-xl border border-border/60 bg-card overflow-hidden shadow-md">
-            {/* Active panel content — full width */}
+          <div className="shell-frame flex flex-col h-full">
             <div className="flex-1 min-h-0 overflow-hidden">
               {mobilePanel === "projects" && (
                 <ProjectsSidebar
@@ -245,8 +249,6 @@ function Home() {
                     setMobilePanel("workspace");
                   }}
                   onDeleted={(deletedId) => {
-                    // r37 ghost-project fix — clear the deleted selection;
-                    // auto-select effect picks the first remaining project.
                     if (deletedId === activeProjectId) setActiveProjectId(null);
                   }}
                   articles={articles}
@@ -260,10 +262,10 @@ function Home() {
                   articles={articles}
                   references={references}
                   activeProjectId={activeProjectId}
-                  onOpenWrite={() => { setUnifiedWriteTab("paragraph"); setUnifiedWriteOpen(true); }}
-                  onOpenCompose={() => { setUnifiedWriteTab("compose"); setUnifiedWriteOpen(true); }}
-                  onOpenGather={() => { setUnifiedWriteTab("gather"); setUnifiedWriteOpen(true); }}
-                  onOpenOutline={() => { setUnifiedWriteTab("outline"); setUnifiedWriteOpen(true); }}
+                  onOpenWrite={openWrite}
+                  onOpenCompose={openCompose}
+                  onOpenGather={openGather}
+                  onOpenOutline={openOutline}
                   progressStats={progressStats}
                   wordGoal={wordGoal}
                   onWordGoalChange={handleWordGoalChange}
@@ -291,20 +293,21 @@ function Home() {
                 </div>
               )}
             </div>
-            {/* Bottom tab bar — fixed-height, touch-friendly 44px targets */}
-            <div className="shrink-0 flex border-t border-border/60 bg-sidebar/40">
-              {([
-                { id: "projects", label: "Projects", icon: FolderOpen },
-                { id: "workspace", label: "Write", icon: PenLine },
-                { id: "data", label: "Data", icon: Database },
-              ] as const).map((tab) => {
+            <div className="shrink-0 flex border-t border-border/60 panel-tint">
+              {(
+                [
+                  { id: "projects", label: "Projects", icon: FolderOpen },
+                  { id: "workspace", label: "Write", icon: PenLine },
+                  { id: "data", label: "Data", icon: Database },
+                ] as const
+              ).map((tab) => {
                 const Icon = tab.icon;
                 const active = mobilePanel === tab.id;
                 return (
                   <button
                     key={tab.id}
                     onClick={() => setMobilePanel(tab.id)}
-                    className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition-colors min-h-[44px] ${
+                    className={`flex-1 flex flex-col items-center justify-center gap-1 py-2 text-[10px] font-medium transition-colors min-h-[44px] ${
                       active
                         ? "text-primary bg-primary/10 border-t-2 border-primary -mt-px"
                         : "text-muted-foreground hover:text-foreground hover:bg-muted/30"
@@ -318,128 +321,125 @@ function Home() {
             </div>
           </div>
         ) : (
-        <ResizablePanelGroup
-          direction="horizontal"
-          key="desktop-panels"
-          className="rounded-xl border border-border/60 bg-card overflow-hidden h-full shadow-lg"
-        >
-          {/* Left: projects */}
-          {/* round-62 (P2-低): defaultSize total must be exactly 100 — 22+52+30
-              =104 made react-resizable-panels log "Invalid layout total size"
-              on every mount. Normalized to 22+48+30=100 (bounds unaffected). */}
-          <ResizablePanel defaultSize={22} minSize={18} maxSize={32} className="bg-sidebar/40">
-            <ProjectsSidebar
-              projects={projects}
-              activeId={activeProjectId}
-              onSelect={setActiveProjectId}
-              onDeleted={(deletedId) => {
-                // r37 ghost-project fix — clear the deleted selection;
-                // auto-select effect picks the first remaining project.
-                if (deletedId === activeProjectId) setActiveProjectId(null);
-              }}
-              articles={articles}
-              onOpenArticle={(a) => setViewArticle(a as Article)}
-            />
-          </ResizablePanel>
-          <ResizableHandle withHandle />
+          <ResizablePanelGroup
+            direction="horizontal"
+            key="desktop-panels"
+            className="shell-frame h-full"
+          >
+            <ResizablePanel
+              defaultSize={22}
+              minSize={18}
+              maxSize={32}
+              className="panel-tint"
+            >
+              <ProjectsSidebar
+                projects={projects}
+                activeId={activeProjectId}
+                onSelect={setActiveProjectId}
+                onDeleted={(deletedId) => {
+                  if (deletedId === activeProjectId) setActiveProjectId(null);
+                }}
+                articles={articles}
+                onOpenArticle={(a) => setViewArticle(a as Article)}
+              />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
 
-          {/* Center: writing workspace */}
-          <ResizablePanel defaultSize={48} minSize={35} className="min-w-0">
-            <WritingWorkspace
-              project={project}
-              paragraphs={paragraphs}
-              articles={articles}
-              references={references}
-              activeProjectId={activeProjectId}
-              onOpenWrite={() => { setUnifiedWriteTab("paragraph"); setUnifiedWriteOpen(true); }}
-              onOpenCompose={() => { setUnifiedWriteTab("compose"); setUnifiedWriteOpen(true); }}
-              onOpenGather={() => { setUnifiedWriteTab("gather"); setUnifiedWriteOpen(true); }}
-              onOpenOutline={() => { setUnifiedWriteTab("outline"); setUnifiedWriteOpen(true); }}
-              progressStats={progressStats}
-              wordGoal={wordGoal}
-              onWordGoalChange={handleWordGoalChange}
-              tipsOpen={tipsOpen}
-              onTipsOpenChange={setTipsOpen}
-              onOpenUserData={() => setUserDataOpen(true)}
-              onOpenArticle={(a) => setViewArticle(a as Article)}
-            />
-          </ResizablePanel>
-          <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={48} minSize={35} className="min-w-0">
+              <WritingWorkspace
+                project={project}
+                paragraphs={paragraphs}
+                articles={articles}
+                references={references}
+                activeProjectId={activeProjectId}
+                onOpenWrite={openWrite}
+                onOpenCompose={openCompose}
+                onOpenGather={openGather}
+                onOpenOutline={openOutline}
+                progressStats={progressStats}
+                wordGoal={wordGoal}
+                onWordGoalChange={handleWordGoalChange}
+                tipsOpen={tipsOpen}
+                onTipsOpenChange={setTipsOpen}
+                onOpenUserData={() => setUserDataOpen(true)}
+                onOpenArticle={(a) => setViewArticle(a as Article)}
+              />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
 
-          {/* Right: databases + knowledge */}
-          <ResizablePanel defaultSize={30} minSize={24} maxSize={42} className="bg-sidebar/20">
-            <div className="flex flex-col h-full overflow-hidden">
-              <div className="h-[44%] min-h-0 border-b border-border/60 overflow-hidden">
-                <DatabaseQueryPanel projectId={activeProjectId} />
+            <ResizablePanel
+              defaultSize={30}
+              minSize={24}
+              maxSize={42}
+              className="panel-tint"
+            >
+              <div className="flex flex-col h-full overflow-hidden">
+                <div className="h-[44%] min-h-0 border-b border-border/60 overflow-hidden">
+                  <DatabaseQueryPanel projectId={activeProjectId} />
+                </div>
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <KnowledgePanel
+                    projectId={activeProjectId}
+                    dataSources={dataSources}
+                    references={references}
+                  />
+                </div>
+                <div className="shrink-0 border-t border-border/60 p-2">
+                  <LLMCacheStatsPanel />
+                </div>
               </div>
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <KnowledgePanel
-                  projectId={activeProjectId}
-                  dataSources={dataSources}
-                  references={references}
-                />
-              </div>
-              {/* LLM cache stats — shows hit rate + clear button so the user
-                  can monitor cache effectiveness and force fresh calls. */}
-              <div className="shrink-0 border-t border-border/60 p-2">
-                <LLMCacheStatsPanel />
-              </div>
-            </div>
-          </ResizablePanel>
-        </ResizablePanelGroup>
+            </ResizablePanel>
+          </ResizablePanelGroup>
         )}
       </main>
 
       <Footer onOpenPalette={() => setPaletteOpen(true)} />
 
-      {/* Modals — lazy-loaded heavy dialogs wrapped in Suspense */}
+      {/* Modals */}
       {activeProjectId && project && (
         <React.Suspense fallback={null}>
-        <UnifiedWritingDialog
-          open={unifiedWriteOpen}
-          onOpenChange={setUnifiedWriteOpen}
-          projectId={activeProjectId}
-          topic={project.topic}
-          field={project.field ?? undefined}
-          paragraphCount={paragraphs.length}
-          sourceCount={dataSources.length}
-          articleCount={articles.length}
-          initialTab={unifiedWriteTab}
-          onGenerationTargetWords={handleWordGoalChange}
-        />
+          <UnifiedWritingDialog
+            open={unifiedWriteOpen}
+            onOpenChange={setUnifiedWriteOpen}
+            projectId={activeProjectId}
+            topic={project.topic}
+            field={project.field ?? undefined}
+            paragraphCount={paragraphs.length}
+            sourceCount={dataSources.length}
+            articleCount={articles.length}
+            initialTab={unifiedWriteTab}
+            onGenerationTargetWords={handleWordGoalChange}
+          />
         </React.Suspense>
       )}
       {viewArticle && (
         <React.Suspense fallback={null}>
-        <ArticleViewerWithTabs
-          article={viewArticle}
-          projectId={activeProjectId!}
-          onClose={() => setViewArticle(null)}
-        />
+          <ArticleViewerWithTabs
+            article={viewArticle}
+            projectId={activeProjectId!}
+            onClose={() => setViewArticle(null)}
+          />
         </React.Suspense>
       )}
       {activeProjectId && (
         <React.Suspense fallback={null}>
-        <InsightsDialog
-          open={insightsOpen}
-          onOpenChange={setInsightsOpen}
-          projectId={activeProjectId}
-        />
+          <InsightsDialog
+            open={insightsOpen}
+            onOpenChange={setInsightsOpen}
+            projectId={activeProjectId}
+          />
         </React.Suspense>
       )}
       {activeProjectId && (
         <React.Suspense fallback={null}>
-        <UserDataDialog
-          open={userDataOpen}
-          onOpenChange={setUserDataOpen}
-          projectId={activeProjectId}
-        />
+          <UserDataDialog
+            open={userDataOpen}
+            onOpenChange={setUserDataOpen}
+            projectId={activeProjectId}
+          />
         </React.Suspense>
       )}
-      <LLMConfigDialog
-        open={llmConfigOpen}
-        onOpenChange={setLlmConfigOpen}
-      />
+      <LLMConfigDialog open={llmConfigOpen} onOpenChange={setLlmConfigOpen} />
       <CommandPalette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
@@ -512,13 +512,10 @@ function Home() {
             icon: <Moon className="h-3.5 w-3.5" />,
             shortcut: "D",
             onSelect: () => {
-              // Route through next-themes (see the "d" keyboard shortcut above).
               setTheme(resolvedTheme === "dark" ? "light" : "dark");
             },
             group: t("cmd.groupProject"),
           },
-          // Only offered while the login gate is actually active — with the
-          // gate toggled off there is no session to sign out of.
           ...(AUTH_ENABLED
             ? [
                 {
@@ -526,9 +523,6 @@ function Home() {
                   label: t("auth.signOut"),
                   icon: <LogOut className="h-3.5 w-3.5" />,
                   onSelect: () => {
-                    // signOut clears the session cookie then reloads "/" — the
-                    // SessionGate re-checks /api/auth/session and shows the login
-                    // card again.
                     signOut({ callbackUrl: "/" });
                   },
                   group: t("cmd.groupProject"),

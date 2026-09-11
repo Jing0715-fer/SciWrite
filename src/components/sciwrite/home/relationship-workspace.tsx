@@ -96,7 +96,7 @@ export function RelationshipWorkspace({ projectId }: { projectId: string }) {
             <p className="text-xs text-destructive mb-3">
               {(relMut.error as Error)?.message?.slice(0, 200)}
             </p>
-            <Button size="sm" className="gap-1.5 text-xs" onClick={() => relMut.mutate()}>
+            <Button size="sm" className="gap-1 text-xs" onClick={() => relMut.mutate()}>
               <Network className="h-3.5 w-3.5" /> {t("workspace.retryBtn")}
             </Button>
           </div>
@@ -106,7 +106,7 @@ export function RelationshipWorkspace({ projectId }: { projectId: string }) {
             <Network className="h-10 w-10 mx-auto opacity-40 mb-3" />
             <p className="text-xs font-medium text-muted-foreground mb-1">{t("workspace.noRelData")}</p>
             <p className="text-[10px] text-muted-foreground mb-4">{t("workspace.noRelDataHint")}</p>
-            <Button size="sm" className="gap-1.5 text-xs" onClick={() => relMut.mutate()}>
+            <Button size="sm" className="gap-1 text-xs" onClick={() => relMut.mutate()}>
               <Network className="h-3.5 w-3.5" /> {t("workspace.analyzeBtn")}
             </Button>
           </div>
@@ -145,28 +145,28 @@ export function RelationshipWorkspace({ projectId }: { projectId: string }) {
                 {relData.themes.map((th: any, i: number) => (
                   <div key={i} className="rounded-md border border-border/50 p-2.5">
                     <span className="text-xs font-semibold">{th.name}</span>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">{th.description}</p>
+                    <p className="text-[10px] text-muted-foreground mt-1">{th.description}</p>
                   </div>
                 ))}
               </div>
             )}
             {relData.keyInsights?.length > 0 && (
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <p className="text-[10px] uppercase tracking-wider text-primary font-semibold">{t("workspace.keyInsights")}</p>
                 {relData.keyInsights.map((insight: string, i: number) => (
-                  <div key={i} className="flex items-start gap-1.5 text-[11px]">
-                    <CheckCircle2 className="h-3 w-3 text-primary mt-0.5 shrink-0" />
+                  <div key={i} className="flex items-start gap-1 text-[11px]">
+                    <CheckCircle2 className="h-3 w-3 text-primary mt-1 shrink-0" />
                     <span>{insight}</span>
                   </div>
                 ))}
               </div>
             )}
             {relData.contradictions?.length > 0 && (
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <p className="text-[10px] uppercase tracking-wider text-rose-600 dark:text-rose-400 font-semibold">{t("workspace.contradictions")}</p>
                 {relData.contradictions.map((c: any, i: number) => (
                   <div key={i} className="rounded-md border border-rose-200/50 dark:border-rose-800/50 bg-rose-50/30 dark:bg-rose-950/20 p-2">
-                    <div className="flex items-center gap-1.5 mb-0.5">
+                    <div className="flex items-center gap-1 mb-1">
                       <AlertTriangle className="h-3 w-3 text-rose-600 dark:text-rose-400" />
                       <Badge variant="outline" className="text-[8px] h-3.5">{c.sourceLabels?.join(" vs ") || ""}</Badge>
                     </div>
@@ -175,7 +175,7 @@ export function RelationshipWorkspace({ projectId }: { projectId: string }) {
                 ))}
               </div>
             )}
-            <Button size="sm" variant="outline" className="gap-1.5 text-xs w-full" onClick={() => relMut.mutate()}>
+            <Button size="sm" variant="outline" className="gap-1 text-xs w-full" onClick={() => relMut.mutate()}>
               <Network className="h-3.5 w-3.5" /> {t("workspace.reanalyzeBtn")}
             </Button>
           </div>

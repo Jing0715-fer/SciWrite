@@ -18,11 +18,7 @@ import { useI18n } from "@/lib/i18n";
 export function Header({
   project,
   onOpenWrite,
-  onOpenCompose,
-  onOpenGather,
   onOpenInsights,
-  onOpenOutline,
-  onOpenOneClick,
   onOpenLLMConfig,
   paragraphCount,
   articleCount,
@@ -40,16 +36,21 @@ export function Header({
 }) {
   const { t } = useI18n();
   return (
-    <header className="glass-toolbar shrink-0 px-4 py-3 flex items-center gap-3 relative z-30">
-      <div className="flex items-center gap-2.5 min-w-0">
-        <div className="brand-tile h-9 w-9 rounded-xl flex items-center justify-center shrink-0">
+    <header className="glass-toolbar shrink-0 px-4 sm:px-5 py-3 flex items-center gap-3 relative z-30">
+      {/* Brand */}
+      <div className="flex items-center gap-2 min-w-0">
+        <div className="brand-tile h-9 w-9 flex items-center justify-center shrink-0">
           <FlaskConical className="h-4.5 w-4.5 text-primary-foreground" />
         </div>
         <div className="leading-none min-w-0">
-          <h1 className="flex items-baseline gap-1.5 min-w-0">
-            <span className="font-serif-text text-[15px] font-bold tracking-tight truncate">{t("app.title")}</span>
+          <h1 className="flex items-baseline gap-1 min-w-0">
+            <span className="font-serif-text text-[15px] font-bold tracking-tight truncate">
+              {t("app.title")}
+            </span>
             <span className="text-primary/50 text-[10px] shrink-0">·</span>
-            <span className="text-[11px] text-muted-foreground font-medium tracking-tight truncate">{t("app.subtitle")}</span>
+            <span className="text-[11px] text-muted-foreground font-medium tracking-tight truncate">
+              {t("app.subtitle")}
+            </span>
           </h1>
           <p className="text-[10px] text-muted-foreground/70 mt-1 tracking-wide truncate">
             {t("app.tagline")}
@@ -57,31 +58,38 @@ export function Header({
         </div>
       </div>
 
-      <div className="h-7 w-px bg-border/70 mx-1.5 hidden sm:block" />
+      <div className="h-7 w-px bg-border/70 mx-1 hidden sm:block" />
 
+      {/* Active project context */}
       <div className="flex-1 min-w-0 hidden sm:block">
         {project ? (
           <div className="flex items-center gap-2 min-w-0 group">
             <span className="inline-flex items-center justify-center h-6 w-6 rounded-md bg-primary/10 text-primary shrink-0">
               <BookOpenText className="h-3.5 w-3.5" />
             </span>
-            <span className="text-[13px] font-medium truncate text-foreground">{project.title}</span>
-            <span className="text-muted-foreground/30 shrink-0 hidden md:inline">·</span>
+            <span className="text-[13px] font-medium truncate text-foreground">
+              {project.title}
+            </span>
+            <span className="text-muted-foreground/30 shrink-0 hidden md:inline">
+              ·
+            </span>
             <span className="text-[10px] text-muted-foreground truncate hidden md:inline">
               {project.topic}
             </span>
           </div>
         ) : (
-          <span className="text-xs text-muted-foreground italic">{t("app.noProject")}</span>
+          <span className="text-xs text-muted-foreground italic">
+            {t("app.noProject")}
+          </span>
         )}
       </div>
 
-      <div className="flex items-center gap-1.5">
+      {/* Action cluster */}
+      <div className="flex items-center gap-2">
         {project && (
           <>
-            {/* Unified count group — one quiet surface-card pill with a hairline
-                divider replaces the previous two separate outline badges. */}
-            <div className="flex items-center h-7 rounded-lg surface-card border-border/60">
+            {/* Count pill */}
+            <div className="flex items-center h-7 rounded-lg surface-card">
               <span className="inline-flex items-center gap-1 px-2 text-[10px] font-semibold text-muted-foreground tabular-nums">
                 <PenLine className="h-3 w-3 text-primary" />
                 {paragraphCount}
@@ -92,28 +100,27 @@ export function Header({
                 {articleCount}
               </span>
             </div>
-            <div className="h-5 w-px bg-border/60 mx-0.5 hidden lg:block" />
+            <div className="h-5 w-px bg-border/60 mx-1 hidden lg:block" />
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 text-xs gap-1.5 hover:bg-muted/60"
+              className="h-8 text-xs gap-1 hover:bg-muted/60"
               onClick={onOpenInsights}
               title={t("app.insightsTitle")}
             >
               <BarChart3 className="h-3.5 w-3.5" />
               <span className="hidden lg:inline">{t("app.insights")}</span>
             </Button>
-            {/* Unified AI Writing Hub button */}
             <Button
               size="sm"
-              className="btn-gradient-primary h-8 text-xs gap-1.5 text-primary-foreground font-medium"
+              className="btn-gradient-primary h-8 text-xs gap-1 text-primary-foreground font-medium"
               onClick={onOpenWrite}
               title={t("app.unifiedWriteTitle")}
             >
               <Sparkles className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">{t("app.unifiedWrite")}</span>
             </Button>
-            <div className="h-5 w-px bg-border/60 mx-0.5 hidden sm:block" />
+            <div className="h-5 w-px bg-border/60 mx-1 hidden sm:block" />
           </>
         )}
         <Button
