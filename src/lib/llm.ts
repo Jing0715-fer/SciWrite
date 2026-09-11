@@ -82,9 +82,21 @@ export interface LlmProviderInfo {
   available: boolean;
   /** 'native' (PATH on host OS), 'wsl' (Linux distro via WSL bridge), or 'sdk'. */
   via: "native" | "wsl" | "sdk";
+  /** Known models for CLI adapters carrying a curated list (round-67) —
+   * surfaced in the config dialog datalists. Undefined for SDK providers. */
+  models?: string[];
+  /** Default model for CLI adapters (round-67) — shown as the model input
+   * placeholder. Undefined for SDK providers. */
+  defaultModel?: string;
 }
 
 // ─── CLI adapter table ────────────────────────────────────────────────────────
+
+/**
+ * WorkBuddy CLI (codebuddy) default model — round-67, was "deepseek-v4-pro".
+ * Overridable per call (stored model override) or via the CODEBUDDY_MODEL env var.
+ */
+const CODEBUDDY_DEFAULT_MODEL = "Deepseek-V4.1-Flash";
 
 interface CliAdapter {
   id: string;
@@ -132,6 +144,16 @@ interface CliAdapter {
    */
   extractContent?: (raw: string) => string;
   callTimeoutMs?: number;
+  /**
+   * Known model ids for this CLI agent (surfaced in the LLM config dialog
+   * datalist + role-split picker so users can pick without guessing the
+   * CLI's `--model` spelling). Optional — adapters without a curated list
+   * keep the free-text model input.
+   */
+  models?: string[];
+  /** Default model for this CLI when no override is stored (used by
+   * callArgs' fallback chain AND shown as the model input placeholder). */
+  defaultModel?: string;
   /** Extra env vars merged into the child process environment. */
   extraEnv?: Record<string, string>;
 }
@@ -387,6 +409,9 @@ const CLI_ADAPTERS: CliAdapter[] = [
     icon: "paw-print",
     bin: "codebuddy",
     needsNode: true,
+    // WorkBuddy is a desktop agent app, NOT an API provider — `codebuddy` is
+    // the CLI binary it ships (electron app.asar.unpacked/cli/bin). The
+    // adapter probes the app install paths first, then PATH/global installs.
     extraProbePaths: [
       process.platform === "win32"
         ? "C:\\Program Files\\WorkBuddy\\resources\\app.asar.unpacked\\cli\\bin\\codebuddy"
@@ -394,8 +419,17 @@ const CLI_ADAPTERS: CliAdapter[] = [
       "/usr/local/bin/codebuddy",
       "/opt/homebrew/bin/codebuddy",
     ],
+    // Known WorkBuddy CLI models (round-67: default switched from
+    // deepseek-v4-pro to Deepseek-V4.1-Flash per user request).
+    defaultModel: CODEBUDDY_DEFAULT_MODEL,
+    models: [
+      "Deepseek-V4.1-Flash",
+      "Deepseek-V4.1",
+      "Deepseek-V3.2-Flash",
+      "deepseek-v4-pro",
+    ],
     callArgs: (q, model) => {
-      const m = model || process.env.CODEBUDDY_MODEL || "deepseek-v4-pro";
+      const m = model || process.env.CODEBUDDY_MODEL || CODEBUDDY_DEFAULT_MODEL;
       // FIX (call errors, per official CodeBuddy CLI docs):
       //  ① `-y` is REQUIRED for `-p/--print` non-interactive mode — without
       //    it every operation that needs authorization (file read/write,
@@ -1092,6 +1126,8 @@ export async function inspectProviders(
         reason: probePair.native.reason,
         available: true,
         via: "native",
+        ...(a.models ? { models: a.models } : {}),
+        ...(a.defaultModel ? { defaultModel: a.defaultModel } : {}),
       });
     } else if (probePair.wsl?.ok) {
       available.push({
@@ -1102,6 +1138,8 @@ export async function inspectProviders(
         reason: probePair.wsl.reason,
         available: true,
         via: "wsl",
+        ...(a.models ? { models: a.models } : {}),
+        ...(a.defaultModel ? { defaultModel: a.defaultModel } : {}),
       });
     } else {
       const why =
@@ -1114,6 +1152,8 @@ export async function inspectProviders(
         reason: why,
         available: false,
         via: "native",
+        ...(a.models ? { models: a.models } : {}),
+        ...(a.defaultModel ? { defaultModel: a.defaultModel } : {}),
       });
     }
   }
@@ -1283,7 +1323,10 @@ async function callAnyLlm(
           content: text,
           text,
           provider: id,
-          model: cfg.model || adapter.id,
+          // Round-67: report the EFFECTIVE model — without an override the
+          // adapter's defaultModel is what callArgs passed (e.g. WorkBuddy
+          // codebuddy → Deepseek-V4.1-Flash), not the adapter id.
+          model: cfg.model || adapter.defaultModel || adapter.id,
           durationMs: Date.now() - t0,
           fallback: item.fallback,
           meta: { cli: probe.bin, via: via ?? "native", cliSessionId: result.sessionId },

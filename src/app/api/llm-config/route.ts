@@ -62,14 +62,21 @@ export async function GET(req: NextRequest) {
           "openai-sdk",
         ]);
         if (!supported.has(name) && !name.startsWith("api:")) return null;
-        // Models known for configured api providers (catalog + override).
+        // Models known for configured api providers (catalog + override);
+        // round-67: CLI adapters with a curated list (WorkBuddy codebuddy)
+        // carry their own models + defaultModel through LlmProviderInfo.
         let models: string[] = [];
+        let defaultModel = "";
         if (p.provider.startsWith("api:")) {
           const status = listApiProvidersWithStatus().find((s) => `api:${s.id}` === p.provider);
           if (status) {
             const ids = status.models.map((m) => m.id);
             models = ids.includes(status.effectiveModel) ? ids : [...ids, status.effectiveModel];
+            defaultModel = status.effectiveModel;
           }
+        } else if (Array.isArray(p.models)) {
+          models = p.models;
+          defaultModel = p.defaultModel ?? "";
         }
         return {
           name,
@@ -79,6 +86,7 @@ export async function GET(req: NextRequest) {
           path: p.bin ?? `${p.via}:${p.provider}`,
           version: "",
           models,
+          defaultModel,
           available: true,
           via: p.via,
         };

@@ -121,7 +121,7 @@ export function resolveApiKey(providerId: string): string | null {
 }
 
 /** Resolve the effective baseURL: user override → env override → catalog default.
- * (round-66: `<PROVIDER>_BASE_URL` env vars — e.g. WORKBUDDY_BASE_URL — let
+ * (round-66: `<PROVIDER>_BASE_URL` env vars — e.g. MINIMAX_BASE_URL — let
  * users point a catalog provider at a custom gateway without the UI.) */
 export function resolveBaseURL(providerId: string): string | null {
   const profile = getProviderProfile(providerId);

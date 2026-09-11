@@ -21,8 +21,9 @@
  * Motivation: an external audit of the TMC1/2 article found the same error
  * classes the pipeline's own reviewers missed — a model auditing its own
  * output shares its blind spots. Splitting the two roles across DIFFERENT
- * providers/models (e.g. generate=api:minimax, review=api:workbuddy with
- * Deepseek-V4.1-Flash) gives genuinely independent review.
+ * providers/models (e.g. generate=api:minimax, review=cli:codebuddy — the
+ * WorkBuddy desktop agent's CLI — with Deepseek-V4.1-Flash) gives genuinely
+ * independent review.
  *
  * Backward compatibility: the legacy flat shape `{ provider, model }` is
  * read as the GENERATE selection; `review` stays unset → review falls back
@@ -76,18 +77,32 @@ interface StoredSelection {
 let _cached: { value: StoredSelection; at: number } | null = null;
 const CACHE_TTL_MS = 2_000;
 
+/**
+ * Round-67 provider-id remap: `api:workbuddy` never existed as a real API —
+ * WorkBuddy is a desktop agent whose CLI is `codebuddy` (adapter in
+ * src/lib/llm.ts). Any selection stored during the round-66 preview (when a
+ * catalog entry had briefly been added under that id) is transparently
+ * remapped to `cli:codebuddy` on read so routing never dangles.
+ */
+function remapProviderId(provider: string): string {
+  return provider === "api:workbuddy" ? "cli:codebuddy" : provider;
+}
+
 function normalizeSelection(raw: any): StoredSelection {
   // New shape: { roles: { generate: {...}, review: {...}|null } }
   if (raw && typeof raw === "object" && raw.roles && typeof raw.roles === "object") {
     const gen = raw.roles.generate;
     const rev = raw.roles.review;
     const generate: RoleSelection = {
-      provider: typeof gen?.provider === "string" && gen.provider.trim() ? gen.provider.trim() : "zai-sdk",
+      provider:
+        typeof gen?.provider === "string" && gen.provider.trim()
+          ? remapProviderId(gen.provider.trim())
+          : "zai-sdk",
       model: typeof gen?.model === "string" ? gen.model.trim() : "",
     };
     const review: RoleSelection | null =
       rev && typeof rev === "object" && typeof rev.provider === "string" && rev.provider.trim()
-        ? { provider: rev.provider.trim(), model: typeof rev.model === "string" ? rev.model.trim() : "" }
+        ? { provider: remapProviderId(rev.provider.trim()), model: typeof rev.model === "string" ? rev.model.trim() : "" }
         : null;
     return {
       provider: generate.provider,
@@ -97,7 +112,10 @@ function normalizeSelection(raw: any): StoredSelection {
     };
   }
   // Legacy flat shape → generate role only; review unset (follows generate).
-  const provider = typeof raw?.provider === "string" && raw.provider.trim() ? raw.provider.trim() : "zai-sdk";
+  const provider =
+    typeof raw?.provider === "string" && raw.provider.trim()
+      ? remapProviderId(raw.provider.trim())
+      : "zai-sdk";
   const model = typeof raw?.model === "string" ? raw.model.trim() : "";
   return {
     provider,

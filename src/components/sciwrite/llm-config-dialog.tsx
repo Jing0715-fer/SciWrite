@@ -293,17 +293,26 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
     }
   };
 
-  const selectedLabel = React.useMemo(() => {
-    const found = (config?.detected ?? []).find((c: any) => {
-      const provId = CLI_PROVIDER_MAP[c.name] ?? c.name;
-      return provId === selected;
-    });
-    return found?.label ?? selected;
-  }, [config, selected]);
-
   const selectedIsApi = selected.startsWith("api:");
   const selectedApi = apiProviders.find((p) => `api:${p.id}` === selected);
   const selectedIsCodebuddy = selected === "cli:codebuddy";
+
+  // round-67: keep the full detected entry (not just its label) so the
+  // model override input can surface a CLI adapter's curated default model
+  // (WorkBuddy codebuddy → Deepseek-V4.1-Flash) as its placeholder + datalist.
+  const selectedEntry = React.useMemo(() => {
+    return (config?.detected ?? []).find((c: any) => {
+      const provId = CLI_PROVIDER_MAP[c.name] ?? c.name;
+      return provId === selected;
+    });
+  }, [config, selected]);
+  const selectedLabel = selectedEntry?.label ?? selected;
+  const selectedCliDefaultModel =
+    !selectedIsApi && typeof selectedEntry?.defaultModel === "string" && selectedEntry.defaultModel
+      ? selectedEntry.defaultModel
+      : "";
+  const selectedCliModels: string[] =
+    !selectedIsApi && Array.isArray(selectedEntry?.models) ? selectedEntry.models : [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -356,10 +365,18 @@ export function LLMConfigDialog({ open, onOpenChange }: Props) {
                   placeholder={
                     selectedIsApi
                       ? selectedApi?.effectiveModel || t("llmConfig.modelOverridePlaceholder")
-                      : t("llmConfig.modelOverridePlaceholder")
+                      : selectedCliDefaultModel || t("llmConfig.modelOverridePlaceholder")
                   }
                   className="h-7 text-[11px] font-mono flex-1 bg-background/60"
+                  list={selectedCliModels.length > 0 ? "main-model-options" : undefined}
                 />
+                {selectedCliModels.length > 0 && (
+                  <datalist id="main-model-options">
+                    {selectedCliModels.map((m) => (
+                      <option key={m} value={m} />
+                    ))}
+                  </datalist>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
@@ -599,8 +616,8 @@ const FOLLOW_SENTINEL = "__follow_generate__";
  * Motivation (TMC1/2 external audit): the pipeline's own reviewers missed
  * the same error classes an external model caught — a model auditing its
  * own output shares its blind spots. Splitting the roles (e.g. generate =
- * MiniMax, review = WorkBuddy / Deepseek-V4.1-Flash) yields genuinely
- * independent verification.
+ * MiniMax API, review = WorkBuddy CLI (cli:codebuddy) / Deepseek-V4.1-Flash)
+ * yields genuinely independent verification.
  *
  * Server side: /api/llm-config/select { provider, model, role } →
  * src/lib/llm-selection.ts (role-scoped selections) → src/lib/ai.ts routes
@@ -659,7 +676,9 @@ function RoleSplitSection({
         value: provId,
         label: cli.label ?? provId,
         models: Array.isArray(cli.models) ? cli.models.slice(0, 8) : [],
-        defaultModel: "",
+        // round-67: CLI adapters with a curated default (WorkBuddy codebuddy
+        // → Deepseek-V4.1-Flash) surface it as the model placeholder.
+        defaultModel: typeof cli.defaultModel === "string" ? cli.defaultModel : "",
       });
     }
     for (const p of apiProviders) {

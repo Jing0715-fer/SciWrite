@@ -23,7 +23,7 @@ export const dynamic = "force-dynamic";
  *     model: "MiniMax-M2",
  *     roles: {
  *       generate: { provider: "api:minimax", model: "MiniMax-M2" },
- *       review:   { provider: "api:workbuddy", model: "Deepseek-V4.1-Flash" } | null
+ *       review:   { provider: "cli:codebuddy", model: "Deepseek-V4.1-Flash" } | null
  *     },
  *     reviewOverride: true
  *   }

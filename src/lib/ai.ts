@@ -271,7 +271,8 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
   // (128KB Linux / 32KB Windows) → ENAMETOOLONG → "returned no output".
   // The stored model override (e.g. codebuddy --model) travels through
   // cfg.model — without it codebuddy would fall back to CODEBUDDY_MODEL /
-  // deepseek-v4-pro and fail on accounts that don't have that model.
+  // Deepseek-V4.1-Flash (its default since round-67; was deepseek-v4-pro)
+  // and could fail on accounts without that model.
   const r = await generateText(opts.system ?? "", compressedPrompt, {
     llm: {
       provider: selected,

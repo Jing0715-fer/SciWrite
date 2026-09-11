@@ -199,21 +199,6 @@ export const PROVIDER_CATALOG: ProviderProfile[] = [
     docsUrl: "https://platform.minimaxi.com/user-center/basic-information/interface-key",
   },
   {
-    id: "workbuddy",
-    displayName: "WorkBuddy",
-    label: "WB",
-    icon: "shield-check",
-    baseURL: "https://api.workbuddy.ai/v1",
-    apiKeyEnv: "WORKBUDDY_API_KEY",
-    defaultModel: "Deepseek-V4.1-Flash",
-    models: [
-      { id: "Deepseek-V4.1-Flash", name: "Deepseek V4.1 Flash", contextWindow: 128000 },
-      { id: "Deepseek-V4.1", name: "Deepseek V4.1", contextWindow: 128000 },
-      { id: "Deepseek-V3.2-Flash", name: "Deepseek V3.2 Flash", contextWindow: 128000 },
-    ],
-    docsUrl: "",
-  },
-  {
     id: "xai",
     displayName: "xAI (Grok)",
     label: "xA",
