@@ -48,6 +48,7 @@ import {
   RefreshCw,
   ScanSearch,
   MoreHorizontal,
+  Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -1501,7 +1502,7 @@ export function ArticleViewerWithTabs({ article, projectId, onClose }: Props) {
 
           {/* Review tab - embedded review */}
           <TabsContent value="review" className="flex-1 mt-0 min-h-0">
-            <EmbeddedReview articleId={article.id} articleTitle={article.title} />
+            <EmbeddedReview articleId={article.id} articleTitle={article.title} projectId={projectId} />
           </TabsContent>
 
           {/* Relationships tab - source relationship network */}
@@ -1838,8 +1839,17 @@ function KeyboardShortcutsHelp({
   );
 }
 
-function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articleTitle: string }) {
+function EmbeddedReview({
+  articleId,
+  articleTitle,
+  projectId,
+}: {
+  articleId: string;
+  articleTitle: string;
+  projectId: string;
+}) {
   const { t } = useI18n();
+  const qc = useQueryClient();
   const [reviewData, setReviewData] = React.useState<any>(null);
 
   // round-62 (P1-小): the mechanical citation audit's non-blocking TOPICALITY
@@ -1888,12 +1898,65 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
 
   const reviewMut = useMutation({
     mutationFn: () => api.aiReview({ mode: "review", articleId }),
-    onSuccess: (data) => {
-      setReviewData(data);
+    onSuccess: () => {
       toast.success(t("toast.reviewCompleted"));
+      // round-68: reload via the saved-review query rather than the mutation
+      // response — the GET shape carries repairSummary + allReviews (loop
+      // history) that the mutation response lacks.
+      setReviewData(null);
+      void qc.invalidateQueries({ queryKey: ["saved-review", articleId] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  // round-68: one-click fix of the OUTSTANDING weaknesses shown in this tab.
+  // The in-pipeline repair loop (STEP 8.5) is budget-bounded — when it stops
+  // with unfixed findings (budget exhausted / guard rejection / style-only
+  // verdict), the latest review's weaknesses stay in the article. This runs
+  // the SAME revise core ("full" mode: addresses every weakness + suggestion)
+  // on demand instead of regenerating the article. zhCleared is surfaced as a
+  // warning toast (the EN half is revised; the ZH half needs retranslation).
+  const fixRemainingMut = useMutation({
+    mutationFn: () =>
+      api.aiReview({ mode: "revise", articleId, reviewId: reviewData?.review?.id }),
+    onSuccess: (data: any) => {
+      toast.success(t("articleViewer.fixRemaining.done"));
+      if (data?.zhCleared) {
+        toast.warning(t("articleViewer.fixRemaining.zhCleared"));
+      }
+      setReviewData(null); // force reload from the saved-review query
+      void qc.invalidateQueries({ queryKey: ["saved-review", articleId] });
+      void qc.invalidateQueries({ queryKey: ["article-topicality", articleId] });
+      void qc.invalidateQueries({ queryKey: ["article-paragraphs", articleId] });
+      void qc.invalidateQueries({ queryKey: ["project", projectId] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // round-68: repair-loop outcome disclosure. Loop context lives on the
+  // article row (repairSummary); the LATEST review row is the article's
+  // current state — its weaknesses are outstanding whenever the verdict
+  // isn't "accept" (earlier rounds' findings were already revised away and
+  // their rows exist only as history via allReviews).
+  const repairMeta = reviewData?.repairSummary ?? null;
+  const outstanding = Boolean(reviewData?.verdict) && reviewData?.verdict !== "accept";
+  const roundHistory: Array<{ round: number; verdict: string }> =
+    Array.isArray(reviewData?.allReviews) ? reviewData.allReviews : [];
+  const scopedChips: string[] = Array.isArray(repairMeta?.scoped)
+    ? repairMeta.scoped.flatMap(
+        (s: any) => (Array.isArray(s?.sections) ? s.sections.map((x: any) => `R${s.round} §${x}`) : []),
+      )
+    : [];
+  const stopReasonKey = (() => {
+    const raw = String(repairMeta?.stopReason || "");
+    if (!raw) return "";
+    if (raw.includes("budget")) return "articleViewer.repairStop.budget";
+    if (raw.includes("clean")) return "articleViewer.repairStop.clean";
+    if (raw.includes("guard")) return "articleViewer.repairStop.guard";
+    if (raw.includes("heading")) return "articleViewer.repairStop.heading";
+    if (raw.includes("disconnected")) return "articleViewer.repairStop.disconnected";
+    return "";
+  })();
 
   return (
     <ScrollArea className="h-full scroll-academic">
@@ -1922,6 +1985,66 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
 
         {reviewData && (
           <div className="space-y-4">
+            {/* round-68: auto-repair loop outcome — what was auto-fixed, why
+                the loop stopped, and which rounds revised which sections. */}
+            {repairMeta && (
+              <div className="rounded-lg border border-border/60 bg-muted/10 p-3 space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <RefreshCw className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span className="text-xs font-semibold">{t("articleViewer.repairLoop.title")}</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {t("articleViewer.repairLoop.stats", {
+                      reviews: repairMeta.reviews ?? "?",
+                      revisions: repairMeta.revisions ?? 0,
+                    })}
+                  </span>
+                  {repairMeta.finalOverall != null && (
+                    <Badge variant="outline" className="text-[9px] h-4 ml-auto">
+                      {t("articleViewer.repairLoop.final")}: {repairMeta.finalOverall}/10
+                    </Badge>
+                  )}
+                </div>
+                {scopedChips.length > 0 && (
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <span className="text-[9px] text-muted-foreground shrink-0">{t("articleViewer.repairLoop.revisedSections")}:</span>
+                    {scopedChips.map((c) => (
+                      <Badge key={c} variant="outline" className="text-[9px] h-4 font-mono">
+                        {c}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+                {stopReasonKey && (
+                  <div className="flex items-start gap-1.5 text-[10px] text-muted-foreground leading-relaxed">
+                    <ShieldCheck className="h-3 w-3 shrink-0 mt-0.5" />
+                    <span>{t(stopReasonKey)}</span>
+                  </div>
+                )}
+                {roundHistory.length > 1 && (
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {roundHistory
+                      .slice()
+                      .sort((a, b) => a.round - b.round)
+                      .map((r) => (
+                        <Badge
+                          key={r.round}
+                          variant="outline"
+                          className={`text-[9px] h-4 font-mono ${
+                            r.verdict === "accept"
+                              ? "text-emerald-600 dark:text-emerald-400 border-emerald-300/60"
+                              : r.verdict === "minor-revision"
+                                ? "text-amber-600 dark:text-amber-400 border-amber-300/60"
+                                : "text-rose-600 dark:text-rose-400 border-rose-300/60"
+                          }`}
+                        >
+                          R{r.round} {r.verdict}
+                        </Badge>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Verdict */}
             {reviewData.verdict && (
               <div className={`rounded-lg border p-3 ${
@@ -1967,12 +2090,50 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
                   ))}
                 </div>
                 <div className="rounded-lg border border-rose-200/50 dark:border-rose-800/50 bg-rose-50/30 dark:bg-rose-950/20 p-2.5">
-                  <p className="text-[10px] uppercase tracking-wider font-semibold text-rose-700 dark:text-rose-300 mb-1">{t("articleViewer.weaknesses")}</p>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <p className="text-[10px] uppercase tracking-wider font-semibold text-rose-700 dark:text-rose-300">
+                      {t("articleViewer.weaknesses")}
+                      {outstanding && (
+                        <span className="normal-case tracking-normal font-normal text-amber-700 dark:text-amber-300 ml-1.5">
+                          · {t("articleViewer.outstandingTag")}
+                        </span>
+                      )}
+                    </p>
+                  </div>
                   {safeParse(reviewData.review.weaknesses).map((w: string, i: number) => (
                     <p key={i} className="text-[10px] mb-1">• {w}</p>
                   ))}
+                  {/* round-68: the answer to "are these already fixed?" — the
+                      latest review's weaknesses describe the CURRENT article;
+                      when the verdict isn't accept they are unfixed, and the
+                      loop's stop reason (budget/style/guard) explains why. */}
+                  {outstanding && (
+                    <p className="text-[9px] leading-relaxed text-amber-700 dark:text-amber-300 border-t border-amber-200/50 dark:border-amber-800/40 pt-1.5 mt-1.5">
+                      {stopReasonKey
+                        ? t("articleViewer.outstandingExplainer", {
+                            why: t(stopReasonKey),
+                          })
+                        : t("articleViewer.outstandingExplainerNoLoop")}
+                    </p>
+                  )}
                 </div>
               </div>
+            )}
+
+            {/* round-68: one-click fix for the outstanding weaknesses. Shown
+                only when the latest review verdict isn't accept — i.e. there
+                IS something unfixed worth acting on. */}
+            {outstanding && reviewData?.review?.id && (
+              <Button
+                size="sm"
+                className="gap-1.5 text-xs w-full"
+                onClick={() => fixRemainingMut.mutate()}
+                disabled={fixRemainingMut.isPending || reviewMut.isPending}
+              >
+                <Loader2 className={fixRemainingMut.isPending ? "h-3.5 w-3.5 animate-spin" : "hidden"} />
+                <Wrench className={!fixRemainingMut.isPending ? "h-3.5 w-3.5" : "hidden"} />
+                {t("articleViewer.fixRemaining.title")}
+              </Button>
             )}
 
             <Button
@@ -1980,7 +2141,7 @@ function EmbeddedReview({ articleId, articleTitle }: { articleId: string; articl
               variant="outline"
               className="gap-1.5 text-xs w-full"
               onClick={() => reviewMut.mutate()}
-              disabled={reviewMut.isPending}
+              disabled={reviewMut.isPending || fixRemainingMut.isPending}
             >
               <Loader2 className={reviewMut.isPending ? "h-3.5 w-3.5 animate-spin" : "hidden"} />
               {t("articleViewer.rerunReview")}

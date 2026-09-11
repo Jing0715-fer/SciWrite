@@ -196,6 +196,12 @@ model Article {
   content          String
   contentZh        String?             // Chinese full-text translation when language is "both"; null otherwise
   journalTemplate String?
+  // round-68: auto-repair loop (STEP 8.5) outcome — { reviews, revisions,
+  // guardRejections, stopReason, finalVerdict, finalOverall, scoped: [{round,
+  // sections}] }. Powers the Review tab's "what was auto-fixed / why the loop
+  // stopped / what remains outstanding" disclosure. Null = pre-round-68
+  // article or the loop never ran (legacy self-fetch review path).
+  repairSummary Json?
   deletedAt        DateTime?           // Soft-delete timestamp — null = active, set = in trash. Auto-purged after 30 days.
   articleParagraph ArticleParagraph[]
   reviews          Review[]

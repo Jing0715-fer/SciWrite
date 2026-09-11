@@ -18,6 +18,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ notFound: true });
   }
   const latest = reviews[0];
+
+  // round-68: the article's auto-repair loop outcome (reviews/revisions/stop
+  // reason/scoped sections) — powers the Review tab's outstanding-issues
+  // disclosure. Null for pre-round-68 articles / loopless runs; the client
+  // degrades to verdict-only disclosure.
+  let repairSummary: any = null;
+  try {
+    const article = await db.article.findUnique({
+      where: { id: articleId },
+      select: { repairSummary: true },
+    });
+    repairSummary = (article?.repairSummary as any) ?? null;
+  } catch {}
+
   return NextResponse.json({
     review: latest,
     scores: {
@@ -30,5 +44,6 @@ export async function GET(req: NextRequest) {
     },
     verdict: latest.verdict,
     allReviews: reviews.map(r => ({ id: r.id, round: r.round, verdict: r.verdict, createdAt: r.createdAt })),
+    ...(repairSummary ? { repairSummary } : {}),
   });
 }

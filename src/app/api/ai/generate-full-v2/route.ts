@@ -2653,6 +2653,35 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             }
           }
           log(`repair: persisted ${repairRounds.length} review round(s)`);
+
+          // round-68: persist the loop OUTCOME on the article row so the
+          // Review tab can disclose what was auto-fixed vs why the loop
+          // stopped vs what remains outstanding (the review rows alone only
+          // show per-round findings — the stop reason and revision count
+          // lived exclusively in the SSE step stream before this).
+          try {
+            await db.article.update({
+              where: { id: article.id },
+              data: {
+                repairSummary: {
+                  reviews: repairTelemetry.reviews,
+                  revisions: repairTelemetry.revisions,
+                  guardRejections: repairTelemetry.guardRejections,
+                  droppedRefs: repairTelemetry.droppedRefs,
+                  strippedNumbers: repairTelemetry.strippedNumbers,
+                  stopReason: repairTelemetry.stopReason || "loop ended",
+                  finalVerdict: repairTelemetry.finalVerdict || "",
+                  finalOverall: repairTelemetry.finalOverall,
+                  scoped: repairRounds
+                    .filter((r: any) => Array.isArray(r.scopedSections) && r.scopedSections.length > 0)
+                    .map((r: any) => ({ round: r.round, sections: r.scopedSections })),
+                  at: new Date().toISOString(),
+                },
+              },
+            });
+          } catch (sumErr: any) {
+            log(`repair: repairSummary persistence FAILED: ${String(sumErr?.message ?? sumErr).slice(0, 100)}`);
+          }
         }
 
         // Final mechanical audit of the composed article (Layer-2 deterministic)
