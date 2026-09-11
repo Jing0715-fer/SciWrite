@@ -3247,3 +3247,25 @@ Stage Summary:
 - 用户使用路径：LLM 配置 → API 供应商区配置 MiniMax/WorkBuddy 密钥 → 分工卡设 生成=api:minimax、审查=api:workbuddy（默认 Deepseek-V4.1-Flash）→ 管线零改动自动生效（review/verify/adversarial-review 类调用全部路由到审查模型，STEP 8.5 修复循环的 revise 仍走生成模型）
 - 设计决策：review 角色未显式配置时完全保持旧行为（跟随 generate）；严格模式仅在分工激活时生效，避免破坏既有回退语义；沙箱内无 minimax/workbuddy 密钥，真实联调待用户提供 key 后进行（409 校验已验证密钥门槛）
 - 遗留：llm-cache 键不含 role（taskType 已天然区分，无实际碰撞）；审查模型切换后旧缓存 review 结果会命中（可接受，后续可加 role 维度）
+---
+Task ID: round-67
+Agent: main (Z.ai Code)
+Task: 纠正 round-66 的 workbuddy 认知错误——用户澄清：workbuddy 不是 API 而是 agent CLI（已有检测），只需把默认模型从 deepseek-v4-pro 改为 Deepseek-V4.1-Flash
+
+Work Log:
+- 用户澄清落实：WorkBuddy 是桌面 agent 应用，其 CLI 二进制就是 codebuddy——llm.ts 的 cli:codebuddy 适配器早已存在（label "Codebuddy / WorkBuddy CLI"，探测 WorkBuddy.app 安装路径 + PATH），round-66 新增的 api:workbuddy 目录条目（虚构 baseURL api.workbuddy.ai/v1）是错误假设
+- provider-catalog：删除 api:workbuddy 条目（保留 minimax——生成侧用 minimax API 的方向正确）
+- llm.ts：CODEBUDDY_DEFAULT_MODEL 常量 = "Deepseek-V4.1-Flash"（原 "deepseek-v4-pro"）；callArgs 兜底链 model → CODEBUDDY_MODEL env → 新默认；CliAdapter/LlmProviderInfo 增 models/defaultModel 可选字段，codebuddy 适配器带 4 模型表（Deepseek-V4.1-Flash/V4.1/V3.2-Flash/deepseek-v4-pro，旧默认保留可选）；CLI 调用结果 model 字段改为报告实际生效模型（cfg.model || adapter.defaultModel，原报 adapter.id 误导可观测性）
+- /api/llm-config GET：detected 条目透传 CLI models/defaultModel（原仅 api:* 有 models）
+- llm-selection：normalizeSelection 读时重映射 api:workbuddy → cli:codebuddy（双角色+legacy flat 形态全覆盖）——round-66 预览期间存储的选区不会悬空
+- llm-config-dialog：主选区+分工卡模型输入框均显示 CLI defaultModel 占位符并提供 datalist；修正实施中引入的 TDZ 顺序隐患（selectedCliDefaultModel 引用后声明的 selectedIsApi）；引导注释全部改指 cli:codebuddy（WorkBuddy CLI）
+- E2E 实弹验证（假 codebuddy shim 置于 dev server PATH 的 node_modules/.bin）：fresh 探测 OK → detected 携带模型表+默认 → generateText 无覆盖时 argv 实际携带 --model Deepseek-V4.1-Flash（fake log 断言）→ POST select 审查角色 cli:codebuddy 持久化 → 伪造 api:workbuddy 存储读取即重映射（双角色均变 cli:codebuddy）→ 浏览器分工卡渲染（生成=Z.ai、审查=Codebuddy/WorkBuddy CLI、模型占位 Deepseek-V4.1-Flash、datalist 4 模型、SPLIT 徽标、api:workbuddy 从目录消失、console 零错误）；截图 /tmp/round67-rolesplit-workbuddy.png
+- 清理：假二进制+测试日志删除、审查覆盖复位 follow-generate（沙箱内无真实 WorkBuddy，避免 auto-iterate 金丝雀的审查步骤静默降级）、存储恢复默认态
+- 质量门：tsc 0 错误 / lint 0 errors 166 warnings（=基线）；dev.log 无新增错误（instrumentation.ts 的 Ecmascript 警告为 round-63 存量）
+- 提交 15ef0c1 并推送 origin/main
+
+Stage Summary:
+- 用户使用路径（真实机器）：安装 WorkBuddy 桌面版（CLI codebuddy 自动被探测）或独立安装 codebuddy → LLM 配置 → 分工卡设 审查=Codebuddy/WorkBuddy CLI（默认 Deepseek-V4.1-Flash，可切换 4 模型）+ 生成=api:minimax（需先存 MiniMax key）→ 审查类调用（review/verify/adversarial-review/fact-check/topicality）自动路由到 WorkBuddy CLI，STEP 8.5 revise 仍走生成模型
+- codebuddy -p 模式认证注意（UI 琥珀提示已有）：模型调用用 CODEBUDDY_API_KEY env 认证，交互登录 token 不生效
+- 设计决策：CODEBUDDY_MODEL env 优先级保留在存储覆盖之下（用户显式配置恒胜）；旧默认 deepseek-v4-pro 保留在 datalist 可选；沙箱无法验证真实 WorkBuddy 联调（无桌面应用），假 shim 已验证协议层（--version 探测 / -p -y --output-format json 信封 / session_id 解析）
+- 遗留（沿袭 round-66）：llm-cache 键不含 role 维度（taskType 已天然区分）；模型分离后的真实审查捕获率对比测试待用户提供 minimax key + WorkBuddy 环境后进行（可用 TMC1/2 同主题三跑对比：同模型自审 vs minimax+WorkBuddy 分工）
