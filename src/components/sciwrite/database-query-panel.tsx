@@ -28,6 +28,7 @@ import { DATABASE_SOURCES } from "@/lib/constants";
 import type { DatabaseQueryResponse, DatabaseResultItem } from "@/lib/types";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useI18n } from "@/lib/i18n";
+import { useQueryHistory, QueryHistoryBar } from "@/components/sciwrite/query-history";
 
 /** Semantic source-type badge → design-system .badge-* class.
  *  These ARE the source-type indicators the design system sanctions
@@ -51,21 +52,32 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
   const [results, setResults] = React.useState<DatabaseQueryResponse | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const qc = useQueryClient();
+  const { history, addEntry, removeEntry, clearAll } = useQueryHistory();
 
   const srcMeta = DATABASE_SOURCES.find((s) => s.id === source)!;
 
   const searchMut = useMutation({
-    mutationFn: async () => {
-      if (!query.trim()) throw new Error(t("db.pleaseEnterQuery"));
+    mutationFn: async (override?: { source: string; query: string; program?: "blastp" | "blastn" }) => {
+      const s = override?.source ?? source;
+      const q = override?.query ?? query;
+      const p = override?.program ?? blastProgram;
+      if (!q.trim()) throw new Error(t("db.pleaseEnterQuery"));
       return api.queryDatabase({
-        source,
-        query,
-        program: source === "blast" ? blastProgram : undefined,
+        source: s,
+        query: q,
+        program: s === "blast" ? p : undefined,
       });
     },
-    onSuccess: (data) => {
+    onSuccess: (data, override) => {
       setResults(data);
       setError(null);
+      // Persist to query history
+      addEntry({
+        source: override?.source ?? source,
+        query: override?.query ?? query,
+        program: (override?.source ?? source) === "blast" ? (override?.program ?? blastProgram) : undefined,
+        resultCount: data.total,
+      });
       if (data.items.length === 0) {
         toast.info(t("db.noResultsFound"));
       } else {
@@ -255,6 +267,30 @@ export function DatabaseQueryPanel({ projectId }: { projectId: string | null }) 
           </button>
         )}
       </div>
+
+      {/* ============================================================
+          Row 3.5 — recent queries history strip
+          Persisted to localStorage. Click a chip to re-run the exact
+          same source+query; X removes it. Helps the user iterate on
+          searches without retyping.
+          ============================================================ */}
+      <QueryHistoryBar
+        history={history}
+        onRerun={(entry) => {
+          setSource(entry.source);
+          setQuery(entry.query);
+          if (entry.program) setBlastProgram(entry.program);
+          // Pass override so the mutation uses the entry's params directly
+          // (state updates are async, so the closure would be stale otherwise).
+          searchMut.mutate({
+            source: entry.source,
+            query: entry.query,
+            program: entry.program,
+          });
+        }}
+        onRemove={removeEntry}
+        onClear={clearAll}
+      />
 
       {/* ============================================================
           Row 4 — result count stat-tile (only when results are present)

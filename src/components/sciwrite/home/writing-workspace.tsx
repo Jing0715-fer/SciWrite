@@ -49,6 +49,8 @@ export function WritingWorkspace({
   onTipsOpenChange,
   onOpenUserData,
   onOpenArticle,
+  pendingJumpId,
+  onJumpHandled,
 }: {
   project?: any;
   paragraphs: any[];
@@ -73,6 +75,8 @@ export function WritingWorkspace({
   onTipsOpenChange: (v: boolean) => void;
   onOpenUserData: () => void;
   onOpenArticle: (a: any) => void;
+  pendingJumpId?: string | null;
+  onJumpHandled?: () => void;
 }) {
   const { t } = useI18n();
   const [workspaceTab, setWorkspaceTab] = React.useState("paragraphs");
@@ -105,6 +109,19 @@ export function WritingWorkspace({
       }
     });
   }, []);
+
+  // Handle pending jump from the Audit task — when the parent passes a
+  // pendingJumpId (e.g. from the citation heatmap), scroll to that paragraph.
+  React.useEffect(() => {
+    if (pendingJumpId) {
+      // Wait for the paragraphs tab to be rendered after task switch.
+      const timer = setTimeout(() => {
+        jumpToParagraph(pendingJumpId);
+        onJumpHandled?.();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [pendingJumpId, jumpToParagraph, onJumpHandled]);
 
   if (!activeProjectId || !project) {
     return <EmptyWorkspace />;

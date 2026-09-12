@@ -32,6 +32,11 @@ export const translations = {
   en: {
     // Header
     "app.title": "SciWrite",
+    "task.research": "Research",
+    "task.draft": "Draft",
+    "task.compose": "Compose",
+    "task.audit": "Audit",
+    "task.manage": "Manage",
     "app.subtitle": "AI Research Writer",
     "app.tagline": "RCSB · UniProt · PubMed · NCBI · BLAST — citation-grade drafting",
     "app.insights": "Insights",
@@ -1411,6 +1416,11 @@ export const translations = {
   zh: {
     // Header
     "app.title": "SciWrite",
+    "task.research": "研究",
+    "task.draft": "撰写",
+    "task.compose": "成文",
+    "task.audit": "审计",
+    "task.manage": "管理",
     "app.subtitle": "AI 科研写作助手",
     "app.tagline": "RCSB · UniProt · PubMed · NCBI · BLAST — 专业引用写作",
     "app.insights": "洞察",
@@ -2793,6 +2803,11 @@ export const translations = {
   // ────────────────────────────────────────────────────────────────────────
   ja: {
     "app.title": "SciWrite",
+    "task.research": "研究",
+    "task.draft": "執筆",
+    "task.compose": "構成",
+    "task.audit": "監査",
+    "task.manage": "管理",
     "app.subtitle": "AI 研究ライター",
     "app.tagline": "RCSB · UniProt · PubMed · NCBI · BLAST — 引用グレードの執筆",
     "app.insights": "インサイト",
