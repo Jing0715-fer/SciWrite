@@ -3398,3 +3398,30 @@ Next-Round Development Recommendations (ranked by impact):
 6. **Clean dead CSS (M1)** — Remove ~80 lines of unused .glass-footer, .surface-raised, .atlas-icon-* classes. ~30 min.
 7. **Accessibility pass (A1-A7)** — Add aria-current to mobile nav, role=tab to workspace tabs, focus-within to hover buttons. ~1 hour.
 8. **Compose wizard → pass selected paragraphs** — The last unfinished core feature. ~2 hours.
+
+---
+Task ID: RESTORE-1
+Agent: main (Z.ai Code) — Canvas architecture restoration
+Task: Restore Canvas architecture that was accidentally reverted during merge
+
+Problem:
+- User reported "UI 又回到过去的版本了，不是重构版了" (UI went back to the old version, not the redesign)
+- Investigation: the Canvas architecture (canvas-shell, canvas-topbar, canvas-tasknav, TaskTabs, TopBar) was missing from page.tsx — it had the OLD 3-panel ResizablePanelGroup layout instead.
+- Root cause: a merge/rebase during the code-review fixes (round REVIEW-1) operated on the `main` branch which never had the Canvas changes. The Canvas commits (805ee8d through 27e5684) were on the redesign/ui-atelier branch but were lost when main was merged over them.
+- 7 Canvas component files were missing entirely (citation-heatmap, source-donut, query-history, use-recent-projects, onboarding-tour, changelog-dialog, shortcuts-overlay).
+- globals.css was 1530 lines (old) instead of 3352 lines (Canvas version with all the canvas-/atlas-/tour-/donut-/heatmap-/stats-/help-/grade-/skeleton classes).
+
+Fix:
+- Restored page.tsx from commit 27e5684 (last known-good Canvas version).
+- Restored all 7 missing component files from 27e5684.
+- Restored globals.css from 27e5684 (3352 lines).
+- Restored writing-workspace.tsx, database-query-panel.tsx, i18n.tsx from 27e5684.
+- Applied code-review fixes on top: ErrorBoundary, useMemo for paragraphs/articles.
+- useIsMobile fix already in hooks/use-mobile.ts.
+
+Verification:
+- HTTP 200, 0 lint errors (184 warnings).
+- agent-browser confirmed: canvas-shell=1, canvas-topbar=1, canvas-tasknav=1, canvas-task-tab=5.
+- All 5 task tabs render: Research, Draft, Compose, Audit, Manage.
+
+Commit 0825ad2 force-pushed to origin/redesign/ui-atelier.
