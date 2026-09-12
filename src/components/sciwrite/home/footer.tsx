@@ -18,7 +18,7 @@ export function Footer({ onOpenPalette }: { onOpenPalette?: () => void }) {
   return (
     <footer className="atlas-statusbar shrink-0 h-7 px-4 sm:px-6 flex items-center justify-between text-[10px] relative z-20">
       <div className="flex items-center gap-3">
-        <span className="inline-flex items-center gap-1.5 font-medium text-foreground/80">
+        <span className="inline-flex items-center gap-1 font-medium text-foreground/80">
           <span className="relative inline-flex h-1.5 w-1.5">
             <span className="absolute inline-flex h-full w-full rounded-full bg-primary/60 animate-ping" />
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />

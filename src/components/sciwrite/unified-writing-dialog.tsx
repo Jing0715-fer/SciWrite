@@ -284,7 +284,7 @@ function ActionButton({
   return (
     <Button
       size="sm"
-      className="btn-gradient-primary gap-1.5 text-[13px] w-full h-10 text-primary-foreground transition-all"
+      className="btn-gradient-primary gap-1 text-[13px] w-full h-10 text-primary-foreground transition-all"
       onClick={onClick}
       disabled={disabled}
     >
@@ -1109,7 +1109,19 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
       toast.success(t("toast.oneClickGenerated", { words: doneWords, refs: doneRefs }));
     } catch (e: any) {
       setLivePreview("");
-      toast.error(e.message);
+      // Enhance common error messages with actionable advice
+      const msg = e?.message || String(e);
+      let enhanced = msg;
+      if (/timeout|timed out|ETIMEDOUT/i.test(msg)) {
+        enhanced = `Generation timed out. The LLM may be busy or unreachable. Try again, or switch to a faster model in LLM Config. (${msg})`;
+      } else if (/ECONNREFUSED|fetch failed|network/i.test(msg)) {
+        enhanced = `Network error — cannot reach the LLM provider. Check your internet connection or provider settings. (${msg})`;
+      } else if (/401|unauthorized|api key|invalid.*key/i.test(msg)) {
+        enhanced = `LLM authentication failed. Open LLM Config (Cpu icon in the top bar) and check your API key. (${msg})`;
+      } else if (/stream ended without completing/i.test(msg)) {
+        enhanced = `The generation stream was interrupted (server restart or connection drop). No article was saved. Try again. (${msg})`;
+      }
+      toast.error(enhanced, { duration: 8000 });
     } finally {
       setCurrentStep(-1);
       // round-62: the run just ended — refresh the checkpoint state so the

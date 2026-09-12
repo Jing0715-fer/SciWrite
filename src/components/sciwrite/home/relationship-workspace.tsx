@@ -143,7 +143,7 @@ export function RelationshipWorkspace({ projectId }: { projectId: string }) {
               <div className="space-y-2">
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{t("workspace.thematicClusters")}</p>
                 {relData.themes.map((th: any, i: number) => (
-                  <div key={i} className="rounded-md border border-border/50 p-2.5">
+                  <div key={i} className="rounded-md border border-border/50 p-3">
                     <span className="text-xs font-semibold">{th.name}</span>
                     <p className="text-[10px] text-muted-foreground mt-1">{th.description}</p>
                   </div>

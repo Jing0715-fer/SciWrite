@@ -121,7 +121,7 @@ export function EmbeddedReviewWorkspace({ articleId, articleTitle, projectId }: 
               </div>
             )}
             {displayData.review?.summary && (
-              <div className="rounded-md border border-border/50 p-2.5">
+              <div className="rounded-md border border-border/50 p-3">
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">{t("workspace.relSummaryLabel")}</p>
                 <p className="text-xs leading-relaxed">{displayData.review.summary}</p>
               </div>
