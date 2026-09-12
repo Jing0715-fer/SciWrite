@@ -29,6 +29,7 @@ import { DatabaseQueryPanel } from "@/components/sciwrite/database-query-panel";
 import { KnowledgePanel } from "@/components/sciwrite/knowledge-panel";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { CommandPalette } from "@/components/sciwrite/command-palette";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { LLMCacheStatsPanel } from "@/components/sciwrite/llm-config-dialog";
 import { Header } from "@/components/sciwrite/home/header";
 import { WritingWorkspace } from "@/components/sciwrite/home/writing-workspace";
@@ -119,9 +120,21 @@ function Home() {
 
   const projects = projectsQ.data?.projects ?? [];
   const project = projectQ.data?.project;
-  const paragraphs = (project?.paragraphs ?? []) as any[];
-  const dataSources = project?.dataSources ?? [];
-  const articles = (project?.articles ?? []) as any[];
+  // Memoize derived arrays so they don't create fresh references every render
+  // (which would bust downstream useMemo/useCallback deps and cause cascade
+  // re-renders of ProjectsSidebar, WritingWorkspace, etc.).
+  const paragraphs = React.useMemo(
+    () => (project?.paragraphs ?? []) as any[],
+    [project?.paragraphs]
+  );
+  const dataSources = React.useMemo(
+    () => project?.dataSources ?? [],
+    [project?.dataSources]
+  );
+  const articles = React.useMemo(
+    () => (project?.articles ?? []) as any[],
+    [project?.articles]
+  );
   const references = React.useMemo(() => {
     const map = new Map<string, any>();
     for (const r of project?.references ?? []) {
@@ -239,8 +252,12 @@ function Home() {
           </div>
         ) : isMobile ? (
           <div className="shell-frame flex flex-col h-full">
-            <div className="flex-1 min-h-0 overflow-hidden">
-              {mobilePanel === "projects" && (
+            <div className="flex-1 min-h-0 overflow-hidden relative">
+              {/* Render all three panels simultaneously and toggle visibility
+                  via CSS — preserves internal state (search results, scroll
+                  position, form input) when switching mobile tabs. Previously
+                  conditional mounting destroyed all child state on tab switch. */}
+              <div className={`absolute inset-0 overflow-hidden ${mobilePanel === "projects" ? "" : "hidden"}`}>
                 <ProjectsSidebar
                   projects={projects}
                   activeId={activeProjectId}
@@ -254,8 +271,8 @@ function Home() {
                   articles={articles}
                   onOpenArticle={(a) => setViewArticle(a as Article)}
                 />
-              )}
-              {mobilePanel === "workspace" && (
+              </div>
+              <div className={`absolute inset-0 overflow-hidden ${mobilePanel === "workspace" ? "" : "hidden"}`}>
                 <WritingWorkspace
                   project={project}
                   paragraphs={paragraphs}
@@ -274,8 +291,8 @@ function Home() {
                   onOpenUserData={() => setUserDataOpen(true)}
                   onOpenArticle={(a) => setViewArticle(a as Article)}
                 />
-              )}
-              {mobilePanel === "data" && (
+              </div>
+              <div className={`absolute inset-0 overflow-hidden ${mobilePanel === "data" ? "" : "hidden"}`}>
                 <div className="flex flex-col h-full overflow-hidden">
                   <div className="h-[44%] min-h-0 border-b border-border/60 overflow-hidden">
                     <DatabaseQueryPanel projectId={activeProjectId} />
@@ -291,7 +308,7 @@ function Home() {
                     <LLMCacheStatsPanel />
                   </div>
                 </div>
-              )}
+              </div>
             </div>
             <div className="shrink-0 flex border-t border-border/60 panel-tint">
               {(
@@ -397,6 +414,7 @@ function Home() {
 
       {/* Modals */}
       {activeProjectId && project && (
+        <ErrorBoundary>
         <React.Suspense fallback={null}>
           <UnifiedWritingDialog
             open={unifiedWriteOpen}
@@ -411,8 +429,10 @@ function Home() {
             onGenerationTargetWords={handleWordGoalChange}
           />
         </React.Suspense>
+        </ErrorBoundary>
       )}
       {viewArticle && (
+        <ErrorBoundary>
         <React.Suspense fallback={null}>
           <ArticleViewerWithTabs
             article={viewArticle}
@@ -420,8 +440,10 @@ function Home() {
             onClose={() => setViewArticle(null)}
           />
         </React.Suspense>
+        </ErrorBoundary>
       )}
       {activeProjectId && (
+        <ErrorBoundary>
         <React.Suspense fallback={null}>
           <InsightsDialog
             open={insightsOpen}
@@ -429,8 +451,10 @@ function Home() {
             projectId={activeProjectId}
           />
         </React.Suspense>
+        </ErrorBoundary>
       )}
       {activeProjectId && (
+        <ErrorBoundary>
         <React.Suspense fallback={null}>
           <UserDataDialog
             open={userDataOpen}
@@ -438,6 +462,7 @@ function Home() {
             projectId={activeProjectId}
           />
         </React.Suspense>
+        </ErrorBoundary>
       )}
       <LLMConfigDialog open={llmConfigOpen} onOpenChange={setLlmConfigOpen} />
       <CommandPalette
