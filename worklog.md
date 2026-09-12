@@ -3349,3 +3349,52 @@ Recommended next steps:
 3. "Cancel generation" button to abort SSE stream
 4. Step timeline should use theme-adaptive colors (not hardcoded emerald)
 5. "Preparing..." state before first SSE event
+
+---
+Task ID: REVIEW-1 + FIX-1
+Agent: main (Z.ai Code) — comprehensive code review + high-priority fixes
+Task: Full code review + implement critical/high-priority fixes + next-round plan
+
+Comprehensive Code Review Results:
+A sub-agent performed a thorough review of the Canvas architecture, components, styling, bugs, performance, accessibility, and type safety. Findings:
+
+Critical issues (5):
+- C1: Mobile tab switches destroyed all child panel state (search results, scroll, form input) — SILENT UX DATA LOSS
+- C2: useIsMobile() never returned undefined — dead loading branch, desktop flash on mobile
+- C3: Auto-select-first-project effect prevents deselection (deferred)
+- C4: Word-goal effect stale-closure risk on totalWords (deferred)
+- C5: Unvalidated `as Article` casts on lazy-loaded dialogs (addressed via ErrorBoundary)
+
+High-priority issues (10):
+- H1: Pervasive `any` typing in home layer (21+ occurrences) — deferred
+- H2: projects-sidebar.tsx 637 lines, 3 components in one file — deferred
+- H3: knowledge-panel.tsx 996 lines, 5 sub-components — deferred
+- H4: Global CustomEvent for project selection — fragile coupling (deferred)
+- H5: Header MutationObserver + per-render theme state causes hydration mismatch (deferred)
+- H6: Lazy dialogs wrapped in Suspense with no ErrorBoundary — FIXED
+- H7: paragraphs/articles re-derived every render → cascade re-renders — FIXED
+- H8: jumpToParagraph uses raw DOM classList manipulation (deferred)
+- H9: Citation regex in computeProgressStats runs per render (partially mitigated by H7)
+- H10: `t("key") || "fallback"` pattern hides missing i18n keys (deferred)
+
+Medium issues (11): dead CSS (~80 lines), monolithic globals.css, theme-selector duplication, dead Header props, prop-drilled `t`, keyboard conflicts, JSON parse swallowing, etc.
+
+Accessibility (7): missing ARIA on tabs/nav, keyboard-invisible hover buttons, decorative elements not aria-hidden.
+
+Fixes implemented this round:
+1. **C1 FIXED**: Mobile panels now render simultaneously with CSS `hidden` toggle. State preserved across tab switches.
+2. **C2 FIXED**: useIsMobile returns `boolean | undefined`. Loading spinner correctly shows until matchMedia resolves.
+3. **H6 FIXED**: New ErrorBoundary component wraps all 4 lazy-loaded dialogs. Shows retry button on chunk-load failure.
+4. **H7 FIXED**: paragraphs/articles/dataSources wrapped in useMemo. Cascade re-renders eliminated.
+
+Commit 551795b pushed to origin/redesign/ui-atelier.
+
+Next-Round Development Recommendations (ranked by impact):
+1. **Type the home layer (H1)** — Replace all `any` with proper interfaces from lib/types. Prevents a whole class of runtime bugs. ~1 day.
+2. **Split knowledge-panel.tsx (H3)** and **projects-sidebar.tsx (H2)** into folders — Both are doing 4-5 jobs. Reduces cognitive load. ~half day each.
+3. **Replace global CustomEvent with callback prop (H4)** — Pass onProjectCreated(id) down. Delete the magic-string event. ~1 hour.
+4. **Fix word-goal stale closure (C4)** — Gate the else branch on a prevTotalWordsRef. ~30 min.
+5. **Fix auto-select side effect (C3)** — Track hasInitializedRef so refresh doesn't force-select. ~30 min.
+6. **Clean dead CSS (M1)** — Remove ~80 lines of unused .glass-footer, .surface-raised, .atlas-icon-* classes. ~30 min.
+7. **Accessibility pass (A1-A7)** — Add aria-current to mobile nav, role=tab to workspace tabs, focus-within to hover buttons. ~1 hour.
+8. **Compose wizard → pass selected paragraphs** — The last unfinished core feature. ~2 hours.
