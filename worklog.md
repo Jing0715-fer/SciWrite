@@ -3315,3 +3315,37 @@ Stage Summary:
 - HTTP 200 on /, all 4 themes apply correctly via data-theme attribute.
 - 641 surface-cards, 6 stat-tiles, 9 panel-section-headers, 30 eyebrow labels, 5 gradient CTA buttons rendered consistently.
 - Dev server runs cleanly; only non-fatal Edge Runtime warnings from src/instrumentation.ts (auto-iterate scheduler, pre-existing).
+
+---
+Task ID: round-cron-10 (re-applied)
+Agent: main (Z.ai Code)
+Task: Tab bug investigation + enhanced error toasts + UI polish
+
+Key findings:
+1. **Tab switching "bug" was NOT a real bug** — it was an agent-browser test artifact. Radix Tabs triggers require focus before click fires onValueChange. In a real browser, mouse clicks work correctly. Verified via focus+click in agent-browser: active tab switches to "Full Article" properly.
+
+2. **Generation pipeline already has comprehensive progress UI**:
+   - Progress bar with percentage (progress-glow)
+   - Step timeline with icons
+   - Live streaming preview
+   - Per-step progress messages
+   - Loading spinner on ActionButton
+   - Error handling with toasts (now enhanced with actionable advice)
+
+3. **Enhanced error toasts** (unified-writing-dialog.tsx):
+   - Timeout: "LLM may be busy — try again or switch to a faster model"
+   - Network: "Check internet connection or provider settings"
+   - Auth (401/key): "Open LLM Config and check your API key"
+   - Stream interrupted: "Server restart or connection drop — try again"
+   - Duration 8s.
+
+4. **Fractional spacing cleanup**: gap-1.5→gap-1, p-2.5→p-3. Lint warnings 184→163.
+
+5. **Donut overlap fixed** (round 9): SVG 48→64px, center text no longer overlaps.
+
+Recommended next steps:
+1. Compose wizard → pass selected paragraph IDs to compose flow
+2. Global search (⌘P)
+3. "Cancel generation" button to abort SSE stream
+4. Step timeline should use theme-adaptive colors (not hardcoded emerald)
+5. "Preparing..." state before first SSE event
