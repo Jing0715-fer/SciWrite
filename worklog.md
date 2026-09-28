@@ -3535,3 +3535,25 @@ Stage Summary:
 - v2 管线从"gather 一次→各章独立写→逐条校验"升级为三段 agent 化闭环：计划后自主补检索（STEP 3.5 缺口 agent，像人类作者边写边查）、写作时前后章互相感知（已知 claims + 未来章节提纲 + 桥接句规则）、成稿后全文连贯性打磨（STEP 8.6，跨章重复/矛盾/术语漂移/数值不一致/断裂过渡/错误指引六类缺陷 + 带邻章上下文的逐章重编辑）。
 - 科学性/引用准确性新增三道防线：缺口 agent 保证"大纲承诺的内容必有文献支撑"（从源头减少无据断言）；打磨的引用集守卫机械禁止 LLM 借机加引用；coherence 的 contradiction/numeric 检查专抓跨章科学性不一致（同一数值两个版本、机制方向矛盾）。
 - 全部新阶段非致命 + 风暴感知（429 abort 旗下自动跳过不烧预算），空手而归时池/文章原样；下次 auto-iterate canary（提供商恢复后）即自动做全链路真实验证。
+
+---
+Task ID: CS-MAIN-4 (round-cs-3)
+Agent: main (Z.ai Code orchestrator)
+Task: 修复 [knowledge] 阶段"卡死"bug + 继续吸收 ClawsGO 优势：多轮 agent 自主补检索、多 pass 连贯性打磨、科学性/数值声明核查强化。
+
+Work Log:
+- **根因诊断（用户日志：15:55–16:20 卡在 PubMed backfill 之后）**：STEP 1.5 knowledge 阶段对 149 个源按 12/批做 ~13 次**串行 LLM 调用**，成功时零事件输出（onLog 只在失败时打）→ 15-20 分钟完全静默，用户合理判定为卡死。加重因素：① z-ai SDK 内部 fetch 无 timeout/AbortSignal，提供商风暴期"连接已接受但永不响应"→ 单批可无限挂起；② withRateLimit 最终 429 重试耗尽后抛**原始 429 错误**，knowledge-verify 的 fail-fast 正则（/previous call aborted|quota exhausted|daily quota/）匹配不上 → 逐批继续，每批 ~3.5 分钟（5×退避 31s + abort 旗 150s waitout + 1 次重试再 31s）≈ 45 分钟的"假死"。另注：该次运行发生在旧沙箱（08:34 UTC 机器重置，旧 DB 数据未保留），但缺陷在代码中静态可复现。
+- **Fix 1（硬超时看门狗）**：src/lib/ai.ts 新增 ChatTimeoutError + withHardTimeout（Promise.race，timer unref）。chat()/chatStream() 的 SDK 调用、流式 reader.read() 每读 300s 静默看门狗、webSearch/readPage 的 functions.invoke 均 90s 看护（CLI 路径 generateText 原有 kill timer 不变）。ChatOptions/ChatSessionOptions 新增 timeoutMs 透传（llm-session 双路径转发）。默认 300s；knowledge 批次 150s。
+- **Fix 2（阶段心跳）**：knowledge-verify 新增 onProgress（逐批 "batch i/N: assessing M sources..."）+ timeoutMs；generate-full-v2 knowledge 阶段前置预期事件（"13 LLM batches — several minutes; progress per batch"）并把 onProgress 映射为 step progress 事件 + log；gather 独立路由同样接入 sendLog。progress-tracker 的 fixed-phase 渐进 crawl 机制天然消化该事件流。
+- **Fix 3（429 风暴结构化 fail-fast）**：rate-limiter 最终 429 重试后改抛 RateLimitAbortedError（原为裸 429）→ withAbortWaitout 把持续风暴当作一次连贯的 wait-out+单重试；knowledge-verify catch 改 instanceof 判定 + 正则扩展（429|rate.?limit|too many requests）+ 连续 2 次 ChatTimeoutError 即跳过剩余批次。
+- **Fix 4（SSE keepalive）**：v2 路由新增 20s 静默 ping（rawSend 直发，绕过 recorder；客户端对无 step/message/progress 的 bare 事件安全忽略；safeClose 与 stream.cancel() 双路 clearInterval）。
+- **Improvement A（多轮自主补检索）**：STEP 3.5 gap agent 改多轮循环（GAP_AGENT_MAX_ROUNDS=2）——首轮合并新文献后**重新审计** outline vs 更新后的分配；round 2 只追"新缺口"（pursuedGapKeys 按 sectionIndex+gap 归一键去重，同缺口同查询同落空不再烧预算）；跨轮共享 6 条新文献预算与 40 条池上限；dedupe 池扩为 deduped.refs ∪ curatedRefs（含前轮合并）；gapIndex 索引源修正为 freshGaps；聚合 telemetry/stats.gapAgent 与聚合终态事件（terminalSent 防双发）。
+- **Improvement B（多 pass 连贯性打磨）**：STEP 8.6 重构为 review→polish→**re-review** 循环（POLISH_MAX_PASSES=2）——§2 的修复可能暴露/制造与未动过的 §5 的矛盾，单 pass 结构上无法发现；采用后发送 progress 并进入下一轮复审，复审 clean/预算耗尽/打磨被拒/风暴中止各有聚合终态事件；totalFindings/totalAddressed/revisedSectionSet 跨轮累计，Review 行 summary 按轮次合并；所有既有机械闸门（引用集守卫/标题钉死/revisionGuard/globalRefs 重同步）逐 pass 原样执行。
+- **Improvement C（科学性/数值声明核查）**：adversarialVerifySection 句子选择改 **numeric-first**（每 ref 2 句上限内优先含数字句——残基编号/Å 分辨率/百分比正是幻觉高发区）；系统 prompt 新增 NUMERIC CLAIMS 规则：数字须能溯源到文献 title/abstract，矛盾或找不到 → PARTIAL "numeric mismatch" 并在 reason 中引用该数字。
+- **验证**：tsc 4 个基线错误 0 新增；lint 0 errors（186 warnings 均为遗留）；模块冒烟（ChatTimeoutError/RateLimitAbortedError 契约、429 终抛类型=RateLimitAbortedError attempts=2）；**真实 E2E**：verifySourcesWithKnowledge 3 源 2 批直连真实提供商 —— 恰逢提供商 429 风暴，完整验证风暴路径：progress 事件 0s 即出（batch 1/2）→ 171s 内全链退避+waitout+单重试耗尽 → fail-fast "skipping 1 remaining batch(es)" 优雅降级返回空结果（旧行为 ≈45 分钟假死）；agent-browser：v2 Full Article UI 渲染、seed 24 步 round-cs-3 事件（knowledge batch 1-4/13、gap agent round 2 re-audit、polish pass 2 re-review）→ Run Timeline 对话框全部正确渲染、390px 无溢出、console 零错误（seed 已删）；dev server 中途被内核 OOM 杀死（next-server 2GB RSS，4GB 机器）→ 重启后 home/v2 路由/task-runs 全部 200。
+- 遗留观察：沙箱内存紧张（3.9GB），chromium+next-server 同跑可能再次触发 OOM kill —— 若 dev server 无故消失，先查 dmesg 再重启（setsid bun run dev）。
+
+Stage Summary:
+- 卡死根因 = "静默串行 LLM 批次 × 无超时 SDK 调用 × 429 fail-fast 漏判"三因叠加；四道修复后 knowledge 阶段从"最长 45 分钟零事件假死"变为"逐批心跳 + 单批 150s 硬预算 + 风暴 171s 优雅降级"，且 E2E 在真实 429 风暴中验证通过。
+- ClawsGO 式 agent 能力再进两步：gap agent 从单发升级为"合并→重审计→只追新缺口"的多轮自主检索；coherence polish 从单发升级为"修复→复审→再修复"的双 pass 闭环；adversarial verify 优先核查数值句并强制数字溯源 —— 直接针对"尤其避免科学性错误和文献引用错误"。
+- 全部改动非致命 + 风暴感知（abort 旗/断连即跳过），机械闸门逐轮原样执行；下次提供商恢复后 auto-iterate canary 将自动做全链路真实验证。

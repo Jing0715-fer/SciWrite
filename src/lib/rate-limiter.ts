@@ -348,8 +348,17 @@ export async function withRateLimit<T>(
       );
       // For 429 specifically, also surface as abort after the final retry —
       // long-running pipelines should stop burning quota.
+      // round-cs-3: throw RateLimitAbortedError (not the raw 429 error) so
+      // (a) callers can fail fast via instanceof instead of message-sniffing,
+      // and (b) ai.ts's withAbortWaitout treats a sustained storm as ONE
+      // coherent wait-out + single retry instead of every batch re-entering
+      // the full 5-attempt backoff chain against the same dead provider.
       if (attempt === maxRetries - 1 && is429) {
         setAbort(`429 after ${maxRetries} retries on '${label}'`);
+        await new Promise((r) => setTimeout(r, jitter));
+        throw new RateLimitAbortedError(
+          `429 after ${maxRetries} retries on '${label}' — rate-limit storm, abort flag set`,
+        );
       }
       await new Promise((r) => setTimeout(r, jitter));
     }

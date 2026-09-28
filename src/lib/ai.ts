@@ -19,6 +19,61 @@ export async function getAI() {
 export { QuotaExhaustedError, RateLimitAbortedError };
 
 /**
+ * round-cs-3 (hung-call watchdog): the z-ai SDK's internal fetch() carries NO
+ * timeout/AbortSignal — during provider brown-outs a chat call can stall on
+ * an accepted-but-silent connection FOREVER, which froze the whole pipeline
+ * at silent stages (observed live: [knowledge] PubMed backfill → 13 silent
+ * LLM batches → user sees a dead run). This error marks a call that exceeded
+ * its hard time budget so callers can fail the unit and move on.
+ */
+export class ChatTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ChatTimeoutError";
+  }
+}
+
+/** Default hard budget for a single non-streaming LLM call. Long enough for
+ * a legitimate 20k-token section write (1-4 min at normal providers), short
+ * enough that a stalled connection can't freeze a stage indefinitely. */
+const DEFAULT_CHAT_TIMEOUT_MS = 300_000;
+
+/**
+ * Race a promise against a hard deadline. The losing promise is left to
+ * settle in the background (the SDK fetch exposes no signal to cancel it);
+ * its eventual result is dropped. The timer is unref'd so it can never hold
+ * the process open.
+ */
+async function withHardTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new ChatTimeoutError(
+                `LLM call '${label}' timed out after ${Math.round(ms / 1000)}s with no response`,
+              ),
+            ),
+          ms,
+        );
+        if (typeof timer === "object" && "unref" in timer) {
+          (timer as any).unref();
+        }
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
  * round-59 (transient-abort wait-out): a 429-storm sets the process-wide
  * abort flag with a 120s TTL (rate-limiter). Any LLM call made while the
  * flag is fresh throws RateLimitAbortedError IMMEDIATELY — which turned a
@@ -86,6 +141,11 @@ export interface ChatOptions {
    *  it needs more (e.g. very long section generation) or less (short JSON
    *  responses to save tokens). */
   maxTokens?: number;
+  /** round-cs-3: hard per-call time budget in ms (default 300s). Guards
+   * against accepted-but-silent provider connections that would otherwise
+   * hang a pipeline stage forever. Short-JSON callers (knowledge batches,
+   * gap agents) should pass a tighter budget. */
+  timeoutMs?: number;
   /** Pipeline role for provider routing (round-66 generation/review split).
    *  "generate" (default) → the generation provider/model selection;
    *  "review" → the review selection, falling back to generate when unset.
@@ -225,22 +285,30 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
     //  - 60s cool-down when > 15 calls in 10 min
     //  - Exponential backoff on 429/5xx (1s/2s/4s/8s/16s, max 5 attempts)
     //  - Quota-exhaustion abort (reads x-ratelimit-user-daily-remaining)
+    // round-cs-3: the SDK call itself is raced against a hard deadline —
+    // only the CALL is budgeted (not the limiter's backoffs/cool-downs), so
+    // a stalled provider connection surfaces as ChatTimeoutError instead of
+    // freezing the stage forever.
     const response = await withAbortWaitout(() => withRateLimit(
       async (captureHeaders) => {
-        const r = await zai.chat.completions.create({
-          messages,
-          stream: false,
-          thinking: { type: opts.thinking ? "enabled" : "disabled" },
-          temperature: opts.temperature ?? 0.6,
-          // Honor a stored model override for zai-sdk too (e.g. glm-4.5).
-          ...(selectedModel ? { model: selectedModel } : {}),
-          // Explicit max_tokens — without this, the SDK may apply a low default
-          // (e.g. 4096) that truncates long outputs like gather's JSON query
-          // plan (which can legitimately need 8K+ tokens). Default 20480
-          // (round-41, was 16384); callers can override via opts.maxTokens,
-          // pipeline routes clamp to 4096–81920.
-          max_tokens: opts.maxTokens ?? 20480,
-        } as Parameters<typeof zai.chat.completions.create>[0]);
+        const r = await withHardTimeout(
+          zai.chat.completions.create({
+            messages,
+            stream: false,
+            thinking: { type: opts.thinking ? "enabled" : "disabled" },
+            temperature: opts.temperature ?? 0.6,
+            // Honor a stored model override for zai-sdk too (e.g. glm-4.5).
+            ...(selectedModel ? { model: selectedModel } : {}),
+            // Explicit max_tokens — without this, the SDK may apply a low default
+            // (e.g. 4096) that truncates long outputs like gather's JSON query
+            // plan (which can legitimately need 8K+ tokens). Default 20480
+            // (round-41, was 16384); callers can override via opts.maxTokens,
+            // pipeline routes clamp to 4096–81920.
+            max_tokens: opts.maxTokens ?? 20480,
+          } as Parameters<typeof zai.chat.completions.create>[0]),
+          opts.timeoutMs ?? DEFAULT_CHAT_TIMEOUT_MS,
+          "chat",
+        );
         // Capture rate-limit headers from the underlying response.
         try {
           const hdrs = (r as any)?._response?.headers ?? (r as any)?.headers;
@@ -388,18 +456,25 @@ export async function chatStream(
   // Streaming still consumes a quota slot — same token-bucket / cool-down /
   // 429-backoff applies. We only rate-limit the START of the stream (the SDK
   // call itself); once the stream body begins, we drain it normally below.
+  // round-cs-3: the SDK call is raced against a hard deadline (accepted-but-
+  // silent connections can never freeze the pipeline); the drain loop below
+  // carries its own per-read inactivity watchdog.
   const streamBody: any = await withAbortWaitout(() => withRateLimit(
     async (captureHeaders) => {
-      const r = await zai.chat.completions.create({
-        messages,
-        stream: true,
-        thinking: { type: opts.thinking ? "enabled" : "disabled" },
-        temperature: opts.temperature ?? 0.6,
-        // Explicit max_tokens for streaming too — section generation can produce
-        // 1000+ word sections that need 8K+ output tokens. Default 20480
-        // (round-41, was 16384); callers can override via opts.maxTokens.
-        max_tokens: opts.maxTokens ?? 20480,
-      } as Parameters<typeof zai.chat.completions.create>[0]);
+      const r = await withHardTimeout(
+        zai.chat.completions.create({
+          messages,
+          stream: true,
+          thinking: { type: opts.thinking ? "enabled" : "disabled" },
+          temperature: opts.temperature ?? 0.6,
+          // Explicit max_tokens for streaming too — section generation can produce
+          // 1000+ word sections that need 8K+ output tokens. Default 20480
+          // (round-41, was 16384); callers can override via opts.maxTokens.
+          max_tokens: opts.maxTokens ?? 20480,
+        } as Parameters<typeof zai.chat.completions.create>[0]),
+        opts.timeoutMs ?? DEFAULT_CHAT_TIMEOUT_MS,
+        "chatStream",
+      );
       try {
         const hdrs = (r as any)?._response?.headers ?? (r as any)?.headers;
         if (hdrs) captureHeaders(hdrs);
@@ -422,10 +497,20 @@ export async function chatStream(
   const decoder = new TextDecoder();
   let buffer = "";
   let accumulated = "";
+  // round-cs-3: per-read inactivity watchdog. A healthy stream delivers
+  // bytes at least every few seconds; thinking models can pause before the
+  // first content token, so the budget is generous (5 min) — but a stream
+  // that goes silent mid-drain surfaces as ChatTimeoutError instead of
+  // hanging the section loop forever.
+  const STREAM_INACTIVITY_MS = 300_000;
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await withHardTimeout(
+        reader.read(),
+        STREAM_INACTIVITY_MS,
+        "chatStream.read",
+      );
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
@@ -523,10 +608,17 @@ export async function webSearch(
   }
   try {
     const zai = await getAI();
-    const result = await zai.functions.invoke("web_search", {
-      query,
-      num,
-    });
+    // round-cs-3: same hung-fetch guard as the chat calls — the SDK's
+    // functions.invoke also carries no timeout, and a stalled web_search
+    // connection would freeze the gather stage's per-query loop.
+    const result = await withHardTimeout(
+      zai.functions.invoke("web_search", {
+        query,
+        num,
+      }),
+      90_000,
+      "webSearch",
+    );
     if (Array.isArray(result)) return result as WebSearchItem[];
     return [];
   } catch (err) {
@@ -649,7 +741,11 @@ export async function readPage(url: string): Promise<PageReadResult> {
   }
   try {
     const zai = await getAI();
-    const result: any = await zai.functions.invoke("page_reader", { url });
+    const result: any = await withHardTimeout(
+      zai.functions.invoke("page_reader", { url }),
+      90_000,
+      "readPage",
+    );
     const data = result?.data ?? result;
     // round-34: hosted page_reader often returns html without text (PMC,
     // many journal pages). Fall back to extracting text from the html (with

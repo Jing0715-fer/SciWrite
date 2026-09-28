@@ -36,6 +36,10 @@ export interface ChatSessionOptions {
   maxContextTokens?: number;
   /** Optional metadata to store with the message */
   metadata?: Record<string, any>;
+  /** round-cs-3: hard per-call time budget forwarded to chat()/chatStream().
+   * Short-JSON agents (knowledge batches, gap research) should pass a tight
+   * budget so a stalled provider connection can't freeze a silent stage. */
+  timeoutMs?: number;
 }
 
 /**
@@ -296,6 +300,7 @@ export async function chatWithSession(
         temperature: opts.temperature,
         thinking: opts.thinking,
         maxTokens: opts.maxTokens,
+        timeoutMs: opts.timeoutMs,
         role,
       },
       resumeSessionId,
@@ -511,6 +516,7 @@ export async function chatWithSessionStream(
         temperature: opts.temperature,
         thinking: opts.thinking,
         maxTokens: opts.maxTokens,
+        timeoutMs: opts.timeoutMs,
         role,
       },
       onChunk,

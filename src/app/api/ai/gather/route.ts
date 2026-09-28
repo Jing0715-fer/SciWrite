@@ -305,9 +305,15 @@ async function runVerify(body: GatherBody, sendLog: (msg: string) => void) {
     abstract: ds.abstract,
   }));
 
+  // round-cs-3: per-batch heartbeats — the LLM knowledge pass used to be
+  // completely silent between "PubMed backfill" and its summary, which read
+  // as a hang on large pools (one LLM round-trip per ~12 sources).
   const kv = await verifySourcesWithKnowledge(
     projectId, kvInputs, body.topic || project.topic, body.field || project.field || "life sciences",
-    { onLog: sendLog }
+    {
+      onLog: sendLog,
+      onProgress: (msg) => sendLog(msg),
+    }
   );
   sendLog(`LLM knowledge pass: ${kv.completions.length} sources assessed, ${kv.missing.length} gap suggestions.`);
 

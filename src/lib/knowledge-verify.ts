@@ -35,6 +35,8 @@
  */
 
 import { chatWithSession } from "@/lib/llm-session";
+import { ChatTimeoutError } from "@/lib/ai";
+import { RateLimitAbortedError, QuotaExhaustedError } from "@/lib/rate-limiter";
 import { queryDatabase, fetchPubMedSummaries, searchCrossref, lookupCrossrefDoi } from "@/lib/databases";
 import { safeParseJSON } from "@/lib/generate-full-helpers";
 
@@ -152,11 +154,32 @@ export async function verifySourcesWithKnowledge(
   sources: KVSourceInput[],
   topic: string,
   field: string,
-  opts: { batchSize?: number; maxMissing?: number; maxTokens?: number; onLog?: (msg: string) => void } = {}
+  opts: {
+    batchSize?: number;
+    maxMissing?: number;
+    maxTokens?: number;
+    onLog?: (msg: string) => void;
+    /** round-cs-3: live per-batch heartbeat so the [knowledge] stage never
+     * looks frozen — each batch is a full LLM round-trip (30-90s), and a
+     * 13-batch pass used to run ~15 min with ZERO events on the wire, which
+     * users reasonably read as a hang. (done/total are 1-based.) */
+    onProgress?: (msg: string, done: number, total: number) => void;
+    /** Hard per-batch time budget (default 150s). JSON fills are short —
+     * a batch that exceeds this is a stalled connection, not slow work. */
+    timeoutMs?: number;
+  } = {}
 ): Promise<KnowledgeVerifyResult> {
   const batchSize = opts.batchSize ?? 12;
   const maxMissing = opts.maxMissing ?? 8;
   const log = opts.onLog || (() => {});
+  const onProgress = opts.onProgress || (() => {});
+  const batchTimeoutMs = opts.timeoutMs ?? 150_000;
+  const totalBatches = Math.ceil(sources.length / batchSize);
+  let batchIndex = 0;
+  // round-cs-3: two consecutive hard timeouts = the provider is stalling
+  // every connection — skip the remaining batches instead of burning
+  // 150s × remaining on a dead endpoint.
+  let consecutiveTimeouts = 0;
 
   const completions: KVCompletion[] = [];
   const missingRaw: KVMissingSource[] = [];
@@ -220,13 +243,21 @@ Rules:
 Output JSON only.`;
 
     try {
+      batchIndex += 1;
+      onProgress(
+        `LLM knowledge pass — batch ${batchIndex}/${totalBatches}: assessing ${batch.length} sources (each batch is one LLM round-trip, ~30-90s)...`,
+        batchIndex,
+        totalBatches,
+      );
       const raw = await chatWithSession(projectId, prompt, {
         system,
         temperature: 0.2,
         taskType: "gather",
         maxTokens: opts.maxTokens,
+        timeoutMs: batchTimeoutMs,
         metadata: { step: "knowledge-verify", batch: Math.floor(b / batchSize) + 1, sources: batch.length },
       });
+      consecutiveTimeouts = 0;
       const parsed = safeParseJSON(raw, { sources: [], missing: [] });
 
       for (const s of parsed.sources || []) {
@@ -272,8 +303,26 @@ Output JSON only.`;
       log(`knowledge-verify: batch ${Math.floor(b / batchSize) + 1} failed: ${errMsg.slice(0, 120)}`);
       // Fail fast on process-wide aborts (429-quota / aborted-flag): trying
       // the remaining batches just produces a wall of identical errors.
-      if (/previous call aborted|quota exhausted|daily quota/i.test(errMsg)) {
-        const remaining = Math.ceil((sources.length - b) / batchSize) - 1;
+      // round-cs-3: structured instanceof checks (the old message-regex
+      // missed raw "429 Too Many Requests" errors, so a storm ground through
+      // every remaining batch at ~3.5 min each) + two-consecutive-timeout
+      // bail-out for stalled connections.
+      const stormAbort =
+        err instanceof RateLimitAbortedError ||
+        err instanceof QuotaExhaustedError ||
+        /previous call aborted|quota exhausted|daily quota|429|rate.?limit|too many requests/i.test(errMsg);
+      if (err instanceof ChatTimeoutError) {
+        consecutiveTimeouts += 1;
+        if (consecutiveTimeouts >= 2) {
+          const remaining = totalBatches - batchIndex;
+          if (remaining > 0) {
+            log(`knowledge-verify: provider stalling (${consecutiveTimeouts} consecutive timeouts) — skipping ${remaining} remaining batch(es)`);
+          }
+          break;
+        }
+      }
+      if (stormAbort) {
+        const remaining = totalBatches - batchIndex;
         if (remaining > 0) {
           log(`knowledge-verify: LLM unavailable — skipping ${remaining} remaining batch(es); database backfill is already applied`);
         }
