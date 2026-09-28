@@ -15,7 +15,7 @@ import {
   REPAIR_MAX_REVISIONS,
 } from "@/lib/v2-config";
 import { logger } from "@/lib/logger";
-import { webSearch } from "@/lib/ai";
+import { webSearchDetailed } from "@/lib/ai";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
 import { countWords, sanitizeSectionContent } from "@/lib/writing";
@@ -533,6 +533,26 @@ export async function POST(req: NextRequest) {
             db.reference.deleteMany({ where: { projectId } }),
           ]);
 
+          // round-cs-4 (OOM mitigation): a resumed run re-hydrated the FULL
+          // citation pool including full texts for sections that are already
+          // done — the resumed process started the memory race closer to the
+          // OOM cliff than the original run (observed: 9-section run dies at
+          // §9, its resume dies at §16 with everything re-loaded). Drop
+          // full-text entries no REMAINING section will cite.
+          try {
+            const firstPending = resume.sectionsDone?.length ?? 0;
+            const neededByRemaining = new Set<string>([""]);
+            for (let j = firstPending; j < sections.length; j++) {
+              for (const n of allocations[j]?.refIndices || []) {
+                const ref = curatedRefs[n - 1];
+                if (ref) neededByRemaining.add(ref.id || "");
+              }
+            }
+            for (const key of [...fullTexts.keys()]) {
+              if (!neededByRemaining.has(key)) fullTexts.delete(key);
+            }
+          } catch {}
+
           // (gather stats: the gather itself ran in the interrupted run —
           // count what it left in the DB so the completion stats stay honest)
           try {
@@ -784,9 +804,29 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           projectId, project.topic, project.field || "life sciences", targetWords, maxWebSearchQueries, maxTokens
         );
         const webItems: any[] = [];
+        // round-cs-4 (search diagnostics): track WHY searches come back
+        // empty — "0 results" was previously indistinguishable from a broken
+        // search API (429 storm) or a provider without hosted search. The
+        // counts surface in the per-query events and the gather summary.
+        const searchFailTally: Record<string, number> = {};
         for (let wi = 0; wi < webSearchQueries.length; wi++) {
           try {
-            const searchResults = await webSearch(webSearchQueries[wi], 10);
+            const outcome = await webSearchDetailed(webSearchQueries[wi], 10);
+            const searchResults = outcome.items;
+            if (outcome.reason) {
+              searchFailTally[outcome.reason] = (searchFailTally[outcome.reason] || 0) + 1;
+              if (outcome.reason === "provider-unavailable") {
+                // Every remaining query would no-op identically — skip the
+                // whole theater (N × 1s sleep) and say why, once.
+                send("step", {
+                  step: "gather",
+                  status: "progress",
+                  message: `Web search unavailable — the selected provider has no hosted search tool. Skipping remaining ${webSearchQueries.length - wi} planned query(ies); gathering continues on database queries.`,
+                });
+                log(`gather: web search disabled for the selected provider — skipping ${webSearchQueries.length - wi} remaining queries`);
+                break;
+              }
+            }
             for (const item of searchResults) {
               webItems.push({
                 source: "web",
@@ -807,10 +847,13 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
                 gatherMethod: "web",
               });
             }
+            const failNote = outcome.reason
+              ? ` (degraded: ${outcome.reason}${searchFailTally[outcome.reason] > 1 ? ` ×${searchFailTally[outcome.reason]}` : ""})`
+              : "";
             send("step", {
               step: "gather",
               status: "progress",
-              message: `Web search ${wi + 1}/${webSearchQueries.length}: "${webSearchQueries[wi].slice(0, 50)}" → ${searchResults.length} results`,
+              message: `Web search ${wi + 1}/${webSearchQueries.length}: "${webSearchQueries[wi].slice(0, 50)}" → ${searchResults.length} results${failNote}`,
             });
           } catch (webErr: any) {
             // FIX (silent-catch telemetry): failed web-search queries were
@@ -819,6 +862,16 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
             log(`gather: web search "${webSearchQueries[wi].slice(0, 40)}" failed: ${String(webErr?.message ?? webErr).slice(0, 100)}`);
           }
           await new Promise((r) => setTimeout(r, 1000));
+        }
+        const failTotal = Object.values(searchFailTally).reduce((a, b) => a + b, 0);
+        if (failTotal > 0) {
+          const breakdown = Object.entries(searchFailTally).map(([k, v]) => `${k}×${v}`).join(", ");
+          send("step", {
+            step: "gather",
+            status: "progress",
+            message: `Web search phase: ${failTotal}/${webSearchQueries.length} query(ies) degraded (${breakdown}) — database-gathered sources are unaffected.`,
+          });
+          log(`gather: web search degraded tally — ${breakdown}`);
         }
 
         // Dedup + save
@@ -2415,17 +2468,63 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             .slice(-24)
             .join("\n");
 
-          send("step", {
-            step: "generate",
-            status: "done",
-            section: sectionNum,
-            total: sections.length,
-            title: section.title,
-            wordCount: paragraph.wordCount,
-            citations: citedRefs.length,
-            message: `Section ${sectionNum} complete: ${paragraph.wordCount} words, ${citedRefs.length} verified citations (${Date.now() - sectionStart}ms).`,
-          });
-          log(`generate: section ${sectionNum} DONE (${paragraph.wordCount} words, ${citedRefs.length} citations, ${Date.now() - sectionStart}ms)`);
+          // ★ round-cs-4 (OOM mitigation — the "dies at section ~14-16" bug):
+          // the kernel OOM-killer murdered the dev server mid-article twice
+          // in one day (dmesg: next-server anon-rss ~2GB on a 3.9GB box),
+          // because the run's working set only ever GREW — full texts for all
+          // ~150 sources stayed resident even after every section that
+          // cited them had been written and checkpointed. Now, after each
+          // section: (1) drop full-text entries no REMAINING section needs
+          // (the checkpoint pool keeps its own copy — a resume re-hydrates),
+          // (2) opportunistically hint GC when exposed, (3) log the RSS
+          // watermark so the next incident is diagnosable from the run log.
+          try {
+            const stillNeeded = new Set<string>([""]);
+            for (let j = i + 1; j < sections.length; j++) {
+              for (const n of allocations[j]?.refIndices || []) {
+                const ref = curatedRefs[n - 1];
+                if (ref) stillNeeded.add(ref.id || "");
+              }
+            }
+            let prunedTexts = 0;
+            for (const key of fullTexts.keys()) {
+              if (!stillNeeded.has(key)) {
+                fullTexts.delete(key);
+                prunedTexts++;
+              }
+            }
+            if (typeof (globalThis as any).gc === "function") {
+              try { (globalThis as any).gc(); } catch {}
+            }
+            const rssMb = Math.round(process.memoryUsage().rss / 1048576);
+            const memNote = ` [mem ${rssMb}MB${prunedTexts > 0 ? `, −${prunedTexts} full texts` : ""}]`;
+            if (rssMb > 1536) {
+              // Early-warning once per section — the user sees memory climb
+              // in real time instead of a silent freeze when the OOM killer
+              // fires. Checkpointing is per-section, so a resume recovers.
+              send("step", {
+                step: "generate",
+                status: "progress",
+                section: sectionNum,
+                total: sections.length,
+                message: `Memory pressure: server RSS at ${rssMb}MB — full texts pruned to the remaining sections. If the run is interrupted it will resume from this section's checkpoint.`,
+              });
+            }
+            send("step", {
+              step: "generate",
+              status: "done",
+              section: sectionNum,
+              total: sections.length,
+              title: section.title,
+              wordCount: paragraph.wordCount,
+              citations: citedRefs.length,
+              message: `Section ${sectionNum} complete: ${paragraph.wordCount} words, ${citedRefs.length} verified citations (${Date.now() - sectionStart}ms).${memNote}`,
+            });
+            log(`generate: section ${sectionNum} DONE (${paragraph.wordCount} words, ${citedRefs.length} citations, ${Date.now() - sectionStart}ms${memNote})`);
+          } catch {
+            // memory bookkeeping must never fail a completed section
+            log(`generate: section ${sectionNum} DONE (${paragraph.wordCount} words, ${citedRefs.length} citations, ${Date.now() - sectionStart}ms)`);
+          }
         }
 
         if (generatedParagraphs.length === 0) {

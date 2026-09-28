@@ -39,15 +39,23 @@ export class ChatTimeoutError extends Error {
 const DEFAULT_CHAT_TIMEOUT_MS = 300_000;
 
 /**
- * Race a promise against a hard deadline. The losing promise is left to
- * settle in the background (the SDK fetch exposes no signal to cancel it);
- * its eventual result is dropped. The timer is unref'd so it can never hold
- * the process open.
+ * Race a promise against a hard deadline. round-cs-4 (OOM leak fix): when
+ * the race times out, the losing promise used to be left dangling with its
+ * socket + response body alive forever — under provider brown-outs dozens of
+ * abandoned SDK calls piled up undrained connections/buffers and pushed
+ * next-server RSS past the kernel OOM threshold mid-run (observed: run dies
+ * at section ~14-16, dmesg "Killed process next-server, anon-rss ~2GB").
+ * Now the loser gets an active cleanup:
+ *   - `onAbandon` runs immediately at timeout (caller may cancel a reader).
+ *   - a settle-hook attaches to the losing promise so the response body is
+ *     cancelled/dropped the moment it finally arrives, releasing the socket.
+ * The timer is unref'd so it can never hold the process open.
  */
 async function withHardTimeout<T>(
   p: Promise<T>,
   ms: number,
   label: string,
+  onAbandon?: () => void,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -68,6 +76,21 @@ async function withHardTimeout<T>(
         }
       }),
     ]);
+  } catch (err) {
+    if (err instanceof ChatTimeoutError) {
+      // Active + passive cleanup of the abandoned call.
+      try { onAbandon?.(); } catch {}
+      p.then(
+        (late) => {
+          try {
+            const body: any = (late as any)?._response?.body ?? (late as any)?.body;
+            if (body && typeof body.cancel === "function") body.cancel().catch?.(() => {});
+          } catch {}
+        },
+        () => {/* rejected loser — nothing to drain */},
+      );
+    }
+    throw err;
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -503,16 +526,31 @@ export async function chatStream(
   // that goes silent mid-drain surfaces as ChatTimeoutError instead of
   // hanging the section loop forever.
   const STREAM_INACTIVITY_MS = 300_000;
+  // round-cs-4 (OOM leak fix): a stream abandoned mid-drain (timeout, caller
+  // error, disconnect) used to keep its socket + buffered SSE frames alive
+  // via releaseLock() alone — which releases the lock but does NOT close the
+  // underlying connection. Under provider brown-outs these undrained
+  // streams accumulated and pushed the dev server past the OOM cliff
+  // mid-article. Now every non-normal exit cancels the stream, which closes
+  // the connection and frees its buffers.
+  let drainedNormally = false;
 
   try {
     while (true) {
-      const { done, value } = await withHardTimeout(
-        reader.read(),
-        STREAM_INACTIVITY_MS,
-        "chatStream.read",
-      );
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      try {
+        const { done, value } = await withHardTimeout(
+          reader.read(),
+          STREAM_INACTIVITY_MS,
+          "chatStream.read",
+        );
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+      } catch (readErr) {
+        // Watchdog fired (or read failed) — actively cancel the stream so
+        // the stalled connection is released instead of leaking.
+        try { reader.cancel().catch?.(() => {}); } catch {}
+        throw readErr;
+      }
 
       // SSE events are separated by DOUBLE newlines (r37: was split("\n") —
       // a multi-line `data:` frame would be split mid-payload and its lines
@@ -550,6 +588,7 @@ export async function chatStream(
         }
       }
     }
+    drainedNormally = true;
     // Flush any remaining buffered data
     if (buffer.trim()) {
       const trimmed = buffer.trim();
@@ -574,6 +613,13 @@ export async function chatStream(
       }
     }
   } finally {
+    if (!drainedNormally) {
+      // Abnormal exit (timeout/error thrown above or caller unwind) —
+      // cancel the underlying stream to release the connection. cancel()
+      // also releases the lock; the bare releaseLock() below stays as a
+      // safety net for the normal path.
+      try { reader.cancel().catch?.(() => {}); } catch {}
+    }
     try { reader.releaseLock(); } catch {}
   }
 
@@ -593,18 +639,28 @@ export interface WebSearchItem {
   favicon?: string;
 }
 
-export async function webSearch(
+/** Outcome of one web-search invocation, with the failure reason separated
+ * from "searched fine, found nothing". round-cs-4: 45 consecutive
+ * "→ 0 results" log lines with no explanation were undiagnosable — the
+ * searches were silently failing (429 storm) or no-op'ing (non-zai provider
+ * selected) while the UI read as "we searched, nothing exists". */
+export interface WebSearchOutcome {
+  items: WebSearchItem[];
+  /** undefined = healthy search. */
+  reason?: "provider-unavailable" | "rate-limit" | "timeout" | "error";
+  detail?: string;
+}
+
+export async function webSearchDetailed(
   query: string,
   num = 8
-): Promise<WebSearchItem[]> {
-  // Non-zai providers don't ship a native web-search tool. Returning [] keeps
-  // the pipeline alive (gather/compose will still run with database queries)
-  // and avoids throwing the misleading "z-ai-config not found" error.
+): Promise<WebSearchOutcome> {
+  // Non-zai providers don't ship a native web-search tool.
   // Web search is a gathering (generate-role) capability — checked against
   // the generate selection.
   if (!(await isZaiSelected("generate"))) {
     warnNoZaiTools("webSearch");
-    return [];
+    return { items: [], reason: "provider-unavailable", detail: "selected provider has no hosted web-search tool" };
   }
   try {
     const zai = await getAI();
@@ -619,12 +675,30 @@ export async function webSearch(
       90_000,
       "webSearch",
     );
-    if (Array.isArray(result)) return result as WebSearchItem[];
-    return [];
-  } catch (err) {
+    if (Array.isArray(result)) return { items: result as WebSearchItem[] };
+    // Non-array payloads (error objects, empty objects) previously read as
+    // "0 results" in the logs — surface the actual shape.
+    return {
+      items: [],
+      reason: "error",
+      detail: `unexpected payload: ${String(JSON.stringify(result)).slice(0, 120)}`,
+    };
+  } catch (err: any) {
+    const msg = String(err?.message ?? err);
     console.error("webSearch error:", err);
-    return [];
+    return {
+      items: [],
+      reason: err instanceof ChatTimeoutError ? "timeout" : /429|rate.?limit|too many/i.test(msg) ? "rate-limit" : "error",
+      detail: msg.slice(0, 120),
+    };
   }
+}
+
+export async function webSearch(
+  query: string,
+  num = 8
+): Promise<WebSearchItem[]> {
+  return (await webSearchDetailed(query, num)).items;
 }
 
 export interface PageReadResult {

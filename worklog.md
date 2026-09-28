@@ -3557,3 +3557,22 @@ Stage Summary:
 - 卡死根因 = "静默串行 LLM 批次 × 无超时 SDK 调用 × 429 fail-fast 漏判"三因叠加；四道修复后 knowledge 阶段从"最长 45 分钟零事件假死"变为"逐批心跳 + 单批 150s 硬预算 + 风暴 171s 优雅降级"，且 E2E 在真实 429 风暴中验证通过。
 - ClawsGO 式 agent 能力再进两步：gap agent 从单发升级为"合并→重审计→只追新缺口"的多轮自主检索；coherence polish 从单发升级为"修复→复审→再修复"的双 pass 闭环；adversarial verify 优先核查数值句并强制数字溯源 —— 直接针对"尤其避免科学性错误和文献引用错误"。
 - 全部改动非致命 + 风暴感知（abort 旗/断连即跳过），机械闸门逐轮原样执行；下次提供商恢复后 auto-iterate canary 将自动做全链路真实验证。
+
+---
+Task ID: CS-MAIN-5 (round-cs-4)
+Agent: main (Z.ai Code orchestrator)
+Task: 诊断"恢复运行到第 16 章再次中断"的根因并修复；继续 v2 管线可靠性打磨（OOM、泄漏、web search 静默零结果）。
+
+Work Log:
+- **根因诊断（用户两次中断）**：本机 dmesg 铁证 —— 09:09:46 UTC（= 上海 17:09:46）内核 OOM-killer 杀死 next-server（pid 1592，anon-rss 2.07GB，total-vm 22GB，3.9GB 机器）。08:39:23–09:09:53 的 auto-iterate round 2 canary 流水线跑满 30 分钟把 RSS 推过悬崖；用户当天 5000 词 TMC 运行同模式两次阵亡（首次 9 章后、恢复后 16 章处 —— 恢复把全部池重新载入内存，比原运行离悬崖更近）。次要异常（45 次 web search 全 0 结果）实锤：本机 webSearchDetailed 实测返回 reason:"rate-limit"（429 风暴）——旧代码把失败吞成"0 results"，用户无从分辨"没搜到"vs"搜索坏了"。
+- **佐证链**：dev.log 无恢复 POST 完成行（流式请求未完成不记录）；本机 DB（db/custom.db）今天零写入（mtime 09:13:06）、零 TaskRun/checkpoint/新段落 —— 用户运行的完整痕迹不在本副本（/tmp/my-project 为同 git 状态镜像，md5 相同）；两次自动提交 f51c6c5（09:09:56 auto-iterate round）与 c941d27（09:15:36 平台快照）均不含 TMC 数据。结论：用户预览连的是另一副本/实例（同一 3.9GB 硬件级别的 OOM 行为模式完全吻合）；修复入 git 推送后全实例共享。
+- **Fix 1（ai.ts 泄漏封堵）**：withHardTimeout 超时竞速的败者原来被永久遗弃（socket+响应体不释放）——风暴期数十个被弃调用把 RSS 推上悬崖。现在超时即触发 onAbandon + 对败者 promise 挂 settle-hook（响应体 cancel）；chatStream 排空循环读超时主动 reader.cancel()，异常退出 finally 里 cancel 流（releaseLock 不关连接的旧缺陷一并修复）。
+- **Fix 2（v2 路由内存瘦身）**：每章完成 + checkpoint 后，fullTexts 剪枝到"剩余章节仍需引用"的键集（"" 键保留）；恢复路径只水化剩余章节所需全文（原行为：全量重载，恢复运行比原运行死得更早）；每章 done 事件附带 `[mem XXXMB, −N full texts]` 水位；RSS>1.5GB 发 memory-pressure 进度事件（提示可从 checkpoint 恢复）；globalThis.gc 存在时机会性调用。
+- **Fix 3（web search 静默零结果）**：新 webSearchDetailed 返回 {items, reason: provider-unavailable|rate-limit|timeout|error, detail}；webSearch 保持向后兼容包装。gather 循环逐查询透出 degraded 原因（×计数）、provider-unavailable 时一次性跳过剩余查询（省 N×1s 假搜索）并明说原因、阶段末汇总 "N/M degraded (rate-limit×K…)"。
+- **Fix 4（dev-server 保活）**：mini-services/iterate-scheduler（3040，bun --hot 存活）新增 30s 原生 TCP 探测 ：3000（不发 HTTP，不触发编译）；连续 2 次失败 → 双检后 setsid 式重拉 `bun run dev`；60s 退避 + 每滚动小时 5 次上限；状态镜像 iteration-state/keepalive.json + dev-keepalive.log；/status 端点透出。OOM 再发生时：~60-90s 内预览自动复活，用户点 Resume 从章节 checkpoint 续跑（恢复机制当天已被用户验证有效——9 章恢复成功）。
+- **验证**：lint 0 errors（186 warnings 均遗留）；tsc 4 基线错误 0 新增；ai.ts 冒烟 —— webSearchDetailed 实时正确分类 429（rate-limit）、chatStream 假挂起流 1.5s 精确触发 ChatTimeoutError；iterate-scheduler 热重载成功、保活探针每 30s 准点跳动（keepalive.json lastProbeAt 滚动更新）、lastProbeOk:true；v2 路由空 body 探测 400 编译无错；agent-browser：主页 200、导览 Skip 后 AI Hub → Full Article 渲染完整（Task Brief/Examples/v2 选择器/TARGET WORD COUNT 5,000）、console 零错误零 page error。
+
+Stage Summary:
+- 两次中断根因 = 内核 OOM kill（RSS ~2GB 撞 3.9GB 上限）：v2 管线工作集只增不减（150 源全文常驻 + 被弃 LLM 调用的连接/缓冲泄漏）+ 恢复路径全量重载；auto-iterate canary 轮次同病（本机 09:09:46 铁证）。
+- 四道修复：泄漏封堵（超时败者主动 cancel）→ 内存单调增长打破（逐章剪枝 + 恢复按需水化 + 水位可观测）→ web search 失败不再假扮"0 结果"（原因透出 + 跳过假搜索）→ OOM 后果兜底（dev-server 30s 探测自动复活，用户从 checkpoint 续跑）。
+- 全部改动非致命（内存簿记 try/catch 包裹，绝不失败已完成的章节）；保活有退避与上限，不会 fork-loop。
