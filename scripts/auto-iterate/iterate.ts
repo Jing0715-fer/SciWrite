@@ -78,17 +78,21 @@ function log(msg: string) {
   console.log(`[${new Date().toISOString().slice(11, 19)}] ${msg}`);
 }
 
-function readJson<T>(path: string): T | null {
+function readJson<T>(p: string): T | null {
   try {
-    return JSON.parse(fs.readFileSync(path, "utf8")) as T;
+    return JSON.parse(fs.readFileSync(p, "utf8")) as T;
   } catch {
     return null;
   }
 }
 
-function writeText(path: string, text: string) {
-  fs.mkdirSync(path.dirname(path), { recursive: true });
-  fs.writeFileSync(path, text);
+function writeText(filePath: string, text: string) {
+  // ★ round-cs-2 bugfix: the parameter was previously named `path`, shadowing
+  // the `path` module import — `path.dirname(path)` then crashed with
+  // "path.dirname is not a function" and FATALed the round's report/push
+  // stage (scripts/auto-iterate/iterate.ts:90, worklog CS-MAIN-2 incident).
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, text);
 }
 
 // ---------- lockfile ----------

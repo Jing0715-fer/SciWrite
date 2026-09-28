@@ -3516,3 +3516,22 @@ Work Log:
 Stage Summary:
 - main 分支现包含 Atelier v2 + Canvas + round-68 修复 + round-cs-1 全部升级（运行时间线/任务简报/Verified 徽章/模型快照）；双分支漂移风险消除。
 - worklog.md 3502+ 行完整保留于 main；db/custom.db 为最新 live 数据。
+
+---
+Task ID: CS-MAIN-3 (round-cs-2)
+Agent: main (Z.ai Code orchestrator)
+Task: 修复bug + 吸收 ClawsGO 优势升级生成管线 — 从"一次性生成、前后章独立"升级为"agent 自主补检索 + 全文上下文反复打磨"，重点防科学性错误与文献引用错误。
+
+Work Log:
+- **Bug 修复**：scripts/auto-iterate/iterate.ts:90 `writeText(path, text)` 参数遮蔽 path 模块导入 → `path.dirname(path)` 崩溃（CS-MAIN-2 记录的 FATAL 根因，round 收尾的 rounds.md 提交/推送因此未执行）。重命名为 filePath；readJson 的同型遮蔽一并改为 p。
+- **STEP 3.5 Research Gap Agent（长时间自主收集信息）**：新模块 src/lib/research-gap.ts。计划(STEP 3)之后、证据分析(STEP 4)之前：①identifyEvidenceGaps — LLM 对照"大纲承诺 vs 各章已分配文献标题"找 ≤3 个可检索的具体证据缺口；零分配文献的章节机械强制入列 ②runGapResearch — 每缺口 ≤2 条定向检索（PubMed + web），三重去重（externalId/URL/归一化标题）对全池，LLM 相关性门控（失败确定性降级为仅 PubMed 结果），≤6 条新文献经 source-tier 门控后并入 curatedRefs + 目标章节 refIndices，并持久化 DataSource/Reference 行（Data 面板可见 gatherMethod:"gap-agent"）。全阶段非致命 + 双风暴守卫（abort 旗已升起时整段跳过，不烧 5×≤30s 重试预算）。
+- **STEP 6 章节联系升级（前后章彼此联系）**：写作 prompt 新增 "SECTIONS STILL TO COME"（后续各章标题+focus — 本章只许一句话前向指引，不得提前展开后章内容）与 ARTICLE CONNECTEDNESS 规则（§2+ 必须一句桥接句衔接前章；术语/缩写/残基编号跨章一致；与既有 NO REPETITION 规则互补）。
+- **STEP 8.6 Whole-Article Coherence Polish（不断根据上下文打磨）**：新模块 src/lib/coherence-polish.ts。修复循环(8.5)后、翻译前：①reviewArticleCoherence — 一次 LLM 全文评审，只找跨章缺陷六类：repetition/contradiction/terminology/numeric/transition/cross-ref（≤10 条，必须点名涉及章节并引用原文）②polishArticleCoherence — 每个受影响章节（≤5）独立重编辑，携带前章结尾+后章开头上下文；四重机械闸门后采纳：引用集守卫（禁止新增引用，删除合法→确定性孤儿清理+重编号）、标题钉死、revisionGuard 字数/引用下限、globalRefs 重同步（匹配前次列表）。发现无论修复与否都持久化为 Review 行（verdict accept/minor-revision），修复循环轮次之后编号。
+- **前端**：v2 STEPS 进度条插入 gapAgent（SearchCheck 图标，plan 后）与 polish（Sparkles 图标，repair 后）两步；progress-tracker 注册新阶段权重（0.6/0.9）；run-timeline-dialog STEP_LABEL_KEYS + i18n 双语词条（EN: "Gap agent — targeted research"/"Coherence polish"；ZH: "缺口补检索"/"全文连贯性打磨"）；oneClick.stepGapAgent/stepPolish 双语词条。run-recorder/send 漏斗零改动自动记录新步骤。
+- **验证**（提供商正处 429 风暴，全真实管线 E2E 留给下次 canary round）：tsc 4 个基线错误（0 新增，均为分支遗留）；lint 0 errors；模块导入冒烟 OK；**gap agent 机械链路真实验证** — 真实 PubMed 检索 GPX4 结构 2 查询执行、去重生效、LLM 门控遇 429 风暴后确定性降级为仅 PubMed 候选（真实 PMID 41422090/35298177 返回，耗时 302s → 促成风暴守卫优化）；coherence 纯机械路径冒烟（splitBodySections/distinctCitations/重建往返）；agent-browser：种子 TaskRun（17 步含 gapAgent 3 事件 + polish 2 事件）→ 时间线对话框 EN/ZH 标签渲染正确、390px 无溢出、console 零错误、种子已删；v2 路由空 body 探测 400 + 运行时编译 409ms 无错。
+- dev.log 仅既有 Edge Runtime 警告；/api/projects 200。
+
+Stage Summary:
+- v2 管线从"gather 一次→各章独立写→逐条校验"升级为三段 agent 化闭环：计划后自主补检索（STEP 3.5 缺口 agent，像人类作者边写边查）、写作时前后章互相感知（已知 claims + 未来章节提纲 + 桥接句规则）、成稿后全文连贯性打磨（STEP 8.6，跨章重复/矛盾/术语漂移/数值不一致/断裂过渡/错误指引六类缺陷 + 带邻章上下文的逐章重编辑）。
+- 科学性/引用准确性新增三道防线：缺口 agent 保证"大纲承诺的内容必有文献支撑"（从源头减少无据断言）；打磨的引用集守卫机械禁止 LLM 借机加引用；coherence 的 contradiction/numeric 检查专抓跨章科学性不一致（同一数值两个版本、机制方向矛盾）。
+- 全部新阶段非致命 + 风暴感知（429 abort 旗下自动跳过不烧预算），空手而归时池/文章原样；下次 auto-iterate canary（提供商恢复后）即自动做全链路真实验证。

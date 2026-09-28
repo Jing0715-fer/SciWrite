@@ -60,6 +60,7 @@ import { partitionCitablePool } from "@/lib/source-tier";
 // "here are the problems, go fix them yourself".
 import {
   actionableFindings,
+  distinctCitations,
   renormalizeArticleCitations,
   restoreOriginalHeadings,
   revisionGuard,
@@ -90,6 +91,22 @@ import {
 // round-cs-1 (ClawsGO-inspired "可追溯可复现"): persist a replayable
 // per-step timeline for every pipeline launch — see lib/run-recorder.ts.
 import { TaskRunRecorder } from "@/lib/run-recorder";
+// round-cs-2 (ClawsGO-inspired 长时间自主收集信息): research gap agent —
+// after the outline is planned, audit it against the allocated evidence
+// and run targeted supplementary searches for uncovered claims.
+import {
+  identifyEvidenceGaps,
+  runGapResearch,
+  GAP_AGENT_MAX_NEW_REFS,
+  GAP_AGENT_POOL_CEILING,
+} from "@/lib/research-gap";
+// round-cs-2 (不断根据上下文打磨): whole-article coherence pass — cross-section
+// review (repetition/contradiction/terminology/numeric/transition/cross-ref)
+// followed by context-aware per-section polishing, guarded mechanically.
+import {
+  reviewArticleCoherence,
+  polishArticleCoherence,
+} from "@/lib/coherence-polish";
 
 export const runtime = "nodejs";
 export const maxDuration = 1800; // 30 minutes — streaming keeps connection alive
@@ -142,6 +159,17 @@ interface GenerateFullV2Body {
 
 /** Conservative removal verdict for the adversarial verify stage. */
 const VERIFY_REMOVE_VERDICT = "UNSUPPORTED";
+
+/** Match a gap-research candidate back to its normalized pool ref (by
+ * externalId or normalized title — the merge keeps both in sync). */
+function titleMatchesGapRef(cand: { externalId?: string | null; title: string }, ref: any): boolean {
+  const ce = String(cand.externalId || "").trim();
+  const re = String(ref?.externalId || ref?.url || "").trim();
+  if (ce && re && ce === re) return true;
+  const ct = String(cand.title || "").toLowerCase().replace(/\s+/g, " ").slice(0, 90);
+  const rt = String(ref?.title || "").toLowerCase().replace(/\s+/g, " ").slice(0, 90);
+  return !!ct && ct === rt;
+}
 // VERIFY_BATCH_SIZE / VERIFY_REMOVE_CONFIDENCE / maxCitableRefs constants
 // live in @/lib/v2-config (single source of truth for pipeline tuning).
 
@@ -191,6 +219,9 @@ export async function POST(req: NextRequest) {
         { step: "score", weight: 0.9 },
         { step: "curate", weight: 0.7 },
         { step: "plan", weight: 0.9 },
+        // round-cs-2: gap agent between plan and analyze — usually quick
+        // (≤3 gaps × ≤2 searches), occasionally skipped.
+        { step: "gapAgent", weight: 0.6 },
         { step: "analyze", weight: 1.1 },
         { step: "allocate", weight: 0.2 },
         // generate+verify interleave PER SECTION — consecutive loop phases
@@ -203,6 +234,8 @@ export async function POST(req: NextRequest) {
         // external fact-check + peer review + surgical revision run BEFORE
         // the Chinese half exists (the final EN text is translated once).
         { step: "repair", weight: 1.2 },
+        // round-cs-2: whole-article coherence polish after the repair loop.
+        { step: "polish", weight: 0.9 },
         ...(trackerBothMode ? [{ step: "translate", unitWeight: 0.75 }] : []),
       ]);
       const send = (event: string, data: any) => {
@@ -267,6 +300,10 @@ export async function POST(req: NextRequest) {
         uncitedAssertionRetries: 0,
         citationsUnverified: 0,
         outOfRangeCitationsStripped: 0,
+        // round-cs-2: research gap agent telemetry (STEP 3.5)
+        gapAgent: null as { gaps: number; queries: number; newRefs: number } | null,
+        // round-cs-2: coherence polish telemetry (STEP 8.6)
+        coherencePolish: null as { findings: number; revisedSections: number; triggered: boolean } | null,
       };
 
       // Hoisted for the catch block's failure-recovery logic (try-block
@@ -1377,6 +1414,215 @@ Output JSON only.`;
           `plan: citation map — ${citationPlanSummary.totalPlanned}/${curatedRefs.length} cited, coreCovered=${citationPlanSummary.coreCovered}, coreMissing=${citationPlanSummary.coreMissing}, toppedUp=${citationPlanSummary.toppedUp}`
         );
 
+        // ============ STEP 3.5 (round-cs-2): ★ Research Gap Agent ============
+        // ClawsGO-inspired autonomous research: the initial gather (STEP 1)
+        // runs BEFORE the outline exists, so it cannot know what the outline
+        // will later need. This stage re-examines the PLANNED outline against
+        // the references actually allocated to each section and, where a
+        // section promises evidence no allocated source provides, executes
+        // TARGETED supplementary searches (PubMed + web) and merges the
+        // survivors into the pool — the way a human writer keeps searching
+        // while drafting. Bounded (≤3 gaps, ≤2 queries/gap, ≤6 new refs) and
+        // strictly non-fatal: any failure leaves the pool untouched.
+        send("step", {
+          step: "gapAgent",
+          status: "started",
+          message: "Research gap agent: auditing the outline against the allocated evidence...",
+        });
+        // Storm guard: if the rate limiter already hoisted the abort flag
+        // (account-level 429 storm), the identify call would just burn its
+        // 5×≤30s retry budget — skip the stage entirely; the section loop's
+        // own abort handling takes over from here.
+        if (isAborted() || clientDisconnected) {
+          send("step", {
+            step: "gapAgent",
+            status: "skipped",
+            message: `Gap agent skipped — ${clientDisconnected ? "client disconnected" : "provider rate-limit abort"}; the pipeline continues with the curated pool.`,
+          });
+          log("gapAgent: skipped (rate-limit abort flag set at stage start)");
+        } else
+        try {
+          const gapIdentify = await identifyEvidenceGaps(
+            projectId,
+            sections,
+            curatedRefs,
+            project.topic,
+            project.field || "life sciences",
+            { maxTokens },
+          );
+          const poolBudget = Math.max(0, GAP_AGENT_POOL_CEILING - curatedRefs.length);
+          const gapBudget = Math.min(GAP_AGENT_MAX_NEW_REFS, poolBudget);
+
+          if (gapIdentify.gaps.length === 0) {
+            send("step", {
+              step: "gapAgent",
+              status: "done",
+              gapsFound: 0,
+              message: gapIdentify.llmError
+                ? `Gap agent: identification unavailable (${gapIdentify.llmError}) — pool unchanged.`
+                : `Gap audit clean: every section's focus is supported by its allocated references — no supplementary retrieval needed.`,
+            });
+            log(`gapAgent: no gaps identified${gapIdentify.llmError ? ` (identify error: ${gapIdentify.llmError})` : ""}`);
+          } else if (gapBudget <= 0) {
+            send("step", {
+              step: "gapAgent",
+              status: "done",
+              gapsFound: gapIdentify.gaps.length,
+              message: `Gap agent found ${gapIdentify.gaps.length} gap(s) but the curated pool is at the analyze ceiling (${curatedRefs.length} refs) — no room for additions.`,
+            });
+            log(`gapAgent: ${gapIdentify.gaps.length} gaps found but pool at ceiling (${curatedRefs.length}) — skipped`);
+          } else {
+            send("step", {
+              step: "gapAgent",
+              status: "progress",
+              gapsFound: gapIdentify.gaps.length,
+              message: `${gapIdentify.gaps.length} evidence gap(s) identified${gapIdentify.mechanicalGaps > 0 ? ` (${gapIdentify.mechanicalGaps} section(s) with zero allocated refs)` : ""} — running targeted searches...`,
+              detail: gapIdentify.gaps.map((g: any) => `§${g.sectionIndex + 1} ${g.sectionTitle}: ${g.gap}`).join("\n"),
+            });
+            const gapResearch = await runGapResearch(projectId, project.topic, gapIdentify.gaps, deduped.refs, {
+              maxNewRefs: gapBudget,
+              maxTokens,
+              onProgress: (m) => send("step", { step: "gapAgent", status: "progress", message: `Gap agent: ${m}` }),
+            });
+
+            if (gapResearch.candidates.length === 0) {
+              send("step", {
+                step: "gapAgent",
+                status: "done",
+                gapsFound: gapIdentify.gaps.length,
+                queriesRun: gapResearch.queriesRun,
+                newRefs: 0,
+                message: `Gap agent ran ${gapResearch.queriesRun} supplementary search(es) but every result was a duplicate or off-topic — pool unchanged.`,
+              });
+              log(`gapAgent: 0 new refs (${gapResearch.queriesRun} queries, ${gapResearch.rejected.length} rejected)`);
+            } else {
+              // Score the newcomers (coverage-backfill pattern: a gap-filled
+              // ref is deliberately core) so downstream score consumers stay
+              // aligned with the pool array.
+              let newRefs: any[] = gapResearch.candidates.map((c) => ({
+                type: c.source === "web" ? "web" : "pubmed",
+                externalId: c.externalId || c.url,
+                title: c.title,
+                authors: c.authors || null,
+                journal: c.journal || null,
+                year: c.year || null,
+                url: c.url || null,
+                doi: c.doi || null,
+                abstract: c.abstract || null,
+                extra: c.extra,
+              }));
+              let newScores = newRefs.map((r) => ({ ...synthesizeBackfillScore(r), reason: "gap-agent backfill — fills an outline evidence gap" }));
+
+              // The tier gate faces web candidates too (the same
+              // hospital/news/encyclopedia junk the STEP 2.2 gate rejects).
+              const gapTier = partitionCitablePool(newRefs, newScores as any);
+              if (gapTier.dropped.length > 0 && !gapTier.fellBackToUnfiltered) {
+                log(
+                  `gapAgent: tier gate dropped ${gapTier.dropped.length} non-primary web source(s) — ` +
+                    gapTier.dropped.map((d) => `[${d.reason}] ${String(d.ref?.title || "").slice(0, 50)}`).join(" | "),
+                );
+                newRefs = gapTier.keptRefs;
+                newScores = gapTier.keptScores;
+              }
+
+              // Persist (Data panel + References table) — same shape as gather.
+              for (let ni = 0; ni < newRefs.length; ni++) {
+                const c = gapResearch.candidates.find(
+                  (x) => titleMatchesGapRef(x, newRefs[ni]),
+                );
+                const nr = newRefs[ni];
+                try {
+                  const ds = await db.dataSource.create({
+                    data: {
+                      projectId,
+                      source: c?.source || "pubmed",
+                      query: c?.queryUsed || "gap-agent supplementary search",
+                      rawJson: JSON.stringify({ items: [{ ...nr, gatherMethod: "gap-agent" }] }),
+                      title: nr.title,
+                      externalId: nr.externalId || null,
+                      url: nr.url || null,
+                      authors: nr.authors || null,
+                      journal: nr.journal || null,
+                      year: nr.year || null,
+                      doi: nr.doi || null,
+                      abstract: nr.abstract || null,
+                      extra: nr.extra ? JSON.stringify(nr.extra) : null,
+                      pinned: true,
+                    },
+                  });
+                  savedDataSources.push(ds);
+                  const ref = await db.reference.create({
+                    data: {
+                      type: c?.source === "web" ? "web" : "pubmed",
+                      externalId: nr.externalId || nr.url,
+                      title: nr.title,
+                      authors: nr.authors || null,
+                      journal: nr.journal || null,
+                      year: nr.year || null,
+                      url: nr.url || null,
+                      doi: nr.doi || null,
+                      abstract: nr.abstract || null,
+                      projectId,
+                    },
+                  });
+                  savedReferences.push(ref);
+                } catch (persistErr: any) {
+                  log(`gapAgent: persist failed for "${String(nr.title).slice(0, 50)}": ${String(persistErr?.message ?? persistErr).slice(0, 100)}`);
+                }
+              }
+
+              // Merge: append to the curated pool + extend the target
+              // sections' citation maps (new indices continue after the pool).
+              const baseIndex = curatedRefs.length;
+              const appendedTitles: string[] = [];
+              for (let ni = 0; ni < newRefs.length; ni++) {
+                curatedRefs.push(newRefs[ni]);
+                newScores[ni].index = baseIndex + ni + 1;
+                curatedScores.push(newScores[ni]);
+                appendedTitles.push(`[${baseIndex + ni + 1}] ${String(newRefs[ni].title).slice(0, 70)}`);
+                const gi = gapResearch.candidates.find(
+                  (x) => titleMatchesGapRef(x, newRefs[ni]),
+                )?.gapIndex;
+                if (gi != null && gapIdentify.gaps[gi]) {
+                  const target = sections[gapIdentify.gaps[gi].sectionIndex];
+                  if (target && Array.isArray(target.refIndices) && target.refIndices.length < 12) {
+                    target.refIndices.push(baseIndex + ni + 1);
+                  } else if (target) {
+                    if (!Array.isArray(target.refIndices)) target.refIndices = [];
+                    if (target.refIndices.length < 12) target.refIndices.push(baseIndex + ni + 1);
+                  }
+                }
+              }
+              stats.gapAgent = {
+                gaps: gapIdentify.gaps.length,
+                queries: gapResearch.queriesRun,
+                newRefs: newRefs.length,
+              };
+              send("step", {
+                step: "gapAgent",
+                status: "done",
+                gapsFound: gapIdentify.gaps.length,
+                queriesRun: gapResearch.queriesRun,
+                newRefs: newRefs.length,
+                message: `Gap agent: ${gapIdentify.gaps.length} gap(s) → ${gapResearch.queriesRun} targeted search(es) → ${newRefs.length} new reference(s) merged into the pool and allocated to their sections.`,
+                detail: appendedTitles.join("\n"),
+              });
+              log(
+                `gapAgent: ${gapIdentify.gaps.length} gaps → ${gapResearch.queriesRun} queries → ${newRefs.length} refs merged (${appendedTitles.join(" | ")})`,
+              );
+            }
+          }
+        } catch (gapErr: any) {
+          // Non-fatal by contract: the pipeline continues with the pool as
+          // curation built it.
+          log(`gapAgent: FAILED — ${String(gapErr?.message ?? gapErr).slice(0, 160)}`);
+          send("step", {
+            step: "gapAgent",
+            status: "skipped",
+            message: `Gap agent skipped after an error (the pipeline continues unchanged): ${gapErr?.message?.slice(0, 80) || "LLM error"}.`,
+          });
+        }
+
         // ============ STEP 4: ★ Analyze — extract evidence bank ============
         // round-42: full texts ride along — refs whose full text was fetched
         // get a ~900-char excerpt in the analysis prompt, so their extracted
@@ -1557,9 +1803,17 @@ Output JSON only.`;
             .slice(0, i)
             .map((s: any, j: number) => `§${j + 1}: ${s.title}`)
             .join("\n");
+          // ★ round-cs-2 (前后章联系): the writer now also sees the sections
+          // STILL TO COME — so it stops "stealing the thunder" of later
+          // chapters (detailed mechanisms that §7 owns showing up in §2) and
+          // instead defers them explicitly, the way a coherent review flows.
+          const upcomingSections = sections
+            .slice(i + 1)
+            .map((s: any, j: number) => `§${i + 2 + j}: ${s.title} — ${String(s.focus || "").slice(0, 90)}`)
+            .join("\n");
           const continuityBlock = previousSectionsDigest
-            ? `\nFULL OUTLINE OF SECTIONS ALREADY WRITTEN (do NOT repeat their content or re-open their examples):\n${allPreviousTitles}\n\nCLAIMS ALREADY ESTABLISHED IN RECENT SECTIONS (do NOT restate these — not even in reworded form):\n${previousSectionsDigest}\n`
-            : "";
+            ? `\nFULL OUTLINE OF SECTIONS ALREADY WRITTEN (do NOT repeat their content or re-open their examples):\n${allPreviousTitles}\n\nCLAIMS ALREADY ESTABLISHED IN RECENT SECTIONS (do NOT restate these — not even in reworded form):\n${previousSectionsDigest}\n\nSECTIONS STILL TO COME (later sections own this content — mention it only as a brief forward pointer like "discussed in detail in a later section", never in detail):\n${upcomingSections || "(this is the final section)"}\n`
+            : `\nSECTIONS STILL TO COME (later sections own this content — mention it only as a brief forward pointer, never in detail):\n${upcomingSections || "(this is the final section)"}\n`;
 
           const prompt = `RESEARCH TOPIC: ${project.topic}
 SECTION ${sectionNum} of ${sections.length}: ${section.title}
@@ -1614,6 +1868,18 @@ NO REPETITION ACROSS SECTIONS (round-15):
   allocated references. When two sections would naturally cite the same
   reference for the same fact, let the more topical section own that fact and
   let the other section skip it entirely.
+
+ARTICLE CONNECTEDNESS (round-cs-2 — this is ONE article, not independent chapters):
+- For sections 2+: open with ONE short bridging sentence that connects this
+  section to the preceding one (the arc of the argument — no new claims, no
+  citations in the bridge).
+- Where this section's topic borders on a LATER section's scope (see
+  "SECTIONS STILL TO COME"), defer it explicitly ("...is examined in detail
+  in a later section") instead of covering it now.
+- Keep terminology and notation CONSISTENT with earlier sections: the same
+  entity must be called the same name/abbreviation throughout (define an
+  abbreviation once, then reuse it), and the same quantity keeps the same
+  units and residue-numbering convention.
 
 EVIDENCE FIDELITY:
 - Write FROM the VERIFIED EVIDENCE claims listed above — those claims were
@@ -2582,6 +2848,285 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           });
         }
 
+        // ============ STEP 8.6 (round-cs-2): ★ Whole-article coherence polish ============
+        // The repair loop (8.5) is CLAIM-scoped: it checks individual facts
+        // against individual sources. What it cannot see is the article AS A
+        // WHOLE — near-duplicate claims living in two sections, the same
+        // quantity stated with two values, a protein renamed mid-article,
+        // missing bridges between chapters, and quiet contradictions between
+        // sections that were written independently (each saw only a digest of
+        // the others). This pass reviews the FULL body for exactly those
+        // cross-section defects, then re-edits each affected section WITH its
+        // neighbors' edges (context-aware polishing — 不断根据上下文打磨).
+        // Mechanical gauntlet after: citation-set preservation (additions
+        // forbidden), deterministic renormalization, heading pinning, and the
+        // revision guard. Non-fatal: any failure keeps the article exactly as
+        // the repair loop left it.
+        const polishTelemetry = {
+          reviewRan: false,
+          findings: 0,
+          findingsAddressed: 0,
+          revisedSections: 0,
+          triggered: false,
+          stopReason: "",
+        };
+        let coherenceReviewRow: {
+          verdict: string;
+          summary: string;
+          weaknesses: string[];
+          suggestions: string[];
+          revisedContent: string | null;
+        } | null = null;
+        send("step", {
+          step: "polish",
+          status: "started",
+          message: "Coherence pass: reviewing the full article for cross-section issues (repetition, contradictions, terminology drift, broken bridges)...",
+        });
+        // Storm guard: same rationale as the gap agent — an abort-flagged run
+        // must not burn the coherence review's retry budget.
+        if (isAborted() || clientDisconnected) {
+          send("step", {
+            step: "polish",
+            status: "skipped",
+            message: `Coherence pass skipped — ${clientDisconnected ? "client disconnected" : "provider rate-limit abort"}; the article stands as repaired.`,
+          });
+          log("polish: skipped (rate-limit abort flag set at stage start)");
+        } else
+        try {
+          const coherence = await reviewArticleCoherence(
+            projectId,
+            { title: articleTitle, content: articleContent },
+            { topic: project.topic, maxTokens },
+          );
+          if (!coherence.ran) {
+            polishTelemetry.stopReason = coherence.error
+              ? `review unavailable (${coherence.error})`
+              : coherence.summary || "not applicable";
+            send("step", {
+              step: "polish",
+              status: "skipped",
+              message: `Coherence pass skipped: ${polishTelemetry.stopReason}.`,
+            });
+            log(`polish: skipped — ${polishTelemetry.stopReason}`);
+          } else if (coherence.findings.length === 0) {
+            polishTelemetry.reviewRan = true;
+            polishTelemetry.stopReason = "article already coherent — no cross-section findings";
+            coherenceReviewRow = {
+              verdict: "accept",
+              summary: `[Coherence pass] ${coherence.summary || "No cross-section defects found."}`,
+              weaknesses: [],
+              suggestions: [],
+              revisedContent: null,
+            };
+            send("step", {
+              step: "polish",
+              status: "done",
+              findings: 0,
+              message: `Coherence pass: ${coherence.summary || "no cross-section defects found"} — the article reads as one connected piece.`,
+            });
+            log(`polish: clean — ${coherence.summary}`);
+          } else {
+            polishTelemetry.reviewRan = true;
+            polishTelemetry.findings = coherence.findings.length;
+            const kinds = [...new Set(coherence.findings.map((f) => f.type))].join(", ");
+            send("step", {
+              step: "polish",
+              status: "progress",
+              findings: coherence.findings.length,
+              message: `${coherence.findings.length} cross-section finding(s) (${kinds}) — polishing the affected sections with full-article context...`,
+              detail: coherence.findings
+                .map((f) => `[${f.type}] §${f.sections.join(",§")}: ${f.description.slice(0, 110)}`)
+                .join("\n"),
+            });
+            log(`polish: ${coherence.findings.length} finding(s) — ${coherence.findings.map((f) => `${f.type}@§${f.sections.join("/")}`).join(" | ")}`);
+
+            const polish = await polishArticleCoherence(
+              projectId,
+              { title: articleTitle, content: articleContent },
+              coherence.findings,
+              {
+                topic: project.topic,
+                maxTokens,
+                onProgress: (m) => send("step", { step: "polish", status: "progress", message: `Coherence polish: ${m}` }),
+              },
+            );
+
+            const coherenceWeaknesses = coherence.findings.map(
+              (f) => `[${f.type}] §${f.sections.join(",§")}: ${f.description}`,
+            );
+            const coherenceSuggestions = coherence.findings.map(
+              (f) => `§${f.sections[f.sections.length - 1]}: ${f.suggestion || "(apply the minimal consistent fix)"}`,
+            );
+
+            if (!polish.ok || !polish.content) {
+              polishTelemetry.stopReason = `polish unavailable: ${polish.reason}`;
+              coherenceReviewRow = {
+                verdict: "minor-revision",
+                summary: `[Coherence pass] ${coherence.findings.length} cross-section finding(s) could not be auto-polished (${polish.reason}) — disclosed for manual attention.`,
+                weaknesses: coherenceWeaknesses,
+                suggestions: coherenceSuggestions,
+                revisedContent: null,
+              };
+              send("step", {
+                step: "polish",
+                status: "done",
+                findings: coherence.findings.length,
+                revisedSections: 0,
+                message: `Coherence pass: ${coherence.findings.length} finding(s) remain (auto-polish unavailable: ${polish.reason}) — disclosed in the Review tab.`,
+              });
+              log(`polish: NOT applied — ${polish.reason}`);
+            } else {
+              // --- Mechanical gauntlet (same philosophy as the repair loop) ---
+              // #1 Citation preservation: the polish contract forbids ADDING
+              //    citations; removals are legitimate (deduplication) and are
+              //    handled by the deterministic renormalizer below.
+              const preSplit = splitBodyAndReferences(articleContent);
+              const postSplitRaw = splitBodyAndReferences(polish.content);
+              const before = distinctCitations(preSplit.body, globalRefs.length);
+              const after = distinctCitations(postSplitRaw.body, globalRefs.length);
+              const added = [...after].filter((n) => !before.has(n));
+              // #2 Deterministic renormalization (orphan drop + renumber).
+              const norm = renormalizeArticleCitations(polish.content);
+              const postSplit = splitBodyAndReferences(norm.content);
+              // #3 Heading pinning (bilingual structure depends on the
+              //    original headings — the ZH compose builds from titles).
+              const polishSectionTitles = generatedParagraphs.map(
+                (gp: any, i2: number) => gp?.title || sections[i2]?.title || `Section ${i2 + 1}`,
+              );
+              const pinned = restoreOriginalHeadings(postSplit.body, polishSectionTitles);
+              // #4 Revision guard (word/citation floors).
+              const guard = pinned ? revisionGuard(articleContent, pinned.trimEnd() + "\n\n" + postSplit.referencesText.trim()) : null;
+
+              if (added.length > 0) {
+                polishTelemetry.stopReason = `polish rejected: introduced ${added.length} new citation(s) ([${added.join(",")}]) — citation additions are forbidden`;
+                coherenceReviewRow = {
+                  verdict: "minor-revision",
+                  summary: `[Coherence pass] ${coherence.findings.length} finding(s); the polished draft was REJECTED by the citation-preservation guard (it tried to add citations) — disclosed for manual attention.`,
+                  weaknesses: coherenceWeaknesses,
+                  suggestions: coherenceSuggestions,
+                  revisedContent: null,
+                };
+                send("step", { step: "polish", status: "done", findings: coherence.findings.length, revisedSections: 0, message: `Coherence polish rejected by the citation-preservation guard — the pre-polish article stands; findings disclosed in the Review tab.` });
+                log(`polish: REJECTED (citation additions: ${added.join(",")})`);
+              } else if (!pinned) {
+                polishTelemetry.stopReason = "polish rejected: heading structure unrepairable";
+                coherenceReviewRow = {
+                  verdict: "minor-revision",
+                  summary: `[Coherence pass] ${coherence.findings.length} finding(s); the polished draft was REJECTED (section-heading mismatch) — disclosed for manual attention.`,
+                  weaknesses: coherenceWeaknesses,
+                  suggestions: coherenceSuggestions,
+                  revisedContent: null,
+                };
+                send("step", { step: "polish", status: "done", findings: coherence.findings.length, revisedSections: 0, message: `Coherence polish rejected (heading structure mismatch) — the pre-polish article stands; findings disclosed in the Review tab.` });
+                log("polish: REJECTED (heading mismatch)");
+              } else if (!guard?.ok) {
+                polishTelemetry.stopReason = `polish rejected by the revision guard: ${(guard?.reasons || ["unknown"]).join("; ")}`;
+                coherenceReviewRow = {
+                  verdict: "minor-revision",
+                  summary: `[Coherence pass] ${coherence.findings.length} finding(s); the polished draft was REJECTED by the revision guard (${(guard?.reasons || []).join("; ")}) — disclosed for manual attention.`,
+                  weaknesses: coherenceWeaknesses,
+                  suggestions: coherenceSuggestions,
+                  revisedContent: null,
+                };
+                send("step", { step: "polish", status: "done", findings: coherence.findings.length, revisedSections: 0, message: `Coherence polish rejected by the revision guard — the pre-polish article stands; findings disclosed in the Review tab.` });
+                log(`polish: REJECTED by guard — ${(guard?.reasons || []).join("; ")}`);
+              } else {
+                // --- Adopt the polished article ---
+                const candidate = pinned.trimEnd() + "\n\n" + postSplit.referencesText.trim();
+                articleContent = candidate;
+                polishTelemetry.triggered = true;
+                polishTelemetry.revisedSections = polish.revisedSections.length;
+                polishTelemetry.findingsAddressed = polish.findingsAddressed;
+                coherenceReviewRow = {
+                  verdict: "accept",
+                  summary: `[Coherence pass] ${coherence.findings.length} cross-section finding(s) — ${polish.findingsAddressed} addressed by polishing §${polish.revisedSections.map((i2) => i2 + 1).join(",§")}. ${coherence.summary}`,
+                  weaknesses: coherenceWeaknesses,
+                  suggestions: coherenceSuggestions,
+                  revisedContent: candidate,
+                };
+                stats.coherencePolish = {
+                  findings: coherence.findings.length,
+                  revisedSections: polish.revisedSections.length,
+                  triggered: true,
+                };
+
+                // Re-derive what downstream stages consume (paragraph sync,
+                // translate, ZH references) — repair-adoption pattern, with
+                // ref lines matched against the PRE-polish list.
+                const finalSecs = splitBodySections(postSplit.body);
+                if (finalSecs && finalSecs.contents.length === renumberedContents.length) {
+                  for (let i2 = 0; i2 < renumberedContents.length; i2++) {
+                    renumberedContents[i2] = finalSecs.contents[i2];
+                  }
+                  if (norm.droppedRefs > 0 || norm.renumbered) {
+                    const preRefBare = preSplit.referencesText
+                      .split("\n").map((l: string) => l.trim())
+                      .filter((l: string) => /^\[\d+\]\s/.test(l))
+                      .map((l: string) => l.replace(/^\s*\[\d+\]\s*/, "").trim());
+                    const finalRefLines = postSplit.referencesText
+                      .split("\n").map((l: string) => l.trim())
+                      .filter((l: string) => /^\[\d+\]\s/.test(l));
+                    const newGlobalRefs: any[] = [];
+                    for (const fl of finalRefLines) {
+                      const bare = fl.replace(/^\s*\[\d+\]\s*/, "").trim();
+                      const idx = preRefBare.findIndex((ol) => ol === bare);
+                      if (idx >= 0 && idx < globalRefs.length) newGlobalRefs.push(globalRefs[idx]);
+                      else break;
+                    }
+                    const finalBodyCit = new Set<number>();
+                    let pcm: RegExpExecArray | null;
+                    const pcre = /\[(\d+(?:[,\-–\s]\d+)*)\]/g;
+                    while ((pcm = pcre.exec(postSplit.body)) !== null) {
+                      for (const part of pcm[1].split(/[,;]\s*/)) {
+                        const rm = part.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+                        if (rm) {
+                          for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) finalBodyCit.add(n);
+                        } else {
+                          const n = parseInt(part);
+                          if (!isNaN(n)) finalBodyCit.add(n);
+                        }
+                      }
+                    }
+                    const maxFinalCit = finalBodyCit.size > 0 ? Math.max(...finalBodyCit) : 0;
+                    if (newGlobalRefs.length === finalRefLines.length && maxFinalCit <= newGlobalRefs.length) {
+                      globalRefs.length = 0;
+                      globalRefs.push(...newGlobalRefs);
+                      log(`polish: globalRefs re-synced to the polished reference list (${globalRefs.length} refs)`);
+                    } else {
+                      log(`polish: reference rematch incomplete (${newGlobalRefs.length}/${finalRefLines.length} lines, maxCit=${maxFinalCit}) — globalRefs kept as pre-polish`);
+                    }
+                  }
+                } else {
+                  log(
+                    `polish: final section split mismatch (${finalSecs?.contents.length ?? "?"} vs ${renumberedContents.length}) — article content adopted, paragraphs keep pre-polish text`,
+                  );
+                }
+                send("step", {
+                  step: "polish",
+                  status: "done",
+                  findings: coherence.findings.length,
+                  revisedSections: polish.revisedSections.length,
+                  findingsAddressed: polish.findingsAddressed,
+                  message: `Coherence pass: ${coherence.findings.length} finding(s) — polished §${polish.revisedSections.map((i2) => i2 + 1).join(", §")} (${polish.findingsAddressed} finding(s) addressed; ${norm.droppedRefs} orphaned reference(s) dropped).`,
+                });
+                log(
+                  `polish: APPLIED — ${polish.findingsAddressed}/${coherence.findings.length} findings addressed in §${polish.revisedSections.map((i2) => i2 + 1).join(",")} (droppedRefs=${norm.droppedRefs} stripped=${norm.strippedNumbers} renumbered=${norm.renumbered})`,
+                );
+              }
+            }
+          }
+        } catch (polishErr: any) {
+          // Non-fatal by contract: the article stands exactly as composed /
+          // repaired, and the coherence findings are simply not recorded.
+          polishTelemetry.stopReason = `pass failed: ${String(polishErr?.message ?? polishErr).slice(0, 120)}`;
+          log(`polish: FAILED — ${polishTelemetry.stopReason}`);
+          send("step", {
+            step: "polish",
+            status: "skipped",
+            message: `Coherence pass skipped after an error (the article is unaffected): ${polishErr?.message?.slice(0, 80) || "LLM error"}.`,
+          });
+        }
+
         // Update each paragraph's content + references to GLOBAL numbering so
         // the workspace view matches the article (v70-1 gap-fill pattern).
         // ★ FIX (atomic rewrite): update + reference deleteMany + reference
@@ -2715,6 +3260,33 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             });
           } catch (sumErr: any) {
             log(`repair: repairSummary persistence FAILED: ${String(sumErr?.message ?? sumErr).slice(0, 100)}`);
+          }
+        }
+
+        // round-cs-2: persist the coherence pass as a Review row (after the
+        // repair rounds, so the Review tab reads: fact-check rounds →
+        // coherence pass). Whatever the pass found — clean, polished, or
+        // disclosed-unpolished — is recorded for the user to inspect.
+        if (coherenceReviewRow) {
+          try {
+            const coherenceRound = repairRounds.length > 0
+              ? Math.max(...repairRounds.map((r: any) => r.round || 0)) + 1
+              : 1;
+            await db.review.create({
+              data: {
+                articleId: article.id,
+                round: coherenceRound,
+                verdict: coherenceReviewRow.verdict,
+                summary: coherenceReviewRow.summary,
+                strengths: JSON.stringify([]),
+                weaknesses: JSON.stringify(coherenceReviewRow.weaknesses),
+                suggestions: JSON.stringify(coherenceReviewRow.suggestions),
+                ...(coherenceReviewRow.revisedContent ? { revisedContent: coherenceReviewRow.revisedContent } : {}),
+              },
+            });
+            log(`polish: coherence Review row persisted (round ${coherenceRound}, verdict ${coherenceReviewRow.verdict})`);
+          } catch (cohRowErr: any) {
+            log(`polish: coherence Review row persistence FAILED: ${String(cohRowErr?.message ?? cohRowErr).slice(0, 100)}`);
           }
         }
 

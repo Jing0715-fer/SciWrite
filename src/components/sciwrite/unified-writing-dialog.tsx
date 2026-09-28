@@ -34,6 +34,7 @@ import {
   Wrench,
   History,
   Paperclip,
+  SearchCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -1022,6 +1023,10 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
         { id: "score", label: t("oneClick.stepScore") || "Score source importance", icon: Gauge },
         { id: "curate", label: t("oneClick.stepCurate"), icon: Filter },
         { id: "plan", label: t("oneClick.stepPlan"), icon: ListTree },
+        // round-cs-2: research gap agent — audits the planned outline against
+        // the allocated evidence and runs targeted supplementary searches
+        // (ClawsGO-inspired autonomous research, bounded ≤3 gaps/≤6 refs).
+        { id: "gapAgent", label: t("oneClick.stepGapAgent") || "Gap agent — targeted research", icon: SearchCheck },
         { id: "analyze", label: t("oneClick.stepAnalyze") || "Analyze Evidence", icon: Microscope },
         { id: "allocate", label: t("oneClick.stepAllocate") || "Allocate Evidence", icon: Target },
         { id: "generate", label: t("oneClick.stepGenerate"), icon: PenLine },
@@ -1031,6 +1036,10 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
         // fact-check verdicts included) BEFORE translation — one click ends
         // with a fact-hardened final article, not a to-do list.
         { id: "repair", label: t("oneClick.stepRepair") || "AI review & auto-repair", icon: Wrench },
+        // round-cs-2: whole-article coherence polish — cross-section review
+        // (repetition/contradiction/terminology/numeric/transition) followed
+        // by context-aware per-section re-editing (不断根据上下文打磨).
+        { id: "polish", label: t("oneClick.stepPolish") || "Coherence polish", icon: Sparkles },
       ];
       // round-27: v2 translates AFTER compose (sections already carry final
       // global citation numbers), so the translate step comes last.
