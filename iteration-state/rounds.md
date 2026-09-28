@@ -2,6 +2,10 @@
 
 One section per round (newest first). metrics.json = machine-readable baseline; last-good.txt = last clean-outcome commit. Scheduled by mini-services/iterate-scheduler — every 6h, throttled-provider retry every 45 min. Manual trigger: `bun scripts/auto-iterate/iterate.ts`.
 
+## Round 2 — 2026-09-28T08:39:23Z
+- outcome: **degraded-provider** · head `e594f76e`
+- mechanical: tsc 4 errors · lint 0 errors · duration 30.5 min
+- regressions: tsc errors 4 → NOT auto-corrected (no reversible code commits since last-good — investigate manually)
 ## Round 2 — 2026-09-28T03:32:06Z
 - outcome: **clean** · head `fd9c6526`
 - canary error: `stream: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetc`

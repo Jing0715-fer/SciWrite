@@ -1,8 +1,8 @@
 {
-  "round": 1,
-  "stamp": "2026-09-10T01:37:01.008Z",
-  "gitHead": "f9402e508f2a0292c0ab56b6198891b65e1ae24c",
-  "outcome": "regressed",
+  "round": 2,
+  "stamp": "2026-09-28T08:39:23.442Z",
+  "gitHead": "e594f76eb93e01768b6342232858bc6d635b0e9c",
+  "outcome": "degraded-provider",
   "produced": false,
   "wordsEn": 0,
   "wordsZh": 0,
@@ -17,7 +17,7 @@
   "reviewVerdict": "none",
   "reviewOverall": -1,
   "factCheckWeaknesses": 0,
-  "tscErrors": 10,
-  "lintErrors": 13,
-  "durationMs": 40863
+  "tscErrors": 4,
+  "lintErrors": 0,
+  "durationMs": 1832615
 }
