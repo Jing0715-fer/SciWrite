@@ -3289,3 +3289,214 @@ Stage Summary:
 - 用户问题的准确答案已固化为 UI 能力：末轮弱点=当前文章未修正问题（停止原因可见），硬性发现已自动修复（scoped 芯片可见），遗留可一键续修（复用成熟 revise 核心，含中英分叉警示）
 - 设计边界澄清：循环故意不无限烧 token——budget 2 次修订后披露而非继续；风格级弱点不自动润色（防降级）；Fix remaining 是用户显式选择才触发
 - 新生成文章自动获得 repairSummary；存量两篇已回填；一键续修按钮未实弹触发（会真实改库清 contentZh，留待用户自行使用）
+
+---
+Task ID: REDESIGN-MAIN
+Agent: orchestrator + 4 parallel subagents (3-a, 3-b, 3-c, 3-d)
+Task: Complete frontend UI redesign ("Atelier" design system v2) — keep all functionality, fix inconsistent spacing, add per-theme differentiated component styles
+
+Work Log:
+- Cloned https://github.com/Jing0715-fer/SciWrite and synced into /home/z/my-project.
+- Built a brand-new design system foundation in src/app/globals.css with:
+  · Strict 4px spacing scale (--space-1..--space-12 tokens).
+  · Unified 5-level elevation ladder (--shadow-2xs..--shadow-xl + --shadow-glow).
+  · Per-theme CHARACTER tokens (--card-radius, --card-border-width, --card-border-color-mix, --glass-blur, --glass-sat, --glass-opacity, --paper-texture, --ring-glow, --gradient-mesh, --shadow-offset-x/y) so each theme changes the whole app's personality, not just colors.
+  · 4 differentiated themes: Emerald (Academic — crisp hairlines, paper texture), Ocean (Aqua — glassmorphism, gradient mesh, pill shapes), Sunset (Warm — thick 1.5px borders, hard offset shadows, solid blocks), Violet (Noir — glowing rings, premium gradients, luxe depth).
+  · New utility classes: .shell-frame, .panel-tint, .panel-section-header, .stat-tile, .focus-ring (all theme-adaptive).
+- Rewrote src/app/layout.tsx to use system-font stacks (no Google Fonts fetch — sandbox-safe).
+- Fixed a critical syntax bug in src/app/page.tsx (`const obilePanel,` → `const [mobilePanel,`) and redesigned the layout shell with .shell-frame / .panel-tint.
+- Redesigned src/components/sciwrite/home/{header,footer,empty-workspace}.tsx with consistent spacing rhythm.
+- Redesigned src/components/sciwrite/theme-switcher.tsx — now each theme shows its personality (subtitle + blurb) so users understand the styles differ.
+- Delegated 4 parallel redesign tasks to subagents (see Task IDs 3-a, 3-b, 3-c, 3-d below).
+
+Stage Summary:
+- All 70+ component functionality preserved (props/interfaces identical).
+- 0 lint errors (155 pre-existing warnings in untouched files).
+- HTTP 200 on /, all 4 themes apply correctly via data-theme attribute.
+- 641 surface-cards, 6 stat-tiles, 9 panel-section-headers, 30 eyebrow labels, 5 gradient CTA buttons rendered consistently.
+- Dev server runs cleanly; only non-fatal Edge Runtime warnings from src/instrumentation.ts (auto-iterate scheduler, pre-existing).
+
+---
+Task ID: round-cron-10 (re-applied)
+Agent: main (Z.ai Code)
+Task: Tab bug investigation + enhanced error toasts + UI polish
+
+Key findings:
+1. **Tab switching "bug" was NOT a real bug** — it was an agent-browser test artifact. Radix Tabs triggers require focus before click fires onValueChange. In a real browser, mouse clicks work correctly. Verified via focus+click in agent-browser: active tab switches to "Full Article" properly.
+
+2. **Generation pipeline already has comprehensive progress UI**:
+   - Progress bar with percentage (progress-glow)
+   - Step timeline with icons
+   - Live streaming preview
+   - Per-step progress messages
+   - Loading spinner on ActionButton
+   - Error handling with toasts (now enhanced with actionable advice)
+
+3. **Enhanced error toasts** (unified-writing-dialog.tsx):
+   - Timeout: "LLM may be busy — try again or switch to a faster model"
+   - Network: "Check internet connection or provider settings"
+   - Auth (401/key): "Open LLM Config and check your API key"
+   - Stream interrupted: "Server restart or connection drop — try again"
+   - Duration 8s.
+
+4. **Fractional spacing cleanup**: gap-1.5→gap-1, p-2.5→p-3. Lint warnings 184→163.
+
+5. **Donut overlap fixed** (round 9): SVG 48→64px, center text no longer overlaps.
+
+Recommended next steps:
+1. Compose wizard → pass selected paragraph IDs to compose flow
+2. Global search (⌘P)
+3. "Cancel generation" button to abort SSE stream
+4. Step timeline should use theme-adaptive colors (not hardcoded emerald)
+5. "Preparing..." state before first SSE event
+
+---
+Task ID: REVIEW-1 + FIX-1
+Agent: main (Z.ai Code) — comprehensive code review + high-priority fixes
+Task: Full code review + implement critical/high-priority fixes + next-round plan
+
+Comprehensive Code Review Results:
+A sub-agent performed a thorough review of the Canvas architecture, components, styling, bugs, performance, accessibility, and type safety. Findings:
+
+Critical issues (5):
+- C1: Mobile tab switches destroyed all child panel state (search results, scroll, form input) — SILENT UX DATA LOSS
+- C2: useIsMobile() never returned undefined — dead loading branch, desktop flash on mobile
+- C3: Auto-select-first-project effect prevents deselection (deferred)
+- C4: Word-goal effect stale-closure risk on totalWords (deferred)
+- C5: Unvalidated `as Article` casts on lazy-loaded dialogs (addressed via ErrorBoundary)
+
+High-priority issues (10):
+- H1: Pervasive `any` typing in home layer (21+ occurrences) — deferred
+- H2: projects-sidebar.tsx 637 lines, 3 components in one file — deferred
+- H3: knowledge-panel.tsx 996 lines, 5 sub-components — deferred
+- H4: Global CustomEvent for project selection — fragile coupling (deferred)
+- H5: Header MutationObserver + per-render theme state causes hydration mismatch (deferred)
+- H6: Lazy dialogs wrapped in Suspense with no ErrorBoundary — FIXED
+- H7: paragraphs/articles re-derived every render → cascade re-renders — FIXED
+- H8: jumpToParagraph uses raw DOM classList manipulation (deferred)
+- H9: Citation regex in computeProgressStats runs per render (partially mitigated by H7)
+- H10: `t("key") || "fallback"` pattern hides missing i18n keys (deferred)
+
+Medium issues (11): dead CSS (~80 lines), monolithic globals.css, theme-selector duplication, dead Header props, prop-drilled `t`, keyboard conflicts, JSON parse swallowing, etc.
+
+Accessibility (7): missing ARIA on tabs/nav, keyboard-invisible hover buttons, decorative elements not aria-hidden.
+
+Fixes implemented this round:
+1. **C1 FIXED**: Mobile panels now render simultaneously with CSS `hidden` toggle. State preserved across tab switches.
+2. **C2 FIXED**: useIsMobile returns `boolean | undefined`. Loading spinner correctly shows until matchMedia resolves.
+3. **H6 FIXED**: New ErrorBoundary component wraps all 4 lazy-loaded dialogs. Shows retry button on chunk-load failure.
+4. **H7 FIXED**: paragraphs/articles/dataSources wrapped in useMemo. Cascade re-renders eliminated.
+
+Commit 551795b pushed to origin/redesign/ui-atelier.
+
+Next-Round Development Recommendations (ranked by impact):
+1. **Type the home layer (H1)** — Replace all `any` with proper interfaces from lib/types. Prevents a whole class of runtime bugs. ~1 day.
+2. **Split knowledge-panel.tsx (H3)** and **projects-sidebar.tsx (H2)** into folders — Both are doing 4-5 jobs. Reduces cognitive load. ~half day each.
+3. **Replace global CustomEvent with callback prop (H4)** — Pass onProjectCreated(id) down. Delete the magic-string event. ~1 hour.
+4. **Fix word-goal stale closure (C4)** — Gate the else branch on a prevTotalWordsRef. ~30 min.
+5. **Fix auto-select side effect (C3)** — Track hasInitializedRef so refresh doesn't force-select. ~30 min.
+6. **Clean dead CSS (M1)** — Remove ~80 lines of unused .glass-footer, .surface-raised, .atlas-icon-* classes. ~30 min.
+7. **Accessibility pass (A1-A7)** — Add aria-current to mobile nav, role=tab to workspace tabs, focus-within to hover buttons. ~1 hour.
+8. **Compose wizard → pass selected paragraphs** — The last unfinished core feature. ~2 hours.
+
+---
+Task ID: RESTORE-1
+Agent: main (Z.ai Code) — Canvas architecture restoration
+Task: Restore Canvas architecture that was accidentally reverted during merge
+
+Problem:
+- User reported "UI 又回到过去的版本了，不是重构版了" (UI went back to the old version, not the redesign)
+- Investigation: the Canvas architecture (canvas-shell, canvas-topbar, canvas-tasknav, TaskTabs, TopBar) was missing from page.tsx — it had the OLD 3-panel ResizablePanelGroup layout instead.
+- Root cause: a merge/rebase during the code-review fixes (round REVIEW-1) operated on the `main` branch which never had the Canvas changes. The Canvas commits (805ee8d through 27e5684) were on the redesign/ui-atelier branch but were lost when main was merged over them.
+- 7 Canvas component files were missing entirely (citation-heatmap, source-donut, query-history, use-recent-projects, onboarding-tour, changelog-dialog, shortcuts-overlay).
+- globals.css was 1530 lines (old) instead of 3352 lines (Canvas version with all the canvas-/atlas-/tour-/donut-/heatmap-/stats-/help-/grade-/skeleton classes).
+
+Fix:
+- Restored page.tsx from commit 27e5684 (last known-good Canvas version).
+- Restored all 7 missing component files from 27e5684.
+- Restored globals.css from 27e5684 (3352 lines).
+- Restored writing-workspace.tsx, database-query-panel.tsx, i18n.tsx from 27e5684.
+- Applied code-review fixes on top: ErrorBoundary, useMemo for paragraphs/articles.
+- useIsMobile fix already in hooks/use-mobile.ts.
+
+Verification:
+- HTTP 200, 0 lint errors (184 warnings).
+- agent-browser confirmed: canvas-shell=1, canvas-topbar=1, canvas-tasknav=1, canvas-task-tab=5.
+- All 5 task tabs render: Research, Draft, Compose, Audit, Manage.
+
+Commit 0825ad2 force-pushed to origin/redesign/ui-atelier.
+
+---
+Task ID: 2-a
+Agent: subagent (Task Brief composer)
+Task: ClawsGO Science-inspired upgrade part 1 — "一句话任务 → 端到端交付": add a structured Task Brief (Goal · Materials · Constraints) composer + "Examples & tutorials" one-click task cards to FullArticleTab in unified-writing-dialog.tsx, compiled into the run's promptInstruction.
+
+Work Log:
+- i18n.tsx: added 19 "brief.*" keys to BOTH en + zh dictionaries (inserted after the oneClick.* block): brief.title/subtitle/sendToggle/goalLabel/goalPlaceholder/materialsLabel/materialsGather/materialsSaved/constraintsLabel/extraLabel/extraPlaceholder/examplesTitle/examplesHint/exampleLoaded + 4 example card labels (exReviewLabel 系统性综述 / exNoteLabel 研究简报 / exDataLabel 数据实证分析 / exBilingualLabel 中文双语综述). ja/ko/fr fall back to en per the established partial-dictionary pattern.
+- unified-writing-dialog.tsx imports: Paperclip (lucide), type LucideIcon, Checkbox (ui/checkbox), Textarea (ui/textarea).
+- New module-level BriefExample type {id,label,icon,badge,goal,constraints,targetWords:number|null,language:string|null} above FullArticleTab.
+- FullArticleTab state: briefGoal (prefilled with `topic` so the untouched state is byte-identical to before), briefConstraints "", briefEnabled false, briefOpen true, briefPanelRef. Derived briefHasContent = goal≠topic || constraints≠""; auto-arm effect on briefHasContent transitions (explicit uncheck stays respected until content returns to default).
+- briefExamples array: ① Systematic review (8,000w, goal cites-source-paper-every-claim + comparison table, constraints "Peer-review-grade rigor; every factual claim must carry an inline citation.") ② Research note (2,500w, broad-audience context/findings/open-questions) ③ Data-grounded analysis (no word pin, RCSB/UniProt/PubMed evidence emphasis) ④ Bilingual review (6,000w, language→"both", EN→ZH with citations intact). {topic} interpolated from the prop; goals/constraints stay English (pipelines are English-first).
+- applyBriefExample: prefills goal/constraints/targetWords/language, arms the checkbox (explicit action), opens the panel, toast "Example loaded — adjust and launch" (bilingual), scrollIntoView nearest.
+- doGenerate promptInstruction: rewritten as brief-first compiler — hasBrief = briefEnabled && (extra non-empty || (goal non-empty && goal ≠ topic)); emits "TASK BRIEF\nGoal: …\n[Constraints: …]\nFollow this brief precisely in addition to the standard pipeline instructions." joined "\n\n" with the existing template instruction appended under it. Empty/default brief compiles to "" → payload identical to pre-change behavior; template-only path unchanged.
+- JSX (inserted between the resume banner and the pipeline selector): ① Examples row — eyebrow "Examples & tutorials" + hint, flex-wrap pill cards (icon + label + badge: "8,000 words"/"2,500 words"/"RCSB · UniProt"/"6,000 · EN+中文", title tooltip = full goal, hover primary tint, focus-ring). ② Task Brief panel — collapsible (aria-expanded chevron, same visual language as the Advanced settings panel), armed-state accent border (border-primary/40 when briefHasContent), header-right "Send brief" Checkbox (outside the collapse button, label hidden md:block), body = Goal Textarea (rows 2, eyebrow label "Goal — what do you want?") + Materials read-only info row (Paperclip icon, topic·field bold, gather note, sourceCount interpolated when >0) + Constraints block (eyebrow + live summary chips: formatWords(targetWords)+para.words / languageLabel via topic.lang* / pipeline v1|v2 chip, muted bg-muted/60 pills) + "Extra constraints (optional)" Textarea rows 2.
+- Design-rule compliance: only existing tokens (primary/border/muted variants), 4px spacing scale (gap-1/2/3, px-2/3, py-1/2, min-h-12), Textarea styled to match the file's h-8 input language (rounded-lg border-border bg-background text-[11px]), responsive (flex-wrap cards, chips wrap, dialog scrolls internally).
+- Verification: tsc → 0 errors in unified-writing-dialog.tsx + i18n.tsx (4 remaining errors are pre-existing in page.tsx/database-query-panel/sidebar.tsx, untouched); lint → 0 errors / 182 warnings (my file keeps only its 6 pre-existing warnings — no new ones; unused Checkbox/Textarea warnings are in article-composer/outline-dialog, pre-existing); HTTP 200; browser E2E (agent-browser): examples row renders ×4, Task Brief expanded with eyebrow subtitle, goal prefilled with topic, checkbox default unchecked; "Systematic review" click → toast + checkbox auto-armed + goal/constraints prefilled + slider 5000→8000; "Bilingual review" click → language "English + 中文" + 6,000; explicit uncheck persists; zh UI fully localized (任务简报/像给新同事布置任务 — 目标 · 材料 · 约束/发送简报/目标 — 你想要什么成果？/附加约束（可选）/示例已载入 — 调整后即可启动/材料 row + 智能体将从 PubMed / RCSB / UniProt / 网络检索全新文献/约束 chips 5,000 词 + v2 · 证据驱动); zero console/page errors; screenshots /tmp/task2a-example-loaded.png, task2a-zh-full-article.png, task2a-armed-brief.png, task2a-mobile.png (390×844).
+
+Stage Summary:
+- FullArticleTab now supports ClawsGO-style structured briefing: Goal (editable, topic-prefilled) · Materials (read-only: topic/field + fresh PubMed/RCSB/UniProt/web gather + saved-source count) · Constraints (live targetWords/language/pipeline chips + free-form extras), compiled as a TASK BRIEF block prepended to the template instruction in promptInstruction — purely additive, zero behavior change when the brief is untouched (goal===topic, no extras, checkbox unarmed).
+- 4 one-click example cards demonstrate the brief pattern (systematic review / research note / data-grounded / bilingual), prefilling brief + settings with bilingual toasts; auto-arm checkbox with explicit-override semantics.
+- All 19 new UI strings bilingual via i18n brief.* keys; design reuses Atelier language (eyebrow/focus-ring/border-border/60 rounded-lg panels, primary-tint armed state); no new colors, no fractional spacing, responsive on mobile.
+---
+Task ID: 2-b
+Agent: subagent (Verified citation badges) — timed out near completion; orchestrator verified + recorded
+Task: ClawsGO Science-inspired upgrade part 2 — "真实引用 + Verified 标记": provenance badges (Verified/Web/Unverified/Audit) on every rendered reference, incl. upgrading the article viewer's raw "## References" text block to a rich badge list.
+
+Work Log:
+- markdown-citations.tsx: added RefVerifyLevel type ("verified"|"web"|"unverified"|"flagged") + exported referenceVerifyLevel() classifier — auditStatus suspect/unsupported/missing → flagged (takes precedence); type ∈ {pubmed,uniprot,rcsb,pdb,ncbi,blast,pmc} && (externalId||doi) → verified; canonical DB URL with embedded record ID (dbIdentityFromUrl helper — compose builds these URLs from type+externalId) → verified; web type or URL-only provenance → web; else unverified.
+- RefVerifyBadge exported component: compact pill (h-4, text-[8px], inline-flex, border /20 opacity) with lucide icons — ShieldCheck/verified emerald, Globe/web sky, HelpCircle/unverified muted, AlertTriangle/flagged amber with "Audit: {status}" label + auditReason tooltip.
+- Shared renderReferenceItem() extracted — BOTH the component-generated reference list and the new article-path rich list use identical <li> markup (DRY; existing conditional row backgrounds unchanged).
+- Article viewer path: "## References" section now parses via parseCitationsBlock into articleListRefs (sparse, numbering = the article's own [n]) and renders the rich badge list; DB-prop refs enrich the entries; raw-text fallback preserved when parsing yields nothing (zero-regression path). No duplicate component-generated list.
+- Badge added to component-generated list after the type:externalId chip; doi text kept (badge = provenance, doi = identifier). Hover tooltip badge skipped (kept low-risk per task brief).
+- Verification (orchestrator): tsc 0 errors for markdown-citations/virtualized-article; lint 0 errors (182 warnings baseline); agent-browser E2E — ferroptosis article viewer → scrolled to References → 27 "Verified" + 1 "Audit" badges render, zero console/page errors; screenshot /tmp/round-cs1-verified-badges.png.
+
+Stage Summary:
+- Every rendered reference now carries an instant provenance mark (ClawsGO-style "Kato et al. · DOI · Verified"), surfacing the pipeline's existing verification work (DB external IDs, DOIs, adversarial-audit verdicts) directly in the reading experience — both in per-section bibliographies and the article's own References section.
+- The article's raw-text References block became a rich parsed list with badges + fallback safety.
+
+---
+Task ID: 3
+Agent: main (Z.ai Code orchestrator)
+Task: ClawsGO Science-inspired upgrade part 3 — "可追溯、可复现：每个动作都有时间线记录，整次运行可重放": Run Timeline UI (replayable per-step timeline dialog) wired into the Draft workspace, consuming the new /api/task-runs records.
+
+Work Log:
+- New component src/components/sciwrite/run-timeline-dialog.tsx (~600 lines): Dialog with run list (newest first) — each run renders as an expandable stat-tile card: status chip (completed emerald / failed rose / aborted amber / running pulsing-primary), pipeline v1/v2 chip, resumed badge (RotateCcw), topic, word count + duration, time-ago. Expanded body:  ① outcome stats grid (8 MiniStat tiles: Words / References / Sections / Target% / Citations checked / Removed / Repair rounds / Total time — from statsJson stats+accuracy)  ② provider transparency snapshot ("Model snapshot at launch" + generate/review role chips from providerJson — "最强模型菜单，倍率透明")  ③ error box for failed/aborted runs  ④ THE REPLAY: vertical step timeline with connector line — per-step icon by status (CheckCircle2/SkipForward/XCircle/Activity/CircleDashed), bilingual human step label (18-entry STEP_LABEL_KEYS map: 文献检索/章节规划/撰写章节/引用核验/组稿/评审与修复/翻译/同行评审…), §i/N loop counters, message, wall-clock timestamp, per-step duration (event ms or next-event delta), max-h-96 scroll  ⑤ footer: Open article (resolves full article object from the articles prop — viewer needs content/title, not just id), EN+中文 bilingual marker, Delete record (DELETE /api/task-runs?id=).
+- Empty state: explanatory copy pointing to AI Hub full-article generation (bilingual); Refresh button; "{n} recorded run(s)" count.
+- i18n: 50 new timeline.* keys + workspace.timelineButton/Title in BOTH en + zh dictionaries; dynamic keys via typed Record<string, TranslationKey> maps (STEP_LABEL_KEYS / STATUS_LABEL_KEYS) — no template-literal key casts.
+- writing-workspace.tsx: History-icon "Timeline" ghost button in the project toolbar (next to Data/Tips, disabled without active project) + RunTimelineDialog render with articles + onOpenArticle pass-through.
+- API GET /api/task-runs returns stepsJson pre-parsed as steps[] + stepRollup{done,skipped,failed} + parsed summary/stats; zombie sweep marks running rows older than 45 min as aborted (maxDuration is 30 min) so a crashed run never shows as phantom in-flight.
+
+Stage Summary:
+- The full ClawsGO "run replay" loop is closed: recorder (backend) → persisted TaskRun rows → /api/task-runs → Run Timeline dialog. Every future pipeline launch (v1 + v2) is recorded automatically; past runs are replayable step-by-step with durations, per-step messages, outcome stats, model snapshot, and one-click jump to the produced article.
+- Verified E2E (agent-browser): seeded a realistic 18-step v2 run → Timeline dialog shows run card (Completed + 4,282w), expand → stats grid, zai-sdk provider chips, 18-step replay with Gather sources→…→Peer review labels, skipped-step visible (rate-limit abort), Open article + EN+中文 chips, durations formatted; zh locale fully localized (运行时间线/已完成/启动时模型快照/文献检索/组稿/同行评审/打开文章); mobile 390px no horizontal overflow; zero console/page errors; screenshots /tmp/round-cs1-timeline-expanded.png, round-cs1-timeline-zh.png, round-cs1-task-brief-zh.png, round-cs1-timeline-mobile.png. Seed record deleted after verification to keep the DB honest — the timeline populates automatically on the next real generation.
+
+---
+Task ID: CS-MAIN (round-cs-1)
+Agent: main (Z.ai Code orchestrator)
+Task: 拉取最新代码（origin/redesign/ui-atelier UI 重构分支）并根据 CSDN《ClawsGO Science使用指南》一文中的优点升级本项目。
+
+Work Log:
+- git fetch --all → 发现新分支 origin/redesign/ui-atelier（Atelier 设计系统 v2 + Canvas/Atlas Studio 布局，已并入 origin/main 的 round-68 修复）；备份 live db/custom.db 后 checkout -b redesign/ui-atelier（保留本地自动迭代 rounds.md 记录 + 运行时数据库）。
+- 抓取并研读 CSDN 文章（page_reader），提炼第五节「ClawsGO Science 的优势」与核心功能：① 无人值守端到端（一句话任务 Goal/Material/Constraints）② 可追溯可复现（动作时间线 + 整次运行可重放）③ 云端驻留多端同步 ④ 最强模型菜单（倍率透明）⑤ 真实引用带 DOI + Verified 标记 ⑥ 示例与教程模板 ⑦ 全流程工作台。
+- 优势→本项目能力映射与四项升级（见 Task 1/2-a/2-b/3 详录）：
+  · ②可追溯可复现 → TaskRun 持久化模型 + TaskRunRecorder 观察者（lib/run-recorder.ts，吞错、2.5s 尾随节流、streaming 采样）挂入 v1/v2 两条管线的 send() 漏斗；complete/fail/abort/finishPartial 终态；/api/task-runs GET(含僵尸清扫)+DELETE。
+  · ①一句话任务 → FullArticleTab 的 Task Brief（Goal/Materials/Constraints）结构化简报 + 4 张一键示例卡（系统性综述/研究简报/数据实证/中文双语），编译为 promptInstruction 前置块（空简报零行为变化）。
+  · ⑤真实引用 → RefVerifyBadge（Verified/Web/Unverified/Audit 四级出处徽章，referenceVerifyLevel 分类器含 dbIdentityFromUrl URL 反查）＋ 文章 ## References 原文块升级为解析后的富列表（保留 raw-text 兜底）。
+  · ④模型菜单透明 → TaskRun 启动时 provider/model 快照（generate+review 双角色），时间线内展示。
+  · ⑥示例模板 → 示例卡即对应物。
+- 基础设施踩坑：db:push 后按 round-63 教训重启 dev server（setsid --fork + 绝对路径拉起，沙箱会收割 nohup 进程）；safeErrorMessage 需双参（fallback）；t() 为类型化键联合，动态键用 Record<string,TranslationKey> 映射表。
+- 回归验证：bunx tsc 0 新增错误（stash 前后均为既有 4 个：page.tsx setShortcutsOpen / database-query-panel ×2 / sidebar.tsx，均为分支遗留、非本轮引入）；lint 0 errors（181 warnings 基线）；dev.log 仅既有 Edge Runtime 警告；agent-browser E2E 全链路（详见各 Task 条目）：Verified 徽章 27+1、Task Brief 中英文、示例卡预填+自动武装、时间线 18 步回放+模型快照+打开文章、中文 locale、移动端 390px 无溢出、console 零错误。
+
+Stage Summary:
+- 本项目现在具备 ClawsGO Science 的四大可移植优势：可回放的运行时间线（每次生成的每一步可追溯）、结构化任务简报（目标·材料·约束，像给新同事交代工作）、带 Verified 标记的真实引用（出处徽章直达文献列表）、透明的模型快照 + 示例模板。所有新能力纯增量、双语、响应式，空状态与回退路径齐备。
+- 生成管线（v1+v2）自动记录 TaskRun；下次真实生成后时间线即有真实数据（验证用的种子记录已删除以保持数据诚实）。

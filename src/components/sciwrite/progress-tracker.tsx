@@ -2,14 +2,13 @@
 
 import * as React from "react";
 import {
-  PenLine,
   Type,
+  PenLine,
   Quote,
   Target,
-  TrendingUp,
   MessageSquare,
+  Check,
 } from "lucide-react";
-import { Progress } from "@/components/ui/progress";
 import {
   Tooltip,
   TooltipContent,
@@ -29,12 +28,19 @@ interface Props {
   onWordGoalChange?: (goal: number) => void;
 }
 
-// Round 26: the ladder now spans real article scales — the old
-// [500..5000] ceiling made every full-article project sit at 100% forever.
 const WORD_GOAL_PRESETS = [500, 1000, 2000, 5000, 10000, 20000, 50000];
-
 const fmt = (n: number) => n.toLocaleString();
 
+/**
+ * ProgressTracker — redesigned as a horizontal "progress rail".
+ *
+ * Architectural change: instead of a 5-card grid + separate progress bar,
+ * the metrics are now integrated INTO a single segmented rail. Each
+ * segment is a metric with its own mini progress bar underneath. The
+ * word-goal segment is clickable to open the goal selector inline.
+ * This is a fundamentally different visual structure — one connected
+ * instrument panel rather than discrete cards.
+ */
 export function ProgressTracker({
   totalWords,
   totalParagraphs,
@@ -50,6 +56,9 @@ export function ProgressTracker({
   const [customGoal, setCustomGoal] = React.useState("");
   const wordProgress = wordGoal > 0 ? Math.min(100, (totalWords / wordGoal) * 100) : 0;
   const goalMet = totalWords >= wordGoal;
+  const hasAnnotations = unresolvedAnnotations > 0 || resolvedAnnotations > 0;
+  const totalAnnotations = unresolvedAnnotations + resolvedAnnotations;
+  const resolvedPct = totalAnnotations > 0 ? (resolvedAnnotations / totalAnnotations) * 100 : 0;
 
   const applyCustomGoal = () => {
     const n = Math.round(Number(customGoal));
@@ -61,135 +70,184 @@ export function ProgressTracker({
   };
 
   return (
-    <div className="glass-subtle px-5 py-2.5 border-b hairline">
-      <div className="flex items-center gap-4 flex-wrap">
-        {/* Word count goal tracker */}
-        <div className="flex-1 min-w-[200px]">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="eyebrow flex items-center gap-1">
-              <Type className="h-3 w-3" />
-              {t("progress.writingProgress")}
-            </span>
-            <button
-              onClick={() => setShowGoalSelector((v) => !v)}
-              className="text-[10px] font-mono text-muted-foreground hover:text-primary transition-colors tabular-nums hover:underline underline-offset-2"
-              title={t("progress.setWordGoalTitle")}
-            >
-              {fmt(totalWords)} / {fmt(wordGoal)}w
-              {goalMet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">✓</span>}
-            </button>
-          </div>
-          <Progress
-            value={wordProgress}
-            className={`h-1.5 bg-primary/15 progress-glow${goalMet ? " progress-done" : ""}`}
-          />
-          {showGoalSelector && (
-            <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-              <span className="text-[9px] text-muted-foreground">{t("progress.goal")}</span>
-              {WORD_GOAL_PRESETS.map((g) => (
-                <button
-                  key={g}
-                  onClick={() => {
-                    onWordGoalChange?.(g);
-                    setShowGoalSelector(false);
-                  }}
-                  className={`text-[9px] px-1.5 py-0.5 rounded transition-all tabular-nums ${
-                    wordGoal === g
-                      ? "tab-pill"
-                      : "tab-pill-inactive"
-                  }`}
-                >
-                  {fmt(g)}
-                </button>
-              ))}
-              <span className="flex items-center gap-0.5">
-                <input
-                  value={customGoal}
-                  onChange={(e) => setCustomGoal(e.target.value.replace(/[^\d]/g, ""))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") applyCustomGoal();
-                  }}
-                  placeholder={t("progress.customGoalPlaceholder")}
-                  inputMode="numeric"
-                  aria-label={t("progress.customGoalPlaceholder")}
-                  className="w-16 text-[9px] px-1.5 py-0.5 rounded border border-border/60 bg-background text-foreground tabular-nums focus:outline-none focus:ring-1 focus:ring-primary/40"
-                />
-                <button
-                  onClick={applyCustomGoal}
-                  className="text-[9px] px-1.5 py-0.5 rounded tab-pill-inactive transition-all hover:text-primary"
-                >
-                  {t("progress.setCustomGoal")}
-                </button>
-              </span>
-            </div>
-          )}
-        </div>
+    <div className="shrink-0 border-b hairline">
+      {/* The rail — segmented metric bar */}
+      <div className="atlas-progress-rail">
+        <TooltipProvider delayDuration={200}>
+          {/* Words segment — clickable to open goal selector */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => setShowGoalSelector((v) => !v)}
+                className="atlas-progress-segment text-left focus-ring rounded-md"
+                aria-label={`${t("insights.wordsLabel")}: ${fmt(totalWords)} / ${fmt(wordGoal)}`}
+              >
+                <div className="flex items-center gap-1">
+                  <Type className="h-3 w-3 text-primary shrink-0" />
+                  <span className="atlas-progress-label">{t("insights.wordsLabel")}</span>
+                  {goalMet && <Check className="h-2.5 w-2.5 text-primary ml-auto" />}
+                </div>
+                <div className="flex items-baseline gap-0.5">
+                  <span className="atlas-progress-value">{fmt(totalWords)}</span>
+                  <span className="atlas-progress-unit">/ {fmt(wordGoal)}w</span>
+                </div>
+                <div className="atlas-progress-bar-wrap">
+                  <div
+                    className="atlas-progress-bar-fill"
+                    style={{ width: `${wordProgress}%` }}
+                  />
+                </div>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">
+              {t("progress.setWordGoalTitle")}
+            </TooltipContent>
+          </Tooltip>
 
-        {/* Stat strip — one calm chip row instead of competing pills */}
-        <div className="surface-card rounded-lg flex items-center divide-x divide-border/60 text-[10px] shrink-0">
-          <StatPill
-            icon={<PenLine className="h-3 w-3" />}
-            label={t("progress.paragraphsPill")}
-            value={totalParagraphs}
-            color="primary"
-          />
-          <StatPill
-            icon={<Quote className="h-3 w-3" />}
-            label={t("progress.citationsPill")}
-            value={totalCitations}
-            color="amber"
-          />
-          <StatPill
-            icon={<Target className="h-3 w-3" />}
-            label={t("progress.coveragePill")}
-            value={`${citationCoverage}%`}
-            color="primary"
-          />
-          {(unresolvedAnnotations > 0 || resolvedAnnotations > 0) && (
-            <StatPill
-              icon={<MessageSquare className="h-3 w-3" />}
-              label={t("progress.annotationsPill")}
-              value={`${unresolvedAnnotations}!/${resolvedAnnotations}✓`}
-              color={unresolvedAnnotations > 0 ? "rose" : "emerald"}
-            />
+          {/* Paragraphs segment */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="atlas-progress-segment">
+                <div className="flex items-center gap-1">
+                  <PenLine className="h-3 w-3 text-primary shrink-0" />
+                  <span className="atlas-progress-label">{t("workspace.paragraphs")}</span>
+                </div>
+                <div className="flex items-baseline gap-0.5">
+                  <span className="atlas-progress-value">{fmt(totalParagraphs)}</span>
+                  <span className="atlas-progress-unit">paras</span>
+                </div>
+                <div className="atlas-progress-bar-wrap">
+                  <div
+                    className="atlas-progress-bar-fill"
+                    style={{ width: `${Math.min(100, totalParagraphs * 5)}%` }}
+                  />
+                </div>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">
+              {totalParagraphs} paragraphs drafted
+            </TooltipContent>
+          </Tooltip>
+
+          {/* Citations segment */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="atlas-progress-segment">
+                <div className="flex items-center gap-1">
+                  <Quote className="h-3 w-3 text-amber-600 dark:text-amber-400 shrink-0" />
+                  <span className="atlas-progress-label">{t("insights.citationsLabel")}</span>
+                </div>
+                <div className="flex items-baseline gap-0.5">
+                  <span className="atlas-progress-value">{fmt(totalCitations)}</span>
+                  <span className="atlas-progress-unit">refs</span>
+                </div>
+                <div className="atlas-progress-bar-wrap">
+                  <div
+                    className="atlas-progress-bar-fill"
+                    style={{ width: `${Math.min(100, totalCitations * 4)}%` }}
+                  />
+                </div>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">
+              Inline citations across all paragraphs
+            </TooltipContent>
+          </Tooltip>
+
+          {/* Coverage segment */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="atlas-progress-segment">
+                <div className="flex items-center gap-1">
+                  <Target className="h-3 w-3 text-primary shrink-0" />
+                  <span className="atlas-progress-label">{t("structure.coverage")}</span>
+                </div>
+                <div className="flex items-baseline gap-0.5">
+                  <span className="atlas-progress-value">{citationCoverage}</span>
+                  <span className="atlas-progress-unit">%</span>
+                </div>
+                <div className="atlas-progress-bar-wrap">
+                  <div
+                    className="atlas-progress-bar-fill"
+                    style={{ width: `${citationCoverage}%` }}
+                  />
+                </div>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">
+              % of paragraphs with at least one citation
+            </TooltipContent>
+          </Tooltip>
+
+          {/* Annotations segment — only if any exist */}
+          {hasAnnotations && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="atlas-progress-segment">
+                  <div className="flex items-center gap-1">
+                    <MessageSquare
+                      className={`h-3 w-3 shrink-0 ${unresolvedAnnotations > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}
+                    />
+                    <span className="atlas-progress-label">{t("para.annotations")}</span>
+                  </div>
+                  <div className="flex items-baseline gap-0.5">
+                    <span className="atlas-progress-value">{unresolvedAnnotations}</span>
+                    <span className="atlas-progress-unit">/ {resolvedAnnotations} res</span>
+                  </div>
+                  <div className="atlas-progress-bar-wrap">
+                    <div
+                      className="atlas-progress-bar-fill"
+                      style={{ width: `${resolvedPct}%` }}
+                    />
+                  </div>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">
+                {unresolvedAnnotations} unresolved · {resolvedAnnotations} resolved
+              </TooltipContent>
+            </Tooltip>
           )}
-        </div>
+        </TooltipProvider>
       </div>
-    </div>
-  );
-}
 
-function StatPill({
-  icon,
-  label,
-  value,
-  color,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string | number;
-  color: string;
-}) {
-  const colorMap: Record<string, string> = {
-    primary: "text-primary",
-    emerald: "text-emerald-600 dark:text-emerald-400",
-    amber: "text-amber-600 dark:text-amber-400",
-    rose: "text-rose-600 dark:text-rose-400",
-  };
-  return (
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 cursor-help">
-            <span className={`shrink-0 ${colorMap[color] || "text-muted-foreground"}`}>{icon}</span>
-            <span className="font-semibold tabular-nums text-foreground">{value}</span>
-            <span className="text-muted-foreground hidden sm:inline">{label}</span>
-          </div>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" className="text-[10px]">
-          {label}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+      {/* Goal selector — inline drawer below the rail */}
+      {showGoalSelector && (
+        <div className="px-4 py-3 border-t hairline flex items-center gap-1 flex-wrap acad-fade-in">
+          <span className="eyebrow mr-1">{t("progress.goal")}</span>
+          {WORD_GOAL_PRESETS.map((g) => (
+            <button
+              key={g}
+              onClick={() => {
+                onWordGoalChange?.(g);
+                setShowGoalSelector(false);
+              }}
+              className={`atlas-tab ${wordGoal === g ? "atlas-tab-active" : ""}`}
+            >
+              {fmt(g)}
+            </button>
+          ))}
+          <span className="flex items-center gap-1 ml-1">
+            <input
+              value={customGoal}
+              onChange={(e) => setCustomGoal(e.target.value.replace(/[^\d]/g, ""))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") applyCustomGoal();
+              }}
+              placeholder={t("progress.customGoalPlaceholder")}
+              inputMode="numeric"
+              aria-label={t("progress.customGoalPlaceholder")}
+              className="w-16 text-[10px] px-2 py-1 rounded-md border hairline bg-background text-foreground tabular-nums focus-ring"
+            />
+            <button
+              onClick={applyCustomGoal}
+              className="atlas-tab"
+            >
+              {t("progress.setCustomGoal")}
+            </button>
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
