@@ -3500,3 +3500,19 @@ Work Log:
 Stage Summary:
 - 本项目现在具备 ClawsGO Science 的四大可移植优势：可回放的运行时间线（每次生成的每一步可追溯）、结构化任务简报（目标·材料·约束，像给新同事交代工作）、带 Verified 标记的真实引用（出处徽章直达文献列表）、透明的模型快照 + 示例模板。所有新能力纯增量、双语、响应式，空状态与回退路径齐备。
 - 生成管线（v1+v2）自动记录 TaskRun；下次真实生成后时间线即有真实数据（验证用的种子记录已删除以保持数据诚实）。
+
+---
+Task ID: CS-MAIN-2 (merge)
+Agent: main (Z.ai Code orchestrator)
+Task: Post-round incident handling — mystery checkout to main + branch unification.
+
+Work Log:
+- Incident: 5 秒内（04:54:17 commit → 04:54:22 checkout main）仓库被某外部机制从 redesign/ui-atelier 切回 main（项目代码中无任何 checkout 调用；auto-iterate 轮次脚本只做 push origin main，且当时已因 writeText 的 path 参数遮蔽 bug 崩溃）。后果：工作树回到旧版 main 代码、dev server 被沙箱收割下线 — 正是 RESTORE-1 轮用户投诉过的"UI 回到旧版"风险模式。
+- Resolution: 将 redesign/ui-atelier（981676f，含全部 round-cs-1 升级）merge 进 main — 冲突 3 文件：db/custom.db（取 theirs=最新 live 库，含 TaskRun 表）、iteration-state/rounds.md（取 theirs 后手工回补 main 侧 09-12/09-13 两条轮次记录，保持 newest-first）、worklog.md（取 theirs=完整历史含 cs-1 条目；main 侧内容早已核验一致）。merge commit 3dac774 已推送 origin/main。
+- 效果：main 与 redesign/ui-atelier 现在同源最新 — 无论未来哪个分支被检出/被 auto-iterate 轮次操作，用户看到的都是 Canvas/Atelier UI + 本轮全部升级；auto-iterate 轮次推送 origin main 也保持一致。
+- 验证：dev server 在合并后的 main 上重启（setsid 拉起），/ 200；canvas-shell/canvas-topbar/5 任务卡/Timeline 按钮全部在位；AI Hub → Full Article → Task Brief + Examples & tutorials + 2 textareas 渲染正常；/api/task-runs 200；console 零错误。
+- 遗留：iterate.ts:90 的 `function writeText(path: string, …)` 参数遮蔽 path 模块导入的 bug（本轮 03:46 轮次因此 FATAL，轮次收尾的 rounds.md 提交/推送未执行）——建议下轮修复（重命名参数为 p/filePath）。
+
+Stage Summary:
+- main 分支现包含 Atelier v2 + Canvas + round-68 修复 + round-cs-1 全部升级（运行时间线/任务简报/Verified 徽章/模型快照）；双分支漂移风险消除。
+- worklog.md 3502+ 行完整保留于 main；db/custom.db 为最新 live 数据。
