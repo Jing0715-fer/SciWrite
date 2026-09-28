@@ -41,6 +41,9 @@ import {
   type SourceScore,
 } from "@/lib/citation-planner";
 import { safeErrorMessage } from "@/lib/api-helpers";
+// round-cs-1 (ClawsGO-inspired "可追溯可复现"): persist a replayable
+// per-step timeline for every pipeline launch — see lib/run-recorder.ts.
+import { TaskRunRecorder } from "@/lib/run-recorder";
 
 export const runtime = "nodejs";
 export const maxDuration = 1800; // 30 minutes — streaming keeps connection alive
@@ -134,6 +137,10 @@ export async function POST(req: NextRequest) {
   // closed the SSE connection (LLM calls + destructive DB writes for an
   // audience of zero). The section loop checks this flag each iteration.
   let clientDisconnected = false;
+  // round-cs-1: run-timeline recorder (assigned after the project/config
+  // are known — every event funnelled through send() is appended to its
+  // persisted stepsJson so the run can be replayed later).
+  let recorder: TaskRunRecorder | null = null;
   const stream = new ReadableStream({
     async start(controller) {
       let isClosed = false;
@@ -167,6 +174,9 @@ export async function POST(req: NextRequest) {
         { step: "compose", weight: 0.8 },
       ]);
       const send = (event: string, data: any) => {
+        // round-cs-1: observe everything that goes on the wire (observer
+        // only — swallowed errors can never break the pipeline).
+        try { recorder?.onEvent(event, data); } catch {}
         if (event === "step" && data && typeof data === "object") {
           const progress = progressTracker.onEvent(data);
           if (progress != null) {
@@ -242,6 +252,19 @@ export async function POST(req: NextRequest) {
         // Chinese is produced in a dedicated translate step afterwards.
         const generationLanguage = "English";
         const targetWords = Math.min(body.targetWords || 5000, 50000);
+        // round-cs-1: create the persisted timeline row for THIS launch.
+        recorder = new TaskRunRecorder({
+          projectId,
+          runId: crypto.randomUUID(),
+          pipeline: "v1",
+          topic: project.topic,
+          language: requestedLanguage,
+          targetWords,
+          trigger: "manual",
+        });
+        await recorder.start();
+        // The init event fires below — the recorder now observes it live
+        // through send(), so no replay is needed here.
         journalTemplate = body.journalTemplate || "generic";
 
         // ---- Advanced tuning parameters (all clamped to safe ranges) ----
@@ -3715,6 +3738,34 @@ ${cleanEn}`;
         // events that record every step's metadata.
         const pipelineEndTime = Date.now();
         const pipelineDuration = pipelineEndTime - t0;
+        // round-cs-1: persist the run's final record (summary + stats) on
+        // the replayable timeline before the SSE event fires.
+        try {
+          await recorder?.complete(
+            {
+              articleId: article.id,
+              wordCount: countWords(articleContent),
+              references: globalRefs.length,
+              sections: generatedParagraphs.length,
+              totalMs: pipelineDuration,
+              pipeline: "v1",
+              hasChinese: !!articleContentZh,
+            },
+            {
+              stats: {
+                sourcesGathered: savedDataSources.length,
+                referencesSaved: savedReferences.length,
+                sectionsPlanned: sections.length,
+                paragraphsGenerated: generatedParagraphs.length,
+                articleWordCount: countWords(articleContent),
+                failedSections: failedSections.length,
+                pipelineDurationMs: pipelineDuration,
+                targetWords,
+                achievementRate: Math.round((countWords(articleContent) / targetWords) * 100),
+              },
+            },
+          );
+        } catch {}
         send("complete", {
           success: true,
           articleId: article.id,
@@ -3746,6 +3797,9 @@ ${cleanEn}`;
         });
       } catch (err: any) {
         console.error("[/api/ai/generate-full] error:", err);
+        // round-cs-1: record the failure on the persisted timeline before
+        // the partial-recovery logic runs.
+        try { await recorder?.fail(String(err?.message ?? err)); } catch {}
         // Even if the pipeline failed midway, try to compose and save a
         // partial article from whatever sections were successfully generated.
         // This ensures the user doesn't lose all progress.
@@ -3830,6 +3884,18 @@ ${cleanEn}`;
               },
             });
             log(`error recovery: saved partial article ${partialArticle.id} with ${generatedParagraphs.length} sections`);
+            // round-cs-1: the failed run was salvaged — upgrade the timeline
+            // record to completed (partial) with the saved article's summary.
+            try {
+              await recorder?.finishPartial({
+                articleId: partialArticle.id,
+                wordCount: countWords(partialArticleContent),
+                sections: generatedParagraphs.length,
+                plannedSections: sections.length,
+                totalMs: Date.now() - t0,
+                pipeline: "v1",
+              });
+            } catch {}
             send("complete", {
               success: true,
               partial: true,

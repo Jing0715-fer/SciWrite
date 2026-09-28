@@ -87,6 +87,9 @@ import {
   RateLimitAbortedError,
   QuotaExhaustedError,
 } from "@/lib/rate-limiter";
+// round-cs-1 (ClawsGO-inspired "可追溯可复现"): persist a replayable
+// per-step timeline for every pipeline launch — see lib/run-recorder.ts.
+import { TaskRunRecorder } from "@/lib/run-recorder";
 
 export const runtime = "nodejs";
 export const maxDuration = 1800; // 30 minutes — streaming keeps connection alive
@@ -157,6 +160,10 @@ export async function POST(req: NextRequest) {
   // an audience of zero. `cancel()` flips this flag; the section loop checks
   // it at every iteration boundary and skips all remaining work.
   let clientDisconnected = false;
+  // round-cs-1: run-timeline recorder (assigned after the project/config
+  // are known — every event funnelled through send() is appended to its
+  // persisted stepsJson so the run can be replayed later).
+  let recorder: TaskRunRecorder | null = null;
   const stream = new ReadableStream({
     async start(controller) {
       let isClosed = false;
@@ -199,6 +206,9 @@ export async function POST(req: NextRequest) {
         ...(trackerBothMode ? [{ step: "translate", unitWeight: 0.75 }] : []),
       ]);
       const send = (event: string, data: any) => {
+        // round-cs-1: observe everything that goes on the wire (observer
+        // only — swallowed errors can never break the pipeline).
+        try { recorder?.onEvent(event, data); } catch {}
         if (event === "step" && data && typeof data === "object") {
           const progress = progressTracker.onEvent(data);
           if (progress != null) {
@@ -369,6 +379,30 @@ export async function POST(req: NextRequest) {
           log(`resume: checkpoint load failed — fresh run: ${String(resumeErr?.message ?? resumeErr).slice(0, 120)}`);
         }
         const activeRunId = resume?.runId || crypto.randomUUID();
+
+        // round-cs-1: create the persisted timeline row for THIS launch.
+        // Note: the TaskRun always gets a FRESH runId — a resumed launch
+        // reuses the checkpoint runId for stage bookkeeping, but reusing it
+        // here would collide with the interrupted launch's TaskRun row
+        // (runId is @unique). `resumed` records the linkage instead.
+        recorder = new TaskRunRecorder({
+          projectId,
+          runId: crypto.randomUUID(),
+          pipeline: "v2",
+          topic: project.topic,
+          language: requestedLanguage,
+          targetWords,
+          trigger: "manual",
+          resumed: !!resume,
+        });
+        await recorder.start();
+        // The init event fired before the recorder existed — replay it so
+        // the timeline starts with the run's configuration record.
+        recorder.onEvent("step", {
+          step: "init",
+          status: "done",
+          message: `v2 evidence-grounded pipeline initialized. Target: ${targetWords} words${isBothMode ? ". Language: English-first, then translate to 中文" : ""}.`,
+        });
 
         if (resume) {
           // ---- RESTORE PATH: rebuild the in-memory state + DB paragraphs ----
@@ -3186,7 +3220,9 @@ ${cleanEn}`;
           log("checkpoint: cleared (run complete)");
         } catch {}
 
-        send("complete", {
+        // round-cs-1: the complete payload is built once so the persisted
+        // run timeline records EXACTLY what the client received.
+        const completePayload = {
           articleId: article.id,
           wordCount: articleWordCount,
           references: globalRefs.length,
@@ -3248,12 +3284,33 @@ ${cleanEn}`;
           message:
             `v2 pipeline complete: ${articleWordCount} words${articleContentZh ? ` + ${countWords(articleContentZh)} Chinese chars` : ""}, ${globalRefs.length} references, ${stats.citationsChecked} citations adversarially verified (${stats.citationsRemoved} removed)` +
             `${repairTelemetry.triggered ? `, ${repairTelemetry.revisions} auto-repair revision(s) applied` : ""}.`,
-        });
+        };
+        send("complete", completePayload);
+        // round-cs-1: finalize the persisted run timeline (summary + stats
+        // + accuracy — everything the replay UI needs).
+        try {
+          await recorder?.complete(
+            {
+              articleId: article.id,
+              wordCount: articleWordCount,
+              references: globalRefs.length,
+              sections: generatedParagraphs.length,
+              totalMs,
+              pipeline: "v2",
+              hasChinese: !!articleContentZh,
+            },
+            { stats: completePayload.stats, accuracy: completePayload.accuracy },
+          );
+        } catch {}
         safeClose();
       } catch (err: any) {
         const errMsg = String(err?.message ?? err);
         try { slog.error("FATAL", { ms: Date.now() - t0, error: errMsg.slice(0, 300) }); } catch {}
         log(`FATAL: ${errMsg.slice(0, 300)}`);
+        // round-cs-1: record the failure on the persisted timeline BEFORE
+        // the recovery logic runs (so even a crash during rollback leaves a
+        // traceable failed run).
+        try { await recorder?.fail(errMsg); } catch {}
 
         // ★ CRITICAL FIX (crash-safe rollback). Previously ANY failure after
         // the force-clear left the project EMPTY (the deletes had already

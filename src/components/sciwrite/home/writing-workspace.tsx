@@ -12,6 +12,7 @@ import {
   Library,
   Trash2,
   DatabaseZap,
+  History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -21,6 +22,7 @@ import { WritingTipsPanel } from "@/components/sciwrite/writing-tips-panel";
 import { ExportMenu } from "@/components/sciwrite/export-menu";
 import { MarkdownCitations } from "@/components/sciwrite/markdown-citations";
 import { SortableParagraphs } from "@/components/sciwrite/sortable-paragraphs";
+import { RunTimelineDialog } from "@/components/sciwrite/run-timeline-dialog";
 import { cleanArticleContent } from "@/lib/writing";
 import { useI18n } from "@/lib/i18n";
 import { EmbeddedReviewWorkspace } from "@/components/sciwrite/home/review-workspace";
@@ -82,6 +84,8 @@ export function WritingWorkspace({
   const [workspaceTab, setWorkspaceTab] = React.useState("paragraphs");
   const [articleViewLang, setArticleViewLang] = React.useState<"en" | "zh">("en");
   const [paraTrashOpen, setParaTrashOpen] = React.useState(false);
+  // round-cs-1: run-timeline dialog (replayable pipeline run records)
+  const [timelineOpen, setTimelineOpen] = React.useState(false);
 
   // Jump to a specific paragraph in the workspace. Switches to the
   // paragraphs tab, waits a tick for it to render, then scrolls the
@@ -161,6 +165,19 @@ export function WritingWorkspace({
             >
               <DatabaseZap className="h-3.5 w-3.5" />
               <span className="hidden xl:inline">{t("app.dataButton")}</span>
+            </Button>
+            {/* round-cs-1: replayable run timeline — every pipeline launch's
+                step-by-step record (what ran, durations, outcome). */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-xs gap-1 hover:bg-muted/60 focus-ring"
+              onClick={() => setTimelineOpen(true)}
+              title={t("workspace.timelineTitle")}
+              disabled={!activeProjectId}
+            >
+              <History className="h-3.5 w-3.5" />
+              <span className="hidden xl:inline">{t("workspace.timelineButton")}</span>
             </Button>
             <Button
               variant="ghost"
@@ -434,6 +451,16 @@ export function WritingWorkspace({
         projectId={activeProjectId}
       />
       </React.Suspense>
+      {/* round-cs-1: replayable run timeline — persisted TaskRun records */}
+      {activeProjectId && (
+        <RunTimelineDialog
+          open={timelineOpen}
+          onOpenChange={setTimelineOpen}
+          projectId={activeProjectId}
+          articles={articles}
+          onOpenArticle={onOpenArticle}
+        />
+      )}
     </div>
   );
 }

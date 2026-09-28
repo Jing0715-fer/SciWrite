@@ -6,7 +6,13 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
-import { ExternalLink } from "lucide-react";
+import {
+  AlertTriangle,
+  ExternalLink,
+  Globe,
+  HelpCircle,
+  ShieldCheck,
+} from "lucide-react";
 import type { Annotation } from "@/lib/types";
 
 export interface CitationRef {
@@ -23,6 +29,148 @@ export interface CitationRef {
   /** Adversarial-audit verdict for this reference (Layer 3 rendering guard). */
   auditStatus?: "ok" | "suspect" | "unsupported" | "missing";
   auditReason?: string | null;
+}
+
+/**
+ * Extract a database identity from a canonical database URL — the reverse of
+ * the URL builder in parseCitationsBlock. Article "## References" lines often
+ * carry no [SOURCE:ID] marker, just a bare URL (e.g.
+ * "— https://pubmed.ncbi.nlm.nih.gov/36171658/"); the record ID is embedded
+ * in the URL itself, so this recovers the provenance the text parse misses.
+ */
+function dbIdentityFromUrl(
+  url?: string | null
+): { type?: string; externalId?: string; doi?: string } | null {
+  if (!url) return null;
+  let m = url.match(/pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)/i);
+  if (m) return { type: "pubmed", externalId: m[1] };
+  m = url.match(/rcsb\.org\/structure\/([A-Za-z0-9_.-]+)/i);
+  if (m) return { type: "rcsb", externalId: m[1] };
+  m = url.match(/uniprot\.org\/(?:uniprotkb|uniprot)\/([A-Za-z0-9_-]+)/i);
+  if (m) return { type: "uniprot", externalId: m[1] };
+  m = url.match(/ncbi\.nlm\.nih\.gov\/pmc\/articles\/(PMC\d+)/i);
+  if (m) return { type: "pmc", externalId: m[1] };
+  m = url.match(/ncbi\.nlm\.nih\.gov\/gene\/(\d+)/i);
+  if (m) return { type: "ncbi", externalId: m[1] };
+  m = url.match(/ncbi\.nlm\.nih\.gov\/pubmed\/(\d+)/i);
+  if (m) return { type: "pubmed", externalId: m[1] };
+  m = url.match(/doi\.org\/(10\.[^\s?#]+)/i);
+  if (m) return { doi: m[1].replace(/[.,;)\]]+$/, "") };
+  return null;
+}
+
+/** Provenance level of a reference (ClawsGO-style "Verified" badge). */
+export type RefVerifyLevel = "verified" | "web" | "unverified" | "flagged";
+
+const REF_DB_TYPES = new Set([
+  "pubmed",
+  "uniprot",
+  "rcsb",
+  "pdb",
+  "ncbi",
+  "blast",
+  "pmc",
+]);
+
+/**
+ * Classify a reference's provenance for the verification badge:
+ * 1. auditStatus suspect/unsupported/missing → "flagged" (takes precedence —
+ *    an audit-flagged reference is never shown as verified);
+ * 2. real database record (PubMed/UniProt/RCSB/PDB/NCBI/BLAST/PMC) with an
+ *    external ID or DOI → "verified";
+ * 2b. canonical database URL with the record ID embedded (compose builds
+ *    these URLs from type+externalId, so the URL itself is the record
+ *    identity) → "verified";
+ * 3. web search result, or a reference whose only provenance is a
+ *     non-database URL → "web" (the URL is what to check);
+ * 4. otherwise → "unverified" (no database ID, DOI or URL).
+ */
+export function referenceVerifyLevel(r: CitationRef): RefVerifyLevel {
+  if (
+    r.auditStatus === "suspect" ||
+    r.auditStatus === "unsupported" ||
+    r.auditStatus === "missing"
+  ) {
+    return "flagged";
+  }
+  const t = r.type?.toLowerCase() ?? "";
+  if (REF_DB_TYPES.has(t) && (r.externalId || r.doi)) {
+    return "verified";
+  }
+  if (!r.externalId && !r.doi) {
+    const ident = dbIdentityFromUrl(r.url);
+    if (ident?.type && REF_DB_TYPES.has(ident.type)) return "verified";
+  }
+  // A web-search result, or a reference whose only provenance is a
+  // non-database URL — the URL is what to check.
+  if (t === "web" || (!r.externalId && !r.doi && r.url)) return "web";
+  return "unverified";
+}
+
+const REF_VERIFY_CONFIG: Record<
+  RefVerifyLevel,
+  { icon: typeof ShieldCheck; pill: string; label: string; title: string }
+> = {
+  verified: {
+    icon: ShieldCheck,
+    pill: "text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
+    label: "Verified",
+    title:
+      "Database-verified source — real external ID (PubMed/RCSB/UniProt/NCBI record)",
+  },
+  web: {
+    icon: Globe,
+    pill: "text-sky-700 dark:text-sky-400 bg-sky-500/10 border-sky-500/20",
+    label: "Web",
+    title: "Web source — check the URL for provenance",
+  },
+  unverified: {
+    icon: HelpCircle,
+    pill: "text-muted-foreground bg-muted/60 border-muted-foreground/20",
+    label: "Unverified",
+    title: "No database ID or DOI — verify manually before citing",
+  },
+  flagged: {
+    icon: AlertTriangle,
+    pill: "text-amber-700 dark:text-amber-400 bg-amber-500/10 border-amber-500/25",
+    label: "Audit",
+    title:
+      "Adversarial audit flagged this reference — review before citing",
+  },
+};
+
+/**
+ * Compact provenance pill rendered next to every reference (ClawsGO-style
+ * "Verified" badge). Kept intentionally tiny (h-4 / text-[8px]) so it never
+ * breaks line wrapping in dense reference lists.
+ */
+export function RefVerifyBadge({
+  reference,
+  className = "",
+}: {
+  reference: CitationRef;
+  className?: string;
+}) {
+  const level = referenceVerifyLevel(reference);
+  const cfg = REF_VERIFY_CONFIG[level];
+  const Icon = cfg.icon;
+  const label =
+    level === "flagged"
+      ? `Audit: ${reference.auditStatus ?? "flagged"}`
+      : cfg.label;
+  const title =
+    level === "flagged" && reference.auditReason
+      ? `Audit ${reference.auditStatus} — ${reference.auditReason}`
+      : cfg.title;
+  return (
+    <span
+      title={title}
+      className={`inline-flex items-center gap-0.5 h-4 px-1 rounded border text-[8px] font-semibold uppercase tracking-wide whitespace-nowrap shrink-0 align-middle ${cfg.pill} ${className}`}
+    >
+      <Icon className="h-2 w-2" aria-hidden="true" />
+      {label}
+    </span>
+  );
 }
 
 interface Segment {
@@ -245,6 +393,105 @@ export function parseCitationsBlock(text: string): CitationRef[] {
     result.push(refMap.get(k) || null as any);
   }
   return result;
+}
+
+/** Normalize a reference type for identity matching (case + PMID/PDB aliases). */
+function normRefType(t?: string | null): string {
+  const s = (t || "").toLowerCase();
+  return s === "pmid" ? "pubmed" : s === "pdb" ? "rcsb" : s;
+}
+
+/** Normalize a title for exact-match comparison (case/punctuation-insensitive). */
+function normRefTitle(s?: string | null): string {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * Find the DB-prop reference for the SAME work as a text-parsed reference —
+ * by normalized type+externalId, DOI, URL-embedded record ID, or exact
+ * normalized title. Used to merge caller-supplied data (audit verdicts,
+ * DOIs, metadata) into the article's own "## References" rows. Render-only:
+ * never feeds citation resolution.
+ */
+function matchPropRef(
+  r: CitationRef,
+  propRefs: CitationRef[],
+  ident?: { type?: string; externalId?: string; doi?: string; url?: string }
+): CitationRef | undefined {
+  const rType = normRefType(r.type);
+  const rId = r.externalId?.trim().toLowerCase();
+  const rDoi = (r.doi || ident?.doi)?.trim().toLowerCase();
+  // URL-embedded record ID: from the raw-line identity pass when available,
+  // else from the ref's own url field.
+  const urlIdent =
+    ident && (ident.type || ident.externalId || ident.doi)
+      ? ident
+      : dbIdentityFromUrl(r.url);
+  const rTitle = normRefTitle(r.title);
+  for (const p of propRefs) {
+    if (p.type === "missing") continue; // gap sentinel — carries no identity
+    const pType = normRefType(p.type);
+    const pId = p.externalId?.trim().toLowerCase();
+    if (rId && rType && pType === rType && pId === rId) return p;
+    if (rDoi && p.doi && p.doi.trim().toLowerCase() === rDoi) return p;
+    if (
+      urlIdent?.externalId &&
+      urlIdent.type &&
+      pType === normRefType(urlIdent.type) &&
+      pId === urlIdent.externalId.toLowerCase()
+    ) {
+      return p;
+    }
+    if (rTitle && rTitle.length >= 10 && normRefTitle(p.title) === rTitle) {
+      return p;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Enrich one article-"## References" row for the rich badge list: lift the
+ * database identity out of the canonical URL when the text parse couldn't
+ * (bare "— https://pubmed.ncbi.nlm.nih.gov/NNN/" lines), and overlay
+ * caller-supplied DB data (audit verdict, DOI, metadata) on identity match.
+ * Purely additive — the parsed row's own display fields always win.
+ */
+function enrichArticleRef(
+  r: CitationRef,
+  propRefs: CitationRef[],
+  ident?: { type?: string; externalId?: string; doi?: string; url?: string }
+): CitationRef {
+  if (r.type === "missing") return r; // gap sentinel — keep the flag row as-is
+  const db = matchPropRef(r, propRefs, ident);
+  const urlId = dbIdentityFromUrl(r.url);
+  // A DB-prop row only contributes a type when it carries a REAL one —
+  // parsed/manual rows would otherwise shadow the URL-embedded identity.
+  const dbType =
+    db?.type && db.type !== "manual" && db.type !== "missing"
+      ? db.type
+      : undefined;
+  const type =
+    r.type && r.type !== "manual"
+      ? r.type
+      : dbType || ident?.type || urlId?.type || r.type;
+  const externalId =
+    r.externalId || db?.externalId || ident?.externalId || urlId?.externalId || null;
+  const doi = r.doi || db?.doi || ident?.doi || urlId?.doi || null;
+  return {
+    ...r,
+    type,
+    externalId,
+    doi,
+    url: r.url || ident?.url || db?.url,
+    authors: r.authors || db?.authors,
+    journal: r.journal || db?.journal,
+    year: r.year || db?.year,
+    auditStatus: db?.auditStatus ?? r.auditStatus,
+    auditReason: r.auditReason || db?.auditReason || null,
+  };
 }
 
 /**
@@ -485,6 +732,9 @@ function renderSegment(
                         {r.type}:{r.externalId}
                       </span>
                     )}
+                    {/* Task 2-b: same provenance pill as the reference lists,
+                        so the tooltip and the list never disagree. */}
+                    <RefVerifyBadge reference={r} />
                     {r.doi && (
                       <span className="text-[9px] font-mono text-muted-foreground break-all">
                         DOI:{r.doi}
@@ -548,6 +798,71 @@ function renderSegment(
   return <span key={idx}>{renderInlineMarkdown(s.text, `seg-${idx}`)}</span>;
 }
 
+/**
+ * Shared <li> markup for BOTH reference lists — the component-generated list
+ * (content without its own "## References" section) and the article's own
+ * References section rendered as a rich badge list. Identical markup keeps
+ * the two paths visually indistinguishable (DRY).
+ */
+function renderReferenceItem(r: CitationRef, i: number): React.ReactNode {
+  return (
+    <li
+      id={`ref-${i + 1}`}
+      key={r.id || i}
+      className={`text-[11px] leading-snug flex gap-1.5 font-sans text-foreground/85 px-2.5 py-1.5 transition-colors hover:bg-accent/30 scroll-mt-16 ${
+        r.auditStatus === "missing"
+          ? "bg-red-50/60 dark:bg-red-950/20"
+          : r.auditStatus === "unsupported" || r.auditStatus === "suspect"
+          ? "bg-amber-50/50 dark:bg-amber-950/15"
+          : i % 2 === 0
+          ? "bg-transparent"
+          : "bg-muted/25"
+      }`}
+    >
+      <span className="font-mono text-primary font-semibold shrink-0">
+        [{i + 1}]
+      </span>
+      <span className="flex-1 min-w-0 break-words">
+        {r.authors && <span>{r.authors} </span>}
+        {r.year && (
+          <span className="text-muted-foreground">({r.year}) </span>
+        )}
+        <span className="font-medium">{r.title}.</span>
+        {r.journal && (
+          <span className="italic text-muted-foreground">
+            {" "}
+            {r.journal}.
+          </span>
+        )}
+        {r.type && r.externalId && (
+          <span className="ml-1 badge-slate px-1 py-0.5 rounded text-[8px] font-semibold uppercase align-middle">
+            {r.type}:{r.externalId}
+          </span>
+        )}
+        {/* Task 2-b: ClawsGO-style provenance pill — Verified / Web /
+            Unverified / Audit: … — every reference's provenance is instantly
+            visible (badge = provenance, doi text = the identifier). */}
+        <RefVerifyBadge reference={r} className="ml-1" />
+        {r.doi && (
+          <span className="ml-1 text-[9px] font-mono text-muted-foreground break-all">
+            doi:{r.doi}
+          </span>
+        )}
+        {r.url && (
+          <a
+            href={r.url}
+            target="_blank"
+            rel="noreferrer"
+            className="ml-1 text-primary hover:underline inline-flex items-center gap-0.5 text-[9px]"
+          >
+            <ExternalLink className="h-2.5 w-2.5" />
+          </a>
+        )}
+      </span>
+    </li>
+  );
+}
+
 export function MarkdownCitations({
   content,
   annotations = [],
@@ -572,7 +887,7 @@ export function MarkdownCitations({
    * references actually cited in this content (per-section view). */
   onlyCitedRefs?: boolean;
 }) {
-  const { bodySegments, citationsBlock, contentRefText, citedRefs, allRefs, hasContentRefs, citedIdx } = React.useMemo(() => {
+  const { bodySegments, citationsBlock, contentRefText, articleListRefs, citedRefs, allRefs, hasContentRefs, citedIdx } = React.useMemo(() => {
     // r37 fix: the `references` prop can arrive SPARSE (parseCitationsBlock
     // fills numbering gaps with null — e.g. paragraph-card feeds
     // globalArticleRefs). Nulls flowing into `merged` crashed three paths:
@@ -737,12 +1052,56 @@ export function MarkdownCitations({
       i = nextStop;
     }
 
+    // Task 2-b (ClawsGO "real citations + Verified badge"): rows for the
+    // article's own "## References" section, rendered as a rich badge list.
+    // Built from the SPARSE parsed refs (index+1 = the article's own [n]
+    // numbering) enriched with DB-prop data (audit verdicts, DOIs) and
+    // URL-embedded record IDs. Render-only — `merged` (citation resolution)
+    // stays untouched. Empty when the section didn't parse → raw-text fallback.
+    //
+    // parseCitationsBlock cannot lift bare URLs out of the reference lines
+    // (a trailing "— https://pubmed.ncbi.nlm.nih.gov/NNN/" carries no
+    // [SOURCE:ID] marker), so run a light second pass over the RAW section
+    // text to recover each [n]'s database identity from the URL. This pass
+    // feeds ONLY the rich list below — parseCitationsBlock and `merged`
+    // stay byte-identical.
+    const refIdentityByNum = new Map<
+      number,
+      { type?: string; externalId?: string; doi?: string; url?: string }
+    >();
+    if (parsedArticleRefs.some((pr) => !!pr)) {
+      const identSource =
+        refHeaderIdx >= 0
+          ? content.slice(refHeaderIdx)
+          : bareRefIdx >= 0
+          ? content.slice(bareRefIdx + 1)
+          : "";
+      for (const line of identSource.split("\n")) {
+        const lm = line.match(/^\s*\[(\d+)\]\s*(.+)$/);
+        if (!lm) continue;
+        const num = parseInt(lm[1], 10);
+        const um = lm[2].match(/https?:\/\/[^\s]+/);
+        const url = um?.[0]?.replace(/[.,;)\]]+$/, "");
+        const ident = dbIdentityFromUrl(url);
+        refIdentityByNum.set(num, { ...ident, url: url || undefined });
+      }
+    }
+    const articleListRefs: (CitationRef | null)[] = parsedArticleRefs.some(
+      (pr) => !!pr
+    )
+      ? parsedArticleRefs.map((pr, k) =>
+          pr
+            ? enrichArticleRef(pr, propRefs, refIdentityByNum.get(k + 1))
+            : null
+        )
+      : [];
+
     // Split body from reference/citations section at the earliest header found.
     // The content may have "### Citations" (paragraph) or "## References" (article)
     // or bare "REFERENCES" (AI-generated). We split at the earliest one.
     if (refSectionIdx >= content.length) {
       // No reference section header found — entire content is body
-      return { bodySegments: segments, citationsBlock: null, citedRefs: citedList, allRefs: merged, hasContentRefs: false, citedIdx: citedIdxSet };
+      return { bodySegments: segments, citationsBlock: null, articleListRefs, citedRefs: citedList, allRefs: merged, hasContentRefs: false, citedIdx: citedIdxSet };
     }
     let acc = 0;
     const body: Segment[] = [];
@@ -769,6 +1128,7 @@ export function MarkdownCitations({
       bodySegments: body,
       citationsBlock: isCitationsBlock ? citText : null,
       contentRefText: !isCitationsBlock ? citText : null,
+      articleListRefs,
       citedRefs: citedList,
       allRefs: merged,
       hasContentRefs: !isCitationsBlock,
@@ -788,15 +1148,31 @@ export function MarkdownCitations({
         </div>
       )}
 
-      {/* Article's own reference section (from "## References" or "REFERENCES" in content).
-          Rendered as literal text — no duplicate component-generated list is added. */}
-      {contentRefText && (
+      {/* Article's own reference section (from "## References" or "REFERENCES" in
+          content). Task 2-b: when the section parses into structured refs, render
+          it as the same rich badge list as the component-generated one (shared
+          <li> markup — Verified/Web/Unverified/Audit provenance pills, DB-prop
+          enrichment, URL-lifted record IDs, numbering = the article's own [n]).
+          Falls back to the literal raw text when parsing yields nothing —
+          zero-regression path. No duplicate component-generated list is added. */}
+      {contentRefText && articleListRefs.length > 0 ? (
+        <div className="mt-4 pt-3 border-t border-border/70">
+          <p className="divider-academic mb-2">
+            <span>References</span>
+          </p>
+          <ol className="list-none rounded-lg overflow-hidden border border-border/40 shadow-sm">
+            {articleListRefs.map((r, i) =>
+              r ? renderReferenceItem(r, i) : null
+            )}
+          </ol>
+        </div>
+      ) : contentRefText ? (
         <div className="mt-4 pt-3 border-t border-border/70">
           <div className="text-[11px] leading-snug font-sans text-foreground/85 whitespace-pre-wrap break-words">
             {contentRefText}
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Component-generated reference list — only shown if the content does NOT
           already have its own reference section AND suppressRefList is false.
@@ -811,58 +1187,7 @@ export function MarkdownCitations({
           <ol className="list-none rounded-lg overflow-hidden border border-border/40 shadow-sm">
             {allRefs.map((r, i) => {
               if (onlyCitedRefs && !citedIdx.has(i)) return null;
-              return (
-              <li
-                id={`ref-${i + 1}`}
-                key={r.id || i}
-                className={`text-[11px] leading-snug flex gap-1.5 font-sans text-foreground/85 px-2.5 py-1.5 transition-colors hover:bg-accent/30 scroll-mt-16 ${
-                  r.auditStatus === "missing"
-                    ? "bg-red-50/60 dark:bg-red-950/20"
-                    : r.auditStatus === "unsupported" || r.auditStatus === "suspect"
-                    ? "bg-amber-50/50 dark:bg-amber-950/15"
-                    : i % 2 === 0
-                    ? "bg-transparent"
-                    : "bg-muted/25"
-                }`}
-              >
-                <span className="font-mono text-primary font-semibold shrink-0">
-                  [{i + 1}]
-                </span>
-                <span className="flex-1 min-w-0 break-words">
-                  {r.authors && <span>{r.authors} </span>}
-                  {r.year && (
-                    <span className="text-muted-foreground">({r.year}) </span>
-                  )}
-                  <span className="font-medium">{r.title}.</span>
-                  {r.journal && (
-                    <span className="italic text-muted-foreground">
-                      {" "}
-                      {r.journal}.
-                    </span>
-                  )}
-                  {r.type && r.externalId && (
-                    <span className="ml-1 badge-slate px-1 py-0.5 rounded text-[8px] font-semibold uppercase align-middle">
-                      {r.type}:{r.externalId}
-                    </span>
-                  )}
-                  {r.doi && (
-                    <span className="ml-1 text-[9px] font-mono text-muted-foreground break-all">
-                      doi:{r.doi}
-                    </span>
-                  )}
-                  {r.url && (
-                    <a
-                      href={r.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="ml-1 text-primary hover:underline inline-flex items-center gap-0.5 text-[9px]"
-                    >
-                      <ExternalLink className="h-2.5 w-2.5" />
-                    </a>
-                  )}
-                </span>
-              </li>
-              );
+              return renderReferenceItem(r, i);
             })}
           </ol>
         </div>

@@ -33,7 +33,9 @@ import {
   ArrowUpCircle,
   Wrench,
   History,
+  Paperclip,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -68,6 +70,8 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import { PromptTemplateManager } from "./prompt-template-manager";
 import { api } from "@/lib/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -804,6 +808,21 @@ function ComposeTab({ projectId, topic, paragraphCount, onInvalidate }: { projec
 }
 
 // ==================== Full Article Tab ====================
+/** A one-click example task card ("Examples & tutorials") — prefills the
+ *  Task Brief (goal + extra constraints) and, where set, the target word
+ *  count / output language. targetWords/language of null = leave the
+ *  current settings untouched. */
+type BriefExample = {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  badge: string;
+  goal: string;
+  constraints: string;
+  targetWords: number | null;
+  language: string | null;
+};
+
 function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount = 0, articleCount = 0, onInvalidate, onRunningChange, onGenerationTargetWords }: { projectId: string; topic: string; field?: string; paragraphCount: number; sourceCount?: number; articleCount?: number; onInvalidate: () => void; onRunningChange?: (running: boolean) => void; onGenerationTargetWords?: (targetWords: number) => void }) {
   const { t } = useI18n();
   const [language, setLanguage] = React.useState("English");
@@ -831,6 +850,29 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
   // instruction is appended to the section-generation prompt.
   const [selectedTemplateId, setSelectedTemplateId] = React.useState<string>("");
   const [templateManagerOpen, setTemplateManagerOpen] = React.useState(false);
+  // Task Brief (ClawsGO "one-sentence task → end-to-end delivery"): a
+  // structured Goal · Materials · Constraints composer that is compiled
+  // into the run's promptInstruction when armed. The Goal textarea is
+  // prefilled with the project topic so the UNTOUCHED state (goal ===
+  // topic, no extra constraints) compiles to nothing — the launch payload
+  // stays byte-identical to the pre-brief behavior.
+  const [briefGoal, setBriefGoal] = React.useState(topic);
+  const [briefConstraints, setBriefConstraints] = React.useState("");
+  const [briefEnabled, setBriefEnabled] = React.useState(false);
+  const [briefOpen, setBriefOpen] = React.useState(true);
+  const briefPanelRef = React.useRef<HTMLDivElement>(null);
+  // Does the brief carry information beyond the plain topic? Drives both
+  // the auto-arm effect below and the panel's armed accent border.
+  const briefHasContent =
+    briefGoal.trim() !== topic.trim() || briefConstraints.trim() !== "";
+  // Auto-arm the send-brief checkbox the moment the brief gains real
+  // content (goal edited past the plain topic / extra constraints filled).
+  // An explicit uncheck stays respected until content returns to the
+  // default (goal === topic AND no constraints), after which editing
+  // re-arms it — the effect only fires on briefHasContent transitions.
+  React.useEffect(() => {
+    if (briefHasContent) setBriefEnabled(true);
+  }, [briefHasContent]);
   // round-52: real progress percent (0-100) from the backend's weighted
   // monotonic tracker — replaces the uniform (stepIndex+1)/N bar that gave
   // the per-section generate/verify loop a fixed ~10% and oscillated 8↔9
@@ -893,6 +935,79 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
   // strategy panel and the step list). v1 only translates in "both" mode;
   // v2 translates in "both" AND "中文" mode.
   const willTranslate = pipeline === "v2" ? v2Bilingual : isBothMode;
+
+  // Localized display label for the current output-language selection —
+  // used by the Task Brief's Constraints summary chips.
+  const languageLabel =
+    language === "English"
+      ? t("topic.langEnglish")
+      : language === "中文"
+      ? t("topic.langChinese")
+      : t("topic.langBoth");
+
+  // Example task cards ("Examples & tutorials") — one click prefills the
+  // Task Brief + relevant settings so the Goal·Materials·Constraints
+  // pattern is demonstrated rather than explained. Goals/constraints stay
+  // in English on purpose: both pipelines are English-first and the
+  // compiled TASK BRIEF instruction is English.
+  const briefExamples: BriefExample[] = [
+    {
+      id: "review",
+      label: t("brief.exReviewLabel"),
+      icon: BookCheck,
+      badge: `${(8000).toLocaleString()} ${t("para.words")}`,
+      goal: `Write a systematic literature review on ${topic}, organised into clear thematic sections. Cite the source paper for every claim and finish with a comparison table of key studies.`,
+      constraints:
+        "Peer-review-grade rigor; every factual claim must carry an inline citation.",
+      targetWords: 8000,
+      language: null,
+    },
+    {
+      id: "note",
+      label: t("brief.exNoteLabel"),
+      icon: FileText,
+      badge: `${(2500).toLocaleString()} ${t("para.words")}`,
+      goal: `Write a concise research note on ${topic} for a broad audience: context, key findings, and open questions.`,
+      constraints: "",
+      targetWords: 2500,
+      language: null,
+    },
+    {
+      id: "data",
+      label: t("brief.exDataLabel"),
+      icon: Database,
+      badge: "RCSB · UniProt",
+      goal: `Write an evidence-focused analysis of ${topic}, emphasising structural/data evidence from RCSB/UniProt/PubMed records and quantitative comparisons.`,
+      constraints: "",
+      targetWords: null,
+      language: null,
+    },
+    {
+      id: "bilingual",
+      label: t("brief.exBilingualLabel"),
+      icon: Languages,
+      badge: `${(6000).toLocaleString()} · EN+中文`,
+      goal: `Write a comprehensive review of ${topic} in English, then translate to Chinese, keeping all citations intact.`,
+      constraints: "",
+      targetWords: 6000,
+      language: "both",
+    },
+  ];
+
+  // Apply an example card: prefill the brief (+ settings where the example
+  // pins them), arm the send checkbox (clicking a card is an explicit "use
+  // this brief" action), make sure the panel is open, and bring it into
+  // view so the prefilled goal is immediately visible/editable.
+  const applyBriefExample = (ex: BriefExample) => {
+    setBriefGoal(ex.goal);
+    setBriefConstraints(ex.constraints);
+    if (ex.targetWords != null) setTargetWords(ex.targetWords);
+    if (ex.language) setLanguage(ex.language);
+    setBriefEnabled(true);
+    setBriefOpen(true);
+    toast.success(t("brief.exampleLoaded"), { duration: 4000 });
+    briefPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  };
 
   const STEPS = React.useMemo(() => {
     if (pipeline === "v2") {
@@ -1005,10 +1120,32 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
             : { maxDbQueries, maxWebSearchQueries, sectionRefTopN, sectionDsTopN, maxTokens }),
           // Pass the selected template's instruction to customize section
           // generation. Empty string = no custom instruction (default behavior).
+          // Task Brief (ClawsGO-style): when the send-brief checkbox is armed
+          // AND the brief carries content beyond the plain topic, the
+          // Goal + extra Constraints are compiled into a structured
+          // instruction FIRST, with the template instruction appended under
+          // it. An empty/default brief (goal === topic, no extra constraints)
+          // compiles to "" so the payload is byte-identical to before.
           promptInstruction: (() => {
-            if (!selectedTemplateId || selectedTemplateId === "none") return "";
-            const tpl = templates.find((t: any) => t.id === selectedTemplateId);
-            return tpl?.instruction || "";
+            const tplInstruction = (() => {
+              if (!selectedTemplateId || selectedTemplateId === "none") return "";
+              const tpl = templates.find((t: any) => t.id === selectedTemplateId);
+              return tpl?.instruction || "";
+            })();
+            const briefGoalText = briefGoal.trim();
+            const briefExtra = briefConstraints.trim();
+            const hasBrief =
+              briefEnabled &&
+              (!!briefExtra || (!!briefGoalText && briefGoalText !== topic.trim()));
+            const briefInstruction = hasBrief
+              ? [
+                  "TASK BRIEF",
+                  `Goal: ${briefGoalText || topic}`,
+                  ...(briefExtra ? [`Constraints: ${briefExtra}`] : []),
+                  "Follow this brief precisely in addition to the standard pipeline instructions.",
+                ].join("\n")
+              : "";
+            return [briefInstruction, tplInstruction].filter(Boolean).join("\n\n");
           })(),
         },
         (event, data) => {
@@ -1194,6 +1331,177 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
           </div>
         </div>
       )}
+
+      {/* Examples & tutorials (ClawsGO-style) — one-click task cards that
+          prefill the Task Brief below (+ relevant settings), so the
+          Goal·Materials·Constraints pattern is demonstrated in one click
+          instead of explained. Compact pill row, wraps on narrow screens. */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="eyebrow flex items-center gap-1.5">
+            <Sparkles className="h-3 w-3 text-muted-foreground" />
+            {t("brief.examplesTitle")}
+          </p>
+          <span className="text-[9px] text-muted-foreground/70 shrink-0">
+            {t("brief.examplesHint")}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {briefExamples.map((ex) => {
+            const ExIcon = ex.icon;
+            return (
+              <button
+                key={ex.id}
+                type="button"
+                onClick={() => applyBriefExample(ex)}
+                title={ex.goal}
+                className="group inline-flex items-center gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-left transition-all hover:border-primary/40 hover:bg-primary/[0.05] focus-ring"
+              >
+                <ExIcon className="h-3.5 w-3.5 text-primary shrink-0" />
+                <span className="text-[10px] font-semibold text-foreground/80 transition-colors group-hover:text-primary">
+                  {ex.label}
+                </span>
+                <span className="text-[9px] text-muted-foreground tabular-nums shrink-0">
+                  {ex.badge}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Task Brief — ClawsGO "brief the agent like a colleague" composer:
+          Goal (editable, prefilled with the topic) · Materials (read-only
+          info: topic/field + the fresh PubMed/RCSB/UniProt/web gather) ·
+          Constraints (live summary chips of targetWords/language/pipeline +
+          free-form extras). Compiled into the run's promptInstruction when
+          the send checkbox is armed and the brief carries content beyond
+          the plain topic; otherwise the launch payload is unchanged. */}
+      <div
+        ref={briefPanelRef}
+        className={`rounded-lg border transition-colors ${
+          briefHasContent
+            ? "border-primary/40 bg-primary/[0.04]"
+            : "border-border/60 bg-muted/20"
+        }`}
+      >
+        <div className="flex items-center">
+          <button
+            type="button"
+            onClick={() => setBriefOpen(!briefOpen)}
+            aria-expanded={briefOpen}
+            className="flex flex-1 items-center gap-2 rounded-t-lg px-3 py-2 text-left min-w-0 focus-ring"
+          >
+            <Target className="h-3.5 w-3.5 text-primary shrink-0" />
+            <span className="flex-1 min-w-0">
+              <span className="block truncate text-[11px] font-semibold text-foreground/80">
+                {t("brief.title")}
+              </span>
+              <span className="eyebrow block truncate">{t("brief.subtitle")}</span>
+            </span>
+            <ChevronDown
+              className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
+                briefOpen ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+          {/* Send toggle — armed = the brief is compiled into the run's
+              prompt. Lives OUTSIDE the collapse button so unchecking never
+              collapses the panel; visible even when collapsed. Auto-arms
+              when the brief gains content (see the effect above). */}
+          <div className="flex shrink-0 items-center gap-2 px-2">
+            <Checkbox
+              id="brief-send-toggle"
+              checked={briefEnabled}
+              onCheckedChange={(v) => setBriefEnabled(v === true)}
+              className="h-3.5 w-3.5"
+              aria-label={t("brief.sendToggle")}
+            />
+            <Label
+              htmlFor="brief-send-toggle"
+              className="hidden cursor-pointer text-[9px] text-muted-foreground md:block"
+            >
+              {t("brief.sendToggle")}
+            </Label>
+          </div>
+        </div>
+        {briefOpen && (
+          <div className="space-y-3 border-t border-border/40 px-3 pb-3 pt-2">
+            {/* Goal */}
+            <div className="space-y-1">
+              <Label htmlFor="brief-goal" className="eyebrow">
+                {t("brief.goalLabel")}
+              </Label>
+              <Textarea
+                id="brief-goal"
+                rows={2}
+                value={briefGoal}
+                onChange={(e) => setBriefGoal(e.target.value)}
+                placeholder={t("brief.goalPlaceholder")}
+                className="min-h-12 rounded-lg border-border bg-background px-3 py-2 text-[11px] leading-relaxed resize-none"
+              />
+            </div>
+
+            {/* Materials — read-only info: what the run will draw on */}
+            <div className="space-y-1">
+              <p className="eyebrow flex items-center gap-1.5">
+                <Paperclip className="h-3 w-3 text-muted-foreground" />
+                {t("brief.materialsLabel")}
+              </p>
+              <div className="rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-[10px] leading-relaxed">
+                <p className="break-words font-semibold text-foreground/80">
+                  {topic}
+                  {field ? (
+                    <span className="font-normal text-muted-foreground"> · {field}</span>
+                  ) : null}
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  {t("brief.materialsGather")}
+                  {sourceCount > 0 && (
+                    <span> — {t("brief.materialsSaved", { n: sourceCount })}</span>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {/* Constraints — live summary of the settings below + free-form extras */}
+            <div className="space-y-1">
+              <p className="eyebrow">{t("brief.constraintsLabel")}</p>
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-2 py-1 text-[9px] font-medium text-foreground/70">
+                  <PenLine className="h-3 w-3" />
+                  {formatWords(targetWords)} {t("para.words")}
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-2 py-1 text-[9px] font-medium text-foreground/70">
+                  <Languages className="h-3 w-3" />
+                  {languageLabel}
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-2 py-1 text-[9px] font-medium text-foreground/70">
+                  {pipeline === "v2" ? (
+                    <ShieldCheck className="h-3 w-3" />
+                  ) : (
+                    <PenLine className="h-3 w-3" />
+                  )}
+                  {pipeline === "v2" ? t("oneClick.pipelineV2") : t("oneClick.pipelineV1")}
+                </span>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="brief-extra" className="text-[9px] text-muted-foreground">
+                  {t("brief.extraLabel")}
+                </Label>
+                <Textarea
+                  id="brief-extra"
+                  rows={2}
+                  value={briefConstraints}
+                  onChange={(e) => setBriefConstraints(e.target.value)}
+                  placeholder={t("brief.extraPlaceholder")}
+                  className="min-h-12 rounded-lg border-border bg-background px-3 py-2 text-[11px] leading-relaxed resize-none"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Pipeline selector — v2 evidence-grounded (default) vs v1 legacy */}
       <ConfigCard label={t("oneClick.pipelineLabel") || "Generation Pipeline"}>

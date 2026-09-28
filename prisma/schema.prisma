@@ -27,6 +27,7 @@ model Project {
   userData    UserData[]
   relationships RelationshipAnalysis[]
   conversations ConversationSession[]
+  taskRuns    TaskRun[]
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 }
@@ -380,4 +381,38 @@ model PipelineCheckpoint {
 
   @@unique([runId, stage])
   @@index([projectId])
+}
+
+// round-cs-1 (ClawsGO Science-inspired): research task run timeline —
+// "每个动作都有时间线记录，整次运行可重放". Every pipeline launch persists
+// a row here, and every step event (gather/curate/plan/…/repair/translate,
+// per-section generate/verify) is appended to stepsJson with its own
+// timestamp + duration. The Run Timeline UI replays any past run: what ran,
+// when, how long each step took, what it produced, and why it stopped.
+model TaskRun {
+  id          String    @id @default(cuid())
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  runId       String    @unique // fresh per POST launch (a resumed launch gets a new run)
+  pipeline    String    @default("v2") // v1 | v2
+  topic       String?
+  language    String?
+  targetWords Int?
+  // Transparency snapshot ("最强模型菜单，倍率透明"): which provider/model
+  // the generate + review roles were pinned to when the run launched.
+  provider    String? // JSON { generate: "…", review: "…" } — selected provider ids
+  model       String? // JSON { generate: "…", review: "…" } — selected model labels
+  status      String    @default("running") // running | completed | failed | aborted
+  trigger     String    @default("manual")
+  resumed     Boolean   @default(false) // true when launched from a PipelineCheckpoint
+  stepsJson   String    @default("[]") // JSON [{step,status,message,ts,ms,progress,section,total}]
+  statsJson   String? // final `complete` payload: stats + accuracy + repair telemetry
+  summaryJson String? // JSON { articleId, wordCount, references, sections, totalMs, hasChinese }
+  error       String?
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+  durationMs  Int?
+
+  @@index([projectId])
+  @@index([startedAt])
 }
