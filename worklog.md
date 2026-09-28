@@ -3576,3 +3576,28 @@ Stage Summary:
 - 两次中断根因 = 内核 OOM kill（RSS ~2GB 撞 3.9GB 上限）：v2 管线工作集只增不减（150 源全文常驻 + 被弃 LLM 调用的连接/缓冲泄漏）+ 恢复路径全量重载；auto-iterate canary 轮次同病（本机 09:09:46 铁证）。
 - 四道修复：泄漏封堵（超时败者主动 cancel）→ 内存单调增长打破（逐章剪枝 + 恢复按需水化 + 水位可观测）→ web search 失败不再假扮"0 结果"（原因透出 + 跳过假搜索）→ OOM 后果兜底（dev-server 30s 探测自动复活，用户从 checkpoint 续跑）。
 - 全部改动非致命（内存簿记 try/catch 包裹，绝不失败已完成的章节）；保活有退避与上限，不会 fork-loop。
+
+---
+Task ID: CS-MAIN-6 (round-cs-6)
+Agent: main (Z.ai Code orchestrator)
+Task: 修复用户报告的导出文章四大质量问题：①英文文章夹杂中文；②每章格式不统一；③部分章节额外多了文献列表；④导出 markdown 未被正确渲染。
+
+Work Log:
+- **根因定位**（用户上传 Serendip-示例课题《线粒体基因组的留守之谜》导出文件反馈；文件未落盘，改用代码勘察 + 合成复现）：
+  - 中文夹杂 = 中文课题无任何语言约束 → plan 阶段输出中文章节标题直接成为英文正文的 `## 标题`；generateArticleTitle 无 CJK 校验可返回中文"英文标题"；正文偶发中文/全角标点泄漏。
+  - 章内文献列表 = LLM 自行在章末追加 "### References"/"#### 参考文献"/"**References:**"/无标题 author-year 列表，而 sanitizeSectionContent 只删 "### Citations" 精确标记；导出 stripRefsSingle 从首个文献头截断到文末——变体漏删（用户所见）或匹配上时会把后续全部章节静默删除（更危险的数据丢失路径）。
+  - 格式不统一 = 生成 prompt 无格式契约；compose 直接 `## ${title}` 拼接，标题带编号/引号/加粗；章内残留 #/## 打乱大纲层级；开头加粗标题回显未剥离。
+  - 渲染问题 = 全局文献列表单 "\n" join（多数渲染器合并为一段）；多行摘要 blockquote 只首行带 ">"；列表/表格紧贴正文行不渲染；奇数个 `**` 使其后全文加粗；LaTeX \(...\)/\[...\] 不渲染；旧文章在应用内查看器被 cleanArticleContent"首尾截断"删掉中间章节。
+- **lib/writing.ts 新增六个工具**：removeReferenceBlocks（块级移除章内文献列表：header≥2条目 / 无头强特征≥3连行 / 尾部孤header，后续内容全保留；契约=调用方自行处理全局尾列表）、normalizeSectionTitle（去编号/引号/尾点、单行化、140字截断）、normalizeSectionMarkdown（章级：LaTeX数学定界符转换、#//## 降为 ###、奇**平衡、块间距）、ensureBlockSpacing（heading/list/table/hr 按子类型插空行、代码栅栏保护）、normalizeAsciiPunctuation（全角→ASCII，仅英文正文）、normalizeExportArticle（导出级治愈旧文章：标题行归一化含 "2.**Title**" 混合形态、按章奇**平衡、间距；全局 References/Appendix 头豁免）。
+- **sanitizeSectionContent 强化**：Step 1.5 接入 removeReferenceBlocks（v1/v2/翻译全路径受益）；Step 6a 剥离开头加粗标题回显（保守：句末标点或>14词不剥）。
+- **cleanArticleContent 重写**：旧"从首个文献头删到末个头之前"（中间章节全失，应用内查看器实测第3章被吞）→ 新"定位最后一个全局文献头 + 前半块级清理 + 尾部原样保留"；尾部 ### Citations（v1）也受保护。VirtualizedArticle/article-viewer-tabs/writing-workspace 全部自动治愈。
+- **lib/section-title-zh.ts**：新增 translateSectionTitlesToEnglish（中文标题批量→英文，一次小调用，空/异常返 null 保留原标题）与 countCJKText；article-title.ts 新增 CJK 守卫（EN 标题含中文 → 一次翻译重试 → 仍含中文回退）+ prompt 强化"MUST be in ENGLISH"。
+- **generate-full-v2 六处修改**：①plan system+prompt 加"全部输出必须英文"硬约束；②plan 解析后 normalizeSectionTitle 归一化 + CJK 标题批量翻译（非致命）；③生成 system+prompt 新增 FORMAT 契约（2-4段纯散文、禁标题/列表/表格/分割线/LaTeX展示式、禁章末文献列表、纯英文零全角）+ 禁止文献列表规则；④验证门新增 cjkGate（countCJKText>0 触发重试，LANGUAGE CORRECTION 追加到任意重试分支，improved 判定含 cjk 减少，stats.cjkLeakRetries 透出）；⑤每章 sanitize 后 normalizeAsciiPunctuation + normalizeSectionMarkdown（仅英文路径，contentZh 不动）；⑥compose 全面重构：enTitles（归一化+CJK批量翻译，治愈恢复的旧 checkpoint 章节）用于 join/STEP8.5 标题钉定/coherence polish 钉定/zh 翻译源（两半标题一一对应）；每章 DB 内容过 removeReferenceBlocks+normalizeSectionMarkdown；refList/zhRefList 改 "\n\n" join；repair 循环 origRefLines 加 filter(Boolean) 防空行索引错位。
+- **review-engine.ts**：rebuildRefLines 与 newRefText 同步改 "\n\n" join（防修复循环把空行拼回单行）。
+- **export/route.ts**：stripRefsSingle 重写（最后一个全局文献头截断 + removeReferenceBlocks 块级清理，杜绝两种失败模式）；cleanContent 套 normalizeExportArticle（全格式治愈）；buildMarkdown 多行摘要逐行 "> "、refLines 空行 join、内容 ensureBlockSpacing、末尾 3+换行折叠。
+- **验证**：tsc 4 基线错误 0 新增；lint 0 errors/186 warnings 回基线（曾因 [\*] 字符类转义 +1，已修）；工具函数冒烟 31/31 + 最终回归 10/10（含查看器保章/保 Citations/表格行粘滞/混合标题）；**真实 API E2E**：种入含全部四类缺陷的合成文章 → /api/export md/docx/pdf 全 200，导出确认：章内文献块与无头 author-year 列表全删、后续章节保留、标题 "1. Introduction：..."/"2.**Co-location...**"/"3. 结论与展望" 全部归一化、表格前空行、奇**修复、多行摘要 blockquote、全局文献空行分隔；agent-browser：应用内 Article 查看器治愈（原被吞的第3章恢复、中途 REFERENCES 块消失、全局列表正常渲染）、Export 菜单→Markdown 下载流程零 console/page error；dev server 重启清掉 Turbopack 陈旧模块缓存（曾致 export 500 "removeReferenceBlocks is not a function"）。
+- **遗留**：实时 LLM 路径（translateSectionTitlesToEnglish / generateArticleTitle CJK 重试 / cjkGate 重试）因供应商持续 429 风暴无法当场端到端——全部按设计非致命降级（null/保留原标题/仅记录），已用合成数据验证机械路径；下个 auto-iterate canary 自动覆盖。旧文章中文正文（如"正如内共生学说所述"）导出时保留原文（导出不改写内容），新生成文章由 cjkGate 从源头拦截。
+
+Stage Summary:
+- 四大缺陷修复形成"生成时源头拦截 + 组装时归一化 + 导出/查看时治愈旧文章"三层防御：plan/生成/标题三处语言约束 + cjkGate 重试掐灭中文夹杂；FORMAT 契约 + 标题归一化 + 章级 markdown 归一化统一每章格式；removeReferenceBlocks 块级清理（替代危险的首尾截断）消灭章内文献列表；文献空行 join + 摘要逐行 blockquote + 块间距 + 奇**平衡 + LaTeX 定界符转换修复渲染。
+- 关键架构决策：removeReferenceBlocks 契约明确"调用方先截全局尾列表再清理"；cleanArticleContent 从截断式改为治愈式（旧文章在查看器中不再丢章节）；enTitles 单一事实源贯穿 compose/repair 钉定/polish 钉定/zh 翻译，中英两半标题强制一一对应。

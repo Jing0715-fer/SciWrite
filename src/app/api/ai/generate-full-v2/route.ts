@@ -18,9 +18,21 @@ import { logger } from "@/lib/logger";
 import { webSearchDetailed } from "@/lib/ai";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
-import { countWords, sanitizeSectionContent } from "@/lib/writing";
+import {
+  countWords,
+  sanitizeSectionContent,
+  normalizeSectionTitle,
+  normalizeSectionMarkdown,
+  normalizeAsciiPunctuation,
+  removeReferenceBlocks,
+} from "@/lib/writing";
 import { generateArticleTitle, retranslateTitleZhWithGlossary } from "@/lib/article-title";
-import { translateSectionTitles } from "@/lib/section-title-zh";
+import {
+  translateSectionTitles,
+  translateSectionTitlesToEnglish,
+  hasCJKText,
+  countCJKText,
+} from "@/lib/section-title-zh";
 import {
   buildAuditReport,
   extractBodyCitations,
@@ -302,6 +314,8 @@ export async function POST(req: NextRequest) {
         // round-14: citation-management hardening telemetry
         zeroCitationRetries: 0,
         trailingUncitedRetries: 0,
+        // round-cs-6: Chinese-leak retry telemetry
+        cjkLeakRetries: 0,
         preprintDuplicatesDropped: 0,
         // round-15: regression-hardening telemetry
         adjacentCitationsMerged: 0,
@@ -1294,7 +1308,8 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         const planSystem =
           "You are a senior research advisor who designs publication-ready review outlines. " +
           "Plan sections with target word counts that sum to the total, AND decide which references each section cites. " +
-          "Prefer MORE sections with SMALLER targets.";
+          "Prefer MORE sections with SMALLER targets. " +
+          "ALL output — every section title and focus line — MUST be written in ENGLISH: when the research topic is in another language (e.g. Chinese), translate its concepts into English.";
         const scoredPoolLines = curatedRefs
           .slice(0, 40)
           .map((r: any, i: number) => formatScoredRefLine(r, curatedScores[i], i + 1))
@@ -1303,6 +1318,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
 FIELD: ${project.field || "life sciences"}
 TARGET TOTAL WORDS: ${targetWords}
 CITATION POOL: ${curatedRefs.length} scored sources — the article's citations come ONLY from this pool.
+LANGUAGE: The topic above may be written in Chinese or another language. Every "title" and "focus" in your JSON MUST still be written in ENGLISH — never copy Chinese characters into the outline.
 
 SCORED SOURCES (sorted by citation priority — CORE > IMPORTANT > MARGINAL):
 ${scoredPoolLines}
@@ -1386,6 +1402,37 @@ Output JSON only.`;
           if (seenTitles.has(tl)) s.title = `${s.title} (continued)`;
           seenTitles.add(tl);
           if (!s.focus) s.focus = `Discussion of ${s.title} in the context of ${project.topic}`;
+        }
+
+        // ★ round-cs-6 (语言一致性 + 格式统一): normalize plan titles (strip
+        // leading "3." numbering, stray quotes, trailing periods) and
+        // translate any CJK titles to English. A Chinese-language topic used
+        // to leak Chinese section headings straight into the English article
+        // ("夹杂中文") and numbered titles made compose headings inconsistent
+        // ("每章格式不统一"). One small batch call; non-fatal.
+        for (let si = 0; si < sections.length; si++) {
+          sections[si].title = normalizeSectionTitle(String(sections[si].title || "")) || `Section ${si + 1}`;
+        }
+        if (sections.some((s: any) => hasCJKText(String(s.title || "")))) {
+          const cjkCount = sections.filter((s: any) => hasCJKText(String(s.title || ""))).length;
+          send("step", {
+            step: "plan",
+            status: "progress",
+            message: `Translating ${cjkCount} Chinese section title(s) to English for the English article...`,
+          });
+          try {
+            const translated = await translateSectionTitlesToEnglish(sections.map((s: any) => String(s.title || "")));
+            let fixed = 0;
+            translated.forEach((t: string | null, k: number) => {
+              if (t && sections[k]) {
+                sections[k].title = t;
+                fixed++;
+              }
+            });
+            log(`plan: translated ${fixed}/${cjkCount} CJK section titles to English`);
+          } catch (titleErr: any) {
+            log(`plan: CJK title translation failed (keeping original titles): ${String(titleErr?.message ?? titleErr).slice(0, 80)}`);
+          }
         }
 
         // ★ round-17: dedup/verify word reserve. The compose-stage mechanical
@@ -2127,12 +2174,28 @@ STYLE:
 - Start directly with the first sentence of content (no headings, no preamble,
   no "Here is the section", no word-count postscripts).
 - Use *italics* for species names; **bold** for gene/protein names on first mention.
+
+FORMAT (uniform across every section — the "## heading" is added by the system):
+- Write 2-4 cohesive paragraphs of plain prose ONLY.
+- Do NOT output any markdown heading, any repeated section title, any bullet
+  or numbered list, any table, any horizontal rule, or any LaTeX display math.
+  Inline formatting allowed: *italics* for species names, **bold** for
+  gene/protein symbols on first mention.
+- NEVER append a reference list, bibliography, "References"/"参考文献" section,
+  or any author-year citation listing at the end of the section — inline {{Rn}}
+  keys are the ONLY citation mechanism; the global reference list is compiled
+  by the system from those keys.
+- The entire output must be written in ENGLISH. Never emit Chinese characters
+  (fullwidth punctuation included) — even if the topic, section title, or
+  custom instruction contains Chinese, express everything in English.
 ${promptInstruction ? `\nCUSTOM INSTRUCTION:\n${promptInstruction}` : ""}`;
 
           const system = `You are a senior scientific research writer and domain expert (${project.field || "life sciences"}).
 Write in English using formal, precise academic prose.
+Your output must be written ENTIRELY in English — never emit Chinese characters or fullwidth punctuation, even when the topic, section title, or custom instruction is written in Chinese.
 Compose ONE cohesive section. Start the body with actual content, NOT a restatement of the title.
 You cite ONLY with {{Rn}} keys — never numeric [n] citations.
+Never append a reference list or bibliography — the system compiles the global reference list.
 Scientific precision rules (round-64):
 - Enzyme/reaction descriptions MUST state the direction explicitly with substrates and product class, e.g. "catalyzes the esterification of coenzyme A with long-chain fatty acids to form acyl-CoA thioesters" — never "esterifies coenzyme A into fatty acids".
 - When citing residue numbers, state the species/numbering once per section (e.g. "Sec46 (human numbering)"); when several species' structures are discussed, note whether the numbering is conserved.
@@ -2239,12 +2302,18 @@ Scientific precision rules (round-64):
           // Drosophila-first inversion narrated with zero citations).
           const uncitedAssertions = uncitedAssertionSentences(chunkContent);
           const uncitedGate = !zeroCite && uncitedAssertions.length > 0;
-          if (zeroCite || trailingGate || uncitedGate || (!gate.ok && (gate.rawNumericMarkers > 0 || gate.outOfRangeKeys > 0))) {
+          // round-cs-6 (语言一致性): any Han character in the English body is
+          // a leak (Chinese topic echoed by the model) — retry with a
+          // language correction appended.
+          const cjkLeak = countCJKText(chunkContent);
+          const cjkGate = cjkLeak > 0;
+          if (zeroCite || trailingGate || uncitedGate || cjkGate || (!gate.ok && (gate.rawNumericMarkers > 0 || gate.outOfRangeKeys > 0))) {
             stats.gateRetries++;
             if (zeroCite) stats.zeroCitationRetries++;
             if (trailingGate) stats.trailingUncitedRetries++;
             if (uncitedGate) stats.uncitedAssertionRetries = (stats.uncitedAssertionRetries || 0) + 1;
-            log(`generate: section ${sectionNum} FAILED validation gate (zeroCite=${zeroCite}, trailing=${trailingGate ? `${trailingBlock}w` : "no"}, uncitedAssert=${uncitedGate ? uncitedAssertions.length : 0}, raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
+            if (cjkGate) stats.cjkLeakRetries = (stats.cjkLeakRetries || 0) + 1;
+            log(`generate: section ${sectionNum} FAILED validation gate (zeroCite=${zeroCite}, trailing=${trailingGate ? `${trailingBlock}w` : "no"}, uncitedAssert=${uncitedGate ? uncitedAssertions.length : 0}, cjkLeak=${cjkLeak}, raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
             send("step", {
               step: "generate",
               status: "progress",
@@ -2256,7 +2325,9 @@ Scientific precision rules (round-64):
                   ? `Section ${sectionNum}: validation gate triggered (trailing ${trailingBlock} uncited claim words) — retrying with grounding instruction...`
                   : uncitedGate
                     ? `Section ${sectionNum}: validation gate triggered (${uncitedAssertions.length} uncited high-risk assertion sentence(s)) — retrying with grounding instruction...`
-                    : `Section ${sectionNum}: validation gate triggered (raw numeric markers: ${gate.rawNumericMarkers}) — retrying with corrective instruction...`,
+                    : cjkGate
+                      ? `Section ${sectionNum}: validation gate triggered (${cjkLeak} Chinese characters leaked into the English text) — retrying with language correction...`
+                      : `Section ${sectionNum}: validation gate triggered (raw numeric markers: ${gate.rawNumericMarkers}) — retrying with corrective instruction...`,
             });
             try {
               const retryPrompt = prompt + (zeroCite
@@ -2276,7 +2347,9 @@ ${uncitedAssertions.map((s: string, j: number) => `${j + 1}. "${s}"`).join("\n")
 Every factual assertion of this kind MUST cite the listed reference that supports it ({{Rn}} keys), or be removed/reframed as explicitly open. Do NOT leave checkable claims (specific quantities, existence claims, first-discovery claims) uncited anywhere in the section — including mid-paragraph. Rewrite the SAME section. Output the corrected section only.`
                     : `
 
-CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] or [2], or invalid keys. Rewrite the SAME section content using ONLY {{Rn}} citation keys from the list. Every citation must be a {{Rn}} key. Output the corrected section only.`);
+CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] or [2], or invalid keys. Rewrite the SAME section content using ONLY {{Rn}} citation keys from the list. Every citation must be a {{Rn}} key. Output the corrected section only.`) + (cjkGate
+                ? `\n\nLANGUAGE CORRECTION: your previous output contained ${cjkLeak} Chinese characters. This article is written in ENGLISH ONLY — rewrite the section with ZERO Chinese characters (translate any Chinese terms into standard English scientific terminology, and use ASCII punctuation).`
+                : "");
               const retryContent = await chatWithSession(projectId, retryPrompt, {
                 system,
                 temperature: 0.5,
@@ -2288,6 +2361,7 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
               const retryGate = keyedCitationsAreValid(sanitizedRetry, sectionRefs.length);
               const retryKeyed = (sanitizedRetry.match(/\{\{R\d+\}\}/g) || []).length;
               const retryTrailing = trailingUncitedClaimWords(sanitizedRetry);
+              const retryCjk = countCJKText(sanitizedRetry);
               let improved: boolean;
               if (zeroCite) {
                 improved = retryKeyed > 0 && retryGate.rawNumericMarkers === 0;
@@ -2298,14 +2372,25 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
               } else {
                 improved = retryGate.rawNumericMarkers < gate.rawNumericMarkers;
               }
+              // round-cs-6: a retry that fixes the language leak (or any other
+              // dimension) is worth adopting even when another gate dimension
+              // is merely unchanged.
+              if (!improved && cjkGate && retryCjk < cjkLeak) improved = true;
               if (improved) {
                 chunkContent = sanitizedRetry;
-                log(`generate: section ${sectionNum} retry improved (keyed ${keyedCount}→${retryKeyed}, raw ${gate.rawNumericMarkers}→${retryGate.rawNumericMarkers})`);
+                log(`generate: section ${sectionNum} retry improved (keyed ${keyedCount}→${retryKeyed}, raw ${gate.rawNumericMarkers}→${retryGate.rawNumericMarkers}, cjk ${cjkLeak}→${retryCjk})`);
               }
             } catch (retryErr: any) {
               log(`generate: section ${sectionNum} retry failed: ${retryErr?.message?.slice(0, 80)}`);
             }
           }
+
+          // round-cs-6 (EN body cleanup): fullwidth punctuation → ASCII and
+          // markdown normalization (LaTeX math delimiters, stray bold markers,
+          // block spacing) so every section shares a uniform render-safe
+          // format. Applied to the ENGLISH body only — never contentZh.
+          chunkContent = normalizeAsciiPunctuation(chunkContent);
+          chunkContent = normalizeSectionMarkdown(chunkContent);
 
           // ---- ★ MECHANICAL key→number conversion (no LLM numbering) ----
           const converted = convertKeysToNumbers(chunkContent, sectionRefs);
@@ -2540,16 +2625,46 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
         // ============ STEP 8: Compose with global renumbering ============
         send("step", { step: "compose", status: "started", message: "Composing final article with global citation renumbering..." });
 
+        // ★ round-cs-6: uniform ENGLISH section headings for the EN article.
+        // Titles are normalized (leading "3." numbering / quotes / trailing
+        // periods stripped) and CJK titles — the leak a Chinese-language topic
+        // used to cause — are batch-translated. Applies to fresh runs AND to
+        // sections restored from old checkpoints, so re-composing heals an
+        // existing article too. The ZH half gets its own translated headings
+        // later in the translate stage (titleZhs).
+        const enTitles: string[] = generatedParagraphs.map((gp: any, i: number) =>
+          normalizeSectionTitle(String(gp?.title || sections[i]?.title || `Section ${i + 1}`)) || `Section ${i + 1}`,
+        );
+        if (enTitles.some((t: string) => hasCJKText(t))) {
+          try {
+            const translated = await translateSectionTitlesToEnglish(enTitles);
+            let fixedTitles = 0;
+            for (let k = 0; k < enTitles.length; k++) {
+              if (translated[k]) {
+                enTitles[k] = translated[k]!;
+                fixedTitles++;
+              }
+            }
+            log(`compose: translated ${fixedTitles} CJK section heading(s) to English`);
+          } catch (e: any) {
+            log(`compose: CJK heading translation failed — keeping original headings: ${String(e?.message ?? e).slice(0, 80)}`);
+          }
+        }
+
         const allParagraphData = await Promise.all(
           generatedParagraphs.map(async (p) => {
             const para = await db.paragraph.findUnique({
               where: { id: p.id },
               include: { references: { orderBy: { citationOrder: "asc" } } },
             });
-            const content = para?.content || "";
+            let content = para?.content || "";
             const citIdx = content.indexOf("### Citations");
-            const cleanContent = citIdx >= 0 ? content.slice(0, citIdx).trim() : content.trim();
-            return { content: cleanContent, refs: para?.references || [] };
+            if (citIdx >= 0) content = content.slice(0, citIdx);
+            // round-cs-6: strip any per-section reference list the LLM
+            // appended (older runs / restored checkpoints) and normalize the
+            // markdown so every section shares a uniform render-safe format.
+            content = normalizeSectionMarkdown(removeReferenceBlocks(content));
+            return { content: content.trim(), refs: para?.references || [] };
           })
         );
 
@@ -2625,7 +2740,9 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           );
         }
         let articleBody = renumberedContents
-          .map((c, i) => `## ${generatedParagraphs[i]?.title || `Section ${i + 1}`}\n\n${c}`)
+          .map((c, i) => `## ${enTitles[i]}
+
+${c}`)
           .join("\n\n");
 
         // ---- round-57 (P2-1): strip out-of-range citation markers ----
@@ -2723,7 +2840,10 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             const url = r.url ? ` — ${r.url}` : "";
             return `[${i + 1}] ${auth}${yr}${jour}. ${r.title || "Untitled"}.${url}`;
           })
-          .join("\n");
+          // round-cs-6: blank line between entries — single "\n" joins render
+          // as ONE merged paragraph in most markdown viewers (user-reported
+          // "没有被正确markdown渲染").
+          .join("\n\n");
 
         // round-59: let — the auto-repair loop (STEP 8.5) may replace this
         // with the revised, renormalized content before anything downstream
@@ -2791,9 +2911,7 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           message: "Auto-review & repair: fact-checking the composed article before translation...",
         });
         try {
-          const originalSectionTitles = generatedParagraphs.map(
-            (gp: any, i: number) => gp?.title || sections[i]?.title || `Section ${i + 1}`,
-          );
+          const originalSectionTitles = [...enTitles];
           let currentContent = articleContent;
           let revisionsDone = 0;
           // round-61 (P0-A): abstracts of the article's own references, keyed
@@ -3056,7 +3174,7 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
               // compacts, never reorders). Match final ref LINES back to the
               // composed list verbatim; a mismatch falls back to the composed
               // refs (logged) rather than guessing.
-              const origRefLines = refList.split("\n").map((l: string) => l.replace(/^\s*\[\d+\]\s*/, "").trim());
+              const origRefLines = refList.split("\n").map((l: string) => l.replace(/^\s*\[\d+\]\s*/, "").trim()).filter(Boolean);
               const finalRefLines = finalSplit.referencesText
                 .split("\n")
                 .map((l: string) => l.trim())
@@ -3375,9 +3493,9 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             const postSplit = splitBodyAndReferences(norm.content);
             // #3 Heading pinning (bilingual structure depends on the
             //    original headings — the ZH compose builds from titles).
-            const polishSectionTitles = generatedParagraphs.map(
-              (gp: any, i2: number) => gp?.title || sections[i2]?.title || `Section ${i2 + 1}`,
-            );
+            //    round-cs-6: pin to the SAME normalized/translated English
+            //    headings the composed article body actually uses (enTitles).
+            const polishSectionTitles = [...enTitles];
             const pinned = restoreOriginalHeadings(postSplit.body, polishSectionTitles);
             // #4 Revision guard (word/citation floors).
             const guard = pinned ? revisionGuard(articleContent, pinned.trimEnd() + "\n\n" + postSplit.referencesText.trim()) : null;
@@ -3778,9 +3896,10 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           // batch call) and injected into it, so the HEADINGS obey the same
           // anchored terminology as the body (round-61 shipped headings and
           // a titleZh that drifted from the body's standard translations).
-          const sectionTitles = generatedParagraphs.map(
-            (gp: any, i: number) => gp?.title || sections[i]?.title || "",
-          );
+          // round-cs-6: translate from the SAME normalized English headings
+          // the EN article body uses (enTitles) so the two halves correspond
+          // 1:1 — a CJK raw title passes through unchanged (already Chinese).
+          const sectionTitles = [...enTitles];
 
           const translatedContents: string[] = [];
 
@@ -4078,7 +4197,7 @@ ${cleanEn}`;
           const zhBody = translatedContents
             .map((c, i) => ({ c, i }))
             .filter(({ c }) => c.trim().length > 0)
-            .map(({ c, i }) => `## ${titleZhs[i] || generatedParagraphs[i]?.title || sections[i]?.title || `Section ${i + 1}`}\n\n${c}`)
+            .map(({ c, i }) => `## ${titleZhs[i] || enTitles[i] || `Section ${i + 1}`}\n\n${c}`)
             .join("\n\n");
           if (missingZh.length > 0) {
             log(`translate: zh compose EXCLUDED ${missingZh.length} failed section(s): §${missingZh.join(", §")} (retranslate available per-section)`);
@@ -4105,7 +4224,9 @@ ${cleanEn}`;
               const url = r.url ? ` — ${r.url}` : "";
               return `[${i + 1}] ${auth}${yr}${jour}. ${r.title || "Untitled"}.${url}`;
             })
-            .join("\n");
+            // round-cs-6: blank line between entries (same rendering fix as
+            // the EN refList — single "\n" merges into one paragraph)
+            .join("\n\n");
 
           articleContentZh = cleanZhBody + "\n\n## 参考文献\n\n" + zhRefList;
 

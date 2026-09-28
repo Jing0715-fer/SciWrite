@@ -721,7 +721,8 @@ export function renormalizeArticleCitations(content: string): CitationNormResult
   });
   const newRefText = survivors
     .map((r, i) => `[${i + 1}] ${r.text}`)
-    .join("\n");
+    // round-cs-6: blank line between entries (same rendering fix)
+    .join("\n\n");
   return {
     content: newBody.trimEnd() + "\n\n## References\n\n" + newRefText,
     refCount: survivors.length,
@@ -733,7 +734,9 @@ export function renormalizeArticleCitations(content: string): CitationNormResult
 }
 
 function rebuildRefLines(lines: { num: number; text: string }[]): string {
-  return lines.map((r, i) => `[${i + 1}] ${r.text}`).join("\n");
+  // round-cs-6: blank line between entries — single "\n" joins render as
+  // one merged paragraph in most markdown viewers.
+  return lines.map((r, i) => `[${i + 1}] ${r.text}`).join("\n\n");
 }
 
 /**

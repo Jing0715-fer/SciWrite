@@ -27,6 +27,7 @@ import {
   type EndNoteRecord,
 } from "@/lib/endnote-fields";
 import { enrichRecordsFromPubmed, applyWebPageRefTypes, repairRecordsFromDbRows } from "@/lib/endnote-enrich";
+import { removeReferenceBlocks, ensureBlockSpacing, normalizeExportArticle } from "@/lib/writing";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -318,7 +319,9 @@ export async function POST(req: NextRequest) {
     // strip each half INDEPENDENTLY — otherwise indexOf("## References")
     // returns the position of the English block, and slicing there would
     // delete the entire Chinese half of the document.
-    const cleanContent = stripReferencesFromContent(exportContent, language);
+    const cleanContent = normalizeExportArticle(
+      stripReferencesFromContent(exportContent, language),
+    );
 
     // Build reference list text — apply journal template format if specified
     const journalTemplate = body.journalTemplate;
@@ -1015,32 +1018,34 @@ function stripReferencesFromContent(content: string, language: "en" | "zh" | "bo
 
 /**
  * Strip reference/citation blocks from a single-language content string.
- * Removes everything from the FIRST reference-like header to the end of the
- * string, plus any "### Citations" block. Returns the cleaned body text.
+ *
+ * round-cs-6 rewrite — the old version truncated from the FIRST reference-
+ * like header to the end of the string. That had two failure modes:
+ *   (a) a per-section reference block in the MIDDLE of the article (an LLM
+ *       artifact with a header variant the regex missed) survived → exported
+ *       docs carried extra mid-document reference lists;
+ *   (b) when such a block DID match, everything after it — often including
+ *       every remaining section — was silently deleted.
+ *
+ * The new strategy:
+ *   1. Truncate at the LAST global reference header ("## References" /
+ *      "## 参考文献" — the section compose itself appends at the very end).
+ *   2. Remove any residual per-section reference blocks (header + entries,
+ *      or headerless author-year runs) from the remaining body WITHOUT
+ *      touching anything else — the export rebuilds its own global list from
+ *      the Reference rows / the body's original list.
  */
 function stripRefsSingle(content: string): string {
-  // Headers we recognize as the start of a reference section (case-insensitive,
-  // leading markdown headers optional). Covers English + Chinese variants.
   const refHeaderRe =
-    /^#{0,6}\s*\*{0,2}(References|REFERENCES|Citations|Bibliography|文献|参考文献|引用文献|参考资料)\*{0,2}\s*:?\s*$/m;
-  const citeHeaderRe = /^#{0,6}\s*Citations\s*$/m;
-  // Bare "REFERENCES:" line (no markdown header)
-  const bareRefRe = /^\s*(REFERENCES|References)\s*:?\s*$/m;
-
-  let cleanEnd = content.length;
-  const refMatch = content.match(refHeaderRe);
-  if (refMatch && refMatch.index !== undefined) {
-    cleanEnd = Math.min(cleanEnd, refMatch.index);
-  }
-  const citeMatch = content.match(citeHeaderRe);
-  if (citeMatch && citeMatch.index !== undefined) {
-    cleanEnd = Math.min(cleanEnd, citeMatch.index);
-  }
-  const bareMatch = content.match(bareRefRe);
-  if (bareMatch && bareMatch.index !== undefined) {
-    cleanEnd = Math.min(cleanEnd, bareMatch.index);
-  }
-  return content.slice(0, cleanEnd).trim();
+    /^#{0,6}\s*\*{0,2}(References|REFERENCES|Citations|Bibliography|文献|参考文献|引用文献|参考资料)\*{0,2}\s*:?\s*$/gm;
+  let lastIdx = -1;
+  let m: RegExpExecArray | null;
+  while ((m = refHeaderRe.exec(content)) !== null) lastIdx = m.index;
+  let body = lastIdx >= 0 ? content.slice(0, lastIdx) : content;
+  // Remove LLM-appended per-section reference lists (any variant header,
+  // headerless author-year runs) while preserving everything else.
+  body = removeReferenceBlocks(body);
+  return body.trim();
 }
 
 /**
@@ -1082,9 +1087,20 @@ function buildMarkdown(
 ): string {
   const parts: string[] = [`# ${title}`, ""];
   if (abstract) {
-    parts.push(`> ${abstract}`, "");
+    // round-cs-6: prefix EVERY line with "> " — a multi-line abstract
+    // previously broke out of the blockquote after its first line.
+    parts.push(
+      abstract
+        .split(/\r?\n/)
+        .map((l) => `> ${l}`.trimEnd())
+        .join("\n"),
+      "",
+    );
   }
-  parts.push(content, "");
+  // round-cs-6: normalize block spacing so headings/lists/tables render in
+  // every markdown viewer (heals older articles whose sections glued block
+  // constructs directly onto prose lines).
+  parts.push(ensureBlockSpacing(content), "");
   if (annotations && annotations.length) {
     parts.push("---", "", "## Annotations", "");
     annotations.forEach((a, i) => {
@@ -1100,9 +1116,11 @@ function buildMarkdown(
   }
   if (refLines.length) {
     parts.push("---", "", "## References", "");
-    parts.push(...refLines);
+    // round-cs-6: blank line between entries — single "\n" joins render as
+    // ONE merged paragraph in most markdown viewers.
+    parts.push(refLines.join("\n\n"));
   }
-  return parts.join("\n");
+  return parts.join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
 /**

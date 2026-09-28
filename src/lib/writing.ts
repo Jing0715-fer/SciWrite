@@ -353,24 +353,30 @@ export function countWords(text: string): number {
  * strips any duplicates before it.
  */
 export function cleanArticleContent(content: string): string {
-  // Match reference-like section headers (## References, REFERENCES, ### Citations, etc.)
-  const refHeaderRe =
-    /^#{0,6}\s*\*{0,2}(References|REFERENCES|Citations|Bibliography|文献|参考文献)\*{0,2}\s*:?\s*$/gm;
-  const matches: { index: number; text: string }[] = [];
+  // round-cs-6 rewrite. The old implementation stripped EVERYTHING from the
+  // FIRST reference-like header to just before the LAST one — when a legacy
+  // article carried a mid-document "### References" block (an LLM artifact),
+  // every section between that block and the global list was silently
+  // deleted from the viewer. The new strategy:
+  //   1. locate the LAST global reference header ("## References" /
+  //      "## 参考文献" / a trailing "### Citations") — compose appends it at
+  //      the very end;
+  //   2. remove per-section reference blocks from the body BEFORE it with
+  //      removeReferenceBlocks() (block-level removal — surrounding sections
+  //      survive);
+  //   3. keep the final global section verbatim.
+  if (!content) return content;
+  const globalRefRe =
+    /^#{1,3}\s*\*{0,2}(References|REFERENCES|Citations|Bibliography|参考文献|引用文献|参考资料|文献)\*{0,2}\s*:?\s*$/gm;
+  let lastIdx = -1;
   let m: RegExpExecArray | null;
-  while ((m = refHeaderRe.exec(content))) {
-    matches.push({ index: m.index, text: m[0] });
+  while ((m = globalRefRe.exec(content)) !== null) lastIdx = m.index;
+  if (lastIdx >= 0) {
+    const healed = removeReferenceBlocks(content.slice(0, lastIdx));
+    return healed.trimEnd() + "\n\n" + content.slice(lastIdx).trim();
   }
-  // No duplicates — return as-is
-  if (matches.length <= 1) return content;
-
-  // Keep only the LAST reference section (the code-generated canonical one).
-  // Strip everything from the FIRST reference header to just before the LAST one.
-  const firstIdx = matches[0].index;
-  const lastIdx = matches[matches.length - 1].index;
-  const before = content.slice(0, firstIdx);
-  const after = content.slice(lastIdx);
-  return before.trimEnd() + "\n\n" + after.trim();
+  // No reference section at all — just strip any stray per-section blocks.
+  return removeReferenceBlocks(content);
 }
 
 /**
@@ -402,6 +408,310 @@ export function stripReasoning(text: string): string {
   if (openIdx >= 0) out = out.slice(0, openIdx);
   out = out.replace(/<\/think>/gi, "");
   return out;
+}
+
+/* ================================================================== *
+ * round-cs-6: per-section reference-list removal + markdown/format
+ * normalizers. User-reported defects these fix:
+ *   1. "有些章节额外多了文献列表" — the LLM sometimes appends its own
+ *      per-section reference list ("### References", "#### 参考文献",
+ *      "**References:**", or a bare numbered author-year run) even though
+ *      the pipeline compiles ONE global "## References" list at compose
+ *      time. removeReferenceBlocks() strips those blocks wherever they
+ *      appear, WITHOUT truncating the content that follows (the old export
+ *      stripper truncated from the first match — a mid-document block
+ *      would have deleted every subsequent section).
+ *   2. "没有被正确markdown渲染" — normalizeSectionMarkdown() /
+ *      ensureBlockSpacing() demote internal headings, convert LaTeX math
+ *      delimiters, balance stray bold markers and insert the blank lines
+ *      around headings/lists/tables that several renderers require.
+ *   3. "夹杂了一些中文" — normalizeAsciiPunctuation() converts the
+ *      fullwidth punctuation an English section sometimes leaks.
+ * ================================================================== */
+
+/**
+ * Full-line headers that introduce an LLM-generated reference block.
+ * Matches "### References", "#### 参考文献", "**References:**",
+ * "Reference list", "引用文献列表", "### Citations", optional bold/colon,
+ * optional "for this section" suffix. The ENTIRE line must be the header.
+ */
+const REF_BLOCK_HEADER_RE =
+  /^\s{0,3}#{0,6}\s*\**\s*(references?|reference\s+list|bibliography|citations?|citation\s+list|参考文献|引用文献|参考资料|文献列表|参考列表)\s*(for\s+(this\s+)?section|（本节）|\(本节\))?\s*(and\s+notes?)?\s*[*_:：\s]*$/i;
+
+/** Line that starts like a numbered/bulleted/bracketed reference entry. */
+const REF_ENTRY_MARKER_RE = /^\s{0,3}(?:\[\d{1,3}\]|\d{1,3}[.)]|[-•*])\s+/;
+
+/** Corroborating evidence that a line is a bibliography entry (not a list
+ *  item of ordinary prose): "et al", a DOI, a URL, or a "(YYYY)" year. */
+const REF_STRONG_MARKER_RE =
+  /et\s+al|doi:\s*10\.|https?:\/\/|\((?:19|20)\d{2}[a-z]?\)/i;
+
+function isRefEntryLine(line: string, requireStrong = false): boolean {
+  const t = line.trim();
+  if (!t) return false;
+  const marker = REF_ENTRY_MARKER_RE.test(line);
+  const strong = REF_STRONG_MARKER_RE.test(t);
+  if (requireStrong) return marker && strong;
+  return marker || strong;
+}
+
+/**
+ * Remove LLM-appended per-section reference blocks from markdown content —
+ * header + following entry lines, headerless author-year runs, and lone
+ * trailing reference headers. Only removes clearly-bibliographic material:
+ * a header must be followed by ≥2 entry lines (or nothing at all, when it
+ * sits at the tail), and a headerless run needs ≥3 consecutive strongly-
+ * marked entry lines. Everything after the removed block is PRESERVED.
+ *
+ * Contract: callers must handle the article's final global "## References"
+ * section separately (compose appends it; export truncates it first) — this
+ * function never sees a document where that global list still exists.
+ */
+export function removeReferenceBlocks(md: string): string {
+  if (!md) return md;
+  const lines = md.split(/\r?\n/);
+  const out: string[] = [];
+  let i = 0;
+
+  const consumeEntries = (from: number): { end: number; count: number } => {
+    let j = from;
+    let count = 0;
+    while (j < lines.length) {
+      if (isRefEntryLine(lines[j])) {
+        count++;
+        j++;
+        continue;
+      }
+      if (lines[j].trim() === "") {
+        // Blank line — keep consuming only if another entry follows (refs
+        // are often separated from the header / each other by blank lines).
+        let k = j;
+        while (k < lines.length && lines[k].trim() === "") k++;
+        if (k < lines.length && isRefEntryLine(lines[k])) {
+          j = k;
+          continue;
+        }
+      }
+      break;
+    }
+    return { end: j, count };
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+    // Case 1: reference-like header line
+    if (REF_BLOCK_HEADER_RE.test(line)) {
+      const { end, count } = consumeEntries(i + 1);
+      const onlyBlanksAfter = end >= lines.length || lines.slice(end).every((l) => l.trim() === "");
+      if (count >= 2 || (count === 0 && onlyBlanksAfter)) {
+        // Drop header + entries; also swallow the blank line directly after
+        // so we never leave double blanks behind.
+        i = end;
+        while (i < lines.length && lines[i].trim() === "" && out.length > 0 && out[out.length - 1].trim() === "") i++;
+        continue;
+      }
+      out.push(line);
+      i++;
+      continue;
+    }
+    // Case 2: headerless run of strongly-marked reference entries
+    if (isRefEntryLine(line, true)) {
+      let j = i;
+      let run = 0;
+      while (j < lines.length && isRefEntryLine(lines[j], true)) {
+        run++;
+        j++;
+      }
+      if (run >= 3) {
+        i = j;
+        continue;
+      }
+    }
+    out.push(line);
+    i++;
+  }
+  // Collapse blank-line runs introduced by removals
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+/, "").trimEnd();
+}
+
+/**
+ * Normalize a plan/section title to a single clean line: collapse internal
+ * whitespace, strip leading numbering ("3.", "Section 3:", "第3章"), stray
+ * quotes and trailing punctuation, and cap runaway sentence-length titles.
+ */
+export function normalizeSectionTitle(raw: string): string {
+  let t = (raw || "").replace(/\s+/g, " ").trim();
+  t = t.replace(
+    /^\s*(?:\d{1,2}[.)]\s+|Section\s+\d{1,2}\s*[:.)]?\s+|第[一二三四五六七八九十百\d]+\s*[章节部分]?[.、:：]?\s*)/i,
+    "",
+  );
+  t = t.replace(/^["“”'«《]+|["“”'»》]+$/g, "");
+  t = t.replace(/\s*[.。:：]\s*$/, "");
+  if (t.length > 140) t = t.slice(0, 140).replace(/\s+\S*$/, "") + "…";
+  return t.trim();
+}
+
+/**
+ * Insert the blank lines around block constructs (headings, lists, tables,
+ * thematic breaks) that CommonMark/GFM renderers require — a list or table
+ * glued to the preceding prose line renders as plain text in most viewers.
+ * Also collapses 3+ consecutive newlines. Never touches code fences.
+ */
+export function ensureBlockSpacing(md: string): string {
+  if (!md) return md;
+  type Kind = "blank" | "heading" | "list" | "table" | "hr" | "prose";
+  const classify = (line: string): Kind => {
+    const t = line.trim();
+    if (t === "") return "blank";
+    if (/^\s{0,3}#{1,6}\s/.test(line)) return "heading";
+    if (/^\s{0,3}[-*+]\s/.test(line)) return "list";
+    if (/^\s{0,3}\d{1,3}[.)]\s/.test(line)) return "list";
+    if (/^\s{0,3}\|/.test(line)) return "table";
+    if (/^\s{0,3}-{3,}\s*$/.test(line)) return "hr";
+    return "prose";
+  };
+  const lines = md.split(/\r?\n/);
+  const out: string[] = [];
+  let prevKind: Kind = "blank";
+  let inFence = false;
+  for (const line of lines) {
+    if (/^\s{0,3}(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      out.push(line);
+      prevKind = "prose";
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+    const kind = classify(line);
+    // Insert a blank line when a block construct abuts a DIFFERENT kind of
+    // content (prose↔heading, prose↔list, list↔table, ...). Same-kind
+    // neighbors stay glued (list items, table rows).
+    if (
+      kind !== "blank" && prevKind !== "blank" && kind !== prevKind &&
+      !(prevKind === "hr" || kind === "hr")
+    ) {
+      out.push("");
+    }
+    out.push(line);
+    prevKind = kind;
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/**
+ * Normalize ONE section's markdown so every section of the composed article
+ * shares a uniform, render-safe format:
+ *  - LaTeX math delimiters \(x\) → $x$ and \[x\] → $$x$$ (markdown-renderable)
+ *  - internal "#"/"##" headings demoted to "###" (compose joins sections
+ *    under "## title" — deeper levels must not fight the outline)
+ *  - an unpaired "**" (the classic "rest of the doc is bold" artifact) removed
+ *  - blank lines inserted around block constructs; blank-line runs collapsed
+ */
+export function normalizeSectionMarkdown(md: string): string {
+  if (!md) return md;
+  let out = md;
+  out = out.replace(/\\\[([\s\S]+?)\\\]/g, (_m, x: string) => `$$${x.trim()}$$`);
+  out = out.replace(/\\\((.+?)\\\)/g, (_m, x: string) => `$${x.trim()}$`);
+  out = out.replace(/^(#{1,2})(\s+)/gm, "###$2");
+  const boldCount = (out.match(/\*\*/g) || []).length;
+  if (boldCount % 2 === 1) {
+    const idx = out.lastIndexOf("**");
+    if (idx >= 0) out = out.slice(0, idx) + out.slice(idx + 2);
+  }
+  return ensureBlockSpacing(out).trim();
+}
+
+/** Fullwidth → ASCII punctuation map for English-body leakage cleanup. */
+const FW_PUNCT_MAP: Record<string, string> = {
+  "，": ",", "。": ".", "；": ";", "：": ":", "！": "!", "？": "?",
+  "（": "(", "）": ")", "【": "[", "】": "]", "、": ",",
+  "“": '"', "”": '"', "‘": "'", "’": "'",
+  "＜": "<", "＞": ">", "＝": "=", "＋": "+", "－": "-", "％": "%", "～": "~",
+};
+
+/**
+ * Convert fullwidth CJK punctuation to its ASCII form. Applied ONLY to
+ * English article content (the Chinese half legitimately uses fullwidth
+ * punctuation — never call this on contentZh).
+ */
+export function normalizeAsciiPunctuation(text: string): string {
+  if (!text) return text;
+  return text.replace(
+    /[，。；：！？（）【】、“”‘’＜＞＝＋－％～]/g,
+    (ch) => FW_PUNCT_MAP[ch] ?? ch,
+  );
+}
+
+/**
+ * Export-time article normalizer (round-cs-6). The GENERATE-time pipeline
+ * now normalizes every section before compose, but articles already in the
+ * DB were written by older code and still carry their defects. This
+ * heal-on-export pass makes every exported format uniform WITHOUT rewriting
+ * any body content:
+ *  - heading lines: strip leading numbering ("3.", "Section 3:", "第3章") and
+ *    stray bold/quote wrappers so all section headings share one format
+ *  - per-section odd-`**` balancing (an unpaired bold marker bolds the rest
+ *    of the document in most markdown viewers)
+ *  - block spacing (blank lines around headings/lists/tables)
+ * Never touches body prose, citations, code fences, or the global
+ * "## References" / "## 参考文献" heading.
+ */
+export function normalizeExportArticle(md: string): string {
+  if (!md) return md;
+  const lines = md.split(/\r?\n/);
+  const out: string[] = [];
+  let inFence = false;
+  for (const line of lines) {
+    if (/^\s{0,3}(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+    const hm = line.match(/^(#{1,6})\s+(.+)$/);
+    if (hm) {
+      const level = hm[1];
+      let text = hm[2].trim();
+      // Never touch the global reference/annotation headings.
+      const isGlobalHeader = /^(references?|参考文献|引用文献|annotations?|appendix\b)/i.test(
+        text.replace(/[\s:：*]+$/, ""),
+      );
+      if (!isGlobalHeader) {
+        // Strip leading numbering — "3. Title", "Section 3:", "第3章", and
+        // the "2.**Title**" hybrid (numbering glued onto a bold wrapper).
+        text = text.replace(/^\s*\d{1,2}[.)](?=[\s*])\s*/, "");
+        text = text.replace(
+          /^\s*(?:Section\s+\d{1,2}\s*[:.)]?|第[一二三四五六七八九十百\d]+\s*[章节部分]?[.、:：]?)\s*/i,
+          "",
+        );
+        text = text.replace(/^\*+|\*+$/g, "").trim();
+        text = normalizeSectionTitle(text) || text;
+      }
+      out.push(`${level} ${text}`);
+      continue;
+    }
+    out.push(line);
+  }
+  let result = out.join("\n");
+  // Per-section odd-bold balancing (split keeps the heading lines as
+  // separators; even-index chunks are the bodies between headings).
+  const parts = result.split(/^(#{1,6} .+)$/m);
+  for (let k = 0; k < parts.length; k += 2) {
+    const body = parts[k];
+    const boldCount = (body.match(/\*\*/g) || []).length;
+    if (boldCount % 2 === 1) {
+      const idx = body.lastIndexOf("**");
+      if (idx >= 0) parts[k] = body.slice(0, idx) + body.slice(idx + 2);
+    }
+  }
+  result = parts.join("");
+  return ensureBlockSpacing(result);
 }
 
 /**
@@ -490,6 +800,13 @@ export function sanitizeSectionContent(content: string): string {
     cleaned = cleaned.slice(0, citIdx).trim();
   }
 
+  // Step 1.5 (round-cs-6): remove any per-section reference list the LLM
+  // appended ("### References", "#### 参考文献", "**References:**", bare
+  // author-year runs...). The pipeline compiles ONE global reference list —
+  // these blocks would otherwise surface as extra mid-document reference
+  // lists in the composed article and every export of it.
+  cleaned = removeReferenceBlocks(cleaned);
+
   // Step 2: Remove horizontal rules (---) that LLMs use as separators
   cleaned = cleaned.replace(/^---+\s*$/gm, "");
 
@@ -566,6 +883,16 @@ export function sanitizeSectionContent(content: string): string {
   //         (the title is already stored separately in paragraph.title and
   //         re-added by the compose step as "## <title>")
   cleaned = cleaned.replace(/^#{1,3}\s+.+\n+/, "");
+
+  // Step 6a (round-cs-6): remove a leading BOLD title echo — the LLM often
+  // opens with "**Section Title**" / "**2.3 Channel Biophysics**" despite the
+  // no-heading rule. Only stripped when the whole first line is bold-wrapped
+  // title-like text (short, no sentence-ending period) and prose follows.
+  cleaned = cleaned.replace(
+    /^\s*\*{2}([^*\n]{3,120})\*{2}\s*:?\s*\n+(?=\S)/,
+    (_m, t: string) =>
+      /[.!?]$/.test(t.trim()) || t.trim().split(/\s+/).length > 14 ? _m : "",
+  );
 
   // Step 6b: Remove LLM-generated numbered section title prefixes that leak
   //          into the body. Despite instructions, the LLM frequently starts

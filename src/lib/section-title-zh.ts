@@ -31,6 +31,13 @@ export function hasCJKText(text: string): boolean {
   return CJK_RE.test(text || "");
 }
 
+/** Count CJK characters — used by the v2 generate validation gate to catch
+ *  Chinese leakage into English section output ("夹杂中文"). */
+export function countCJKText(text: string): number {
+  const m = (text || "").match(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g);
+  return m ? m.length : 0;
+}
+
 export async function translateSectionTitles(
   titles: string[],
   opts: { temperature?: number; glossary?: string } = {},
@@ -88,6 +95,76 @@ ${list}`;
     // Sanity: must actually be Chinese and reasonably heading-sized.
     if (!zh || !hasCJKText(zh) || zh.length > 120) continue;
     result[toTranslate[k].i] = zh;
+  }
+  return result;
+}
+
+/**
+ * round-cs-6: batch-translate CHINESE academic section headings to English.
+ *
+ * The v2 pipeline writes English-first, but the project TOPIC may be written
+ * in Chinese ("线粒体基因组的留守之谜..."). Without a language constraint the
+ * plan LLM echoed the topic's language into its section titles, so the
+ * composed ENGLISH article carried Chinese "## 标题" headings between English
+ * paragraphs (user-reported "夹杂了一些中文"). This helper translates any
+ * CJK-containing titles in ONE small LLM call.
+ *
+ * Contract (mirror of translateSectionTitles):
+ *  - Returns exactly `titles.length` entries.
+ *  - Entry value: the English title on success; `null` when that title could
+ *    not be translated (callers keep the original).
+ *  - Titles with NO CJK pass through as null (already English — keep as-is).
+ *  - Total failure → all-null array (never throws).
+ */
+export async function translateSectionTitlesToEnglish(
+  titles: string[],
+  opts: { temperature?: number } = {},
+): Promise<(string | null)[]> {
+  const result: (string | null)[] = titles.map(() => null);
+  if (!titles.length) return result;
+
+  const toTranslate = titles
+    .map((t, i) => ({ t: (t || "").trim(), i }))
+    .filter(({ t }) => t && hasCJKText(t));
+  if (!toTranslate.length) return result;
+
+  const list = toTranslate.map(({ t }, k) => `${k + 1}. ${t}`).join("\n");
+  const system =
+    "You are a professional scientific translator specializing in academic paper section headings. " +
+    "You translate Chinese academic headings into concise, formal English academic headings.";
+
+  const prompt = `Translate the following Chinese academic section headings into English.
+
+REQUIREMENTS:
+1. Use standard English academic section terminology (e.g. 引言 → Introduction, 机制 → Mechanisms, 结构 → Structure, 功能 → Functions, 疾病 → Disease, 展望 → Future Directions / Perspectives).
+2. Keep gene/protein names, technical abbreviations (e.g. TMC1, mtDNA, ER), numerals, and punctuation like colons unchanged.
+3. Keep each heading concise — a faithful academic rendering (≤ 20 English words when possible), never a literal word-by-word expansion.
+4. Do NOT add any preamble or commentary. Output ONLY the numbered translations, one per line, in the SAME order, each on its own line in the exact format:
+<number>. <English heading>
+
+HEADINGS:
+
+${list}`;
+
+  let out = "";
+  try {
+    out = await chat(prompt, { system, temperature: opts.temperature ?? 0.2 });
+  } catch {
+    return result; // all-null → callers keep the original headings
+  }
+
+  const lines = (out || "").split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const m = line.match(/^(\d{1,3})\s*[.、:：)]\s*(.+)$/);
+    if (!m) continue;
+    const k = parseInt(m[1], 10) - 1;
+    if (k < 0 || k >= toTranslate.length) continue;
+    let en = m[2].trim().replace(/\s*[.。]\s*$/, "").trim();
+    // Sanity: must actually be English (no CJK) and reasonably heading-sized.
+    if (!en || hasCJKText(en) || en.length > 160) continue;
+    result[toTranslate[k].i] = en;
   }
   return result;
 }

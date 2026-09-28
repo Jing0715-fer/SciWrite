@@ -71,6 +71,7 @@ ${excerpt.slice(0, 800) || "(not available)"}
 
 Rules:
 - Title in English, 8–20 words, specific to what the sections actually cover.
+- The title MUST be written in ENGLISH even when the working brief or section outline is in Chinese — translate the concepts, never copy Chinese characters into the title.
 - Journal-grade: no clickbait, no quotes, no trailing period, no numbering.
 - Do NOT copy the working brief verbatim — synthesize the actual content.
 - If a standard domain phrasing exists (e.g. "A Review of ...", "...: A Comprehensive Review"), use it only when it fits naturally.${wantZh ? "\n- Also provide a faithful, natural Chinese translation of that title." : ""}
@@ -93,6 +94,40 @@ TITLE: <english title>${wantZh ? "\nTITLE_ZH: <中文标题>" : ""}`;
     const zh = zhMatch?.[1]?.trim().replace(/^["“”'«]+|["“”'»]+$/g, "");
 
     if (!en || en.length < 8 || en.length > 300) return fallback;
+
+    // round-cs-6 (语言一致性): the "English" title must not contain Chinese.
+    // A Chinese-language topic made the title call echo Chinese ("TITLE: 线粒体
+    // 基因组的留守之谜") — that leaked straight into the stored Article.title,
+    // every export filename, and the "# <title>" heading of the exported md.
+    // One small follow-up call re-translates it; on failure we fall back.
+    if (hasCJKText(en)) {
+      try {
+        const fixRaw = await Promise.race([
+          chat(
+            `Translate this scientific article title into natural, journal-grade English (keep gene/protein names and standard abbreviations like mtDNA, CRISPR unchanged). Output ONLY the English title on a single line, nothing else.
+
+${en}`,
+            {
+              system: "You are a senior academic journal editor. You write concise, precise, information-dense English article titles.",
+              temperature: 0.2,
+              maxTokens: 120,
+            },
+          ),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 30_000)),
+        ]);
+        const fixed = stripReasoning(fixRaw || "")
+          .trim()
+          .replace(/^(TITLE|English title|TITLE_EN)\s*[:：]\s*/i, "")
+          .replace(/^["“”'««]+|["“”'»»]+$/g, "")
+          .trim();
+        if (fixed && !hasCJKText(fixed) && fixed.length >= 8 && fixed.length <= 300) {
+          return { title: fixed, titleZh: zh || null, generated: true };
+        }
+        return fallback;
+      } catch {
+        return fallback;
+      }
+    }
     return { title: en, titleZh: zh || null, generated: true };
   } catch {
     return fallback;
