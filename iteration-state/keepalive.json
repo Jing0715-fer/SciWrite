@@ -1,8 +1,10 @@
 {
-  "lastProbeAt": "2026-09-29T14:02:13.453Z",
-  "lastProbeOk": false,
-  "consecutiveFailures": 1,
-  "restarts": [],
-  "lastRestartAt": null,
+  "lastProbeAt": "2026-09-29T14:47:13.443Z",
+  "lastProbeOk": true,
+  "consecutiveFailures": 0,
+  "restarts": [
+    "2026-09-29T14:02:43.416Z"
+  ],
+  "lastRestartAt": "2026-09-29T14:02:43.416Z",
   "lastError": null
 }
