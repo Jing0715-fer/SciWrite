@@ -4086,6 +4086,25 @@ ${articleContent.slice(0, 3500)}`;
             const p = generatedParagraphs[i];
             const sectionNum = i + 1;
             const trStart = Date.now();
+            // CR-B#13 fix (mirror of the generate loop's guard): the round-5
+            // canary hit a 429 storm exactly at translate — each of the 10
+            // sections burned its full backoff chain + abort-waitout (~4.5
+            // min) before failing, ~50 min and 100+ provider requests for
+            // ZERO output, while the wire had already been dead for 45 min
+            // (the canary fetch hit its 100-min cap mid-translate). The
+            // generate loop short-circuits on abort/disconnect at every
+            // section boundary; the translate loop now does the same.
+            if (abortedDueToRateLimit || isAborted() || clientDisconnected) {
+              translatedContents.push("");
+              send("step", {
+                step: "translate",
+                status: "skipped",
+                section: sectionNum,
+                total: generatedParagraphs.length,
+                message: `Section ${sectionNum} translation SKIPPED — ${clientDisconnected ? "client disconnected" : "rate-limit storm"}. Remaining sections skipped; EN article stands (retranslate available per-section).`,
+              });
+              continue;
+            }
             try {
               const para = await db.paragraph.findUnique({ where: { id: p.id } });
               if (!para) {
