@@ -262,7 +262,14 @@ Output JSON only.`;
 
       for (const s of parsed.sources || []) {
         const n = parseInt(String(s.n), 10);
-        if (isNaN(n) || n < 1 || n > sources.length) continue;
+        // CR-B#1 fix: the prompt numbers rows GLOBALLY (batch 3 shows rows
+        // (25)..(36)), but models routinely renumber locally (1..12). The old
+        // check (1..sources.length) let local numbers through, silently
+        // applying batch-3 metadata fills to DIFFERENT sources in batch 1 —
+        // corrupted citation metadata (authors/year/journal) written to the
+        // DB and mirrored into the bibliography. Only ids within THIS
+        // batch's global range are valid.
+        if (isNaN(n) || n < b + 1 || n > b + batch.length) continue;
         const fill: KVCompletion["fill"] = {};
         for (const f of FILLABLE_FIELDS) {
           // Fill ONLY if the original field was actually missing

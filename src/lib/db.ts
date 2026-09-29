@@ -24,4 +24,13 @@ globalForPrisma.prisma = db
   } catch {
     // Ignore — the PRAGMA still takes effect even if Prisma throws
   }
+  // CR-D#3 fix: SQLite's default busy_timeout is 0 — any concurrent write
+  // lock (compose $transaction, checkpoint upserts, recorder writes every
+  // ~2.5s) instantly surfaces as SQLITE_BUSY "database is locked" 500s to
+  // the recovery poller's reads. 5s of patient retry instead.
+  try {
+    await db.$queryRawUnsafe(`PRAGMA busy_timeout = 5000`)
+  } catch {
+    // Ignore — the PRAGMA still takes effect even if Prisma throws
+  }
 })()

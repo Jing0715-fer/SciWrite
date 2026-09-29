@@ -182,7 +182,19 @@ class QuotaState {
   }
 
   isExhausted(): boolean {
-    return this.dailyRemaining !== null && this.dailyRemaining <= 0;
+    if (this.dailyRemaining === null) return false;
+    if (this.dailyRemaining > 0) return false;
+    // CR-A#1 fix: daily quotas ROLL OVER. An "exhausted" reading older than
+    // 6h is stale — keep it and every LLM call in this process is bricked
+    // until a restart (with a days-alive dev server, that's effectively
+    // forever). Forget the stale reading; the next successful response
+    // re-seeds it from headers.
+    if (Date.now() - this.lastUpdated > 6 * 3600_000) {
+      console.warn("[rate-limiter] stale exhausted-quota reading (>6h old) — resetting (daily quota rolls over)");
+      this.dailyRemaining = null;
+      return false;
+    }
+    return true;
   }
 
   snapshot(): RateLimitHeaders {
@@ -212,16 +224,25 @@ const quota = new QuotaState();
 // crashed run poisoned every subsequent run in the same process, and
 // (b) a NEW run's clearAbort() erased an IN-FLIGHT run's abort, sending it
 // back to hammering the provider with 429s. Aborts now carry a timestamp
-// and auto-expire (ABORT_TTL_MS) — stale ones clear themselves, fresh ones
-// still short-circuit every caller, and no run needs to touch another
-// run's abort state. clearAbort() is kept as a force-reset escape hatch.
-const ABORT_TTL_MS = 120_000;
-let abortInfo: { reason: string; at: number } | null = null;
+// and auto-expire — stale ones clear themselves, fresh ones still
+// short-circuit every caller, and no run needs to touch another run's abort
+// state. clearAbort() is kept as a force-reset escape hatch.
+//
+// CR-A#3 fix (escalating TTL): a FLAT 120s TTL made the client re-probe the
+// provider with a fresh 5-attempt backoff chain every ~2-4 minutes for as
+// long as a storm lasted — ~10 requests per 4 min of self-inflicted load
+// that kept the account throttled (client-side storm persistence). The TTL
+// now escalates on consecutive storms: 2 min → 10 min → 30 min → 60 min,
+// de-escalating only after a genuinely successful call.
+const ABORT_TTL_STEPS_MS = [120_000, 600_000, 1_800_000, 3_600_000];
+let consecutiveStorms = 0;
+let lastAbortAt = 0;
+let abortInfo: { reason: string; at: number; ttl: number } | null = null;
 
 export function isAborted(): boolean {
   if (!abortInfo) return false;
-  if (Date.now() - abortInfo.at > ABORT_TTL_MS) {
-    console.warn(`[rate-limiter] abort auto-expired (set ${Math.round((Date.now() - abortInfo.at) / 1000)}s ago): ${abortInfo.reason.slice(0, 80)}`);
+  if (Date.now() - abortInfo.at > abortInfo.ttl) {
+    console.warn(`[rate-limiter] abort auto-expired (set ${Math.round((Date.now() - abortInfo.at) / 1000)}s ago, ttl ${Math.round(abortInfo.ttl / 1000)}s): ${abortInfo.reason.slice(0, 80)}`);
     abortInfo = null;
     return false;
   }
@@ -234,8 +255,11 @@ export function clearAbort() {
 }
 
 export function setAbort(reason: string) {
-  abortInfo = { reason, at: Date.now() };
-  console.warn(`[rate-limiter] ABORT set: ${reason}`);
+  const step = Math.min(consecutiveStorms, ABORT_TTL_STEPS_MS.length - 1);
+  abortInfo = { reason, at: Date.now(), ttl: ABORT_TTL_STEPS_MS[step] };
+  lastAbortAt = Date.now();
+  consecutiveStorms += 1;
+  console.warn(`[rate-limiter] ABORT set (storm #${consecutiveStorms}, ttl ${Math.round(ABORT_TTL_STEPS_MS[step] / 1000)}s): ${reason}`);
 }
 
 export function getQuotaSnapshot(): RateLimitHeaders {
@@ -311,6 +335,11 @@ export async function withRateLimit<T>(
       // (6) Success — update quota + window.
       quota.updateFromHeaders(capturedHeaders);
       window.record();
+      // A success after a ≥10-min quiet period is real evidence the storm
+      // is over — de-escalate the abort TTL ladder (CR-A#3).
+      if (consecutiveStorms > 0 && Date.now() - lastAbortAt > 10 * 60_000) {
+        consecutiveStorms = 0;
+      }
       return result;
     } catch (err: any) {
       lastErr = err;
@@ -337,6 +366,16 @@ export async function withRateLimit<T>(
       if (!is429 && !is5xx) {
         // Non-retriable error — propagate.
         throw err;
+      }
+
+      // CR-A#2 fix (limiter learns from failures): record FAILED attempts in
+      // the sliding window too. Previously only successes counted, so a
+      // 429-rejected burst never slowed the NEXT call — the opening burst of
+      // every run could re-trigger the provider's rolling limit entirely
+      // self-inflicted. Failed 429/5xx attempts now occupy window slots, so
+      // pacing kicks in immediately after a rejected burst.
+      if (is429 || is5xx) {
+        window.record();
       }
 
       // Exponential backoff: 1s, 2s, 4s, 8s, 16s (jittered ±20%).

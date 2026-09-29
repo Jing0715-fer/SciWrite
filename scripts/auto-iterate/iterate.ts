@@ -105,12 +105,17 @@ function acquireLock(): boolean {
       const alive = Bun.spawnSync(["bash", "-c", `kill -0 ${old.pid} 2>/dev/null && echo alive`]).stdout
         ?.toString()
         .includes("alive");
-      const stale = Date.now() - new Date(old.started).getTime() > ROUND_TIMEOUT_MS + 10 * 60_000;
-      if (alive && !stale) {
-        log(`round already running (pid ${old.pid}, started ${old.started}) — exiting`);
+      // CR-D#2 fix: NEVER reclaim a lock whose PID is still alive. The old
+      // `alive && !stale` branch treated a round older than 110 min as dead
+      // — but a legitimate round is up to 30-min provider wait + 100-min
+      // canary + gates ≈ 135 min, so a long CLEAN round got a second round
+      // started beside it (two concurrent v2 pipelines on a 3.9GB/0-swap
+      // box = OOM kill mid-run). Staleness now only governs DEAD pids.
+      if (alive) {
+        log(`round already running (pid ${old.pid}, started ${old.started}, ${Math.round((Date.now() - new Date(old.started).getTime()) / 60000)}min) — exiting`);
         return false;
       }
-      log(`stale/dead lock (pid ${old.pid}) — reclaiming`);
+      log(`dead lock (pid ${old.pid}) — reclaiming`);
     }
     writeText(LOCK_FILE, JSON.stringify({ pid: process.pid, started: ROUND_STAMP }));
     return true;

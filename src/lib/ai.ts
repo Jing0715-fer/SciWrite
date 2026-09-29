@@ -456,9 +456,14 @@ export async function chatStream(
 
   const role = opts.role ?? "generate";
   let selected = "zai-sdk";
+  let selectedModel = "";
   try {
-    const { getSelectedProvider } = await import("@/lib/llm-selection");
+    const { getSelectedProvider, getSelectedModel } = await import("@/lib/llm-selection");
     selected = getSelectedProvider(role);
+    // CR-A#4 fix: fetch the model too — the stored model override (e.g.
+    // glm-4.5) was silently ignored for ALL streaming calls (sections,
+    // retranslate, regenerate) while non-streaming chat() honored it.
+    selectedModel = getSelectedModel(role);
   } catch {
     selected = "zai-sdk";
   }
@@ -490,6 +495,9 @@ export async function chatStream(
           stream: true,
           thinking: { type: opts.thinking ? "enabled" : "disabled" },
           temperature: opts.temperature ?? 0.6,
+          // CR-A#4 fix: honor the stored model override for streaming too
+          // (mirrors chat()'s behavior — was silently missing here).
+          ...(selectedModel ? { model: selectedModel } : {}),
           // Explicit max_tokens for streaming too — section generation can produce
           // 1000+ word sections that need 8K+ output tokens. Default 20480
           // (round-41, was 16384); callers can override via opts.maxTokens.
