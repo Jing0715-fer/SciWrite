@@ -2,6 +2,11 @@
 
 One section per round (newest first). metrics.json = machine-readable baseline; last-good.txt = last clean-outcome commit. Scheduled by mini-services/iterate-scheduler — every 6h, throttled-provider retry every 45 min. Manual trigger: `bun scripts/auto-iterate/iterate.ts`.
 
+## Round 5 — 2026-09-29T02:27:37Z
+- outcome: **regressed** · head `79d94a3a`
+- canary error: `stream: The operation was aborted.`
+- mechanical: tsc 4 errors · lint 0 errors · duration 100.0 min
+- regressions: tsc errors 4 → NOT auto-corrected (no reversible code commits since last-good — investigate manually)
 ## Round 4 — 2026-09-28T15:24:45Z
 - outcome: **degraded-provider** · head `fe9a8af8`
 - mechanical: tsc 4 errors · lint 0 errors · duration 30.5 min
