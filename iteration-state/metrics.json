@@ -1,7 +1,7 @@
 {
-  "round": 6,
-  "stamp": "2026-09-29T04:12:37.337Z",
-  "gitHead": "a849ef5aacfd52f8276481fe9eb3baa9a10e6b4e",
+  "round": 7,
+  "stamp": "2026-09-29T13:31:46.675Z",
+  "gitHead": "8d48224c3c1c6a92cae4b35928cf72c62e988b4a",
   "outcome": "degraded-provider",
   "produced": false,
   "wordsEn": 0,
@@ -19,5 +19,5 @@
   "factCheckWeaknesses": 0,
   "tscErrors": 4,
   "lintErrors": 0,
-  "durationMs": 1829439
+  "durationMs": 1832725
 }
