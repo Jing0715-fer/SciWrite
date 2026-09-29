@@ -3647,3 +3647,129 @@ Stage Summary:
 - "后台在跑、前端冻结"架构性闭环：SSE 线路死亡（代理空闲切断/网关超时/HMR 重启/标签休眠）不再导致 UI 永久冻结或 r37 硬失败——前端自动切换到 TaskRun 时间线轮询恢复显示，流水线侧 4 分钟观察宽限保证瞬时断线不杀运行（只有真正无人观看才跳过剩余工作）。
 - 任务时间线（round-cs-1 的可复现记录）从"事后回放"升级为"实时恢复数据源"；recorder 现记录 progress 装饰后事件。
 - 遗留未动：web search 48 查询 degraded-provider（会话前遗留）、knowledge 阶段 ~4min/batch 总时长优化、v1 路由无 ping（v1 仅享错误路径恢复，无看门狗）——均非本轮范围。
+
+---
+Task ID: CR-C
+Agent: code-review-subagent (frontend/progress layer)
+Task: 只读代码评审 frontend/progress-streaming 层（unified-writing-dialog FullArticleTab、progress-tracker、sse、run-recorder/run-watch、task-runs/pipeline-checkpoint/llm-probe 路由），评估 round-cs-8 "后台在跑、前端冻结"修复的剩余风险。
+
+Work Log:
+- 读 worklog 尾部获取上下文（round-cs-8：90s 停滞看门狗 + /api/task-runs 恢复轮询 + 服务端 4min 宽限观察器 + liveness-aware zombie sweep）。
+- 全文读完 unified-writing-dialog.tsx（2435 行，重点 FullArticleTab 的 SSE 消费/看门狗/恢复轮询/handedOffRef 生命周期/resume 流程）、progress-tracker.ts、sse.ts、run-recorder.ts、run-watch.ts、task-runs/route.ts、pipeline-checkpoint/route.ts、health/llm-probe/route.ts。
+- 追踪消费链路 api-client.ts（aiGenerateFullV2Stream → consumeSSEStream，emitComplete+rejectOnError）与 generate-full-v2/route.ts 的 SSE 基建（keepalive 20s ping 绕过 recorder、cancel→4min 宽限观察器、send 先装饰后记录、streaming 事件 100ms 节流带 message、generate streaming 无 accumulatedTail 而 translate 有）。
+- 核对 zombie sweep 静默阈值（20min）与各阶段事件密度：knowledge 逐批心跳、verify 每节仅 started/done（VERIFY_BATCH_SIZE=10，慢风暴下单节静默可逼近/超过 20min）、polish 有 per-section onProgress。
+- 核对 i18n：recovery/resume/steps 键 EN+ZH 均已注册（`t()||fallback` 为死代码但无害）；恢复相关 toast、日志空态、Step X/Y 标签等为硬编码英文。
+- 验证无并发护栏：v2 POST 不检查项目是否已有 running TaskRun；pipeline-checkpoint 在运行中（pool 断点存在）即返回 resumable=true → 重开对话框/第二标签页会看到"恢复中断的运行"横幅并可在原运行存活时再次启动。
+- 只读评审，未改任何源码。
+
+Stage Summary:
+- HIGH：运行中重开对话框/双标签页 → pipeline-checkpoint 把存活运行误报为"可恢复的中断运行"，无并发护栏 → 用户可对同一项目并发起第二条流水线（clearSession+同 runId checkpoint 竞写）。
+- HIGH：zombie sweep 20min 步骤静默阈值在 verify 慢风暴（10 引用/批 × 300s 超时 × 重试）可误杀存活运行；恢复轮询的 GET 自身触发 sweep → 前端收到假"aborted"→ 引导 resume → 双运行。
+- MED-HIGH：doGenerate 空结果路径先 setCurrentStep(STEPS.length) 再探测 → isRunning 瞬断（进度 UI 卸载 + 生成按钮短暂可用）→ 闪烁 + 窗口期重复启动。
+- MED：全链无 AbortController（关闭对话框后 SSE fetch/闭包存续至运行结束，且无取消按钮）；streaming 事件 ~10/s 全量入 500 条 streamLog（index key 全行重渲 + 强制滚动）；probeLatestRun 的 startedAt>=runStart-60s 受客户端时钟偏差影响且双运行时会取到别的运行；v2 generate 阶段无 accumulatedTail → EN 写作期 Live preview 恒空。
+- MED-LOW：恢复文案硬编码英文；task-runs GET 每次轮询全量解析/返回 stepsJson（无游标）；Step 序号在 generate↔verify 交替间回摆；pipeline/language 选择器运行中未禁用（切到 v1 会拆掉看门狗）；useStreamingTask logs 无上限；进度 UI 无 aria-live/role=log；llm-probe 无超时。
+- 总体评估：CS-8 修复对主场景（代理切断+API 可达+recorder 健康）稳固——90s 看门狗→8s 轮询→终态收敛闭环正确、handedOffRef 无双重 finally 路径、进度双侧单调钳制；剩余永久冻结/陈旧数据路径 = v1 无 ping 静默死线、sweep 误杀、时钟偏差>60s 的匹配失败、以及"关闭对话框后运行不可重附着"。
+
+---
+Task ID: CR-A
+Agent: code-review-subagent (LLM layer)
+Task: Read-only comprehensive code review of the LLM abstraction layer (llm.ts 1915L / ai.ts 881L / llm-session.ts / llm-cache.ts / llm-selection.ts / rate-limiter.ts / api-provider-config.ts / provider-catalog.ts — 4,676 lines, all read in full).
+
+Work Log:
+- 读取 worklog 尾部（CS-MAIN-2..8）建立上下文：429 风暴史、cs-3 硬超时/结构化 fail-fast、cs-4 泄漏封堵（withHardTimeout settle-hook + chatStream cancel）、cs-5 内存剪枝、cs-8 SSE 恢复。
+- 全文精读 8 个 scope 文件；针对疑点交叉验证调用方：knowledge-verify.ts（batch 循环/错误分类）、generate-full-v2/route.ts（fullTexts 剪枝、clearLLMCache 时机）、generate-full/route.ts + citation-planner/search-enhance/generate-full-helpers（llm-cache 键构造）、llm-config/route.ts（generateText 直调）、writing.ts stripReasoning、v2-config SESSION_MAX_TOTAL_CHARS。
+- 手工推演 429 风暴下单次 chat() 的完整时序（withRateLimit 5×退避 → setAbort(TTL 120s) → withAbortWaitout 150s 轮询 → 单次重试再 5×退避 ≈ 3.5-4min/调用），与"knowledge ~4min/batch"观测精确吻合；推演 token bucket（1 req/2s）与 provider 30 req/10min 限速的量级错配（10× 超速）。
+- 核对 ai.ts chatStream 的 create 参数与 chat() 逐字段 diff（发现 model override 缺失）；核对 llm.ts callZai/callAnthropic/callOpenai 的超时与客户端复用情况；核对 decideProviderOrder auto 列表与注释意图的矛盾（api:* 付费项进入静默回退路径）。
+- 未修改任何源码（纯 review）；本条目为唯一 worklog 追加。
+
+Stage Summary:
+- CRITICAL rate-limiter.ts:164-194/274 — QuotaState 命中 0 后永不过期（无日界重置、无 TTL），长命 dev-server + 保活机制下一次配额耗尽 = 全部后续 LLM 调用 QuotaExhaustedError 直到手动重启；建议加 24h 滚动重置或 lastUpdated TTL。
+- HIGH rate-limiter.ts:200/9-11 — token bucket 1 req/2s 允许 40s 内连发 20+ 请求，而 provider 限 30 req/10min（需 1/20s）；每次运行开局的 burst 自触 429，且重试不计入滑窗（只记成功）→ 限速器永远学不会。
+- HIGH ai.ts:115-130 + rate-limiter.ts:302-364 — 风暴_retry 放大：每调用 5×退避(~35s)+abort 等待(~120-150s)+单重试再 5× ≈ 4min/10 请求；abort TTL 仅 120s（无递增退避/熔断），auto-iterate 每 30min 自动起新 run → 客户端可自行把风暴续命数小时。
+- HIGH ai.ts:487-497 — chatStream 的 zai create 不带 model 字段（chat() 有），存储的模型 override 对所有流式生成（章节/重译/重生成）静默失效。
+- HIGH llm.ts:1777-1796 — callZai 每次调用 new ZAI.create()（无单例）且无任何硬超时；该分支经 auto 回退与 llm-config 测试路径可达，正是 cs-3 在 ai.ts 修掉的那类"永久挂起"。
+- HIGH llm.ts:1495-1497 vs 1489-1494 注释 — api:* 付费 provider 在 auto 顺序（zai-sdk 之后）与显式选择的 rest 回退中都会被静默尝试，违背"绝不静默烧 API 额度"的注释意图；api:zai 还与 zai-sdk 重复。
+- MEDIUM ai.ts:54-97 — 超时败者的清理是被动的（settle-hook），SDK promise 永不落地时 socket+prompt 永久滞留；根治需把 AbortSignal 传入 SDK 调用（RSS 残留贡献项）。
+- MEDIUM llm-cache.ts:48-57 — 缓存键不含 model/provider/role，30min TTL 内切换模型会拿到旧模型答案（管线路径被 run 开头 clearLLMCache 兜住，search-enhance/paragraphs 路径无兜底）；80-93 Map 无容量上限（仅过期清扫，条目可 ~32KB）。
+- MEDIUM ai.ts:279/455 — compressPrompt(24k) 无条件作用于 zai HTTP 调用（其设计目的只是 CLI argv 安全），128k 上下文的 GLM 被静默砍到 ~24k 输入。
+- MEDIUM llm-session.ts:244+299 — system prompt 双发（finalPrompt 内扁平 "SYSTEM:" + opts.system 再传一次）；llm-session.ts:487-497 流式 CLI/API 分支漏传 timeoutMs（与 373-548 的 ~150 行复制粘贴漂移所致）。
+- MEDIUM llm.ts:1600-1605 — runCli 超时路径不调 cleanup()（依赖 close 事件；kill 失败则临时文件泄漏）、killTimer 未 unref、reject 后 stdout/stderr 仍持续累积；1686-1688 WSL 内层 timeout 忽略 prompt 长度启发式。
+- MEDIUM llm.ts:1736/1756 — eval("import") 加载 openai/anthropic SDK（同类手法曾让 callZai 在 webpack 下全坏），且两者无显式超时。
+- LOW 汇总 — readPage 吞错成 {} 不带 reason（与 webSearchDetailed 分类不一致）；wslAvailable 45s 兜底 timer 不清理（llm.ts:637）；inspectProviders chosen 取首个 available 而非实效默认（llm.ts:1223）；maxRetries 实为 maxAttempts；rate-limiter 头注释（60s/15 次）与实现（30s/20 次）过期；decideProviderOrder `_model`/SlidingWindow `_coolDownMs`/compressPrompt `system` 三个死参数；llm-session `where: any`、cache `result: any`；风暴中止前多等一次无意义 jitter（rate-limiter.ts:358）。
+- 架构总评：双层派发（ai.ts zai 门面 + llm.ts CLI/API 调度器）+ 四层包裹（chat→withAbortWaitout→withRateLimit→withHardTimeout→SDK）实战淬炼、防御密集（pump 修复/abort TTL/settle-hook/逐读看门狗都对口真实事故），但最坏延迟按层相乘（单调用理论上限 25min+）、错误类型在 generateText 边界坍缩为字符串、超时/模型语义在两条派发路径间重复实现且已漂移 —— 最大风险在接缝处。
+- 三问解释：(a) 4min 静默 = 单 batch 的 5×退避+120s abort 等待+单重试时序（进度事件仅 batch 开头发）；(b) 数小时风暴 = provider 侧棕天 × 客户端 120s TTL 后再探 burst + 桶速率 10× 超限自触发 + canary 轮次自动续压，无递增熔断；(c) RSS→2GB = 管线 fullTexts 池（cs-5 已剪）为主 + LLM 层残留：settle-hook 对永不落地连接无效、缓存 Map 无上限、回退路径每调用新建 SDK 客户端。
+
+---
+Task ID: CR-B
+Agent: code-review-subagent (evidence/science layer)
+Task: READ-ONLY comprehensive review of the evidence/scientific-integrity layer (knowledge-verify, evidence-pipeline, research-gap, fact-check, citation-binding, review-engine, coherence-polish, citation-audit, endnote-enrich, source-tier + generate-full-v2 route trace of the [n] numbering lifecycle).
+
+Work Log:
+- 读 worklog 尾部（round-cs-8 为最新）+ 全量精读 10 个 scope 文件（knowledge-verify 1110 行、evidence-pipeline 439、research-gap 398、fact-check 623、citation-binding 318、review-engine 802、coherence-polish 297、citation-audit 981、endnote-enrich 264、source-tier 402）。
+- 追踪 [n] 编号生命周期：plan refIndices（curatedRefs 1-based）→ coverage backfill（原地置换/追加 + staleIndices 剥离）→ gap agent（append-only 追加 + baseIndex 续号）→ allocation → 生成 {{Rn}} 键 → convertKeysToNumbers（局部号，首现序）→ compose 全局重编（type:externalId 身份键）→ 跨章去重/孤儿过滤重映射 → repair（renormalizeArticleCitations + 标题钉死 + globalRefs 逐行 rematch）→ polish（引用集守卫禁止新增）→ paragraph 同步（全局号写回 DB）→ 翻译（引用集漂移检测=仅记日志）。
+- 核对 STEP 7 adversarialVerifySection（route 4669-4849）：numeric-first 选句、UNSUPPORTED≥80 才删、PARTIAL 仅 flagged；grep 确认 flagged 只进 stats.citationsFlagged/step 消息，从不进 STEP 8.5 修复反馈。
+- 核对 STEP 8.5/8.6 的机械闸门链（revisionGuard 0.6 下限 / renormalize / restoreOriginalHeadings / globalRefs 重同步）与翻译阶段 ZH 引用一致性检查；核对 llm-session 上下文上限（28k 字符、仅 last-4 消息 300 字符摘要）排除 knowledge 批次上下文溢出假设。
+- 未修改任何源码（纯 review）；仅追加本 worklog 段。
+
+Stage Summary:
+- HIGH knowledge-verify.ts:263-265 — 批内 LLM 返回的 n 只校验 1..sources.length（全局），未校验本批区间 [b+1, b+batch.length]：模型把批内行重编号为 1..12（常见行为）时，fill 会写到**别的批次**的源上（错 authors/year/journal 落 DB + 引用孪生行）→ 一行修复：改为批内区间校验。
+- HIGH generate-full-v2 route:2521-2545 — STEP 7 的 PARTIAL/numeric-mismatch 只"flagged"（stats），从不进 STEP 8.5 修复 weaknesses：CS-MAIN-4 的数值幻觉核查=只检测不修复，取决于 fact-check ≤8-12 句采样是否碰巧同句。
+- HIGH route:1571-1585 — coverage backfill 后的二道 source-tier 门过滤会**压缩** curatedRefs（keptRefs 去掉了中位元素），但 plan 的 sections[].refIndices 不做重映射：替换场景（review 被 hospital 页顶替再被门丢弃）下其后所有索引左移一位 → 各章分到错误文献（最终编号仍机械自洽，但 allocation 错绑）。
+- MED-HIGH route:3280-3312 — repair 后 globalRefs 重同步逐行字符串精确匹配、首行失配即 break：LLM 改动任一文献行文本 → globalRefs 保留陈旧composed 版，而 articleContent 已是修订版 → ZH 参考文献表（由 globalRefs 生成）与 EN 正文实际列表错位、paragraph 同步的引用行错绑。
+- MED-HIGH route:4224-4230 — 翻译引用漂移检测只查 EN→ZH 丢失（ZH 新增 [n] 不查），且检出后仅记日志"keeping translation as-is"：中文半边可带着与共享文献表错位的 [n] 出厂。
+- MEDIUM v2-config:59-64 + review-engine:617-646 — revisionGuard 下限 0.6：surgical 契约说"逐字保留 [n]"，守卫却容忍 40% distinct citations / 40% 字数静默流失（合并段落/丢引用可无声通过）。
+- MEDIUM fact-check.ts:445+616-622 — 每篇仅采样 ≤8（硬上限 12）条高风险句；且 LLM 仲裁结果被当"ground truth，do not soften"注入复审 → 假 CONTRADICTED 可让修复层删掉真实论断（检测器本身无仲裁）。
+- MEDIUM route:4704-4721 — 每引用仅核 2 句（其余句不进 adversarial）+ "Topical match is enough for SUPPORTED"：同主题错数值可过；配合上一条构成数值幻觉的主要逃逸面。
+- MEDIUM knowledge-verify.ts:375-382 — titleSimilarity 用 inter/min(|A|,|B|)（非对称）：短建议标题是长 PubMed 标牌子集时得 1.0 → 可"验证"到另一篇真论文（真文献、错作品），0.72 门槛因此偏松。
+- MEDIUM coherence-polish.ts:196-204 — 多章 finding 一律由"后章"修改并向"先建立值"对齐：若先出现的数值才是错的，polish 会把错误值向后传播（reviewer finding 决定何为 established，无二次仲裁）。
+- LOW-MED evidence-pipeline.ts:165-167 — evidence 批次失败仅 console.warn（不上 SSE），该批源零 claims 静默降级为"仅题目/摘要"写作；research-gap.ts:123-139 机械缺口未按 GAP_AGENT_MAX_GAPS 封顶（与注释矛盾，查询仍按 2/缺口有界）；research-gap.ts:384-387 相关性门 keep-0 时无条件回退 PubMed 候选（门判无关也可入池）；route:3815-3834 paragraph 同步为 1..maxCitedNum 建引用行（含未引用的中间号，DB 噪声）。
+- 结论（最弱环节）：编号正确性由纯机械层保证（{{R}} 键→首现序→全局重编→确定性 renormalize，几乎无错位空间）；但**论断级科学真伪**停在"采样 + 软信号"：数值/主题 mismatch 被 flag 不被修、fact-check 采样 8-12 句且其 LLM 仲裁被当真值、翻译漂移只记日志 —— 检测-执行之间的缝是防科学性错误的最弱链。
+- 慢源判定：~4min/batch 主因 = knowledge-verify.ts 的**全量串行 LLM 批次**（149 源 ÷12 ≈13 次串行往返，30-90s/次；风暴期叠加 rate-limiter 5×退避+waitout+单重试 ≈171s+/批），prompt 仅 ~5KB、session 上下文有 28k 上限 —— 不是上下文溢出问题。最安全提速：complete 行（三字段齐全）不进补全批次，改为一次 title-only 汇总 gap 检测调用；有缺口的行按 12/批并行度 2-3 跑（abort 旗架构已保证风暴安全）→ 13 次串行 → ~2-5 次并行，预计 3-5× 墙钟缩短且输出等价。
+
+---
+Task ID: CR-D
+Agent: code-review-subagent (infra/DB/export layer)
+Task: Read-only comprehensive review of infrastructure/DB/export layer (scheduler, SQLite/Prisma, export pipeline, writing.ts normalizers, generate-full-helpers, iterate.ts, config/secrets).
+
+Work Log:
+- Read worklog tail (~150 lines) for project history context (OOM incidents, Edge-compat fix, cs-6/cs-7 format healing).
+- Read fully: src/instrumentation.ts, mini-services/iterate-scheduler/index.ts, mini-services/watchdog/index.ts, prisma/schema.prisma, src/lib/db.ts, src/app/api/export/route.ts (2782 lines), src/lib/writing.ts (1207 lines), src/lib/generate-full-helpers.ts (959 lines), src/lib/api-helpers.ts, src/proxy.ts, next.config.ts, package.json, .env.example, tsconfig.json, scripts/auto-iterate/iterate.ts (529 lines), src/lib/run-watch.ts, src/app/api/task-runs/route.ts, iteration-state/provider-watch.ts.
+- Verified live state: ps/ss audit (found DUPLICATE mini-services running: 2× iterate-scheduler console, 2× round-58 watchdog, 4× `bun run dev` parents; next-server at 2.0GB RSS / 49.5% mem with 1.4GB available, zero swap; round 7 in-flight in waitForProvider), git ls-files (db/custom.db 40MB tracked; no tokens in tracked files; credential embedded in remote URL), watchdog's hard-coded PCSK9 projectId confirmed deleted from DB (benign today, latent footgun), llm-provider API keys stored outside repo (~/.sciwrite/api-providers.json) — good.
+- Cross-checked normalizer call sites (normalizeArticleBodySections only on EN halves; ZH translate path skips normalizeAsciiPunctuation — correct); verified $transaction usage in v2/compose; verified checkpoint payload sizes (pool once with fullTexts; per-section small); verified findGlobalRefsStart used at export:403/425/606 but NOT at export:278 (v112-2 bodyRefPmids path still uses substring indexOf).
+- No source files modified (read-only review).
+
+Stage Summary:
+- CRITICAL: duplicate mini-services live right now (2× console + 2× watchdog, no single-instance guard) — double dev-server relaunch loops + per-process `launched` flags can double-fire pipelines on provider recovery.
+- CRITICAL: iterate.ts lock staleness math (110min) < legitimate round duration (30min provider wait + 100min canary ≈ 135min) → stale-but-ALIVE lock gets reclaimed → two concurrent canary rounds → OOM on the 3.9GB box.
+- HIGH: db.ts sets journal_mode=DELETE with NO busy_timeout — concurrent SSE-recorder writes + 8s recovery polling + out-of-process canary reads risk "database is locked" 500s (SQLite default busy_timeout=0).
+- HIGH: correctByRevert runs `git reset --hard` which can destroy an interactive session's uncommitted work; round pushes never pull/rebase (non-fast-forward silently dropped); `db:push --accept-data-loss`; db/custom.db (user content) tracked in git.
+- HIGH: removeReferenceBlocks Case 2 (≥3 strongly-marked lines) can eat legitimate numbered/bulleted content that merely contains "et al"/URL/(19xx).
+- MEDIUM: export:278 stale substring match (inflates Data-Source "cited" counts); injectEndnoteFields O(n²) slice/concat string surgery (RSS spike risk); export loads rawJson for ALL DataSources every export; sanitizeSectionContent postscript cut can truncate legit "Note:" lines; keepalive relaunch not setsid-detached (contradicts round-cs-8 lesson); tsconfig excludes scripts/+mini-services (lock-math bug class untypechecked) with noImplicitAny:false.
+- Positives confirmed: hot-path indexes present; transactions around multi-step writes; fullTexts pruning + resume-on-demand hydration live; literal-require Edge fix intact; keepalive has backoff+cap; .env ignored, no tokens in tracked files, API keys outside repo.
+
+---
+Task ID: RT-1 (real-test round, phase 1: push + review + pre-test fixes)
+Agent: main (Z.ai Code orchestrator)
+Task: 用户指令"push（token ghp_CQFK…），进行全面代码审查和真实全文生成测试，并根据测试结果提出下一阶段改进意见"。
+
+Work Log:
+- push：git remote 换用用户提供 token，连同 keepalive 状态共 2 个提交推送成功（1117ccf..8d48224）；测试前修复后再推 8d48224..3625582。
+- 并行代码审查：4 个子代理（CR-A LLM 层 / CR-B 证据科学层 / CR-C 前端进度层 / CR-D 基础设施层）全部完成，各自 worklog 已留档（Task ID: CR-A/B/C/D）；主线精读 generate-full-v2/route.ts（4850 行）核心段落（SSE/grace/keepalive、gather、knowledge、generate 循环、compose 全局重编号）复核确认。
+- 审查发现合计 60+ 条，其中测试前必须处理的 6 条已修复（见下）；其余进入改进计划。
+- 测试前关键修复（commit 3625582，已推送）：
+  - CR-A#1 rate-limiter QuotaState：耗尽读数 >6h 视为过期自动复位（日配额滚动——此前单次耗尽把进程内所有 LLM 调用永久砖死）。
+  - CR-A#2 滑动窗口现在记录失败的 429/5xx 尝试（限流器从失败中学习，开场突发不再自造风暴）。
+  - CR-A#3 abort TTL 阶梯升级 2min→10→30→60min（连续风暴时客户端不再每 2-4 分钟重探烧配额；成功且静默 ≥10min 才降级）。
+  - CR-A#4 chatStream 补上 stored model override（此前所有流式生成静默忽略模型选择）。
+  - CR-B#1 knowledge-verify 批次行号校验改为批内全局范围（此前 LLM 局部重编号通过校验，把元数据填到错误来源——引用元数据损坏）。
+  - CR-D#2 iterate.ts 轮锁：活 PID 永不回收（旧 110min 过期阈值 < 合法 135min 轮 → 双管线 OOM 风险）。
+  - CR-D#3 db.ts PRAGMA busy_timeout=5000（恢复轮询与 compose 事务不再撞 database is locked）。
+- 运维清理：杀掉重复 mini-service 实例（2× iterate-scheduler、2× watchdog、4 个 EADDRINUSE 僵尸 dev 父进程）；iterate-scheduler 控制台单实例重启（:3040）。
+- 验证：lint 0 errors（186 warnings 基线不变）；tsc 4 基线错误 0 新增；修复模块冒烟通过；agent-browser 主页/AI Hub/Full Article v2 界面渲染零错误。
+- 基线勘察：现存 canary #5 文章（round 5，100min 硬上限被中止的产物）——EN 半区格式审计全绿（0 CJK、0 列表行、粗体平衡、24 refs 全被引、每章 2-4 段统一），但 ZH 半区缺失（翻译阶段被中止——中断伪影而非翻译 bug）；导出 markdown 39.6KB 格式正确；发现自引用瑕疵（GPX4 章 "As detailed in Section 3" 指向自身）。
+- 真实测试编排：LLM 供应商自 ≥04:43 UTC 起持续 429 风暴（10 模型×多探针全 7-23ms 秒拒——网关级账号限流，非本地配额）；轮 7 canary 正在 30min 等待窗内（将 degraded 收场）；已部署 provider-watch 探测器（2min 节奏、连续 2 次健康即经 :3040/trigger 触发测试轮）+ scripts/test-monitor.ts（15s 采样 TaskRun 步数/进度/next-server RSS/OOM 预警）。
+
+Stage Summary:
+- 代码审查完成：4 层 60+ 发现，6 条测试前关键修复已入库推送；双实例/僵尸进程清理完毕。
+- 供应商 429 风暴是真实测试的唯一阻塞项；探测器+调度器+监控脚本三件套就绪，恢复后自动开跑。
+- 历史产物质量基线：EN 格式修复（round-cs-6/7）在真实文章上验证有效；中断运行的 ZH 缺失与自引用瑕疵记入改进计划。

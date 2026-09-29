@@ -1,194 +1,156 @@
-# SciWrite v2 Pipeline — Improvement Plan
+# SciWrite v2 Pipeline — Next-Stage Improvement Plan
 
-Generated from a fresh end-to-end generation test on 2026-08-26
-(test artifact: `tool-results/full-gen-test-report.json`).
+Generated 2026-09-29 from: (1) a four-layer comprehensive code review
+(LLM / evidence-integrity / frontend-progress / infra-DB-export, 60+
+findings, see worklog Task IDs CR-A/B/C/D); (2) **real production-run
+forensics** — the round-5 canary's complete TaskRun timeline (2026-09-29
+02:28–04:55 UTC, bilingual 3,000-word run, provider healthy→storm
+mid-flight); (3) live incident reproduction (export-triggered OOM kill).
 
-## Test snapshot
+---
 
-| Metric                          | Value                          |
-| ------------------------------- | ------------------------------ |
-| Topic                           | CRISPR-Cas9 genome editing     |
-| Target words                    | 1500                           |
-| Generated body words            | 2726 (body only)               |
-| Sections generated              | 7                              |
-| References cited (unique)       | 17                             |
-| Citation markers in body        | 53                             |
-| Pipeline wall-clock             | 12.4 minutes (744 s)           |
-| In-pipeline removals (verify)   | 8 citations                    |
-| In-pipeline flags (verify)      | 5 citations                    |
-| Compose audit blocking          | 0                              |
-| Compose audit topicality warns  | 19                             |
-| Independent adversarial review  | 30 checked / 28 SUPPORTED / 2 UNSUPPORTED |
-| Independent review support rate | **93.3 %**                     |
-| Independent review unsupported  | **6.7 %**                      |
+## 0. Real-run forensics (the data behind every item below)
 
-## Issues surfaced by this run
+Round-5 canary (Ferroptosis structural biology, 10 sections, 410 gathered
+sources → 25 curated refs), stage wall-clock from the persisted timeline:
 
-### A1. Duplicate `[n,n]` citation markers (HIGH — fixed in this session)
+| Stage | Time | Notes |
+|---|---|---|
+| gather | **22.1 min** | 18 DB queries + web search theater + LLM query planning |
+| knowledge | ~8 min | 40 batch events; healthy batches are 11–15s, gap-heavy 40–44s (the notorious "~4 min/batch" was pure 429-storm backoff math, not inherent) |
+| score | 6.5 min | 266 sources, batched LLM |
+| curate + plan | 1.3 min | 25/266 selected, 10 sections |
+| gapAgent | 4.7 min | 3 gaps → 3 searches → 6 refs merged |
+| analyze + allocate | 2.5 min | 76 evidence claims from 32 refs |
+| generate + verify | **10.3 min** | 10 sections, 32–77s each — the CHEAPEST writing stage |
+| repair | 18.6 min | 3 review rounds, 2 revisions |
+| polish | 9.6 min | 20 findings, 2 passes |
+| translate | **50.5 min → 10/10 FAILED** | 429 storm hit at 04:02; each section burned the full backoff chain (~4.5 min) before failing; wire already dead 45 min (canary 100-min cap) |
+| relationships | 2 min | skipped (timeout) |
 
-**Symptom**
+Total server-side ≈ 147 min; healthy-provider estimate ≈ 80–90 min.
+Three structural conclusions: **(a)** per-section writing is fast and
+cheap; **(b) the serial-LLM-call stages (gather planning, score, repair,
+translate) dominate wall-clock; (c) storms turn any serial stage into a
+fixed ~4.5 min/section money bonfire — now partially fixed (see P0).
 
-The generated article body contained the marker `[5,5]`:
+---
 
-> "7 Å across different Cas9 orthologs provide fundamental insights into
->  the molecular basis of RNA-guided DNA recognition and cleavage [5,5]."
+## 1. P0 — already fixed this session (shipped, commit 3625582 + b39dc68)
 
-A single bracket citing the same paper twice is semantically meaningless
-and trips duplicate-citation audit warnings. The same defect class was
-reported by the user in a previous meta-review (`[2,2]`, `[9,9]`).
+1. **QuotaState never rolled over** (CR-A#1): one daily-quota exhaustion
+   bricked every LLM call in the process forever (dev server lives for
+   days). Fixed: exhausted readings >6h old auto-reset.
+2. **Limiter didn't learn from failures** (CR-A#2): failed 429/5xx attempts
+   now occupy sliding-window slots — the opening burst of a run can no
+   longer self-trigger the provider's rolling limit.
+3. **Flat 120s abort TTL** (CR-A#3): escalated 2min→10→30→60min on
+   consecutive storms; the client no longer re-probes a throttled provider
+   every ~2–4 min for hours (client-side storm persistence).
+4. **chatStream ignored the stored model override** (CR-A#4): all streaming
+   generation silently ran the default model.
+5. **Knowledge-batch row-id cross-contamination** (CR-B#1): LLM
+   locally-renumbered replies passed validation and wrote metadata fills
+   onto *different* sources (citation-metadata corruption). Fixed: ids
+   validated against the batch's own global range.
+6. **Round-lock staleness < legitimate round length** (CR-D#2): a clean
+   135-min round could get a second round started beside it → double
+   pipeline → OOM. Fixed: a live PID is never reclaimed.
+7. **SQLite busy_timeout = 0** (CR-D#3): recovery polling + compose
+   transactions collided as `database is locked`. Fixed: 5s.
+8. **Translate loop had no storm/disconnect short-circuit** (round-5
+   post-mortem): 50 min / 100+ requests for zero output during a storm,
+   45 min of it post-wire-death. Fixed: mirrors the generate loop's guard.
+9. **Storm launches burned 3 minutes then fatal-rolled-back everything**
+   (real-test finding RT-2, reproduced live): the gather query-planning LLM
+   call has no try/catch — a launch during a 429 storm ran the full
+   backoff chain, hit the fatal path, and the snapshot rollback erased even
+   the freshly-gathered sources. Fixed: a one-call pre-flight on POST — 429
+   storm → 503 in ~1s with an honest "nothing was consumed" message
+   (verified: 0.5s rejection during the live storm), plus setAbort so
+   re-clicks within the abort TTL cost zero provider calls.
 
-**Root cause**
+## 2. P1 — scientific-accuracy enforcement gaps (the user's #1 priority)
 
-`convertKeysToNumbers()` in `src/lib/citation-binding.ts` builds the
-output marker by joining all `oldToNew[n]` values for the keys inside a
-single `{{R…}}` group, without deduplicating. So `{{R5,R5}}` → `[5,5]`.
+The review's clearest verdict: **structural citation integrity is strong**
+({{Rn}} keys, deterministic renumbering, heading pinning, citation-set
+guards), but the **claim-truth layer is detect-only in too many places**.
 
-`removeCitationsAndRenumber()` has the same defect in its keep-rewrite
-path, and `sanitizeOutOfRangeCitations()` in `citation-audit.ts` only
-filtered out-of-range numbers — a duplicate pair where both numbers are
-in range slipped through unchanged.
+| # | Item | Evidence | Fix sketch |
+|---|---|---|---|
+| P1-1 | **Adversarial-verify PARTIAL findings never reach the repair loop** — including the flagship "numeric mismatch" verdicts (CS-MAIN-4) | route.ts STEP 7 → `stats.citationsFlagged` only; STEP 8.5 builds `feedback.weaknesses` from fact-check + review only | Pipe `verifyResult.flagged` (esp. numeric mismatch) into the repair loop's weaknesses as `[VERIFY PARTIAL]` lines; numeric mismatches with confidence ≥ threshold should be removal-grade |
+| P1-2 | Post-coverage-backfill tier re-gate compacts the pool but never remaps `sections[].refIndices` → wrong-paper-to-wrong-section allocation | route.ts 1571–1585; staleIndices only handles replaced slots | Identity-map remap after the gate (same pattern as compose's `refNumberMap`), or mark-and-strip with null placeholders until after allocation |
+| P1-3 | Repair-loop `globalRefs` re-sync matches reference lines by exact string; first mismatch `break`s; stale list adopted while content is new → bilingual halves / paragraph sync can diverge from the EN reference list | route.ts 3280–3312 | Match by PMID/DOI identity (reuse `parseReferenceList` logic); skip unmatched, never break; re-derive from final refs on fallback |
+| P1-4 | Translation citation drift is detected but only logged ("keeping translation as-is"); ZH-hallucinated `[n]` additions unchecked | route.ts 4205–4230 (round-5 run exercised exactly this path) | One retry with "restore citation markers verbatim"; then mechanical splice of EN markers; check `zhNums ⊆ enNums` too |
+| P1-5 | Fact-check samples ≤8 claims/article and its verdicts are framed to the repairer as infallible ground truth — a false CONTRADICTED deletes a true claim | fact-check.ts 445, 616–622 | Feed STEP-7-flagged sentences into the claim pool (guaranteed coverage of suspects); require `evidenceQuote` non-empty for actionable CONTRADICTED |
+| P1-6 | Adversarial verify caps at 2 sentences/ref/section; "topical match = SUPPORTED" lets same-topic-wrong-number pass | route.ts 4704–4721 | Raise the cap for numeric-bearing sentences; numeric mismatch ≥ threshold → removal-grade |
+| P1-7 | `titleSimilarity` is asymmetric containment (short LLM suggestion ⊂ long real title scores 1.0) → real citation, wrong work | knowledge-verify.ts 375–382 | Symmetric Jaccard + suggestion-token coverage |
+| P1-8 | Coherence polish always "fixes" the LATER section, propagating an error forward if the earlier value was the wrong one | coherence-polish.ts 196–204 | Let the reviewer name the authoritative section per finding; fall back to later-only when unspecified |
+| P1-9 | `revisionGuard` floors (0.6) let a repair/polish silently drop 40% of citations and 40% of body words | v2-config.ts 59–64 | Tighten distinct-citation floor to ~0.85–0.9; per-section citation-count check on the scoped path |
+| P1-10 | Section self-reference ("As detailed in Section 3" *inside* §3) survives polish | observed live in the canary-5 export | Mechanical detector: a section body referencing its own ordinal → cheap gate at compose |
 
-**Fix applied (this session)**
+## 3. P2 — throughput & reliability (measured, not speculative)
 
-1. `convertKeysToNumbers` Pass 3: `Array.from(new Set(newNums))` before
-   sort+join → `{{R5,R5}}` becomes `[5]`, not `[5,5]`.
-2. `removeCitationsAndRenumber` Pass 2: same dedup pattern in the
-   `@@KEEP…@@` rewrite step.
-3. `sanitizeOutOfRangeCitations`: even when every number is in range,
-   duplicates are collapsed and the marker is rewritten.
+| # | Item | Measured impact | Fix sketch |
+|---|---|---|---|
+| P2-1 | **Knowledge stage re-design** (CR-B): complete rows (all three fields filled) still ride a full LLM round-trip each | 8 min healthy; 15 batches × ~12 sources | One aggregate gap-detection call over the pool + batch only gap-carrying rows; bounded concurrency 2–3 (abort architecture is already storm-safe) ≈ 3–5× stage speedup |
+| P2-2 | **Translate stage concurrency + glossary reuse** | 50 min serial (storm); ~10–15 min healthy serial | Sections are independent post-compose; translate 2–3 in parallel with shared glossary; ~2–3× stage speedup |
+| P2-3 | Gather: 22 min — web-search 1s sleeps × N queries + LLM planning + sequential NCBI | 22.1 min | Parallelize web queries (provider allows it when healthy), overlap DB+web phases, cache query plans per topic |
+| P2-4 | **The double-run corruption chain** (CR-C#1+#2+#3): resume banner shows while a run is live (checkpoint `resumable:true` whenever a pool exists) + zombie sweep kills live slow-verify runs (20-min step silence; verify has no per-batch heartbeat) + null-path `setCurrentStep(STEPS.length)` re-enables Generate mid-probe | One click during the probe window launches a second pipeline on the same project → `clearSession` wipes paragraphs the live run references → checkpoint `runId_stage` unique-constraint collisions | (a) checkpoint route consults run-watch/TaskRun liveness before advertising resumable; (b) v2 POST rejects a second concurrent run per project; (c) verify emits per-batch events (mirror knowledge); (d) hold currentStep during the null-probe |
+| P2-4b | **Gather LLM-failure has no mechanical fallback** (real-test RT-2, sibling of the fixed pre-flight): a mid-run storm at gather (after a healthy pre-flight) still fatals + rolls back; only empty-PARSE falls back to topic-word queries | gather is the FIRST LLM call — most exposed stage | try/catch around query planning → existing mechanical fallback → run continues with DB-only gathering; sources persist even if plan later fails (today the fatal rollback erases them) |
+| P2-5 | **Export-path OOM** (reproduced live this session: docx/pdf export on the 2 GB dev server → kernel OOM kill at 2.3 GB RSS): export pulls `rawJson` for every dataSource (10–50 MB for a 150-source project) and runs the full appendix + EndNote enrichment for formats that discard them; `injectEndnoteFields` is O(n²) string copying | dmesg `Killed process 1597 anon-rss:2302712kB` during this session's export test | `select` excluding rawJson; gate appendix/enrichment on format; segment-join instead of slice-concat; consider moving export to a worker |
+| P2-6 | Client render storm: server emits ~10 events/s with messages; client appends all 500 log rows with **index keys** → all rows re-render 10×/s for 1–2 h; autoscroll forces on every event | CPU burn on weak machines for the whole run — the same class of condition as the original freeze report | rAF/250ms throttle for streaming events; stable keys; autoscroll only when near-bottom |
+| P2-7 | No AbortController in the SSE consumer; no user-facing Cancel; closing the dialog leaves the fetch running for the remaining 1–2 h | invisible token burn; "run invisible after reopen" feeds the double-run chain | Ref-held AbortController aborted on unmount + Cancel button (server 4-min grace already handles the wind-down) |
+| P2-8 | Freshness matcher `startedAt ≥ runStart−60s` compares server ts to client clock and picks newest match | >60s clock skew → permanent "no record found"; two concurrent runs → displays the wrong one | Echo recorder `runId` in an early SSE event; match on runId; single-running-row acceptance |
+| P2-9 | Generate-stage streaming lacks `accumulatedTail` (translate has it) — the live-preview footer stays empty during the longest phase | UI built for it, never fed | One-line: include `accumulated.slice(-300)` in generate streaming events |
+| P2-10 | Storm-mode pacing: `withAbortWaitout` deadline is hardcoded 150s while escalated abort TTLs now reach 10–60 min | retry-once semantics silently became "fail fast" for escalated storms (acceptable, but undocumented) | Make the waitout deadline TTL-aware; document the contract |
+| P2-11 | withRateLimit gives each of 5 attempts a fresh 300s budget (worst case 25–50 min/call on a slow-but-alive provider) | theoretical ceiling, observed near-misses | Budget the timeout across the whole withRateLimit call |
+| P2-12 | canary fetch hard-capped at 100 min while a healthy bilingual run measures 80–90 min + any storm overruns | round-5 killed at cap; server kept going (now guarded by the translate short-circuit) | Raise the canary cap to 135 min (lock math now tolerates it) or scale to a storm factor |
 
-Verified by inline tests in `scripts/`:
-`{{R5,R5}} → [5]`, `[5,5]+remove(1) → [1]`, `{{R3,R5}} → [1,2]` (real
-multi-cite preserved).
+## 4. P3 — hygiene & hardening (do opportunistically)
 
-### A2. Section redundancy between "Molecular Mechanisms" and "Structural Insights" (MEDIUM)
+- **P3-1** `removeReferenceBlocks` false-positive class (CR-D#5): ≥3 lines with list markers + "et al"/URL/(19xx) deletes legitimate methods lists — tighten to ≥2 strong markers per line or terminal-block-only. Same family: the postscript cut on any "Note:" after char 500 (P3-2).
+- **P3-3** `db/custom.db` (40 MB, user content) is tracked in git and pushed to the remote — remove from tracking, keep a seed/demo path (P3-4 documents the migration).
+- **P3-5** Unattended git surgery (CR-D#4): `correctByRevert` runs `git revert` + `git reset --hard` on a shared tree; round pushes never pull/rebase (non-FF silently dropped). Abort correction on a dirty tree (except iteration-state); `git pull --rebase` before push.
+- **P3-6** Mini-services lack single-instance guards (CR-D#1): this session found 2× scheduler consoles + 2× watchdogs + 4 zombie dev parents live simultaneously; the watchdog pair could double-fire pipelines on provider recovery. Port-bind/PID-file guard; retire mini-services/watchdog (its target projectId is dead).
+- **P3-7** `scripts/` + `mini-services/` are excluded from tsc and have `noImplicitAny:false` — the riskiest code (git surgery, lock math — both already FATAL'd once) is un-typechecked. Add tsconfig.scripts.json.
+- **P3-8** llm.ts residual (CR-A): `callZai` new-client-per-call without timeout; `api:*` paid providers inside the auto-fallback walk (silent credit burn); `eval("import")` hacks; cache key omits model; unbounded 30-min cache map; `compressPrompt` applied to SDK calls (24k cap on a 128k-context model); system prompt duplicated in llm-session.
+- **P3-9** i18n gaps in recovery toasts/badges/step labels (CR-C#8); task-runs payload (full stepsJson × 50 runs per poll) needs a sinceTs cursor (CR-C#9); pipeline/language selectors stay enabled mid-run — switching disarms the stall watchdog (CR-C#11); accessibility (aria-live, role=log) for the 1–2 h progress UI (CR-C#14).
+- **P3-10** `db:push --accept-data-loss` as the routine script name; export `bodyRefPmids` still has the substring-match bug class cs-7 fixed elsewhere (route line 278); llm-probe endpoint has no timeout (a hung provider hangs the probe).
+- **P3-11** Keepalive relaunch uses non-detached spawn (CR-D#11) — contradicts the project's own setsid lesson; a relaunched dev server can be reaped with the console.
 
-**Symptom**
+## 5. P4 — architecture: the multi-round agent the user asked for
 
-The planner generated two overlapping sections — "Molecular Mechanisms of
-Cas9" and "Structural Insights into Cas9 Function" — that both cover the
-bilobed architecture, HNH/RuvC domains, and the 2.5 Å crystal structure.
-This is the same redundancy the user flagged in the previous meta-review
-on an earlier v2 article. The earlier fix was applied at the
-**post-hoc article-edit** level (manually merging the two paragraphs),
-so it does not survive a fresh regenerate.
+The user's standing direction: "文章生成不再是一次生成…需要重复利用 agent
+能力，长时间自主收集信息，和不断根据上下文打磨内容，尤其避免科学性错误
+和文献引用错误." Current state vs. target:
 
-**Root cause**
+- ✅ Gap agent: multi-round (merge → re-audit → pursue only new gaps), 6-ref budget, pool ceiling.
+- ✅ Coherence polish: multi-pass (review → polish → re-review), mechanical gates per pass.
+- ✅ Adversarial verify: numeric-first sentence selection.
+- Next steps, in dependency order:
+  1. **Close the enforcement gaps** (P1-1/5/6) — detection already exists; wiring it to repair is cheap and directly serves "避免科学性错误".
+  2. **Evidence-driven revision rounds**: after repair, re-run verify on the
+     CHANGED sentences only (scoped re-verification), until a clean pass or
+     budget exhaustion — turns verify from a one-shot filter into a loop.
+  3. **Deep-read on demand**: when verify flags a numeric mismatch, fetch the
+     cited source's full text (PMC) and re-adjudicate with quote-level
+     evidence before deleting the claim (pairs with P1-5's evidenceQuote
+     requirement).
+  4. **Writer-agent memory across sections**: today's continuity is a
+     prompt digest; persist a structured claim-ledger (claim → source →
+     section → status) that verify/repair/polish all read AND write —
+     single source of truth for "what the article currently asserts".
+  5. **User-visible provenance**: surface the claim-ledger in the UI (per-
+     claim evidence links) — the ClawsGO-style traceability the auto-iterate
+     timeline started.
 
-The `plan` stage (LLM-designed outline) has no structural-overlap
-detector; if the LLM emits two topically adjacent sections, nothing
-pushes back.
+## 6. Verification plan for each wave
 
-**Proposed fix (future)**
-
-In `/api/ai/generate-full-v2`, after the LLM returns the section list,
-compute pairwise topicality (reusing `topicalityScore` from
-`citation-audit.ts` with the new CJK-aware keyword extractor) between
-section **titles + one-sentence purpose** lines. If any pair exceeds a
-similarity threshold (e.g. 0.6), send a follow-up LLM call asking it to
-merge the two sections into one and re-emit the outline. Cap at 2 merge
-iterations to avoid loops.
-
-Estimated effort: ~30 LOC + 1 LLM call per planning run (when triggered).
-
-### A3. Verify stage serial + small batches (MEDIUM)
-
-**Symptom**
-
-The v2 pipeline spent ~470 s (8 of 12.4 min) in the per-section verify
-stage. Each section makes 1 LLM call per batch of ≤10 citations, and
-sections are verified serially after each section's generation.
-
-**Root cause**
-
-`VERIFY_BATCH_SIZE = 10` (line 83 of `generate-full-v2/route.ts`) was
-chosen for prompt-size safety, but the prompt comfortably fits ~20
-(sentence, citation, reference title/abstract) tuples under the 4 k
-token ceiling we use. Sections are also verified immediately after each
-section is generated (sequential), not in parallel.
-
-**Proposed fix (future)**
-
-1. Bump `VERIFY_BATCH_SIZE` from 10 → 20 (halve the LLM call count).
-2. Optionally: collect all sections, then verify them in parallel with
-   `Promise.all` (rate-limiter already prevents flooding). This trades
-   wall-clock for ~7× concurrent LLM load.
-
-Estimated speedup: ~3 min off a 12-min pipeline (25 % faster), with no
-loss of accuracy.
-
-### A4. Factual error in the body — "7 Å" instead of "2.5 Å" (LOW)
-
-**Symptom**
-
-The model wrote "7 Å across different Cas9 orthologs" when the canonical
-resolution associated with Cas9 structure papers is 2.5 Å (Nishimasu
-2014). The verify stage correctly flagged this as UNSUPPORTED because
-the cited reference (Bravo 2022) does not mention 7 Å.
-
-**Root cause**
-
-The LLM occasionally confabulates specific numeric facts. The verify
-stage catches the **citation mismatch** but not the **factual error**
-itself; the sentence still ships with "7 Å" in the body.
-
-**Proposed fix (future, exploratory)**
-
-Cross-check canonical numeric facts against an external knowledge graph
-(Wikidata SPARQL for "Cas9 crystal structure resolution"). This is out
-of scope for the current iteration but worth tracking.
-
-A lighter interim option: when the verify stage removes a citation
-because of a numeric mismatch, also flag the sentence for human review
-(extend `removedCitations` with a `factualIssue` field). The UI
-(`paragraph-card.tsx`) already shows citation-audit findings — adding
-a "review this sentence" pill is cheap.
-
-### A5. Topicality warnings not surfaced in UI (LOW)
-
-**Symptom**
-
-The compose audit reported `19 topicality warnings` — these are
-citation-claim pairs where the topicality score fell below the
-"supported" threshold but above the "unsupported" threshold. They are
-written to the audit report but not surfaced anywhere user-visible.
-
-**Proposed fix (future)**
-
-`citation-audit-banner.tsx` already renders the audit report. Add a
-collapsible "Review suggested (low topicality)" section that lists
-these pairs and links to the paragraph + sentence for the user to
-review. ~50 LOC, mostly UI plumbing.
-
-## Priority summary
-
-| ID  | Issue                                | Priority | Status        |
-| --- | ------------------------------------ | -------- | ------------- |
-| A1  | Duplicate `[n,n]` citation markers   | HIGH     | **Fixed**     |
-| A2  | Section redundancy (Molecular / Structural) | MEDIUM | Planned        |
-| A3  | Verify stage serial + small batches  | MEDIUM   | Planned        |
-| A4  | Factual error "7 Å"                  | LOW      | Tracked        |
-| A5  | Topicality warnings hidden in UI     | LOW      | Planned        |
-
-## Reproducing the test
-
-```bash
-# Dev server must be running on http://localhost:3000
-bun run scripts/full-generation-test.ts --words 1500
-# → JSON report written to tool-results/full-gen-test-report.json
-# → run log to stderr / tee to tool-results/full-gen-test-run.log
-```
-
-## Comparison to previous runs
-
-| Source                       | Run date   | Words | Refs | Unsupported rate | Wall-clock |
-| ---------------------------- | ---------- | ----- | ---- | ---------------- | ---------- |
-| v1 baseline (worklog §10)    | 2026-08-25 | 1614  | 19   | 41 %             | 5.8 min    |
-| v2 evidence-grounded (worklog §10) | 2026-08-25 | 1822 | 15 | 8 %         | 9.3 min    |
-| **v2 fresh run (this test)** | 2026-08-26 | 2726  | 17   | 6.7 %            | 12.4 min   |
-
-The fresh run is consistent with the previous v2 measurement: low
-unsupported rate (~7–8 %), no orphan or out-of-range citations, but
-noticeably longer wall-clock (because we generated ~50 % more content).
-The `[5,5]` defect is new — it was not observed in the previous run but
-matches a defect class the user had reported on a different v2 article.
+- Wave 1 (P1-1..P1-6 + P2-4): synthetic seeded articles with known defects
+  (existing test harness: test-format-cs7.ts pattern) + one real canary.
+- Wave 2 (P2-1/2/2-5): timing A/B against the round-5 baseline table above
+  (knowledge ≤3 min, translate ≤6 min healthy, export <10s/MB, RSS delta
+  <300 MB).
+- Every wave: tsc/lint gates + canary regression metrics (words/refs/parity/
+  blocking) before/after, auto-revert on hard regression (iterate.ts).
