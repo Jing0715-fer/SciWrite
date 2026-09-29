@@ -101,6 +101,7 @@ import {
 import {
   preFlightQuotaCheck,
   isAborted,
+  setAbort,
   RateLimitAbortedError,
   QuotaExhaustedError,
 } from "@/lib/rate-limiter";
@@ -193,12 +194,80 @@ function titleMatchesGapRef(cand: { externalId?: string | null; title: string },
 // VERIFY_BATCH_SIZE / VERIFY_REMOVE_CONFIDENCE / maxCitableRefs constants
 // live in @/lib/v2-config (single source of truth for pipeline tuning).
 
+/**
+ * RT-2 fix (storm pre-flight): ONE minimal probe call (max_tokens 8) before
+ * the pipeline starts. A launch during a 429 storm previously burned the
+ * full 5-attempt backoff chain (~3 min) on the gather query-planning call,
+ * then hit the FATAL path — which rolls back the snapshot, so even the
+ * gathered sources were lost. The user saw: click → 3 minutes of nothing →
+ * hard error → empty project. Now: 429 storm → 503 in ~1s with an honest
+ * message (and setAbort, so re-clicks within the abort TTL cost ZERO
+ * provider calls). Non-429 probe errors (timeout, 5xx blips) do NOT block
+ * the launch — the pipeline's own stage handling covers those. Only the
+ * zai-sdk default provider is probed (a CLI/API provider selection has its
+ * own endpoints with different limits).
+ */
+async function providerStorming(): Promise<string | null> {
+  try {
+    const { getSelectedProvider } = await import("@/lib/llm-selection");
+    const selected = getSelectedProvider("generate");
+    if (selected && selected !== "zai-sdk" && selected !== "auto") return null;
+  } catch {
+    // selection unavailable — probe the default provider anyway
+  }
+  try {
+    const { default: ZAI } = await import("z-ai-web-dev-sdk");
+    const zai = await ZAI.create();
+    await zai.chat.completions.create({
+      messages: [{ role: "user", content: "Reply with the single word: OK" }],
+      max_tokens: 8,
+    });
+    return null;
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    if (/429|rate.?limit|too many requests/i.test(msg)) {
+      return "provider throttled (429 storm)";
+    }
+    return null;
+  }
+}
+
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as GenerateFullV2Body;
   const projectId = body.projectId;
 
   if (!projectId) {
     return Response.json({ error: "Missing 'projectId'." }, { status: 400 });
+  }
+
+  // RT-2: fast-fail a storm launch (see providerStorming). This runs BEFORE
+  // the stream starts, so a plain JSON error response is fine — the UI's
+  // error path handles non-OK JSON.
+  try {
+    preFlightQuotaCheck("generate-full-v2:pre-flight");
+  } catch (e: any) {
+    return Response.json(
+      { error: `Pipeline not started: ${e?.message?.slice(0, 140) || "quota/abort guard"}` },
+      { status: 503 },
+    );
+  }
+  if (isAborted()) {
+    return Response.json(
+      { error: "Pipeline not started: a recent rate-limit abort is still active — retry in a few minutes." },
+      { status: 503 },
+    );
+  }
+  const stormReason = await providerStorming();
+  if (stormReason) {
+    setAbort(`pre-flight: ${stormReason}`);
+    return Response.json(
+      {
+        error:
+          `${stormReason} — the pipeline was NOT started (no sources were cleared, nothing was consumed). ` +
+          "Provider storms typically clear within minutes to hours; retry shortly.",
+      },
+      { status: 503 },
+    );
   }
 
   const encoder = new TextEncoder();
