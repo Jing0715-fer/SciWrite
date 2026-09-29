@@ -400,7 +400,7 @@ export async function POST(req: NextRequest) {
     // entries and desync [n] markers from the exported list. Body-derived
     // lines guarantee [n] ↔ entry consistency in every exported format.
     {
-      const refStart = content.indexOf("## References");
+      const refStart = findGlobalRefsStart(content);
       if (refStart >= 0) {
         const refSection = content.substring(refStart);
         const matches = [...refSection.matchAll(/^\s*\[(\d{1,3})\]\s*(.+)$/gm)]
@@ -422,7 +422,7 @@ export async function POST(req: NextRequest) {
     //      section), enriched with DOI/URL from the same rows
     const enRecords = new Map<number, EndNoteRecord>();
     {
-      const refStart = content.indexOf("## References");
+      const refStart = findGlobalRefsStart(content);
       if (refStart >= 0) {
         // Parse the body's compose-format lines with the dedicated parser
         // (comma-tolerant journal matching — see parseRefLineForRecord).
@@ -603,7 +603,7 @@ export async function POST(req: NextRequest) {
     // "## References" section and count `[n]` markers there as the
     // source of truth, falling back to `references.length` only if the
     // body has no parseable reference section.
-    const bodyRefSectionStart = content.indexOf("## References");
+    const bodyRefSectionStart = findGlobalRefsStart(content);
     let bodyMaxRefN = references.length;
     if (bodyRefSectionStart >= 0) {
       const bodyRefSection = content.substring(bodyRefSectionStart);
@@ -1026,6 +1026,25 @@ export async function POST(req: NextRequest) {
  *
  * For "en" or "zh" mode, there is no separator, so we just clean the whole string.
  */
+/**
+ * round-cs-7: locate the article's GLOBAL "## References" section — the
+ * compose-appended level-2 heading at the end of the body. Line-anchored
+ * (`^##\s+References$`) so a per-section "### References" block — the exact
+ * LLM defect class this round fixes — can NOT match: the old
+ * `content.indexOf("## References")` matched INSIDE "### References"
+ * ("###…" contains "## …" at offset 1), poisoning the v115 refLines parse
+ * (duplicate [n] entries → sequential check fails → export shipped with NO
+ * reference list at all). Returns the index of the LAST matching heading
+ * line, or -1.
+ */
+function findGlobalRefsStart(content: string): number {
+  const re = /^##\s+References\s*$/gm;
+  let last = -1;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) last = m.index;
+  return last;
+}
+
 function stripReferencesFromContent(content: string, language: "en" | "zh" | "both"): string {
   // When language === "both", the content was assembled as:
   //   `# ${enTitle}\n\n${enContent}\n\n---\n\n# ${zhTitle}\n\n${zhContent}`

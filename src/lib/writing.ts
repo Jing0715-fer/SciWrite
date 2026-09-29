@@ -845,12 +845,23 @@ const FW_PUNCT_MAP: Record<string, string> = {
  * Convert fullwidth CJK punctuation to its ASCII form. Applied ONLY to
  * English article content (the Chinese half legitimately uses fullwidth
  * punctuation — never call this on contentZh).
+ * round-cs-7: a converted , . ; : ! ? gains a following space when the next
+ * character is alphanumeric — Chinese typography omits the space ("成员，TMC1")
+ * but English requires it ("members, TMC1"), so a bare character swap
+ * produced "members,TMC1". Pre-existing ASCII punctuation is untouched
+ * (never re-spaced — "1,234" stays "1,234").
  */
 export function normalizeAsciiPunctuation(text: string): string {
   if (!text) return text;
   return text.replace(
     /[，。；：！？（）【】、“”‘’＜＞＝＋－％～]/g,
-    (ch) => FW_PUNCT_MAP[ch] ?? ch,
+    (ch, offset: number, full: string) => {
+      const ascii = FW_PUNCT_MAP[ch] ?? ch;
+      if (/[,.;:!?]/.test(ascii) && /[A-Za-z0-9]/.test(full[offset + 1] || "")) {
+        return ascii + " ";
+      }
+      return ascii;
+    },
   );
 }
 
