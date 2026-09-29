@@ -3601,3 +3601,26 @@ Work Log:
 Stage Summary:
 - 四大缺陷修复形成"生成时源头拦截 + 组装时归一化 + 导出/查看时治愈旧文章"三层防御：plan/生成/标题三处语言约束 + cjkGate 重试掐灭中文夹杂；FORMAT 契约 + 标题归一化 + 章级 markdown 归一化统一每章格式；removeReferenceBlocks 块级清理（替代危险的首尾截断）消灭章内文献列表；文献空行 join + 摘要逐行 blockquote + 块间距 + 奇**平衡 + LaTeX 定界符转换修复渲染。
 - 关键架构决策：removeReferenceBlocks 契约明确"调用方先截全局尾列表再清理"；cleanArticleContent 从截断式改为治愈式（旧文章在查看器中不再丢章节）；enTitles 单一事实源贯穿 compose/repair 钉定/polish 钉定/zh 翻译，中英两半标题强制一一对应。
+
+---
+Task ID: CS-MAIN-7 (round-cs-7)
+Agent: main (Z.ai Code orchestrator)
+Task: 用户报告真实生成的文章文件（Mammalian-TMC1-TMC8-channel-family…20260928-194655.md）"还是有很多格式问题，需要进一步限定生成的格式"——在 round-cs-6 四层防御基础上进一步收紧格式约束。
+
+Work Log:
+- **时间线考证**：用户文件生成于 2026-09-28 11:46 UTC（上海 19:46），round-cs-6 修复 13:49 UTC（b9ba391）才落库——文件由 pre-cs-6 代码生成；但代码勘察发现 cs-6 之后仍存在四类结构性缺口，用户的"进一步限定"诉求完全成立。文件本体未落盘（upload 未保存、用户预览实例在另一副本——cs-5 已证），以合成复现 + 真实 API E2E 验证。
+- **缺口 1（章节结构不统一的机械保证）**：cs-6 的 normalizeSectionMarkdown 只把内部 #/## 降为 ###，子标题、列表、表格仍留在章节里 → 各章结构照样不一致。新增 detectSectionFormatViolations（计数 internalHeadings/listLines/tableRows/hrLines）+ enforceUniformSectionFormat（内部标题行整行删除=标签非内容；列表块压平成一段散文=内容保留；表格保留=数据优先；hr 删除；幂等；keepDocumentMarkers 模式保留 H1 标题与双语 --- 分隔符）。generate 循环接入 formatGate（gate 集群第 5 维：违规点名重试一次 + stats.formatRetries；improved 判定含违规数下降），重试后无条件 enforce 兜底——每章落库即纯散文模板。
+- **缺口 2（修复/打磨阶段重新注入缺陷）**：STEP 8.5 repair 与 8.6 polish 是整文 LLM 重写，只有引用守卫没有格式守卫——它们能把 generate 阶段消灭的章内文献列表/内部标题/列表/全角标点原样写回。新增 normalizeArticleBodySections（按 ## 分节逐章跑 removeReferenceBlocks→normalizeAsciiPunctuation→normalizeSectionMarkdown→enforceUniformSectionFormat，## 标题钉死不动）接入两处采纳路径 + compose DB 重读路径（旧 checkpoint 恢复的章节也被治愈）+ translate 阶段（中文镜像同样 enforce，不动全角标点）。
+- **缺口 3（文献列表头变体漏检）**：REF_BLOCK_HEADER_RE 补 Literature cited/Works cited/Sources/Web sources/Further reading/资料来源 等期刊风格变体；新增 STRICT_GLOBAL_REF_HEADER_RE（整行恰为 References/Citations/Bibliography/参考文献…）——严格头 1 条引用即整块删除（cs-6 的 ≥2 阈值为宽松变体设计，单条目的 "## References" 正是用户看到的"额外文献列表"）；cleanArticleContent 的全局头正则 # 改可选（裸 REFERENCES 行）。
+- **缺口 4（导出全局文献列表整段丢失——真 bug）**：export 三处 content.indexOf("## References") 会匹配到 "### References" 内部（"###"含"##"于偏移 1）→ v115 refLines 解析混入章内条目 → 顺序校验失败 → 导出完全没有 References。新增 findGlobalRefsStart（行锚定 ^##\s+References$ 取最后一次）替换全部三处（refLines/enRecords/bodyMaxRefN）。
+- **导出治愈升级**：normalizeExportArticle 按分节 enforce 统一模板（H1/分隔符安全）+ 逐行全角→ASCII（仅无 CJK 表意字符的行——英文泄漏行转换、中文行保留全角）；export 路由对 EN 半部的 CJK 章节标题做一次批量翻译（translateSectionTitlesToEnglish，非致命——用户旧 TMC 文章重导出即得英文标题，无需重新生成）。
+- **prompt 收紧**：FORMAT 契约改为字面模板（"The output is EXACTLY 2-4 paragraphs…NOTHING else" + 骨架示意 + "No line may begin with #, -, *, +, digit."）；system prompt 同步。v1 compose 路由同步接入全套规整（双语 ## 中文 标记保护——按标记切分两半分别处理，ZH 半不跑 ASCII 转换）。
+- **标点细节**：normalizeAsciiPunctuation 转换 , . ; : ! ? 后遇字母数字补空格（"members，TMC1"→"members, TMC1"），既有 ASCII 标点不动（"1,234" 安全）。
+- **验证**：tsc 4 基线错误 0 新增；lint 0 errors；test-format-cs7.ts 74/74（检测器/压平器/幂等/生成链/整文链/导出治愈/新头变体/顺序保证/双语标记/标题归一化）；单元测试 145/145——顺带修复 3 条陈旧断言（renumberByAppearance 越界→[$REF] 是文档化的 CRITICAL FIX 行为）并删除 tests/tests/ 意外重复目录；**真实 API E2E**：种入含全部缺陷类的合成文章 → md/docx/pdf 全 200 → 导出确认每类缺陷治愈且全局 References 完整（空行分隔）；agent-browser：应用加载/文章查看器零 console 错误。期间处置两次基础设施事件：dev server Turbopack 陈旧模块缓存（重启 + rm .next/dev 清除——cs-6 已知问题）与 setsid 进程被沙箱收割（改 setsid --fork 存活）；canary round 5 因供应商 429 风暴在 gather 阶段空转 33 分钟被终止（与 round 2-4 同为 degraded-provider 模式，无产出损失）。
+- 推送 origin/main（dfeae1c + 2c42045）——用户预览实例经 git 同步即得全部修复。
+
+Stage Summary:
+- "每章格式不统一"现在有三层机械保证：生成时 formatGate 重试 + enforce 兜底（每章落库即纯散文）、修复/打磨采纳时整文重跑分节规整（LLM 重写无法再注入缺陷）、导出时旧文章治愈（分节 enforce + 标题归一 + 逐行标点）。
+- "有些章节额外多出了文献列表"补齐两类漏网：期刊风格头变体（Literature cited 等）与单条目严格头；同时修复更严重的隐性 bug——章内 "### References" 会让导出全局文献列表整段消失（行锚定定位根治）。
+- 用户现有 TMC1-TMC8 文件无需重新生成：重新导出（任意格式）即得治愈版（英文标题翻译、统一格式、完整 References）；新生成文章则从源头保证。
+- 遗留：供应商 429 风暴持续（canary round 2-5 连续 degraded-provider），LLM 依赖路径（formatGate 重试/CJK 翻译）的实时端到端留待风暴恢复后由下轮 canary 自动覆盖；风暴期全部按设计非致命降级。
