@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { createSSEStream, SSE_HEADERS } from "@/lib/sse";
-import { countWords, cleanArticleContent } from "@/lib/writing";
+import { countWords, cleanArticleContent, normalizeSectionTitle, normalizeSectionMarkdown, removeReferenceBlocks, enforceUniformSectionFormat } from "@/lib/writing";
 import { parseReferenceList, refIdentity } from "@/lib/citation-audit";
 import type { ComposeRequest } from "@/lib/types";
 
@@ -81,7 +81,33 @@ export async function POST(req: NextRequest) {
         // Replace [$REF] placeholders with a reader-friendly note so the
         // final composed article doesn't contain raw "[$REF]" text.
         content = content.replace(/\[\$REF\]/g, "[citation needed]");
-        return { ...p, cleanContent: content };
+        // round-cs-7: same uniform-format gauntlet as the v2 pipeline — strip
+        // per-section reference lists, normalize markdown (LaTeX delimiters,
+        // stray bold, block spacing) and enforce the plain-prose section
+        // template (internal headings dropped, lists flattened), so v1-
+        // composed articles share the exact same uniform section format.
+        // Bilingual v1 paragraphs embed a "## 中文" marker line that MUST
+        // survive — split there and normalize each half separately (the ZH
+        // half skips ASCII-punctuation conversion: fullwidth punctuation is
+        // legitimate Chinese typography).
+        try {
+          const zhMarkerRe = /\n##\s*中文\s*\n/;
+          const zhMatch = content.match(zhMarkerRe);
+          if (zhMatch && zhMatch.index !== undefined) {
+            const enPart = content.slice(0, zhMatch.index);
+            const afterMarker = zhMatch.index + zhMatch[0].length;
+            const zhPart = content.slice(afterMarker);
+            content =
+              enforceUniformSectionFormat(normalizeSectionMarkdown(removeReferenceBlocks(enPart))) +
+              "\n\n## 中文\n\n" +
+              enforceUniformSectionFormat(normalizeSectionMarkdown(removeReferenceBlocks(zhPart)));
+          } else {
+            content = enforceUniformSectionFormat(normalizeSectionMarkdown(removeReferenceBlocks(content)));
+          }
+        } catch {
+          // Non-fatal: keep the pre-normalization content on any failure.
+        }
+        return { ...p, cleanContent: content, normalizedTitle: normalizeSectionTitle(p.title || "") || p.title || "" };
       });
 
       // Bug #1 fix — recover stale global citation numbers from the prior
@@ -195,8 +221,10 @@ export async function POST(req: NextRequest) {
 
       // Build article body using paragraph titles as section headings
       // NO forced Introduction/Background/Results/Discussion — use actual paragraph titles
+      // round-cs-7: titles are normalized (strip "3." numbering / quotes /
+      // trailing punctuation) so every heading shares one format.
       const articleBody = cleanParagraphs
-        .map((p, i) => `## ${p.title}\n\n${renumberedContents[i]}`)
+        .map((p, i) => `## ${(p as any).normalizedTitle || p.title}\n\n${renumberedContents[i]}`)
         .join("\n\n");
 
       // Build deduplicated references list.

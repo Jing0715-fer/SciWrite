@@ -320,11 +320,15 @@ describe("renumberByAppearance", () => {
     expect(content).toContain("[1] Old");
   });
 
-  test("keeps out-of-range numbers unchanged", () => {
-    // [99] is out of range (refs.length === 4)
+  test("replaces out-of-range numbers with [$REF] (hallucination guard)", () => {
+    // [99] is out of range (refs.length === 4). CRITICAL FIX (see
+    // renumberByAppearance): an unmapped citation must NOT survive as its
+    // original number — it becomes the explicit "[$REF]" placeholder so the
+    // audit and hover tooltips never see an out-of-range marker.
     const { content, references } = renumberByAppearance("see [99] and [1]", refs);
-    expect(content).toContain("[99]");
+    expect(content).toContain("[$REF]");
     expect(content).toContain("[1]");
+    expect(content).not.toContain("[99]");
     expect(references.map((r) => r.id)).toEqual(["r1"]);
   });
 });

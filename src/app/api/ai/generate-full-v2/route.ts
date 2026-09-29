@@ -25,6 +25,9 @@ import {
   normalizeSectionMarkdown,
   normalizeAsciiPunctuation,
   removeReferenceBlocks,
+  detectSectionFormatViolations,
+  enforceUniformSectionFormat,
+  normalizeArticleBodySections,
 } from "@/lib/writing";
 import { generateArticleTitle, retranslateTitleZhWithGlossary } from "@/lib/article-title";
 import {
@@ -316,6 +319,8 @@ export async function POST(req: NextRequest) {
         trailingUncitedRetries: 0,
         // round-cs-6: Chinese-leak retry telemetry
         cjkLeakRetries: 0,
+        // round-cs-7: uniform-format retry telemetry
+        formatRetries: 0,
         preprintDuplicatesDropped: 0,
         // round-15: regression-hardening telemetry
         adjacentCitationsMerged: 0,
@@ -2176,13 +2181,22 @@ STYLE:
 - Use *italics* for species names; **bold** for gene/protein names on first mention.
 
 FORMAT (uniform across every section — the "## heading" is added by the system):
-- Write 2-4 cohesive paragraphs of plain prose ONLY.
-- Do NOT output any markdown heading, any repeated section title, any bullet
-  or numbered list, any table, any horizontal rule, or any LaTeX display math.
-  Inline formatting allowed: *italics* for species names, **bold** for
+- The output is EXACTLY 2-4 paragraphs of plain prose, separated by single blank lines. NOTHING else.
+- TEMPLATE (follow literally):
+    <first paragraph of flowing sentences, claims cited with {{Rn}} keys>
+
+    <second paragraph ...>
+
+    [optionally 1-2 more paragraphs]
+- No line may begin with "#", "-", "*", "+", or a digit followed by "." or ")" — those are
+  headings/lists, and this section must contain neither. Fold any enumeration
+  into flowing sentences ("Three lines of evidence support... first,... second,...").
+- No tables, no horizontal rules, no LaTeX display math ($$...$$ blocks are
+  display math; inline $x$ is fine).
+- Inline formatting allowed: *italics* for species names, **bold** for
   gene/protein symbols on first mention.
-- NEVER append a reference list, bibliography, "References"/"参考文献" section,
-  or any author-year citation listing at the end of the section — inline {{Rn}}
+- NEVER append a reference list, bibliography, "References"/"参考文献"/"Literature
+  cited" section, or any author-year citation listing at the end of the section — inline {{Rn}}
   keys are the ONLY citation mechanism; the global reference list is compiled
   by the system from those keys.
 - The entire output must be written in ENGLISH. Never emit Chinese characters
@@ -2193,7 +2207,8 @@ ${promptInstruction ? `\nCUSTOM INSTRUCTION:\n${promptInstruction}` : ""}`;
           const system = `You are a senior scientific research writer and domain expert (${project.field || "life sciences"}).
 Write in English using formal, precise academic prose.
 Your output must be written ENTIRELY in English — never emit Chinese characters or fullwidth punctuation, even when the topic, section title, or custom instruction is written in Chinese.
-Compose ONE cohesive section. Start the body with actual content, NOT a restatement of the title.
+Compose ONE cohesive section as 2-4 paragraphs of PLAIN PROSE — no headings, no bullet or numbered lists, no tables (the system adds the section heading and compiles the reference list itself).
+Start the body with actual content, NOT a restatement of the title.
 You cite ONLY with {{Rn}} keys — never numeric [n] citations.
 Never append a reference list or bibliography — the system compiles the global reference list.
 Scientific precision rules (round-64):
@@ -2307,13 +2322,21 @@ Scientific precision rules (round-64):
           // language correction appended.
           const cjkLeak = countCJKText(chunkContent);
           const cjkGate = cjkLeak > 0;
-          if (zeroCite || trailingGate || uncitedGate || cjkGate || (!gate.ok && (gate.rawNumericMarkers > 0 || gate.outOfRangeKeys > 0))) {
+          // round-cs-7 (格式统一): the section template is "2-4 prose
+          // paragraphs, nothing else". Internal headings / bullet lists /
+          // tables / hr are the structural inconsistency the user reported
+          // ("每章的格式不统一") — retry once naming the violations, then
+          // enforceUniformSectionFormat below strips whatever survives.
+          const fmtViolations = detectSectionFormatViolations(chunkContent);
+          const formatGate = fmtViolations.total > 0;
+          if (zeroCite || trailingGate || uncitedGate || cjkGate || formatGate || (!gate.ok && (gate.rawNumericMarkers > 0 || gate.outOfRangeKeys > 0))) {
             stats.gateRetries++;
             if (zeroCite) stats.zeroCitationRetries++;
             if (trailingGate) stats.trailingUncitedRetries++;
             if (uncitedGate) stats.uncitedAssertionRetries = (stats.uncitedAssertionRetries || 0) + 1;
             if (cjkGate) stats.cjkLeakRetries = (stats.cjkLeakRetries || 0) + 1;
-            log(`generate: section ${sectionNum} FAILED validation gate (zeroCite=${zeroCite}, trailing=${trailingGate ? `${trailingBlock}w` : "no"}, uncitedAssert=${uncitedGate ? uncitedAssertions.length : 0}, cjkLeak=${cjkLeak}, raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
+            if (formatGate) stats.formatRetries = (stats.formatRetries || 0) + 1;
+            log(`generate: section ${sectionNum} FAILED validation gate (zeroCite=${zeroCite}, trailing=${trailingGate ? `${trailingBlock}w` : "no"}, uncitedAssert=${uncitedGate ? uncitedAssertions.length : 0}, cjkLeak=${cjkLeak}, fmt=${formatGate ? `${fmtViolations.internalHeadings}h/${fmtViolations.listLines}l/${fmtViolations.tableRows}t/${fmtViolations.hrLines}hr` : "clean"}, raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
             send("step", {
               step: "generate",
               status: "progress",
@@ -2327,7 +2350,9 @@ Scientific precision rules (round-64):
                     ? `Section ${sectionNum}: validation gate triggered (${uncitedAssertions.length} uncited high-risk assertion sentence(s)) — retrying with grounding instruction...`
                     : cjkGate
                       ? `Section ${sectionNum}: validation gate triggered (${cjkLeak} Chinese characters leaked into the English text) — retrying with language correction...`
-                      : `Section ${sectionNum}: validation gate triggered (raw numeric markers: ${gate.rawNumericMarkers}) — retrying with corrective instruction...`,
+                      : formatGate
+                        ? `Section ${sectionNum}: validation gate triggered (${fmtViolations.internalHeadings} heading(s), ${fmtViolations.listLines} list line(s), ${fmtViolations.tableRows} table row(s) — template is plain prose) — retrying with format correction...`
+                        : `Section ${sectionNum}: validation gate triggered (raw numeric markers: ${gate.rawNumericMarkers}) — retrying with corrective instruction...`,
             });
             try {
               const retryPrompt = prompt + (zeroCite
@@ -2349,6 +2374,8 @@ Every factual assertion of this kind MUST cite the listed reference that support
 
 CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] or [2], or invalid keys. Rewrite the SAME section content using ONLY {{Rn}} citation keys from the list. Every citation must be a {{Rn}} key. Output the corrected section only.`) + (cjkGate
                 ? `\n\nLANGUAGE CORRECTION: your previous output contained ${cjkLeak} Chinese characters. This article is written in ENGLISH ONLY — rewrite the section with ZERO Chinese characters (translate any Chinese terms into standard English scientific terminology, and use ASCII punctuation).`
+                : "") + (formatGate
+                ? `\n\nFORMAT CORRECTION: your previous output violated the uniform section template. Detected: ${fmtViolations.internalHeadings > 0 ? `${fmtViolations.internalHeadings} internal markdown heading line(s) ` : ""}${fmtViolations.listLines > 0 ? `${fmtViolations.listLines} bullet/numbered list line(s) ` : ""}${fmtViolations.tableRows > 0 ? `${fmtViolations.tableRows} table row(s) ` : ""}${fmtViolations.hrLines > 0 ? `${fmtViolations.hrLines} horizontal rule(s) ` : ""}. Rewrite the SAME section as 2-4 cohesive paragraphs of PLAIN PROSE ONLY: no markdown headings, no bullet or numbered lists (fold list content into flowing sentences), no tables, no horizontal rules. Inline *italics* and **bold** remain allowed. Output the corrected section only.`
                 : "");
               const retryContent = await chatWithSession(projectId, retryPrompt, {
                 system,
@@ -2362,6 +2389,7 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
               const retryKeyed = (sanitizedRetry.match(/\{\{R\d+\}\}/g) || []).length;
               const retryTrailing = trailingUncitedClaimWords(sanitizedRetry);
               const retryCjk = countCJKText(sanitizedRetry);
+              const retryFmt = detectSectionFormatViolations(sanitizedRetry);
               let improved: boolean;
               if (zeroCite) {
                 improved = retryKeyed > 0 && retryGate.rawNumericMarkers === 0;
@@ -2376,9 +2404,12 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
               // dimension) is worth adopting even when another gate dimension
               // is merely unchanged.
               if (!improved && cjkGate && retryCjk < cjkLeak) improved = true;
+              // round-cs-7: same for the format dimension — fewer structural
+              // violations is a strictly better section.
+              if (!improved && formatGate && retryFmt.total < fmtViolations.total) improved = true;
               if (improved) {
                 chunkContent = sanitizedRetry;
-                log(`generate: section ${sectionNum} retry improved (keyed ${keyedCount}→${retryKeyed}, raw ${gate.rawNumericMarkers}→${retryGate.rawNumericMarkers}, cjk ${cjkLeak}→${retryCjk})`);
+                log(`generate: section ${sectionNum} retry improved (keyed ${keyedCount}→${retryKeyed}, raw ${gate.rawNumericMarkers}→${retryGate.rawNumericMarkers}, cjk ${cjkLeak}→${retryCjk}, fmt ${fmtViolations.total}→${retryFmt.total})`);
               }
             } catch (retryErr: any) {
               log(`generate: section ${sectionNum} retry failed: ${retryErr?.message?.slice(0, 80)}`);
@@ -2391,6 +2422,10 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           // format. Applied to the ENGLISH body only — never contentZh.
           chunkContent = normalizeAsciiPunctuation(chunkContent);
           chunkContent = normalizeSectionMarkdown(chunkContent);
+          // round-cs-7: unconditional uniform-template backstop — whatever
+          // headings/lists survived the prompt + retry are stripped/flattened
+          // here, so EVERY section lands in the DB as plain prose.
+          chunkContent = enforceUniformSectionFormat(chunkContent);
 
           // ---- ★ MECHANICAL key→number conversion (no LLM numbering) ----
           const converted = convertKeysToNumbers(chunkContent, sectionRefs);
@@ -2663,7 +2698,10 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
             // round-cs-6: strip any per-section reference list the LLM
             // appended (older runs / restored checkpoints) and normalize the
             // markdown so every section shares a uniform render-safe format.
-            content = normalizeSectionMarkdown(removeReferenceBlocks(content));
+            // round-cs-7: enforceUniformSectionFormat also drops internal
+            // headings / flattens lists — sections restored from pre-cs-7
+            // checkpoints are healed to the uniform prose template too.
+            content = enforceUniformSectionFormat(normalizeSectionMarkdown(removeReferenceBlocks(content)));
             return { content: content.trim(), refs: para?.references || [] };
           })
         );
@@ -3163,6 +3201,19 @@ ${c}`)
           // ZH reference list) so the WHOLE pipeline sees the final article.
           if (repairTelemetry.triggered && currentContent !== articleContent) {
             articleContent = currentContent;
+            // round-cs-7: the repair revision is a WHOLE-ARTICLE LLM rewrite —
+            // it can re-inject per-section reference lists, internal headings,
+            // lists, fullwidth punctuation, odd bold and LaTeX delimiters that
+            // the per-section pipeline already stripped. Re-run the full
+            // per-section normalization gauntlet over the revised body (##
+            // section headings stay pinned; citation numbering is untouched).
+            try {
+              const rs = splitBodyAndReferences(articleContent);
+              const normalizedBody = normalizeArticleBodySections(rs.body);
+              articleContent = normalizedBody.trimEnd() + "\n\n" + rs.referencesText.trim();
+            } catch (normErr: any) {
+              log(`repair: post-revision format renormalization skipped (${normErr?.message?.slice(0, 60)}) — revision kept as-is`);
+            }
             const finalSplit = splitBodyAndReferences(articleContent);
             const finalSections = splitBodySections(finalSplit.body);
             if (finalSections && finalSections.contents.length === renumberedContents.length) {
@@ -3570,7 +3621,12 @@ ${c}`)
             }
 
             // --- Adopt the polished article ---
-            const candidate = pinned.trimEnd() + "\n\n" + postSplit.referencesText.trim();
+            // round-cs-7: the polish draft is an LLM rewrite of the affected
+            // sections — run the per-section format gauntlet over the pinned
+            // body BEFORE adopting (same rationale as the repair path), so
+            // no reference lists / headings / lists leak back in.
+            const polishedBody = normalizeArticleBodySections(pinned);
+            const candidate = polishedBody.trimEnd() + "\n\n" + postSplit.referencesText.trim();
             articleContent = candidate;
             polishTelemetry.triggered = true;
             totalAddressed += polish.findingsAddressed;
@@ -3586,7 +3642,7 @@ ${c}`)
             // Re-derive what downstream stages consume (paragraph sync,
             // translate, ZH references) — repair-adoption pattern, with
             // ref lines matched against the PRE-polish list.
-            const finalSecs = splitBodySections(postSplit.body);
+            const finalSecs = splitBodySections(polishedBody);
             if (finalSecs && finalSecs.contents.length === renumberedContents.length) {
               for (let i2 = 0; i2 < renumberedContents.length; i2++) {
                 renumberedContents[i2] = finalSecs.contents[i2];
@@ -4091,6 +4147,11 @@ ${cleanEn}`;
                 .replace(/^(以下是|翻译如下|中文翻译：?|译文：?|Translation:?)\s*\n*/i, "")
                 .trim();
               zhContent = sanitizeSectionContent(zhContent);
+              // round-cs-7: the translation must mirror the EN section's
+              // uniform template — strip internal headings/lists the
+              // translator may have introduced. (No ASCII-punctuation pass:
+              // fullwidth punctuation is correct Chinese typography.)
+              zhContent = enforceUniformSectionFormat(zhContent);
 
               // Citation-integrity check (cheap, deterministic): the Chinese
               // section must cite EXACTLY the same global numbers as the

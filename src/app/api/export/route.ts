@@ -28,6 +28,7 @@ import {
 } from "@/lib/endnote-fields";
 import { enrichRecordsFromPubmed, applyWebPageRefTypes, repairRecordsFromDbRows } from "@/lib/endnote-enrich";
 import { removeReferenceBlocks, ensureBlockSpacing, normalizeExportArticle } from "@/lib/writing";
+import { translateSectionTitlesToEnglish, hasCJKText } from "@/lib/section-title-zh";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -319,9 +320,36 @@ export async function POST(req: NextRequest) {
     // strip each half INDEPENDENTLY — otherwise indexOf("## References")
     // returns the position of the English block, and slicing there would
     // delete the entire Chinese half of the document.
-    const cleanContent = normalizeExportArticle(
+    const cleanContent0 = normalizeExportArticle(
       stripReferencesFromContent(exportContent, language),
     );
+
+    // round-cs-7: heal CJK SECTION HEADINGS in the English half — articles
+    // written by pre-cs-6 code carry Chinese headings ("## 发育、膜定位与…")
+    // even in the EN article. One small batch translation call (non-fatal:
+    // provider storms / failures keep the original headings). The ZH half
+    // of a bilingual export is SUPPOSED to have Chinese headings — untouched.
+    let cleanContent = cleanContent0;
+    if (language !== "zh") {
+      try {
+        const SEP = "\n\n---\n\n";
+        const sepIdx = cleanContent.indexOf(SEP);
+        const enHalf = sepIdx >= 0 ? cleanContent.slice(0, sepIdx) : cleanContent;
+        const headingTexts = [...enHalf.matchAll(/^##\s+(.+)$/gm)].map((mm) => mm[1].trim());
+        if (headingTexts.length > 0 && headingTexts.some((t) => hasCJKText(t))) {
+          const translated = await translateSectionTitlesToEnglish(headingTexts);
+          let hi = 0;
+          const fixedHalf = enHalf.replace(/^##\s+(.+)$/gm, (_whole: string, t: string) => {
+            const rep = translated[hi] || t;
+            hi++;
+            return `## ${rep}`;
+          });
+          cleanContent = sepIdx >= 0 ? fixedHalf + cleanContent.slice(sepIdx) : fixedHalf;
+        }
+      } catch {
+        // Non-fatal — keep original headings.
+      }
+    }
 
     // Build reference list text — apply journal template format if specified
     const journalTemplate = body.journalTemplate;

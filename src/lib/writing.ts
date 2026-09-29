@@ -366,8 +366,12 @@ export function cleanArticleContent(content: string): string {
   //      survive);
   //   3. keep the final global section verbatim.
   if (!content) return content;
+  // round-cs-7: "#" is OPTIONAL — a bare "REFERENCES" line (no hash) is a
+  // legitimate global header shape older articles produced; it must also
+  // start the protected tail so the last list survives while stale
+  // duplicates in the body are healed away.
   const globalRefRe =
-    /^#{1,3}\s*\*{0,2}(References|REFERENCES|Citations|Bibliography|参考文献|引用文献|参考资料|文献)\*{0,2}\s*:?\s*$/gm;
+    /^#{0,3}\s*\*{0,2}(References|REFERENCES|Citations|Bibliography|参考文献|引用文献|参考资料|文献)\*{0,2}\s*:?\s*$/gm;
   let lastIdx = -1;
   let m: RegExpExecArray | null;
   while ((m = globalRefRe.exec(content)) !== null) lastIdx = m.index;
@@ -434,12 +438,30 @@ export function stripReasoning(text: string): string {
  * Matches "### References", "#### 参考文献", "**References:**",
  * "Reference list", "引用文献列表", "### Citations", optional bold/colon,
  * optional "for this section" suffix. The ENTIRE line must be the header.
+ * round-cs-7: added the journal-style variants the previous set missed —
+ * "Literature cited" (Nature house style), "Works cited", "Sources",
+ * "Web sources", "Further reading", "资料来源" — each observed in the wild
+ * as an LLM-appended per-section bibliography header.
  */
 const REF_BLOCK_HEADER_RE =
-  /^\s{0,3}#{0,6}\s*\**\s*(references?|reference\s+list|bibliography|citations?|citation\s+list|参考文献|引用文献|参考资料|文献列表|参考列表)\s*(for\s+(this\s+)?section|（本节）|\(本节\))?\s*(and\s+notes?)?\s*[*_:：\s]*$/i;
+  /^\s{0,3}#{0,6}\s*\**\s*(references?|reference\s+list|bibliography|citations?|citation\s+list|literature\s+cited|works\s+cited|sources?(\s+(list|used|cited))?|web\s+sources?|further\s+reading|参考文献|引用文献|参考资料|资料来源|文献列表|参考列表|来源列表)\s*(for\s+(this\s+)?section|（本节）|\(本节\))?\s*(and\s+notes?)?\s*[*_:：\s]*$/i;
 
 /** Line that starts like a numbered/bulleted/bracketed reference entry. */
 const REF_ENTRY_MARKER_RE = /^\s{0,3}(?:\[\d{1,3}\]|\d{1,3}[.)]|[-•*])\s+/;
+
+/**
+ * round-cs-7: the STRICT global-reference header — a line that is EXACTLY a
+ * bibliography heading ("References", "REFERENCES", "Citations",
+ * "Bibliography", "Literature cited", "参考文献"...), with or without a
+ * 0-3 hash prefix, optional bold/colon. No "for this section" suffixes,
+ * no exotic variants. When a line matches THIS pattern the header alone is
+ * unambiguous bibliographic material — so removeReferenceBlocks removes it
+ * even when only ONE entry follows (the round-cs-6 ≥2-entry threshold was
+ * tuned for the broad variant set, and single-entry "## References" lists
+ * leaked through as the "extra reference lists" the user reported).
+ */
+const STRICT_GLOBAL_REF_HEADER_RE =
+  /^\s{0,3}#{0,3}\s*\**\s*(references?|citations?|bibliography|literature\s+cited|works\s+cited|参考文献|引用文献|参考资料)\s*\**\s*:?\s*$/i;
 
 /** Corroborating evidence that a line is a bibliography entry (not a list
  *  item of ordinary prose): "et al", a DOI, a URL, or a "(YYYY)" year. */
@@ -453,6 +475,189 @@ function isRefEntryLine(line: string, requireStrong = false): boolean {
   const strong = REF_STRONG_MARKER_RE.test(t);
   if (requireStrong) return marker && strong;
   return marker || strong;
+}
+
+/* ==================================================================
+ * round-cs-7 — uniform section-format enforcement
+ * ------------------------------------------------------------------
+ * User-reported (26-section TMC article export): sections still came out
+ * structurally inconsistent — some prose-only, some with ### sub-headings,
+ * some with bullet lists, some with a trailing reference list. The prompt
+ * already forbade all of these, but prompt rules are advisory: the pipeline
+ * needs a MECHANICAL guarantee that every section body is plain prose.
+ *
+ * detectSectionFormatViolations() feeds the generation retry gate (an LLM
+ * gets one corrective rewrite naming the exact violations);
+ * enforceUniformSectionFormat() is the unconditional backstop that runs
+ * after the retry regardless of its outcome:
+ *   - internal heading lines (#..######) → removed entirely (a heading is a
+ *     label, never body content — the section's ## title is added by compose)
+ *   - bullet/numbered list blocks → flattened into one prose paragraph
+ *     (markers stripped, items joined with spaces — content is preserved)
+ *   - tables are KEPT (they carry data; spacing is fixed elsewhere)
+ * ================================================================== */
+
+export interface SectionFormatViolations {
+  internalHeadings: number;
+  listLines: number;
+  tableRows: number;
+  hrLines: number;
+  total: number;
+}
+
+/** Count the format violations a section body carries against the
+ *  "plain 2-4 prose paragraphs" template. Citation markers like "[1]" are
+ *  NOT list markers and never count. */
+export function detectSectionFormatViolations(md: string): SectionFormatViolations {
+  const v: SectionFormatViolations = { internalHeadings: 0, listLines: 0, tableRows: 0, hrLines: 0, total: 0 };
+  if (!md) return v;
+  let inFence = false;
+  for (const line of md.split(/\r?\n/)) {
+    if (/^\s{0,3}(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const t = line.trim();
+    if (!t) continue;
+    if (/^#{1,6}\s+/.test(t)) v.internalHeadings++;
+    else if (/^[-*+]\s+\S/.test(t) || /^\d{1,3}[.)]\s+\S/.test(t)) v.listLines++;
+    else if (t.startsWith("|")) v.tableRows++;
+    else if (/^-{3,}$/.test(t)) v.hrLines++;
+  }
+  v.total = v.internalHeadings + v.listLines + v.tableRows + v.hrLines;
+  return v;
+}
+
+/**
+ * Unconditionally reshape a section body into the uniform template:
+ * plain prose paragraphs. Internal headings are dropped, list blocks are
+ * flattened into a paragraph, stray horizontal rules removed, blank-line
+ * runs collapsed. Tables survive (content beats uniformity for those rare
+ * cases). Idempotent — running it twice changes nothing the second time.
+ *
+ * opts.keepDocumentMarkers (document-level callers like the export healer):
+ * PRESERVE "# " level-1 heading lines and "---" horizontal rules — those are
+ * document structure markers (article H1 titles, the bilingual half
+ * separator), not section-body violations. Section-level callers (generate,
+ * compose) leave it off: a section body must contain no heading at all.
+ */
+export function enforceUniformSectionFormat(
+  md: string,
+  opts?: { keepDocumentMarkers?: boolean },
+): string {
+  if (!md) return md;
+  const keepDoc = opts?.keepDocumentMarkers === true;
+  const lines = md.split(/\r?\n/);
+  const out: string[] = [];
+  let inFence = false;
+  let listBuf: string[] = [];
+
+  const flushList = () => {
+    if (listBuf.length === 0) return;
+    // Join list items into ONE prose paragraph. Items keep their own
+    // terminal punctuation when present; items without punctuation are
+    // joined with a space (no fabricated punctuation).
+    out.push(listBuf.join(" ").replace(/\s+/g, " ").trim());
+    listBuf = [];
+  };
+
+  for (const line of lines) {
+    if (/^\s{0,3}(```|~~~)/.test(line)) {
+      flushList();
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+    const t = line.trim();
+    // Level-1 headings and hr are document markers when the caller asked to
+    // keep them (export healer: H1 titles + bilingual "---" separator).
+    if (keepDoc && /^#\s+\S/.test(t)) {
+      flushList();
+      out.push(line);
+      continue;
+    }
+    if (keepDoc && /^-{3,}$/.test(t)) {
+      flushList();
+      out.push(line);
+      continue;
+    }
+    // Internal heading → drop the line (label, not content).
+    if (/^#{1,6}\s+/.test(t)) continue;
+    // Horizontal rule → drop.
+    if (/^-{3,}$/.test(t) || /^\*{3,}$/.test(t)) continue;
+    // List item → buffer for flattening.
+    const bullet = t.match(/^[-*+]\s+(\S.*)$/);
+    const numbered = t.match(/^\d{1,3}[.)]\s+(\S.*)$/);
+    if (bullet || numbered) {
+      listBuf.push((bullet ? bullet[1] : numbered![1]).trim());
+      continue;
+    }
+    // Blank line ends a list block.
+    if (t === "") {
+      flushList();
+      out.push(line);
+      continue;
+    }
+    // Any other non-list line also terminates the list block (a list
+    // followed by prose flushes first).
+    flushList();
+    out.push(line);
+  }
+  flushList();
+  return out
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\n+/, "")
+    .trim();
+}
+
+/**
+ * Whole-article body normalizer for the LLM-revision adoption paths
+ * (STEP 8.5 repair / STEP 8.6 coherence polish). Those stages replace the
+ * ENTIRE article text via one LLM rewrite — a rewrite that can re-inject
+ * every defect the per-section pipeline fought (per-section reference
+ * lists, internal headings, lists, fullwidth punctuation, odd bold,
+ * LaTeX delimiters). This runs the full per-section gauntlet over each
+ * "## " section of the revised body:
+ *   removeReferenceBlocks → normalizeAsciiPunctuation →
+ *   normalizeSectionMarkdown → enforceUniformSectionFormat
+ * "## " heading lines themselves are pinned (untouched) — the bilingual
+ * compose depends on them. Returns the normalized body.
+ */
+export function normalizeArticleBodySections(body: string): string {
+  if (!body) return body;
+  const headingRe = /^##\s+(.+)$/gm;
+  const marks: { line: string; start: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = headingRe.exec(body)) !== null) {
+    marks.push({ line: m[0], start: m.index });
+  }
+  if (marks.length === 0) {
+    // No ## structure (unexpected at this stage) — normalize as one chunk.
+    return enforceUniformSectionFormat(
+      normalizeSectionMarkdown(normalizeAsciiPunctuation(removeReferenceBlocks(body))),
+    );
+  }
+  const chunks: string[] = [];
+  for (let i = 0; i < marks.length; i++) {
+    const afterHeading = body.indexOf("\n", marks[i].start);
+    const contentStart = afterHeading === -1 ? body.length : afterHeading + 1;
+    const end = i + 1 < marks.length ? marks[i + 1].start : body.length;
+    const raw = body.slice(contentStart, end);
+    const cleaned = enforceUniformSectionFormat(
+      normalizeSectionMarkdown(normalizeAsciiPunctuation(removeReferenceBlocks(raw))),
+    );
+    chunks.push(`${marks[i].line}\n\n${cleaned}`);
+  }
+  // Preserve any preamble before the first ## heading (e.g. an H1 title)
+  // verbatim — it is not section content.
+  const preamble = body.slice(0, marks[0].start);
+  return (preamble ? preamble.trimEnd() + "\n\n" : "") + chunks.join("\n\n");
 }
 
 /**
@@ -503,7 +708,11 @@ export function removeReferenceBlocks(md: string): string {
     if (REF_BLOCK_HEADER_RE.test(line)) {
       const { end, count } = consumeEntries(i + 1);
       const onlyBlanksAfter = end >= lines.length || lines.slice(end).every((l) => l.trim() === "");
-      if (count >= 2 || (count === 0 && onlyBlanksAfter)) {
+      // round-cs-7: a STRICT global header ("References"/"参考文献"... as the
+      // whole line) is unambiguous — one entry (or none, at the tail) is
+      // enough to condemn the block. The broad variants still need ≥2.
+      const strictHeader = STRICT_GLOBAL_REF_HEADER_RE.test(line);
+      if (count >= 2 || (strictHeader && count >= 1) || (count === 0 && (strictHeader || onlyBlanksAfter))) {
         // Drop header + entries; also swallow the blank line directly after
         // so we never leave double blanks behind.
         i = end;
@@ -656,11 +865,60 @@ export function normalizeAsciiPunctuation(text: string): string {
  *  - per-section odd-`**` balancing (an unpaired bold marker bolds the rest
  *    of the document in most markdown viewers)
  *  - block spacing (blank lines around headings/lists/tables)
+ *  - round-cs-7: the full uniform section template is enforced on every
+ *    section body (internal sub-headings dropped, bullet/numbered lists
+ *    flattened into prose, stray hr removed; H1 titles and the bilingual
+ *    "---" separator preserved) — the exact inconsistency the user reported
+ *    ("每章的格式不统一"). Guarded: only applied when the document actually
+ *    uses "## " section headings; an article structured purely with ###
+ *    keeps them (they ARE its sections). The global "## References"/appendix
+ *    headings are appended by the exporter AFTER this pass and are never
+ *    affected.
+ *  - round-cs-7: fullwidth punctuation converted to ASCII on lines that
+ *    contain no CJK ideographs (EN-body leakage), preserving legitimate
+ *    Chinese typography on CJK lines.
  * Never touches body prose, citations, code fences, or the global
  * "## References" / "## 参考文献" heading.
  */
 export function normalizeExportArticle(md: string): string {
   if (!md) return md;
+  // round-cs-7: enforce the uniform section template on every section body
+  // (between the article's own "## " headings) — drops internal sub-headings,
+  // flattens bullet/numbered lists into prose, removes stray hr. Guarded:
+  // only applied when the document actually uses "## " section headings; an
+  // article structured purely with ### keeps them (they ARE its sections).
+  // The global "## References"/appendix headings are appended by the exporter
+  // AFTER this pass and are never affected.
+  const sectionHeadingRe = /^##\s+\S/m;
+  if (sectionHeadingRe.test(md)) {
+    const parts = md.split(/^(##\s+.+)$/m);
+    // parts = [preamble, "## heading1", body1, "## heading2", body2, ...] —
+    // ODD indices are the captured "## " heading lines (pass through
+    // untouched), EVEN indices are body/preamble chunks that go through the
+    // uniform-template enforcer (which trims their edges). Re-join with
+    // "\n\n" — uniform spacing regardless of the original line spacing.
+    // keepDocumentMarkers preserves H1 titles and the bilingual "---"
+    // separator that live in these document-level chunks.
+    const rebuilt: string[] = [];
+    for (let k = 0; k < parts.length; k++) {
+      if (k % 2 === 1) {
+        rebuilt.push(parts[k].trim());
+      } else {
+        const enforced = enforceUniformSectionFormat(parts[k], { keepDocumentMarkers: true });
+        if (enforced) rebuilt.push(enforced);
+      }
+    }
+    md = rebuilt.join("\n\n");
+  }
+  // round-cs-7: fullwidth punctuation → ASCII, per LINE, and only on lines
+  // that contain NO CJK ideographs. An English line carrying ，or 。 is
+  // EN-body leakage (convert); a Chinese line legitimately uses fullwidth
+  // punctuation (preserve). Mixed lines are left untouched (safe).
+  const CJK_IDEOGRAPH_RE = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]/;
+  md = md
+    .split(/\r?\n/)
+    .map((l) => (CJK_IDEOGRAPH_RE.test(l) ? l : normalizeAsciiPunctuation(l)))
+    .join("\n");
   const lines = md.split(/\r?\n/);
   const out: string[] = [];
   let inFence = false;
