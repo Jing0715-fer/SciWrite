@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { safeErrorMessage } from "@/lib/api-helpers";
+import { runWatch } from "@/lib/run-watch";
 
 export const runtime = "nodejs";
 
@@ -12,10 +13,20 @@ export const runtime = "nodejs";
  * carries the full per-step records (stepsJson), the launch config snapshot
  * (provider/model transparency), and the final summary/stats.
  *
- * Zombie sweep: a run whose process died (server restart / crash) stays
- * status="running" forever. maxDuration is 30 min, so any "running" row
- * older than 45 min is marked aborted on read — the timeline never shows
- * a phantom in-flight run.
+ * round-cs-8: this endpoint is also the LIVE-PROGRESS RECOVERY source —
+ * when the SSE wire drops mid-run, the writing dialog polls this route
+ * and renders the persisted stepsJson as the progress log. Two
+ * consequences:
+ *  1. every GET touches the run-watch registry (lib/run-watch.ts) so the
+ *     v2 pipeline knows a client is still watching a disconnected run;
+ *  2. the zombie sweep must be LIVENESS-AWARE, not age-aware. The old rule
+ *     ("running" AND startedAt older than 45 min → aborted) falsely killed
+ *     LIVE long runs — bilingual v2 pipelines routinely exceed 45 min end
+ *     to end (a 171-source knowledge pass alone can take ~1h), and the
+ *     recovery poller reads these rows mid-run. A run is a zombie only
+ *     when its timeline has been SILENT: the recorder flushes stepsJson
+ *     within ~2.5s of every step event, so a live run's last step ts is
+ *     always fresh, while a dev-server restart leaves it frozen forever.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -26,17 +37,41 @@ export async function GET(req: NextRequest) {
     }
     const limit = Math.max(1, Math.min(50, Number(searchParams.get("limit")) || 20));
 
-    // --- Zombie sweep (cheap, bounded by projectId) ---
-    const staleCutoff = new Date(Date.now() - 45 * 60 * 1000);
+    // round-cs-8: this read is a liveness signal — a client is watching
+    // this project's runs (recovery poller or the timeline UI).
+    runWatch.touch(projectId);
+
+    // --- Zombie sweep (liveness-aware, bounded by projectId) ---
+    // A "running" row is only a zombie when its timeline has been silent
+    // for STALE_STEP_MS (no step event for 20 min ⇒ the recording process
+    // is gone; live runs flush at least one step every few minutes even in
+    // their quietest phases). Age alone (the old 45-min startedAt rule) is
+    // NOT evidence of death for hours-long bilingual runs.
+    const STALE_STEP_MS = 20 * 60 * 1000;
     try {
-      await db.taskRun.updateMany({
-        where: { projectId, status: "running", startedAt: { lt: staleCutoff } },
-        data: {
-          status: "aborted",
-          error: "run interrupted (server restart or crash) — timeline preserved",
-          finishedAt: new Date(),
-        },
+      const runningRows = await db.taskRun.findMany({
+        where: { projectId, status: "running" },
+        select: { id: true, stepsJson: true, startedAt: true },
       });
+      const now = Date.now();
+      for (const row of runningRows) {
+        let lastTs = new Date(row.startedAt).getTime() || 0;
+        try {
+          const steps = JSON.parse(row.stepsJson || "[]");
+          const last = Array.isArray(steps) ? steps[steps.length - 1] : null;
+          if (typeof last?.ts === "number" && last.ts > lastTs) lastTs = last.ts;
+        } catch {}
+        if (now - lastTs > STALE_STEP_MS) {
+          await db.taskRun.update({
+            where: { id: row.id },
+            data: {
+              status: "aborted",
+              error: "run interrupted (server restart or crash) — timeline preserved",
+              finishedAt: new Date(),
+            },
+          });
+        }
+      }
     } catch {}
 
     const runs = await db.taskRun.findMany({

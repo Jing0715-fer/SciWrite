@@ -3624,3 +3624,26 @@ Stage Summary:
 - "有些章节额外多出了文献列表"补齐两类漏网：期刊风格头变体（Literature cited 等）与单条目严格头；同时修复更严重的隐性 bug——章内 "### References" 会让导出全局文献列表整段消失（行锚定定位根治）。
 - 用户现有 TMC1-TMC8 文件无需重新生成：重新导出（任意格式）即得治愈版（英文标题翻译、统一格式、完整 References）；新生成文章则从源头保证。
 - 遗留：供应商 429 风暴持续（canary round 2-5 连续 degraded-provider），LLM 依赖路径（formatGate 重试/CJK 翻译）的实时端到端留待风暴恢复后由下轮 canary 自动覆盖；风暴期全部按设计非致命降级。
+
+---
+Task ID: round-cs-8
+Agent: main (Z.ai Code session)
+Task: 用户报告两项问题：① 根因修复 src/instrumentation.ts 的 Edge Runtime 兼容性违规（round-cs-1 加的 auto-iterate scheduler 顶层 `import { spawn } from "child_process"` 让 Turbopack 把整个文件判 Edge 不兼容，级联破坏同 bundle 内所有 API 路由编译——/api/projects/[id] 等动态路由全部 404；用户已在本地（D:/AI-web-app/SciWrite）验证的修法是函数内 require）；② v2 全文生成运行到 knowledge batch 4/15 后前端进度显示卡死，但后台流水线仍在运行（SSE 线路静默死亡，UI 无恢复路径）。
+
+Work Log:
+- 读取 worklog 尾部 + dev.log，确认 Turbopack 对 instrumentation.ts 共打出 5 条 Edge-incompat 警告（顶层 child_process import、process.kill:78、await import("fs"):54、await import("path"):55）——与用户根因分析一致。
+- 修复 instrumentation.ts（round-cs-1-2）：删除顶层 `import { spawn }`；fs/path/process/child_process 全部改为 register() 内（NEXT_RUNTIME 守卫之后）的字面量 `require("...")`，外层 try/catch 兜底（require 不可用时优雅禁用调度器而非崩溃）。踩坑实测：变量 specifier 的 `req(moduleName)` 形式在 Turbopack 编译产物下运行时抛 "Cannot find module as expression is too dynamic"（dev.log 现场捕获）——必须字面量 require。
+- 新增 src/lib/run-watch.ts：进程内 run-watch 注册表（projectId → 最后观看时刻）。
+- /api/task-runs GET：① 开头 runWatch.touch(projectId)（阅读即存活信号）；② zombie sweep 从"age-aware"（startedAt>45min 即判死）改为"liveness-aware"（stepsJson 最后一步 ts 静默 >20min 才判死）——旧规则会误杀时长 45min+ 的在跑双语流水线（用户本次运行 43min 才到 knowledge 4/15，全程约 2h）。
+- generate-full-v2/route.ts 三处改造：① send() 重排——progress 装饰先于 recorder.onEvent（时间线记录现在与线上一致携带 progress 值，恢复轮询可直接驱动进度条）；② cancel() 不再立即置 clientDisconnected，改起 4 分钟宽限观察器：线路死 ≥4min 且期间无人 touch run-watch 才判"观众已走"（恢复轮询/API 观看都算存活）；safeClose 清理观察器。③ 相关注释更新。
+- unified-writing-dialog.tsx（FullArticleTab）round-cs-8 恢复机制：① 事件级活跃时钟（ping 也算）+ 90s 停滞看门狗（仅 v2——v1 无 ping，节拍静默是常态）；② 恢复轮询（8s 间隔）拉 /api/task-runs，applyRunRecord 用持久化 steps 驱动同一套日志面板/步进条/§i·N 标签/进度条；③ r37"流未完成"与 catch 网络错误路径先探测时间线：running→移交恢复轮询（handedOffRef 跳过 finally 复位），completed→直接采纳结果卡，否则维持原报错；④ 终态处理：completed→finishRecoveredRun（结果卡+invalidate+toast）、failed/aborted→错误 toast+断点续跑横幅、8 次无记录→诚实降级文案；⑤ 日志追加尾部去重（恢复交还实时线时防重叠）；⑥ 恢复横幅（进度时间线内）+ 日志面板 "recovery" 徽标。
+- i18n.tsx：补 oneClick.recoveryBanner 键（EN+ZH）。踩坑：t() 对缺失键返回键本身（truthy），`t(key) || fallback` 的 fallback 永不生效——必须注册键（浏览器实测发现渲染出了字面键名）。
+- 基础设施：dev server 重启两次踩沙箱收割坑（nohup & 启动的进程在工具调用结束后被收割）——按 worklog 3198 行既有结论改用 `setsid --fork` 拉起，跨调用存活验证通过。
+- 验证：lint 0 errors（改动文件无新增告警）；单元测试 145/145 通过（含 i18n EN/ZH 键奇偶校验）；dev.log Edge 警告 5→0；/api/projects、/api/projects/[id]（曾被毒化的动态路由类）、/api/task-runs 全 200；调度器心跳存活（literal require 修复后正常 tick）。
+- agent-browser E2E（网络 mock 金路径）：mock SSE 三事件后断流（无 complete）→ r37 探测 → 恢复模式横幅/徽标/时间线驱动步进条(Step 2/13)/12%进度/日志面板渲染记录 steps → mock 换 completed → 11s 内采纳结果卡（2530 words/40 sources/双语标记）+横幅消失+表单复位；顺带实测 freshness 匹配器两次正确拒绝陈旧 startedAt 的 mock 记录（>= runStart-60s）。mock 全部 unroute，页面 reload 后干净无错。
+
+Stage Summary:
+- instrumentation Edge 毒化根因修复落地（字面量函数级 require），dev.log 警告清零，动态路由 404 类问题消除；调度器照常运行。
+- "后台在跑、前端冻结"架构性闭环：SSE 线路死亡（代理空闲切断/网关超时/HMR 重启/标签休眠）不再导致 UI 永久冻结或 r37 硬失败——前端自动切换到 TaskRun 时间线轮询恢复显示，流水线侧 4 分钟观察宽限保证瞬时断线不杀运行（只有真正无人观看才跳过剩余工作）。
+- 任务时间线（round-cs-1 的可复现记录）从"事后回放"升级为"实时恢复数据源"；recorder 现记录 progress 装饰后事件。
+- 遗留未动：web search 48 查询 degraded-provider（会话前遗留）、knowledge 阶段 ~4min/batch 总时长优化、v1 路由无 ping（v1 仅享错误路径恢复，无看门狗）——均非本轮范围。

@@ -885,6 +885,22 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
   const [loopInfo, setLoopInfo] = React.useState<{ section: number; total: number } | null>(null);
   const logEndRef = React.useRef<HTMLDivElement>(null);
   const logScrollRef = React.useRef<HTMLDivElement>(null);
+  // round-cs-8 (frozen-progress recovery): the SSE wire can die mid-run
+  // (proxy idle-cut, gateway timeout, dev-server HMR restart, tab sleep)
+  // while the pipeline keeps running server-side and persists every step
+  // to the TaskRun timeline (lib/run-recorder.ts, flushed every ~2.5s).
+  // The dialog now detects the stall (v2 emits a keepalive ping every ≤20s,
+  // so 90s of total silence means the wire is dead) and switches to polling
+  // /api/task-runs: the persisted timeline drives the same log panel /
+  // progress bar / stepper until the run reaches a terminal state — instead
+  // of freezing forever (or hard-failing with the r37 "stream ended" error).
+  const [recovering, setRecovering] = React.useState(false);
+  const lastActivityRef = React.useRef<number>(Date.now());
+  const runStartRef = React.useRef<number>(0);
+  // true while doGenerate hands the UI over to the recovery poller — the
+  // finally-block must NOT reset currentStep in that case (the poller owns
+  // the terminal transition).
+  const handedOffRef = React.useRef(false);
 
   // Load available prompt templates for the template selector dropdown
   const { data: templateData } = useQuery({
@@ -1084,6 +1100,170 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
     return () => onRunningChange?.(false);
   }, [isRunning, onRunningChange]);
 
+  // ================= round-cs-8: live-progress recovery =================
+
+  /**
+   * Fetch the newest persisted run record for this project that belongs to
+   * the in-flight doGenerate call (started around/after launch). Returns
+   * null when the timeline has no matching row (recorder never started or
+   * the server is unreachable).
+   */
+  const probeLatestRun = async (): Promise<any | null> => {
+    try {
+      const r = await fetch(`/api/task-runs?projectId=${projectId}&limit=5`);
+      if (!r.ok) return null;
+      const j = await r.json();
+      const runs: any[] = Array.isArray(j?.runs) ? j.runs : [];
+      return (
+        runs.find((x) => new Date(x.startedAt).getTime() >= runStartRef.current - 60_000) ??
+        null
+      );
+    } catch {
+      return null;
+    }
+  };
+
+  /**
+   * Render a persisted run record through the same UI state the live SSE
+   * stream drives: the log panel (recorded steps carry the exact ts / step /
+   * status / message shape it renders), the stepper, the §i/N loop label,
+   * the per-step progress lines, and the weighted progress bar.
+   */
+  const applyRunRecord = (run: any) => {
+    const steps: any[] = Array.isArray(run?.steps) ? run.steps : [];
+    setStreamLog(steps.slice(-500));
+    const sp: Record<string, string> = {};
+    for (const s of steps) {
+      if (s?.step && s?.message) sp[s.step] = s.message;
+    }
+    setStepProgress(sp);
+    const last = steps[steps.length - 1];
+    if (last) {
+      const idx = STEPS.findIndex((s) => s.id === last.step);
+      if (idx >= 0) setCurrentStep(idx);
+      setLoopInfo(
+        typeof last.section === "number" && typeof last.total === "number"
+          ? { section: last.section, total: last.total }
+          : null
+      );
+      if (typeof last.progress === "number") {
+        setBarProgress((p) => Math.max(p, Math.min(99.4, last.progress)));
+      } else if (idx >= 0) {
+        // recorder events that predate the progress decoration — ordinal
+        // fallback, same estimate the legacy live path uses
+        setBarProgress((p) => Math.max(p, ((idx + 1) / STEPS.length) * 100));
+      }
+    }
+    return run;
+  };
+
+  /**
+   * Adopt a run the timeline shows as completed — mirrors the normal SSE
+   * success path (result card + invalidate + toast).
+   */
+  const finishRecoveredRun = (run: any) => {
+    const s = run?.summary || {};
+    const st = run?.stats?.stats || {};
+    setResult({
+      articleId: s.articleId,
+      wordCount: s.wordCount ?? 0,
+      sections: s.sections ?? 0,
+      hasChinese: !!s.hasChinese,
+      sourcesGathered: st.sourcesGathered ?? 0,
+      stats: {
+        articleWordCount: s.wordCount ?? 0,
+        sectionsPlanned: s.sections ?? 0,
+        sourcesGathered: st.sourcesGathered ?? 0,
+      },
+      recovered: true,
+    });
+    setLivePreview("");
+    onInvalidate();
+    toast.success(
+      `Run recovered after a connection drop — article complete: ${s.wordCount ?? 0} words, ${s.references ?? 0} references.`
+    );
+  };
+
+  // Stall watchdog (v2 only — v1 has no keepalive pings, so silence between
+  // its step events is normal): while a v2 run is live, ≥90s without ANY
+  // event (pings included) means the wire is dead → enter recovery. Any
+  // later live event hands control back to the stream automatically.
+  React.useEffect(() => {
+    if (!isRunning || recovering || pipeline !== "v2") return;
+    const id = setInterval(() => {
+      if (Date.now() - lastActivityRef.current >= 90_000) {
+        setRecovering(true);
+      }
+    }, 5_000);
+    return () => clearInterval(id);
+  }, [isRunning, recovering, pipeline]);
+
+  // Recovery poller: while recovering, pull the persisted timeline every 8s
+  // and render it. Terminal states resolve the run exactly like the live
+  // stream would have (completed → result card; failed/aborted → the run's
+  // own error message + the checkpoint resume banner). If no usable run
+  // record appears after ~8 polls, fall back to the honest "connection
+  // lost" message.
+  React.useEffect(() => {
+    if (!recovering) return;
+    let cancelled = false;
+    let misses = 0;
+    const settle = (fn: () => void) => {
+      if (cancelled) return;
+      setRecovering(false);
+      setCurrentStep(-1);
+      setLivePreview("");
+      checkpointQ.refetch().catch(() => {});
+      fn();
+    };
+    const tick = async () => {
+      if (cancelled) return;
+      let run: any = null;
+      try {
+        run = await probeLatestRun();
+      } catch {}
+      if (cancelled) return;
+      if (run) {
+        misses = 0;
+        applyRunRecord(run);
+        if (run.status === "completed") {
+          settle(() => finishRecoveredRun(run));
+          return;
+        }
+        if (run.status === "failed" || run.status === "aborted") {
+          settle(() => {
+            toast.error(
+              `${run.status === "aborted" ? "The run was interrupted" : "The run failed"}${
+                run.error ? `: ${run.error}` : ""
+              }. Saved sections are preserved — you can resume from the checkpoint.`,
+              { duration: 9000 }
+            );
+          });
+          return;
+        }
+      } else {
+        misses += 1;
+        if (misses >= 8) {
+          settle(() => {
+            toast.error(
+              "Lost the live connection and found no run record to recover from. The run may still be completing in the background — check the Run Timeline in a few minutes.",
+              { duration: 9000 }
+            );
+          });
+          return;
+        }
+      }
+    };
+    void tick();
+    const id = setInterval(() => void tick(), 8_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recovering]);
+
+
   const run = async () => {
     // If the project already has paragraphs, articles, or gathered sources,
     // show a confirmation dialog before proceeding — the generation pipeline
@@ -1109,6 +1289,11 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
     setLivePreview("");
     setBarProgress(0);
     setLoopInfo(null);
+    // round-cs-8: arm the recovery machinery for this launch.
+    setRecovering(false);
+    lastActivityRef.current = Date.now();
+    runStartRef.current = Date.now();
+    handedOffRef.current = false;
     // Report the real generation target so the workspace progress bar
     // tracks THIS run's goal (round 26 — no more fixed 1000w bar).
     onGenerationTargetWords?.(targetWords);
@@ -1158,6 +1343,11 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
           })(),
         },
         (event, data) => {
+          // round-cs-8: ANY event (keepalive pings included) proves the
+          // live wire is alive — refresh the stall clock, and if we were in
+          // recovery, hand control back to the live stream.
+          lastActivityRef.current = Date.now();
+          setRecovering(false);
           const stepMap: Record<string, number> = {};
           STEPS.forEach((s, i) => { stepMap[s.id] = i; });
           // The backend sends { event: "step", step: "gather", status: "started" }
@@ -1190,6 +1380,19 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
           }
           if (data.message) {
             setStreamLog((prev) => {
+              // round-cs-8: tail-dedupe — when recovery hands control back
+              // to the live wire, the newest live events can overlap the
+              // last recorded steps already rendered from the timeline.
+              const last = prev[prev.length - 1];
+              if (
+                last &&
+                last.step === data.step &&
+                last.status === data.status &&
+                last.section === data.section &&
+                last.message === data.message
+              ) {
+                return prev;
+              }
               const next = [...prev, { event, ...data, ts: Date.now() }];
               return next.length > 500 ? next.slice(-500) : next;
             });
@@ -1238,7 +1441,22 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
       // restart / route crash mid-pipeline) resolves to null — previously
       // that rendered a "0 words, 0 references" SUCCESS toast and silently
       // returned to the form. Treat it as the failure it is.
+      // round-cs-8: before failing, check the persisted run timeline — the
+      // pipeline often keeps running server-side (the wire just dropped);
+      // a "running" record hands the UI to the recovery poller instead of
+      // erroring out, and a "completed" one is adopted directly.
       if (data == null) {
+        const run = await probeLatestRun();
+        if (run && run.status === "running") {
+          applyRunRecord(run);
+          setRecovering(true);
+          handedOffRef.current = true;
+          return;
+        }
+        if (run && run.status === "completed") {
+          finishRecoveredRun(run);
+          return;
+        }
         throw new Error(
           "The generation stream ended without completing (server restarted or connection dropped). No article was saved."
         );
@@ -1254,6 +1472,23 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
       const doneRefs = data?.stats?.referencesSaved || data?.references || 0;
       toast.success(t("toast.oneClickGenerated", { words: doneWords, refs: doneRefs }));
     } catch (e: any) {
+      // round-cs-8: a broken wire often surfaces as a reader error instead
+      // of a clean end-of-stream — probe the timeline before declaring
+      // failure. A still-running pipeline hands off to recovery polling; a
+      // completed one is adopted. (Real pipeline errors arrive as in-stream
+      // "error" events AFTER the recorder already marked the run failed,
+      // so they fall through to the normal error handling below.)
+      const probed = await probeLatestRun();
+      if (probed && probed.status === "running") {
+        applyRunRecord(probed);
+        setRecovering(true);
+        handedOffRef.current = true;
+        return;
+      }
+      if (probed && probed.status === "completed") {
+        finishRecoveredRun(probed);
+        return;
+      }
       setLivePreview("");
       // Enhance common error messages with actionable advice
       const msg = e?.message || String(e);
@@ -1269,11 +1504,16 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
       }
       toast.error(enhanced, { duration: 8000 });
     } finally {
-      setCurrentStep(-1);
-      // round-62: the run just ended — refresh the checkpoint state so the
-      // resume banner appears immediately after a failed run (checkpoint
-      // kept) or disappears after a completed one (checkpoint cleared).
-      checkpointQ.refetch().catch(() => {});
+      // round-cs-8: skip the reset when doGenerate handed the UI over to
+      // the recovery poller — it owns the terminal transition now.
+      if (!handedOffRef.current) {
+        setCurrentStep(-1);
+        // round-62: the run just ended — refresh the checkpoint state so the
+        // resume banner appears immediately after a failed run (checkpoint
+        // kept) or disappears after a completed one (checkpoint cleared).
+        checkpointQ.refetch().catch(() => {});
+      }
+      handedOffRef.current = false;
     }
   };
 
@@ -1929,6 +2169,19 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
       {/* Progress timeline */}
       {isRunning && (
         <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/[0.02] p-3">
+          {/* round-cs-8: recovery banner — the live SSE wire dropped but the
+              pipeline keeps running server-side; the progress UI below is
+              driven by the persisted run timeline until the wire or the run
+              ends. */}
+          {recovering && (
+            <div className="flex items-center gap-2 rounded-md border border-amber-300/60 dark:border-amber-700/50 bg-amber-50/60 dark:bg-amber-950/20 px-2.5 py-2">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-600 dark:text-amber-400 shrink-0" />
+              <p className="text-[10px] leading-relaxed text-amber-700 dark:text-amber-400">
+                {t("oneClick.recoveryBanner") ||
+                  "Live connection interrupted — the pipeline is still running on the server. Recovering progress from the persisted run timeline…"}
+              </p>
+            </div>
+          )}
           {/* Overall progress bar */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
@@ -2117,6 +2370,13 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
             <span className="text-[10px] font-mono font-semibold text-muted-foreground uppercase tracking-wider flex-1 truncate">
               {t("oneClick.detailedLog") || "Detailed log"}
             </span>
+            {/* round-cs-8: recovery indicator — log entries are being
+                restored from the persisted run timeline, not the live wire. */}
+            {recovering && (
+              <span className="rounded bg-amber-100 dark:bg-amber-950/60 px-1.5 py-0.5 text-[8px] font-mono font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400 shrink-0">
+                recovery
+              </span>
+            )}
             <span className="text-[9px] font-mono text-muted-foreground/70 shrink-0 tabular-nums">
               {streamLog.length}
             </span>

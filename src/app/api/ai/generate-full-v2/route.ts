@@ -53,6 +53,7 @@ import {
   type EvidenceRefInput,
 } from "@/lib/evidence-pipeline";
 import { PipelineProgressTracker } from "@/lib/progress-tracker";
+import { runWatch } from "@/lib/run-watch";
 import {
   countBySource,
   dedupePreprintVersions,
@@ -204,8 +205,11 @@ export async function POST(req: NextRequest) {
   // FIX (client-disconnect waste): the ReadableStream previously had no
   // cancel() handler, so when the browser closed the SSE connection the
   // pipeline kept running for up to 30 minutes — LLM calls + DB writes for
-  // an audience of zero. `cancel()` flips this flag; the section loop checks
-  // it at every iteration boundary and skips all remaining work.
+  // an audience of zero. cancel() now starts a grace watcher (round-cs-8,
+  // see below) which flips this flag only when the wire has been dead for
+  // several minutes AND no client has watched the run timeline in that
+  // window; the section loop checks the flag at every iteration boundary
+  // and skips all remaining work.
   let clientDisconnected = false;
   // round-cs-1: run-timeline recorder (assigned after the project/config
   // are known — every event funnelled through send() is appended to its
@@ -214,6 +218,41 @@ export async function POST(req: NextRequest) {
   // round-cs-3: cleared by the stream's cancel() handler (browser dropped
   // the SSE connection) so the keepalive pump stops with the stream.
   let cancelKeepalive: (() => void) | null = null;
+  // round-cs-8: disconnect GRACE. The wire dropping is often transient
+  // (proxy idle-cut, gateway timeout, dev-server HMR restart, tab refresh)
+  // and the UI now recovers by polling /api/task-runs — those polls touch
+  // the run-watch registry, proving a client is still watching. So cancel()
+  // no longer flips clientDisconnected immediately; instead it starts a
+  // watch: the flag only turns true once BOTH the wire has been dead for
+  // DISCONNECT_GRACE_MS AND nobody has watched this project's run timeline
+  // within that window. Existing skip-on-disconnect logic downstream is
+  // untouched — it just observes the flag, which now carries the "really
+  // gone" verdict instead of the "wire hiccup" one.
+  const DISCONNECT_GRACE_MS = 4 * 60_000;
+  let disconnectWatchTimer: ReturnType<typeof setInterval> | null = null;
+  let disconnectedAt = 0;
+  const startDisconnectWatch = () => {
+    if (disconnectWatchTimer) return;
+    disconnectedAt = Date.now();
+    disconnectWatchTimer = setInterval(() => {
+      if (clientDisconnected || !disconnectedAt) {
+        if (disconnectWatchTimer) { clearInterval(disconnectWatchTimer); disconnectWatchTimer = null; }
+        return;
+      }
+      const wireDeadFor = Date.now() - disconnectedAt;
+      const lastWatch = runWatch.since(projectId);
+      const watchedRecently = Date.now() - lastWatch < DISCONNECT_GRACE_MS;
+      if (wireDeadFor >= DISCONNECT_GRACE_MS && !watchedRecently) {
+        clientDisconnected = true;
+        // (logger lives inside start(); console is fine for this one-line verdict)
+        try { console.log(`[generate-full-v2] client disconnect confirmed after ${Math.round(wireDeadFor / 1000)}s grace (no timeline watcher) — remaining work will be skipped`); } catch {}
+      }
+    }, 30_000);
+    if (typeof (disconnectWatchTimer as any).unref === "function") (disconnectWatchTimer as any).unref();
+  };
+  const stopDisconnectWatch = () => {
+    if (disconnectWatchTimer) { clearInterval(disconnectWatchTimer); disconnectWatchTimer = null; }
+  };
   const stream = new ReadableStream({
     async start(controller) {
       let isClosed = false;
@@ -278,23 +317,30 @@ export async function POST(req: NextRequest) {
         ...(trackerBothMode ? [{ step: "translate", unitWeight: 0.75 }] : []),
       ]);
       const send = (event: string, data: any) => {
-        // round-cs-1: observe everything that goes on the wire (observer
-        // only — swallowed errors can never break the pipeline).
-        try { recorder?.onEvent(event, data); } catch {}
+        // round-cs-8: decorate FIRST, then record + send. The recorder used
+        // to observe the RAW payload (before the progress value was
+        // attached), so the persisted timeline — and any client recovering
+        // from it via /api/task-runs polling after a wire drop — carried no
+        // progress values. Recording the decorated event keeps the wire and
+        // the timeline byte-identical.
+        let out = data;
         if (event === "step" && data && typeof data === "object") {
           const progress = progressTracker.onEvent(data);
           if (progress != null) {
-            rawSend(event, { ...data, progress });
-            return;
+            out = { ...data, progress };
           }
         }
         if (event === "complete") progressTracker.finish();
-        rawSend(event, data);
+        // round-cs-1: observe everything that goes on the wire (observer
+        // only — swallowed errors can never break the pipeline).
+        try { recorder?.onEvent(event, out); } catch {}
+        rawSend(event, out);
       };
       const safeClose = () => {
         if (isClosed) return;
         isClosed = true;
         clearInterval(keepalive);
+        stopDisconnectWatch();
         try { controller.close(); } catch {}
       };
 
@@ -4573,9 +4619,14 @@ ${cleanEn}`;
       }
     },
     cancel() {
-      // Browser closed the SSE stream (navigate away / refresh / drop).
-      // The start() closure observes this via `clientDisconnected`.
-      clientDisconnected = true;
+      // Browser closed the SSE stream (navigate away / refresh / proxy
+      // cut). round-cs-8: do NOT treat this as "audience gone" immediately —
+      // the drop is often transient and the UI recovers by polling
+      // /api/task-runs (each poll touches the run-watch registry). The
+      // start() closure observes the verdict through `clientDisconnected`,
+      // which the grace watcher flips only if nobody watches for
+      // DISCONNECT_GRACE_MS after the drop.
+      startDisconnectWatch();
       // round-cs-3: stop the keepalive pump too — nothing left to keep alive.
       cancelKeepalive?.();
     },
