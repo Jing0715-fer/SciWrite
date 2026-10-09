@@ -3511,7 +3511,7 @@ ${c}`)
                 gaps: sweep.findings.length,
               };
               if (sweep.findings.length > 0) {
-                const numericWeaknesses = sweep.findings.map(numericFindingToWeakness);
+                const numericWeaknesses = sweep.findings.slice(0, 5).map(numericFindingToWeakness);
                 log(
                   `repair: numeric sweep — ${sweep.sentencesExamined} numeric sentence(s) examined, ${sweep.covered} covered, ${sweep.findings.length} gap(s) (advisory)`,
                 );
@@ -3521,9 +3521,14 @@ ${c}`)
                   round,
                   message: `Numeric coverage sweep: ${sweep.findings.length} value(s) not found in their cited abstract(s) — flagged as advisory for the reviewer.`,
                 });
-                // Advisory injection: they ride the revision feedback when a
-                // revision is already happening; they never start one.
-                (rc as any).__numericWeaknesses = numericWeaknesses;
+                // Advisory injection into mergedWeaknesses: they ride the
+                // revision feedback when a revision is already happening AND
+                // the Review tab (which persists mergedWeaknesses) discloses
+                // them; they never start a revision round on their own.
+                for (const w of numericWeaknesses) {
+                  if (rc.mergedWeaknesses.length >= 15) break;
+                  rc.mergedWeaknesses.push(w);
+                }
               }
             } catch {
               // sweep is best-effort by contract
@@ -3615,11 +3620,7 @@ ${c}`)
               summary: rc.parsed.summary || "",
               scores: rc.parsed.scores,
               strengths: rc.parsed.strengths || [],
-              weaknesses: [
-                ...rc.mergedWeaknesses,
-                ...structuralWeaknesses,
-                ...((rc as any).__numericWeaknesses || []),
-              ],
+              weaknesses: [...rc.mergedWeaknesses, ...structuralWeaknesses],
               suggestions: rc.parsed.suggestions || [],
             };
 
