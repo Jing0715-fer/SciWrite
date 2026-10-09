@@ -69,3 +69,10 @@ iteration-state/scheduler-heartbeat.json
 iteration-state/scheduler-console.log
 iteration-state/console-heartbeat.json
 iteration-state/scheduler.json
+
+# round-RT3 (R8/O1): the SQLite database must never be git-tracked —
+# a git stash during a live run swaps the file under the dev server's
+# SQLite handle ("readonly database" at compose) and 40MB blobs bloat
+# every clone. Back it up OUTSIDE the repo if needed.
+db/custom.db
+db/*.db

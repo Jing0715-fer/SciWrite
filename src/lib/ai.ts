@@ -1,11 +1,13 @@
 import ZAI from "z-ai-web-dev-sdk";
 import {
+
   withRateLimit,
   isAborted,
   QuotaExhaustedError,
   RateLimitAbortedError,
 } from "@/lib/rate-limiter";
 import { stripReasoning } from "@/lib/writing";
+import { webSearchCacheGet, webSearchCacheSet } from "@/lib/web-search-cache";
 
 let _zai: Awaited<ReturnType<typeof ZAI.create>> | null = null;
 
@@ -689,6 +691,15 @@ export async function webSearchDetailed(
   query: string,
   num = 8
 ): Promise<WebSearchOutcome> {
+  // round-RT3 (R7): replay healthy cached results within the TTL — search
+  // results for a given query are stable for minutes, and re-runs / canary
+  // retries / fact-check re-reviews previously re-burned hosted-search
+  // quota for identical queries. Failures are never cached (see
+  // web-search-cache.ts) and hits are deep copies (callers mutate evidence).
+  const cached = webSearchCacheGet(query, num);
+  if (cached) {
+    return { items: cached as WebSearchItem[], reason: undefined, detail: "cached" };
+  }
   // Non-zai providers don't ship a native web-search tool.
   // Web search is a gathering (generate-role) capability — checked against
   // the generate selection.
@@ -709,7 +720,12 @@ export async function webSearchDetailed(
       90_000,
       "webSearch",
     );
-    if (Array.isArray(result)) return { items: result as WebSearchItem[] };
+    if (Array.isArray(result)) {
+      const items = result as WebSearchItem[];
+      // round-RT3 (R7): store only healthy non-empty result sets.
+      webSearchCacheSet(query, num, items);
+      return { items };
+    }
     // Non-array payloads (error objects, empty objects) previously read as
     // "0 results" in the logs — surface the actual shape.
     return {

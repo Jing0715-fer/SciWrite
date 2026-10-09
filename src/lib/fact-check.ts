@@ -43,6 +43,8 @@ import { splitBodyAndReferences } from "@/lib/citation-audit";
 // non-GLM review models, degrading every adjudication to an ERROR verdict
 // (which the review layer then treated as ground truth).
 import { parseLlmJson } from "@/lib/llm-json";
+// round-RT3 (R1): pooled claim adjudication — see checkClaim() below.
+import { runWithConcurrency } from "@/lib/search-enhance";
 
 /* ------------------------------------------------------------------ *
  * Types
@@ -467,71 +469,91 @@ export async function factCheckArticle(
   const findings: FactCheckFinding[] = [];
   let searchSuccesses = 0; // telemetry: how many claims needed the web fallback
 
-  for (const claim of claims) {
-    const citedRefs = claim.citedNums
-      .map((n) => refsByNumber.get(n))
-      .filter(Boolean) as RefMeta[];
-    const abstracts = abstractsForClaim(claim, opts.refAbstracts);
+  // round-RT3 (R1): claims were adjudicated STRICTLY SERIALLY — up to 8
+  // claims × (web search + LLM arbitration + 250ms cooldown) stacked ~5-8
+  // minutes onto EVERY repair-loop review round (3 rounds in the RT2
+  // production = the single biggest wall-clock slice). Claims are
+  // independent of each other, so they now ride a fixed pool. The per-task
+  // tail cooldown is kept (external search quota courtesy) but no longer
+  // serializes the whole loop; findings are re-sorted by claimId so the
+  // output order (and thus review-prompt blocks / Review rows) is
+  // byte-identical to the serial version.
+  const FACT_CHECK_POOL = 3;
+  const pooledFindings = await runWithConcurrency(
+    claims,
+    FACT_CHECK_POOL,
+    async (claim): Promise<FactCheckFinding[]> => {
+      const out: FactCheckFinding[] = [];
+      const citedRefs = claim.citedNums
+        .map((n) => refsByNumber.get(n))
+        .filter(Boolean) as RefMeta[];
+      const abstracts = abstractsForClaim(claim, opts.refAbstracts);
 
-    // ---- Pass 1 (round-61 P0-A): cited-abstract arbitration, no web search.
-    if (abstracts.length > 0) {
-      try {
-        const finding = await arbitrate(projectId, claim, [], citedRefs, abstracts);
-        if (finding.verdict === "VERIFIED" || finding.verdict === "CONTRADICTED") {
-          finding.evidenceSource = "cited-abstract";
-          findings.push(finding);
-          continue; // decisive — the web search quota stays untouched
+      // ---- Pass 1 (round-61 P0-A): cited-abstract arbitration, no web search.
+      if (abstracts.length > 0) {
+        try {
+          const finding = await arbitrate(projectId, claim, [], citedRefs, abstracts);
+          if (finding.verdict === "VERIFIED" || finding.verdict === "CONTRADICTED") {
+            finding.evidenceSource = "cited-abstract";
+            out.push(finding);
+            return out; // decisive — the web search quota stays untouched
+          }
+          // UNVERIFIABLE from the abstract alone → escalate to web evidence.
+        } catch {
+          // arbitration failure → fall through to the web path
         }
-        // UNVERIFIABLE from the abstract alone → escalate to web evidence.
-      } catch {
-        // arbitration failure → fall through to the web path
       }
-    }
 
-    // ---- Pass 2: web search (sequential — external quota courtesy).
-    const evidence = await searchForClaim(claim);
-    if (evidence.length > 0) searchSuccesses++;
-    if (evidence.length === 0 && abstracts.length === 0) {
-      // No evidence of any kind to arbitrate against — could be tool failure
-      // or a genuinely empty result set. Record ERROR and move on.
-      findings.push({
-        claimId: claim.id,
-        category: claim.category,
-        sentence: claim.sentence,
-        citedNums: claim.citedNums,
-        verdict: "ERROR",
-        reason: "web search returned no usable evidence for this claim",
-        evidenceQuote: "",
-        evidenceUrls: [],
-        confidence: 0,
-      });
-      continue;
-    }
-    try {
-      const finding = await arbitrate(projectId, claim, evidence, citedRefs, abstracts);
-      finding.evidenceSource =
-        abstracts.length > 0 && evidence.length > 0
-          ? "cited-abstract+web"
-          : evidence.length > 0
-            ? "web"
-            : "cited-abstract";
-      findings.push(finding);
-    } catch {
-      findings.push({
-        claimId: claim.id,
-        category: claim.category,
-        sentence: claim.sentence,
-        citedNums: claim.citedNums,
-        verdict: "ERROR",
-        reason: "arbitration call failed",
-        evidenceQuote: "",
-        evidenceUrls: evidence.slice(0, 2).map((e) => e.url).filter(Boolean),
-        confidence: 0,
-      });
-    }
-    // Small cool-down between searches (external search quota courtesy).
-    await new Promise((r) => setTimeout(r, 250));
-  }
+      // ---- Pass 2: web search (pooled — see FACT_CHECK_POOL above).
+      const evidence = await searchForClaim(claim);
+      if (evidence.length > 0) searchSuccesses++;
+      if (evidence.length === 0 && abstracts.length === 0) {
+        // No evidence of any kind to arbitrate against — could be tool failure
+        // or a genuinely empty result set. Record ERROR and move on.
+        out.push({
+          claimId: claim.id,
+          category: claim.category,
+          sentence: claim.sentence,
+          citedNums: claim.citedNums,
+          verdict: "ERROR",
+          reason: "web search returned no usable evidence for this claim",
+          evidenceQuote: "",
+          evidenceUrls: [],
+          confidence: 0,
+        });
+        return out;
+      }
+      try {
+        const finding = await arbitrate(projectId, claim, evidence, citedRefs, abstracts);
+        finding.evidenceSource =
+          abstracts.length > 0 && evidence.length > 0
+            ? "cited-abstract+web"
+            : evidence.length > 0
+              ? "web"
+              : "cited-abstract";
+        out.push(finding);
+      } catch {
+        out.push({
+          claimId: claim.id,
+          category: claim.category,
+          sentence: claim.sentence,
+          citedNums: claim.citedNums,
+          verdict: "ERROR",
+          reason: "arbitration call failed",
+          evidenceQuote: "",
+          evidenceUrls: evidence.slice(0, 2).map((e) => e.url).filter(Boolean),
+          confidence: 0,
+        });
+      }
+      // Small cool-down per pooled task (external search quota courtesy) —
+      // it throttles each WORKER, not the whole loop.
+      await new Promise((r) => setTimeout(r, 250));
+      return out;
+    },
+  );
+  // Restore serial-order output (claimId ascending) — downstream prompt
+  // blocks and persisted Review rows depend on stable ordering.
+  findings.push(...pooledFindings.flat().sort((a, b) => a.claimId - b.claimId));
 
   // Wholesale failure: nothing resolved at all (no abstract verdicts, no
   // successful searches, every finding ERROR) ⇒ the tool layer is down or

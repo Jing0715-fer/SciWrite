@@ -69,6 +69,13 @@ export interface ReviewCoreParsed {
   summary: string;
   strengths: string[];
   weaknesses: string[];
+  /** round-RT3 (R4): per-weakness classification, same order as `weaknesses`:
+   *  "fixable" (fact/citation/structure — a revision can actually repair it
+   *  within budget) or "advisory" (breadth/novelty/scope — a writer cannot
+   *  conjure new experiments by revising). Missing/short arrays ⇒ unknown
+   *  for that slot (callers fall back to fixable to preserve legacy
+   *  behavior for models that drop the field). */
+  weaknessClasses?: string[];
   suggestions: any[];
 }
 
@@ -80,6 +87,8 @@ export interface ReviewCoreResult {
   factWeaknesses: string[];
   /** LLM weaknesses + fact weaknesses, deduped, capped at 10 — what gets persisted */
   mergedWeaknesses: string[];
+  /** count of LLM weaknesses classified "fixable" (R4) — see weaknessClasses */
+  fixableWeaknessCount: number;
 }
 
 export interface RevisionFeedback {
@@ -178,11 +187,15 @@ Respond as STRICT JSON:
   "summary": "2-3 sentence overall assessment",
   "strengths": ["specific strength 1", "specific strength 2", "specific strength 3"],
   "weaknesses": ["specific weakness 1", "specific weakness 2", "specific weakness 3"],
+  "weakness_classes": ["fixable", "advisory"],
   "suggestions": [
     {"section": "Introduction", "issue": "what's wrong", "fix": "how to fix it"},
     {"section": "Results", "issue": "...", "fix": "..."}
   ]
 }
+CLASSIFY each weakness in "weakness_classes" (same order, exactly one entry per weakness):
+- "fixable" — a revision of THIS manuscript can repair it: factual errors, misattributed citations, unsupported claims, missing citations for stated facts, structural/organizational problems, unclear or contradictory prose.
+- "advisory" — a revision cannot repair it: insufficient breadth/depth, missing subtopics, lack of novelty or experimental data, scope limitations inherent to a literature review. These are disclosed to the author, not repaired.
 Be demanding but fair. Focus on scientific rigor, citation completeness, and clarity.
 Output JSON only.`;
 
@@ -200,12 +213,23 @@ Output JSON only.`;
     weaknesses: [],
     suggestions: [],
   });
+  // round-RT3 (R4): normalize the per-weakness classes (garbage values →
+  // "fixable" so legacy behavior is preserved when a model drops or mangles
+  // the field — over-triggering the loop is the old bug, under-triggering on
+  // a parsing quirk would be a new one).
+  const rawClasses: unknown = (parsed as any).weakness_classes;
+  const llmWeaknesses: string[] = Array.isArray(parsed.weaknesses) ? parsed.weaknesses : [];
+  const weaknessClasses = llmWeaknesses.map((_, i) => {
+    const c = Array.isArray(rawClasses) ? String((rawClasses as any[])[i] ?? "") : "";
+    return /advis/i.test(c) ? "advisory" : "fixable";
+  });
+  const fixableWeaknessCount = weaknessClasses.filter((c) => c === "fixable").length;
+  parsed.weaknessClasses = weaknessClasses;
 
   // Force-merge the external fact-check findings into the weaknesses (deduped
   // against the LLM's own) — the reviewing LLM is *told* to keep them, but a
   // lazy/generous model must not be able to bury a CONTRADICTED finding.
   // Cap the merged list at 10 (LLM weaknesses + facts).
-  const llmWeaknesses: string[] = Array.isArray(parsed.weaknesses) ? parsed.weaknesses : [];
   const mergedWeaknesses = [...llmWeaknesses];
   for (const w of factWeaknesses) {
     if (mergedWeaknesses.length >= 10) break;
@@ -217,7 +241,7 @@ Output JSON only.`;
     if (!already) mergedWeaknesses.push(w);
   }
 
-  return { parsed, factReport, factWeaknesses, mergedWeaknesses };
+  return { parsed, factReport, factWeaknesses, mergedWeaknesses, fixableWeaknessCount };
 }
 
 /* ------------------------------------------------------------------ *
@@ -245,6 +269,11 @@ function isHedged(sentence: string): boolean {
  *    unhedged UNVERIFIABLE).
  *  - "verdict" trigger (soft): reject, or major-revision with a failing
  *    citations score — mechanically repairable citation-level problems.
+ *    round-RT3 (R4): a major-revision whose LLM weaknesses are ALL
+ *    "advisory" (breadth/novelty/scope — see weaknessClasses) no longer
+ *    triggers: the RT2 production burned 2 extra rounds chasing "not
+ *    enough breadth" that no revision of the same sources could ever fix.
+ *    Unparseable/missing classes count as fixable (legacy behavior).
  *  - "none": a minor-revision verdict with no factual findings is STYLE
  *    feedback; auto-polishing prose against it risks degradation for no
  *    accuracy gain, so the loop stops and the review is disclosed as-is.
@@ -266,7 +295,7 @@ export function actionableFindings(res: ReviewCoreResult): Actionability {
   const verdict = res.parsed.verdict || "";
   const citations = res.parsed.scores?.citations ?? 10;
   const overall = res.parsed.scores?.overall ?? 10;
-  if (verdict === "reject" || (verdict === "major-revision" && (citations < 6 || overall < 6))) {
+  if (verdict === "reject") {
     return {
       actionable: true,
       hardFindings: [],
@@ -274,7 +303,99 @@ export function actionableFindings(res: ReviewCoreResult): Actionability {
       reason: `verdict ${verdict} (overall ${overall}/10, citations ${citations}/10)`,
     };
   }
+  if (verdict === "major-revision" && (citations < 6 || overall < 6)) {
+    // R4: citation-level failure is mechanical and always fixable; an
+    // overall<6 verdict is only actionable when at least one LLM weakness
+    // is actually repairable by a revision.
+    const fixable = res.fixableWeaknessCount ?? (res.parsed.weaknesses?.length || 0);
+    if (citations < 6 || fixable > 0) {
+      return {
+        actionable: true,
+        hardFindings: [],
+        trigger: "verdict",
+        reason: `verdict ${verdict} (overall ${overall}/10, citations ${citations}/10, ${fixable} fixable weakness(es))`,
+      };
+    }
+    return {
+      actionable: false,
+      hardFindings: [],
+      trigger: "none",
+      reason: `verdict ${verdict} with advisory-only weaknesses (${res.parsed.weaknesses?.length || 0} advisory) — disclosed, not repaired`,
+    };
+  }
   return { actionable: false, hardFindings: [], trigger: "none", reason: "" };
+}
+
+/* ------------------------------------------------------------------ *
+ * 2.5 round-RT3 (R1): repair-loop convergence — when to stop early
+ * ------------------------------------------------------------------ */
+
+export interface RepairRoundSnapshot {
+  /** review overall score (0-10); null = unparseable */
+  overall: number | null;
+  /** hard fact findings this round (CONTRADICTED + unhedged UNVERIFIABLE) */
+  hardCount: number;
+  /** CONTRADICTED findings only — new ones must never be ignored */
+  contradictedCount: number;
+  /** fixable LLM weakness count (R4) */
+  fixableCount: number;
+}
+
+export interface ConvergenceDecision {
+  stop: boolean;
+  reason: string;
+}
+
+/**
+ * Early-exit gate for the repair loop (STEP 8.5). The RT2 production run
+ * spent 3 review rounds (14.6 min, 35 % of wall-clock) where rounds 2-3
+ * each bought ~1 finding and the overall score moved 6/10 → 6/10. Rule:
+ * STOP when a round improved the overall score by < 1 point AND the hard
+ * findings did not shrink AND no NEW contradiction appeared — the loop is
+ * converging on noise at that point and the remaining issues are exactly
+ * what the Review tab discloses. The FIRST round (no previous snapshot)
+ * never stops (the initial revision is where all the value is), and a
+ * score that got WORSE without new contradictions is also converged
+ * churn (re-revising against the same feedback produces the same result).
+ */
+export function shouldStopForConvergence(
+  prev: RepairRoundSnapshot | null,
+  cur: RepairRoundSnapshot,
+): ConvergenceDecision {
+  if (!prev) return { stop: false, reason: "" };
+  // A new or growing contradiction is always worth one more round.
+  if (cur.contradictedCount > prev.contradictedCount) {
+    return { stop: false, reason: "" };
+  }
+  // Hard-finding shrinkage means the revisions are still landing.
+  if (cur.hardCount < prev.hardCount) {
+    return { stop: false, reason: "" };
+  }
+  const gain =
+    cur.overall != null && prev.overall != null ? cur.overall - prev.overall : null;
+  if (gain != null && gain < 1) {
+    return {
+      stop: true,
+      reason: `converged — overall ${prev.overall}→${cur.overall} (<1 gain), ${cur.hardCount} hard finding(s) unchanged; remaining issues disclosed in the Review tab`,
+    };
+  }
+  return { stop: false, reason: "" };
+}
+
+/** Convenience: snapshot a completed review round for the convergence gate. */
+export function repairRoundSnapshotOf(res: ReviewCoreResult): RepairRoundSnapshot {
+  const findings = res.factReport?.findings || [];
+  const hard = findings.filter(
+    (f) =>
+      f.verdict === "CONTRADICTED" ||
+      (f.verdict === "UNVERIFIABLE" && !isHedged(f.sentence)),
+  );
+  return {
+    overall: res.parsed.scores?.overall ?? null,
+    hardCount: hard.length,
+    contradictedCount: findings.filter((f) => f.verdict === "CONTRADICTED").length,
+    fixableCount: res.fixableWeaknessCount ?? 0,
+  };
 }
 
 /* ------------------------------------------------------------------ *

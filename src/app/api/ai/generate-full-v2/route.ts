@@ -81,13 +81,20 @@ import {
   actionableFindings,
   distinctCitations,
   renormalizeArticleCitations,
+  repairRoundSnapshotOf,
   restoreOriginalHeadings,
   revisionGuard,
   reviseArticleCore,
   reviseArticleScoped,
   reviewArticleCore,
+  shouldStopForConvergence,
   splitBodySections,
 } from "@/lib/review-engine";
+// round-RT3 (R6): advisory numeric-coverage sweep (zero-LLM abstract cross-check).
+import {
+  numericFindingToWeakness,
+  sweepNumericClaims,
+} from "@/lib/numeric-sweep";
 // round-42: importance-driven citation planning — score every source,
 // curate with a dynamic count, fetch full texts, co-plan outline+citations.
 import {
@@ -547,6 +554,11 @@ export async function POST(req: NextRequest) {
         let sections: any[] = [];
         let allocations: any[] = [];
         let previousSectionsDigest = "";
+        // round-RT3 (R2): per-section digest entries (one per generated
+        // section, in order) — the pipelined verify refreshes an entry after
+        // citation removals land. Declared here (outer scope) so the RESUME
+        // path below can populate it before STEP 6 begins.
+        const digestEntryTexts: string[] = [];
         const sectionsCheckpointData: { title: string; content: string; refs: any[] }[] = [];
         // round-61: hoisted from STEP 1 (fresh-run scope) — the complete-event
         // stats read .length even on a resumed run.
@@ -771,6 +783,9 @@ export async function POST(req: NextRequest) {
                 .filter(Boolean)
                 .slice(-24)
                 .join("\n");
+              // round-RT3 (R2): keep the entry array in sync (pipelined-verify
+              // digest refresh indexes by section).
+              digestEntryTexts.push(digestEntry);
             }
           }
         } else {
@@ -2342,6 +2357,176 @@ Output JSON only.`;
 
         let abortedDueToRateLimit = false;
 
+        // ============ round-RT3 (R2): ★ Pipelined generate→verify ============
+        // verify(section i) used to BLOCK generate(section i+1) — the RT2
+        // production spent 7.8 min in a strictly serial generate+verify
+        // alternation. The adversarial verify only reads the section and
+        // its refs, so it now runs ONE SECTION BEHIND the writer: while
+        // §i is being verified, §i+1 is already being written. The
+        // continuity digest is the only cross-section dependency — it is
+        // appended from the PRE-verify content of §i (citation removal
+        // only strips markers, the claim sentences stand) and REFRESHED
+        // from the post-verify text when the pending verify lands. The
+        // per-section save/checkpoint/digest bookkeeping moved into
+        // finalizePendingVerify(), which runs at the START of the NEXT
+        // section's tail (or after the loop for the last section) —
+        // paragraph order, checkpoint order and event payloads are all
+        // unchanged from the serial version.
+        interface PendingVerify {
+          idx: number;
+          sectionNum: number;
+          title: string;
+          sectionContent: string;
+          citedRefs: any[];
+          promise: Promise<{
+            ok: boolean;
+            result?: Awaited<ReturnType<typeof adversarialVerifySection>>;
+            err?: any;
+            ms: number;
+          }>;
+        }
+        let pendingVerify: PendingVerify | null = null;
+        const buildDigestEntry = (num: number, title: string, content: string): string => {
+          const claimSentences = content
+            .split(/(?<=[.!?])\s+/)
+            .filter((s: string) => /\[\d/.test(s))
+            .slice(0, 6)
+            .map((s: string) => s.replace(/\s+/g, " ").replace(/^[-•*]\s*/, "").slice(0, 150));
+          return (
+            `§${num} "${title}" established:\n` +
+            (claimSentences.length > 0
+              ? claimSentences.map((s: string) => `- ${s}`).join("\n")
+              : `- (opening: ${content.slice(0, 140).replace(/\n+/g, " ")}...)`)
+          );
+        };
+        const rebuildDigest = () => {
+          previousSectionsDigest = digestEntryTexts
+            .join("\n")
+            .split("\n")
+            .filter(Boolean)
+            .slice(-24)
+            .join("\n");
+        };
+
+        /**
+         * Await the in-flight verify for section `pv.idx`, apply citation
+         * removals, save the paragraph + refs atomically, write the
+         * checkpoint, and refresh that section's digest entry with the
+         * final (post-removal) text. Rate-limit storms save the section with
+         * unverified citations (matching the serial behavior); other errors
+         * propagate as before.
+         */
+        const finalizePendingVerify = async (pv: PendingVerify): Promise<void> => {
+          const { idx, sectionNum, title, promise } = pv;
+          let { sectionContent, citedRefs } = pv;
+          const res = await promise;
+          if (!res.ok) {
+            const verifyErr = res.err;
+            if (verifyErr instanceof RateLimitAbortedError || verifyErr instanceof QuotaExhaustedError) {
+              abortedDueToRateLimit = true;
+              log(`verify: section ${sectionNum} skipped — rate limit hit; saving section with unverified citations`);
+            } else {
+              throw verifyErr;
+            }
+          }
+          const verifyResult = res.ok
+            ? res.result!
+            : { checked: 0, removedNums: [], flagged: [], removals: [], llmCalls: 0, unverifiedChecks: 0 } as any;
+          stats.citationsChecked += verifyResult.checked;
+          stats.citationsRemoved += verifyResult.removedNums.length;
+          stats.citationsFlagged += verifyResult.flagged.length;
+          if (verifyResult.unverifiedChecks > 0) {
+            stats.citationsUnverified = (stats.citationsUnverified || 0) + verifyResult.unverifiedChecks;
+          }
+
+          if (verifyResult.removedNums.length > 0) {
+            const after = removeCitationsAndRenumber(sectionContent, citedRefs, new Set(verifyResult.removedNums));
+            sectionContent = after.content;
+            citedRefs = after.refs;
+          }
+
+          send("step", {
+            step: "verify",
+            status: "done",
+            section: sectionNum,
+            total: sections.length,
+            checked: verifyResult.checked,
+            removed: verifyResult.removedNums.length,
+            flagged: verifyResult.flagged.length,
+            message: `Section ${sectionNum} verification: ${verifyResult.checked} citations checked, ${verifyResult.removedNums.length} removed, ${verifyResult.flagged.length} flagged${verifyResult.unverifiedChecks ? `, ${verifyResult.unverifiedChecks} SAVED UNVERIFIED (batch failure)` : ""} (${res.ms}ms).`,
+            detail: verifyResult.removals.map((r) => `[${r.n}] ${r.reason}`).join("\n"),
+          });
+          log(`verify: section ${sectionNum} — checked=${verifyResult.checked} removed=${verifyResult.removedNums.length} flagged=${verifyResult.flagged.length}${verifyResult.unverifiedChecks ? ` unverified=${verifyResult.unverifiedChecks}` : ""}`);
+
+          // ---- Save the paragraph + cited references (atomic, in order) ----
+          const paragraph = await db.$transaction(async (tx) => {
+            const p = await tx.paragraph.create({
+              data: {
+                projectId,
+                title,
+                content: sectionContent,
+                format: inferFormat(title, idx, sections.length),
+                scenario: "literature-review",
+                status: "draft",
+                order: idx,
+                wordCount: countWords(sectionContent),
+              },
+            });
+            if (citedRefs.length > 0) {
+              await tx.reference.createMany({
+                data: citedRefs.map((ref: any, refIdx: number) => ({
+                  type: ref.type || "pubmed",
+                  externalId: ref.externalId,
+                  title: ref.title,
+                  authors: ref.authors,
+                  journal: ref.journal,
+                  year: ref.year,
+                  url: ref.url,
+                  doi: ref.doi,
+                  abstract: ref.abstract,
+                  projectId,
+                  paragraphId: p.id,
+                  citationOrder: refIdx,
+                })),
+              });
+            }
+            return p;
+          });
+
+          generatedParagraphs.push({
+            id: paragraph.id,
+            title,
+            wordCount: paragraph.wordCount,
+          });
+
+          sectionsCheckpointData.push({
+            title,
+            content: sectionContent,
+            refs: citedRefs,
+          });
+          try {
+            await db.pipelineCheckpoint.upsert({
+              where: { runId_stage: { runId: activeRunId, stage: "sections" } },
+              create: {
+                projectId,
+                runId: activeRunId,
+                stage: "sections",
+                topic: project.topic,
+                payload: JSON.stringify(sectionsCheckpointData),
+              },
+              update: { payload: JSON.stringify(sectionsCheckpointData), updatedAt: new Date() },
+            });
+          } catch {
+            // best-effort — a failed checkpoint write never fails the run
+          }
+
+          // Refresh the digest entry with the FINAL text (the pre-verify
+          // entry was appended when the section was queued for verify; a
+          // citation removal can change its [n] markers).
+          digestEntryTexts[idx] = buildDigestEntry(sectionNum, title, sectionContent);
+          rebuildDigest();
+        };
+
         for (let i = 0; i < sections.length; i++) {
           const section = sections[i];
           const sectionNum = i + 1;
@@ -2349,6 +2534,17 @@ Output JSON only.`;
           const sectionStart = Date.now();
 
           if (abortedDueToRateLimit || isAborted() || clientDisconnected) {
+            // RT3 (R2): a skipped section must still land its PENDING
+            // predecessor (save/checkpoint/digest) — otherwise the section
+            // generated just before the abort is silently lost.
+            if (pendingVerify) {
+              try {
+                await finalizePendingVerify(pendingVerify);
+              } catch (finErr: any) {
+                log(`verify: pending section finalize failed on skip: ${String(finErr?.message ?? finErr).slice(0, 100)}`);
+              }
+              pendingVerify = null;
+            }
             send("step", {
               step: "generate",
               status: "skipped",
@@ -2796,6 +2992,13 @@ COMPLETION: your previous output appears cut off mid-sentence (it never reached 
           // ============ STEP 7 (per-section): ★ Adversarial verification ============
           // Every (sentence, citation) pair is checked against the reference's
           // actual title/abstract. Unsupported citations are surgically removed.
+          // round-RT3 (R2): the verify now runs as a BACKGROUND TASK — it only
+          // reads this section + its refs, so §i+1 starts generating while this
+          // verify is still in flight (previously verify(i) blocked
+          // generate(i+1) — 7.8 min of strict serialization in the RT2 run).
+          // The removal application / save / checkpoint / digest refresh land
+          // in finalizePendingVerify() at the tail of the NEXT section (or
+          // after the loop for the final section).
           send("step", {
             step: "verify",
             status: "started",
@@ -2804,146 +3007,56 @@ COMPLETION: your previous output appears cut off mid-sentence (it never reached 
             message: `Adversarially verifying ${extractBodyCitations(sectionContent).length} citations in section ${sectionNum}...`,
           });
 
+          // Pre-verify digest entry (round-RT3 R2): §i+1's continuity block
+          // needs this section's established claims NOW — the next section
+          // generates in parallel with this verify. Removals only strip [n]
+          // markers; the claim sentences stand. The entry is refreshed from
+          // the final text when the verify lands (see finalizePendingVerify).
+          digestEntryTexts.push(buildDigestEntry(sectionNum, section.title, sectionContent));
+          rebuildDigest();
+
+          // Land the PREVIOUS section's verify — by now it has been running
+          // for an entire generation cycle and is usually already complete.
+          if (pendingVerify) {
+            await finalizePendingVerify(pendingVerify);
+            pendingVerify = null;
+          }
+
+          // Kick off THIS section's verify in the background (R2 pipelining).
           const verifyStart = Date.now();
-          let verifyResult;
-          try {
-            verifyResult = await adversarialVerifySection(
-              projectId,
-              sectionContent,
-              citedRefs,
-              {
-                batchSize: VERIFY_BATCH_SIZE,
-                removeVerdict: VERIFY_REMOVE_VERDICT,
-                removeConfidence: VERIFY_REMOVE_CONFIDENCE,
-                maxTokens,
-              }
-            );
-          } catch (verifyErr: any) {
-            // Rate-limit aborts during verification also skip gracefully — the
-            // section keeps its citations UNVERIFIED rather than killing the run.
-            if (verifyErr instanceof RateLimitAbortedError || verifyErr instanceof QuotaExhaustedError) {
-              abortedDueToRateLimit = true;
-              log(`verify: section ${sectionNum} skipped — rate limit hit; saving section with unverified citations`);
-              verifyResult = { checked: 0, removedNums: [], flagged: [], removals: [], llmCalls: 0, unverifiedChecks: 0 } as any;
-            } else {
-              throw verifyErr;
-            }
-          }
-          stats.citationsChecked += verifyResult.checked;
-          stats.citationsRemoved += verifyResult.removedNums.length;
-          stats.citationsFlagged += verifyResult.flagged.length;
-          if (verifyResult.unverifiedChecks > 0) {
-            stats.citationsUnverified = (stats.citationsUnverified || 0) + verifyResult.unverifiedChecks;
-          }
-
-          if (verifyResult.removedNums.length > 0) {
-            const after = removeCitationsAndRenumber(sectionContent, citedRefs, new Set(verifyResult.removedNums));
-            sectionContent = after.content;
-            citedRefs = after.refs;
-          }
-
-          send("step", {
-            step: "verify",
-            status: "done",
-            section: sectionNum,
-            total: sections.length,
-            checked: verifyResult.checked,
-            removed: verifyResult.removedNums.length,
-            flagged: verifyResult.flagged.length,
-            message: `Section ${sectionNum} verification: ${verifyResult.checked} citations checked, ${verifyResult.removedNums.length} removed, ${verifyResult.flagged.length} flagged${verifyResult.unverifiedChecks ? `, ${verifyResult.unverifiedChecks} SAVED UNVERIFIED (batch failure)` : ""} (${Date.now() - verifyStart}ms).`,
-            detail: verifyResult.removals.map((r) => `[${r.n}] ${r.reason}`).join("\n"),
-          });
-          log(`verify: section ${sectionNum} — checked=${verifyResult.checked} removed=${verifyResult.removedNums.length} flagged=${verifyResult.flagged.length}${verifyResult.unverifiedChecks ? ` unverified=${verifyResult.unverifiedChecks}` : ""}`);
-
-          // ---- Save the paragraph + cited references ----
-          // ★ FIX (atomic section save): paragraph + references were created
-          // sequentially with no transaction — a failure on reference #5 left a
-          // paragraph with partial references, desyncing compose's global
-          // renumbering. One $transaction keeps them all-or-nothing.
-          const paragraph = await db.$transaction(async (tx) => {
-            const p = await tx.paragraph.create({
-              data: {
+          const verifyPromise = (async () => {
+            try {
+              const result = await adversarialVerifySection(
                 projectId,
-                title: section.title,
-                content: sectionContent,
-                format: inferFormat(section.title, i, sections.length),
-                scenario: "literature-review",
-                status: "draft",
-                order: i,
-                wordCount: countWords(sectionContent),
-              },
-            });
-            if (citedRefs.length > 0) {
-              await tx.reference.createMany({
-                data: citedRefs.map((ref: any, idx: number) => ({
-                  type: ref.type || "pubmed",
-                  externalId: ref.externalId,
-                  title: ref.title,
-                  authors: ref.authors,
-                  journal: ref.journal,
-                  year: ref.year,
-                  url: ref.url,
-                  doi: ref.doi,
-                  abstract: ref.abstract,
-                  projectId,
-                  paragraphId: p.id,
-                  citationOrder: idx,
-                })),
-              });
+                sectionContent,
+                citedRefs,
+                {
+                  batchSize: VERIFY_BATCH_SIZE,
+                  removeVerdict: VERIFY_REMOVE_VERDICT,
+                  removeConfidence: VERIFY_REMOVE_CONFIDENCE,
+                  maxTokens,
+                }
+              );
+              return { ok: true as const, result, ms: Date.now() - verifyStart };
+            } catch (verifyErr: any) {
+              // Rate-limit aborts are resolved (not rejected) so the in-flight
+              // promise can never go unhandled — the finalize step saves the
+              // section with unverified citations, exactly like the serial
+              // version did.
+              return { ok: false as const, err: verifyErr, ms: Date.now() - verifyStart };
             }
-            return p;
-          });
-
-          generatedParagraphs.push({
-            id: paragraph.id,
+          })();
+          pendingVerify = {
+            idx: i,
+            sectionNum,
             title: section.title,
-            wordCount: paragraph.wordCount,
-          });
-
-          // round-61 (P2): incremental section checkpoint — after EVERY
-          // saved section, so an interruption at §7 of 9 only re-runs §7-9.
-          sectionsCheckpointData.push({
-            title: section.title,
-            content: sectionContent,
-            refs: citedRefs,
-          });
-          try {
-            await db.pipelineCheckpoint.upsert({
-              where: { runId_stage: { runId: activeRunId, stage: "sections" } },
-              create: {
-                projectId,
-                runId: activeRunId,
-                stage: "sections",
-                topic: project.topic,
-                payload: JSON.stringify(sectionsCheckpointData),
-              },
-              update: { payload: JSON.stringify(sectionsCheckpointData), updatedAt: new Date() },
-            });
-          } catch {
-            // best-effort — a failed checkpoint write never fails the run
-          }
-
-          // ★ round-15: claim-level digest. The old digest (first 160 chars)
-          // carried style but not substance — the TMC regression repeated the
-          // dimer/TMEM16 and cysteine-mutagenesis claims verbatim across three
-          // sections because later sections never SAW those claims. Now each
-          // digest entry lists the citation-bearing sentences so downstream
-          // sections know exactly what is already established.
-          const claimSentences = sectionContent
-            .split(/(?<=[.!?])\s+/)
-            .filter((s: string) => /\[\d/.test(s))
-            .slice(0, 6)
-            .map((s: string) => s.replace(/\s+/g, " ").replace(/^[-•*]\s*/, "").slice(0, 150));
-          const digestEntry =
-            `§${sectionNum} "${section.title}" established:\n` +
-            (claimSentences.length > 0
-              ? claimSentences.map((s: string) => `- ${s}`).join("\n")
-              : `- (opening: ${sectionContent.slice(0, 140).replace(/\n+/g, " ")}...)`);
-          previousSectionsDigest = (previousSectionsDigest + "\n" + digestEntry)
-            .split("\n")
-            .filter(Boolean)
-            .slice(-24)
-            .join("\n");
+            sectionContent,
+            citedRefs,
+            promise: verifyPromise,
+          };
+          log(
+            `generate: section ${sectionNum} queued for pipelined verification (${citedRefs.length} refs) — writer proceeds while it runs`,
+          );
 
           // ★ round-cs-4 (OOM mitigation — the "dies at section ~14-16" bug):
           // the kernel OOM-killer murdered the dev server mid-article twice
@@ -2993,15 +3106,22 @@ COMPLETION: your previous output appears cut off mid-sentence (it never reached 
               section: sectionNum,
               total: sections.length,
               title: section.title,
-              wordCount: paragraph.wordCount,
+              wordCount: countWords(sectionContent),
               citations: citedRefs.length,
-              message: `Section ${sectionNum} complete: ${paragraph.wordCount} words, ${citedRefs.length} verified citations (${Date.now() - sectionStart}ms).${memNote}`,
+              message: `Section ${sectionNum} complete: ${countWords(sectionContent)} words, ${citedRefs.length} citations — verification running in parallel (${Date.now() - sectionStart}ms).${memNote}`,
             });
-            log(`generate: section ${sectionNum} DONE (${paragraph.wordCount} words, ${citedRefs.length} citations, ${Date.now() - sectionStart}ms${memNote})`);
+            log(`generate: section ${sectionNum} DONE (${countWords(sectionContent)} words, ${citedRefs.length} citations, ${Date.now() - sectionStart}ms${memNote})`);
           } catch {
             // memory bookkeeping must never fail a completed section
-            log(`generate: section ${sectionNum} DONE (${paragraph.wordCount} words, ${citedRefs.length} citations, ${Date.now() - sectionStart}ms)`);
+            log(`generate: section ${sectionNum} DONE (${countWords(sectionContent)} words, ${citedRefs.length} citations, ${Date.now() - sectionStart}ms)`);
           }
+        }
+
+        // round-RT3 (R2): the LAST section's verify is still in flight —
+        // land it before compose (same path the serial version took).
+        if (pendingVerify) {
+          await finalizePendingVerify(pendingVerify);
+          pendingVerify = null;
         }
 
         if (generatedParagraphs.length === 0) {
@@ -3322,6 +3442,8 @@ ${c}`)
               abstractMap.set(i + 1, { title: String(r.title || ""), abstract: String(r.abstract) });
             }
           });
+          // round-RT3 (R1): previous round's snapshot for the convergence gate.
+          let prevRoundSnapshot: import("@/lib/review-engine").RepairRoundSnapshot | null = null;
           for (let round = 1; round <= REPAIR_MAX_REVISIONS + 1; round++) {
             if (clientDisconnected) {
               repairTelemetry.stopReason = "client disconnected";
@@ -3336,6 +3458,76 @@ ${c}`)
             repairTelemetry.finalVerdict = rc.parsed.verdict || "";
             repairTelemetry.finalOverall = rc.parsed.scores?.overall ?? null;
             let act = actionableFindings(rc);
+
+            // ★ round-RT3 (R1): convergence early-exit. The RT2 production
+            // spent 3 review rounds where rounds 2-3 bought ~1 finding each
+            // and the overall score sat at 6/10 throughout — pure churn.
+            // Rule (see shouldStopForConvergence): a round that gained <1
+            // overall score, did not shrink the hard findings, and produced
+            // no NEW contradiction ends the loop — the remaining issues are
+            // disclosed in the Review tab instead of re-revised.
+            const roundSnapshot = repairRoundSnapshotOf(rc);
+            const convergence = shouldStopForConvergence(prevRoundSnapshot, roundSnapshot);
+            if (round > 1 && convergence.stop && act.actionable) {
+              repairTelemetry.stopReason = convergence.reason;
+              log(`repair: round ${round} EARLY EXIT — ${convergence.reason}`);
+              send("step", {
+                step: "repair",
+                status: "progress",
+                round,
+                message: `Round ${round}: ${convergence.reason}.`,
+              });
+              // The round still counts as a REVIEW (persisted + disclosed),
+              // just not as a revision trigger.
+              repairRounds.push({
+                round,
+                core: rc,
+                actionable: act.actionable,
+                trigger: act.trigger,
+                reason: act.reason,
+                revisedContent: null as string | null,
+                guardRejected: null as string[] | null,
+                converged: true,
+              });
+              break;
+            }
+            prevRoundSnapshot = roundSnapshot;
+
+            // ★ round-RT3 (R6): advisory numeric-coverage sweep — every
+            // citation-bearing number+unit sentence is cross-checked
+            // against the cited abstracts at ZERO LLM cost. Findings are
+            // injected as ADVISORY weaknesses (never a hard trigger: an
+            // absent-from-abstract number is a verification gap, not proof
+            // of error) so the reviewer/reviser sees them and the Review
+            // tab discloses them.
+            try {
+              const sweep = sweepNumericClaims(
+                splitBodyAndReferences(currentContent).body,
+                abstractMap,
+              );
+              (repairTelemetry as any).numericSweep = {
+                sentencesExamined: sweep.sentencesExamined,
+                covered: sweep.covered,
+                gaps: sweep.findings.length,
+              };
+              if (sweep.findings.length > 0) {
+                const numericWeaknesses = sweep.findings.map(numericFindingToWeakness);
+                log(
+                  `repair: numeric sweep — ${sweep.sentencesExamined} numeric sentence(s) examined, ${sweep.covered} covered, ${sweep.findings.length} gap(s) (advisory)`,
+                );
+                send("step", {
+                  step: "repair",
+                  status: "progress",
+                  round,
+                  message: `Numeric coverage sweep: ${sweep.findings.length} value(s) not found in their cited abstract(s) — flagged as advisory for the reviewer.`,
+                });
+                // Advisory injection: they ride the revision feedback when a
+                // revision is already happening; they never start one.
+                (rc as any).__numericWeaknesses = numericWeaknesses;
+              }
+            } catch {
+              // sweep is best-effort by contract
+            }
 
             // ★ round-64: article-level STRUCTURAL citation hygiene. The
             // ferroptosis production run (round-63) shipped with a 500-word
@@ -3423,7 +3615,11 @@ ${c}`)
               summary: rc.parsed.summary || "",
               scores: rc.parsed.scores,
               strengths: rc.parsed.strengths || [],
-              weaknesses: [...rc.mergedWeaknesses, ...structuralWeaknesses],
+              weaknesses: [
+                ...rc.mergedWeaknesses,
+                ...structuralWeaknesses,
+                ...((rc as any).__numericWeaknesses || []),
+              ],
               suggestions: rc.parsed.suggestions || [],
             };
 

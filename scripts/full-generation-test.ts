@@ -24,7 +24,8 @@
  *
  * Requires: dev server running on http://localhost:3000.
  */
-import { writeFileSync } from "fs";
+import { writeFileSync, mkdirSync } from "fs";
+import { dirname, join, resolve } from "path";
 
 // ----- CLI args --------------------------------------------------------------
 const args = process.argv.slice(2);
@@ -345,7 +346,15 @@ async function main() {
   report.meta.finishedAt = new Date().toISOString();
 
   // 5. Dump JSON + markdown summary --------------------------------------
-  const outPath = "/home/z/my-project/tool-results/full-gen-test-report.json";
+  // round-RT3 (R8/O2): the report path is now pinned RELATIVE TO THIS
+  // SCRIPT (…/SciWrite/tool-results/), not the CWD it was launched from —
+  // running from a different checkout used to write the report into
+  // whatever tool-results/ happened to be lying around.
+  const outDir = join(resolve(dirname(process.argv[1] ?? process.cwd())), "..", "tool-results");
+  const outPath = join(outDir, "full-gen-test-report.json");
+  try {
+    mkdirSync(outDir, { recursive: true });
+  } catch {}
   writeFileSync(outPath, JSON.stringify(report, null, 2));
   console.error(`\nJSON report written to ${outPath}`);
 
