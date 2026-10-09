@@ -1345,14 +1345,15 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
           // final "done" event — users reasonably read that as a hang (the
           // very report that triggered this round). Live per-batch progress
           // events now keep the wire busy and the user informed.
-          const kvBatchTotal = Math.ceil(kvInputs.length / KV_BATCH_SIZE);
-          if (kvBatchTotal > 1) {
-            send("step", {
-              step: "knowledge",
-              status: "progress",
-              message: `LLM knowledge pass starting: ${kvInputs.length} sources in ${kvBatchTotal} LLM batches — this stage typically takes several minutes; progress is reported per batch.`,
-            });
-          }
+          // round-RT2: the actual batch count is need-based (only incomplete
+          // rows ride the fill batches; the function reports its own precise
+          // count) — this pre-announcement no longer hardcodes the old
+          // ceil(total/12) math, which overstated the work.
+          send("step", {
+            step: "knowledge",
+            status: "progress",
+            message: `LLM knowledge pass starting on ${kvInputs.length} sources — need-based batches (complete rows are covered by a single gap-detection digest); progress is reported per batch.`,
+          });
           const kvResult = await verifySourcesWithKnowledge(
             projectId, kvInputs, project.topic, project.field || "life sciences",
             {
