@@ -46,17 +46,32 @@ New unit coverage highlights:
 
 ## 3. E2E full-generation run
 
-**Status at document time: blocked by an account-level z-ai 429 quota
-storm** (hard-blocked since ~05:45; single-attempt probes and 5-step retry
-ladders both fail). The storm pre-flight (RT2) correctly fast-fails the
-launch in ~1s instead of burning a 3-minute backoff — the guard works as
-designed. An auto-launcher is armed that probes every 60s and starts
-`full-generation-test.ts --words 1500` the moment a probe succeeds; results
-will be appended below when the run completes.
+**Status: BLOCKED by an account-level z-ai quota storm — not by any code
+defect.** Hard-blocked from ~05:45 (and still blocked at 14:12, >8.5 h):
+single-attempt probes AND 5-step exponential retry ladders all return
+`429 Too many requests` at the account level, while the process-level
+limiter window shows 0 in-flight calls (the storm is provider-side quota
+exhaustion, not self-inflicted rate). This after ~2.5 h of heavy same-day
+usage (two full RT2 runs + a stray browser-triggered adversarial review).
 
-Comparison target (RT2 run, GLM-4.6, 1500 words, same script):
-41.3 min total / gather→analyze 17.1 min / generate+verify 7.8 min /
-repair 14.6 min / 0 citations removed / clean mechanical audit.
+What the incident DID validate:
+
+- The **storm pre-flight** (RT2) worked exactly as designed: 429 → 503 in
+  ~1s with an honest error, no sources cleared, nothing consumed, no
+  3-minute backoff theater.
+- The **graceful-degradation contract** held: the failed launch left an
+  empty project and a clean JSON report; the server stayed healthy (200s
+  throughout); no partial state.
+
+An auto-launcher remains armed (probes every ~2 min): the moment quota
+returns, `full-generation-test.ts --words 1500` runs unattended and its
+report lands in `tool-results/full-gen-test-report.json` +
+`tool-results/e2e-rt3.log`. Comparison target when it runs (RT2 baseline,
+GLM-4.6, 1500 words): 41.3 min total / gather→analyze 17.1 min /
+generate+verify 7.8 min / repair 14.6 min / 0 citations removed / clean
+mechanical audit. Expected RT3 deltas: repair rounds 3→≤2 (convergence +
+advisory split), generate slice −30-40 % (pipelined verify), review rounds
+faster (pooled fact-check), web-search re-queries free (R7 cache).
 
 <!-- E2E-RESULTS:APPENDED-BELOW-WHEN-AVAILABLE -->
 
