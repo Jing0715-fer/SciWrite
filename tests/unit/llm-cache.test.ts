@@ -12,39 +12,41 @@ beforeEach(() => {
 });
 
 describe("llmCacheKey", () => {
-  test("returns a non-empty string", () => {
-    const key = llmCacheKey("hello", { temperature: 0.2 });
+  // round-RT2: llmCacheKey is now async (the key includes the current
+  // provider/model selection — see src/lib/llm-cache.ts).
+  test("returns a non-empty string", async () => {
+    const key = await llmCacheKey("hello", { temperature: 0.2 });
     expect(typeof key).toBe("string");
     expect(key.length).toBeGreaterThan(0);
   });
 
-  test("same inputs produce the same key", () => {
-    const k1 = llmCacheKey("prompt", { system: "sys", temperature: 0.5, taskType: "write" });
-    const k2 = llmCacheKey("prompt", { system: "sys", temperature: 0.5, taskType: "write" });
+  test("same inputs produce the same key", async () => {
+    const k1 = await llmCacheKey("prompt", { system: "sys", temperature: 0.5, taskType: "write" });
+    const k2 = await llmCacheKey("prompt", { system: "sys", temperature: 0.5, taskType: "write" });
     expect(k1).toBe(k2);
   });
 
-  test("different prompts produce different keys", () => {
-    const k1 = llmCacheKey("prompt-a", { temperature: 0 });
-    const k2 = llmCacheKey("prompt-b", { temperature: 0 });
+  test("different prompts produce different keys", async () => {
+    const k1 = await llmCacheKey("prompt-a", { temperature: 0 });
+    const k2 = await llmCacheKey("prompt-b", { temperature: 0 });
     expect(k1).not.toBe(k2);
   });
 
-  test("different temperatures produce different keys", () => {
-    const k1 = llmCacheKey("prompt", { temperature: 0 });
-    const k2 = llmCacheKey("prompt", { temperature: 1 });
+  test("different temperatures produce different keys", async () => {
+    const k1 = await llmCacheKey("prompt", { temperature: 0 });
+    const k2 = await llmCacheKey("prompt", { temperature: 1 });
     expect(k1).not.toBe(k2);
   });
 
-  test("different systems produce different keys", () => {
-    const k1 = llmCacheKey("prompt", { system: "sys-a", temperature: 0 });
-    const k2 = llmCacheKey("prompt", { system: "sys-b", temperature: 0 });
+  test("different systems produce different keys", async () => {
+    const k1 = await llmCacheKey("prompt", { system: "sys-a", temperature: 0 });
+    const k2 = await llmCacheKey("prompt", { system: "sys-b", temperature: 0 });
     expect(k1).not.toBe(k2);
   });
 
-  test("different taskTypes produce different keys", () => {
-    const k1 = llmCacheKey("prompt", { taskType: "write", temperature: 0 });
-    const k2 = llmCacheKey("prompt", { taskType: "revise", temperature: 0 });
+  test("different taskTypes produce different keys", async () => {
+    const k1 = await llmCacheKey("prompt", { taskType: "write", temperature: 0 });
+    const k2 = await llmCacheKey("prompt", { taskType: "revise", temperature: 0 });
     expect(k1).not.toBe(k2);
   });
 });
@@ -138,9 +140,9 @@ describe("integration: llmCacheKey + cache round-trip", () => {
     expect(getCachedLLMResult(key)).toEqual({ result: "ok" });
   });
 
-  test("different prompts produce different cache slots", () => {
-    const k1 = llmCacheKey("prompt-a", { temperature: 0 });
-    const k2 = llmCacheKey("prompt-b", { temperature: 0 });
+  test("different prompts produce different cache slots", async () => {
+    const k1 = await llmCacheKey("prompt-a", { temperature: 0 });
+    const k2 = await llmCacheKey("prompt-b", { temperature: 0 });
     setCachedLLMResult(k1, "a");
     setCachedLLMResult(k2, "b");
     expect(getCachedLLMResult(k1)).toBe("a");

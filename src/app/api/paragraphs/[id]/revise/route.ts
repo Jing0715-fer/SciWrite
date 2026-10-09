@@ -58,11 +58,28 @@ export async function POST(
       metadata: { mode, paragraphId: id, annotationCount: unresolved.length },
     });
 
+    // round-RT2 (multi-model format hardening): the revised text used to be
+    // saved VERBATIM — a weak model's prose preambles ("Here is the revised
+    // paragraph:"), fullwidth punctuation, internal headings and stray
+    // reference lists went straight into paragraph.content and from there
+    // into every export. Run the same gauntlet the generate loop uses (the
+    // citation protocol here is numeric [n], so only the format layers
+    // apply — renumbering stays with the caller's existing logic).
+    const { normalizeAsciiPunctuation, normalizeSectionMarkdown, enforceUniformSectionFormat, stripResidualCJK } = await import("@/lib/writing");
+    let cleaned = normalizeAsciiPunctuation(revised);
+    cleaned = normalizeSectionMarkdown(cleaned);
+    cleaned = enforceUniformSectionFormat(cleaned);
+    const cjkStripped = stripResidualCJK(cleaned);
+    if (cjkStripped.removed > 0) {
+      console.warn(`[revise] CJK backstop removed ${cjkStripped.removed} residual Han character(s)`);
+      cleaned = cjkStripped.content;
+    }
+    const revisedClean = cleaned;
     const updated = await db.paragraph.update({
       where: { id },
       data: {
-        content: revised,
-        wordCount: countWords(revised),
+        content: revisedClean,
+        wordCount: countWords(revisedClean),
         status: "revised",
       },
     });

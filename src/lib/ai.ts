@@ -369,11 +369,29 @@ export async function chat(prompt: string, opts: ChatOptions = {}): Promise<stri
       provider: selected,
       model: selectedModel || undefined,
       temperature: opts.temperature,
+      // round-RT2 (multi-model format hardening): forward maxTokens to
+      // non-zai providers. It was silently dropped here — callOpenAiCompat
+      // then omitted `max_tokens` and providers applied their own defaults
+      // (often 4096), truncating 600-word sections mid-sentence. That is
+      // exactly the “switching models breaks the format” symptom: GLM-4.6
+      // via zai-sdk got 20480 while every other model got cut short.
+      ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
       ...(reviewSplitActive ? { strict: true } : {}),
     },
     maxChars: 32000,
   });
-  if (r.ok) return r.text;
+  if (r.ok) {
+    // round-RT2 (observability): mid-article provider substitution is the
+    // classic invisible cause of mixed-format output — surface it in the
+    // server log so a model switch that silently walked to another provider
+    // is diagnosable from dev.log.
+    if (r.fallback) {
+      console.warn(
+        `[ai.chat] provider substitution: requested '${selected}' but answer came from '${r.provider}' (${r.model}) — output style may differ`,
+      );
+    }
+    return r.text;
+  }
   throw new Error(
     `[ai.chat] selected provider '${selected}' returned no output: ${r.error ?? "unknown error"}`,
   );
@@ -420,12 +438,20 @@ export async function chatWithSessionId(
       provider: selected,
       model: selectedModel || undefined,
       temperature: opts.temperature,
+      // round-RT2: forward maxTokens (see the identical fix in chat() —
+      // dropping it truncated every non-zai section mid-sentence).
+      ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
       ...(reviewSplitActive ? { strict: true } : {}),
     },
     maxChars: 32000,
     sessionId,
   });
   if (r.ok) {
+    if (r.fallback) {
+      console.warn(
+        `[ai.chatWithSessionId] provider substitution: requested '${selected}' but answer came from '${r.provider}' (${r.model}) — output style may differ`,
+      );
+    }
     return { text: r.text, cliSessionId: (r.meta?.cliSessionId as string | null) ?? null };
   }
   throw new Error(

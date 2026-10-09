@@ -4,7 +4,7 @@ import { webSearch } from "@/lib/ai";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
 import { PipelineProgressTracker } from "@/lib/progress-tracker";
-import { countWords, renumberByAppearance, sanitizeSectionContent, buildStructureContextFromDataSources } from "@/lib/writing";
+import { countWords, renumberByAppearance, sanitizeSectionContent, buildStructureContextFromDataSources, normalizeArticleBodySections } from "@/lib/writing";
 import { generateArticleTitle } from "@/lib/article-title";
 import { translateSectionTitles } from "@/lib/section-title-zh";
 import { validateCitationsInline } from "@/lib/citation-audit";
@@ -989,7 +989,7 @@ Analyze how these sources relate. Respond as STRICT JSON:
           // Check LLM cache — relationships analysis is deterministic for the
           // same curated refs, so caching saves a 10-30s LLM call on regenerate.
           const { llmCacheKey: relCacheKeyFn, getCachedLLMResult: relGetCache, setCachedLLMResult: relSetCache } = await import("@/lib/llm-cache");
-          const relCacheKey = relCacheKeyFn(relPrompt, { system: relSystem, temperature: 0.4, taskType: "relationships", maxTokens });
+          const relCacheKey = await relCacheKeyFn(relPrompt, { system: relSystem, temperature: 0.4, taskType: "relationships", maxTokens });
           const relCached = relGetCache(relCacheKey);
           let relRaw: string;
           if (relCached) {
@@ -1141,7 +1141,7 @@ Output JSON only.`;
         // Check LLM cache — outline planning is deterministic for the same
         // topic + curated refs, so caching saves a 10-20s LLM call on regenerate.
         const { llmCacheKey: planCacheKeyFn, getCachedLLMResult: planGetCache, setCachedLLMResult: planSetCache } = await import("@/lib/llm-cache");
-        const planCacheKey = planCacheKeyFn(planPrompt, { system: planSystem, temperature: 0.5, taskType: "plan", maxTokens });
+        const planCacheKey = await planCacheKeyFn(planPrompt, { system: planSystem, temperature: 0.5, taskType: "plan", maxTokens });
         const planCached = planGetCache(planCacheKey);
         let planRaw: string;
         if (planCached) {
@@ -2756,6 +2756,15 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           .join("\n");
 
         let cleanBody = articleBody.trim();
+        // round-RT2 (multi-model format hardening): v1 compose previously
+        // did no per-section or whole-body normalization — weaker models
+        // left fullwidth punctuation, internal headings, bullet lists and
+        // stray in-section reference lists in the composed article. The v2
+        // pipeline has run normalizeArticleBodySections since round-cs-7;
+        // now v1 gets the same mechanical guarantee at compose time (H2
+        // section headings are pinned by the helper; ZH halves in bilingual
+        // content must be handled by the caller — v1 composes EN body here).
+        cleanBody = normalizeArticleBodySections(cleanBody);
         cleanBody = cleanBody.replace(/^#{1}\s+.+\n*/m, "").trim();
 
         const refSectionRe =

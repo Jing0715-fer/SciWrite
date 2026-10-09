@@ -37,6 +37,11 @@ export async function GET(req: NextRequest) {
 function safeJson(raw: string, fallback: any): any {
   try { return JSON.parse(raw); } catch { return fallback; }
 }
+// round-RT2: the LLM-answer extractor is the canonical shared one (fences /
+// top-level arrays / JSON5 / repair) — the old greedy-brace + bare
+// JSON.parse copy silently no-op'd the whole analysis stage when a
+// non-GLM model fenced its JSON.
+import { safeParseJSON } from "@/lib/llm-json";
 
 // Analyze relationships between data sources using LLM.
 // Returns a network graph: nodes (sources) + edges (relationships) + summary.
@@ -194,15 +199,5 @@ Output JSON only. Focus on scientific substance, not metadata similarity.`;
       { error: safeErrorMessage(err, "Relationship analysis failed.") },
       { status: 500 }
     );
-  }
-}
-
-function safeParseJSON(raw: string, fallback: any): any {
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return fallback;
-  try {
-    return JSON.parse(match[0]);
-  } catch {
-    return fallback;
   }
 }

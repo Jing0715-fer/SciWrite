@@ -505,6 +505,63 @@ export interface SectionFormatViolations {
   total: number;
 }
 
+/**
+ * round-RT2 (CJK final backstop): after the cjkGate retry (which adopts only
+ * when strictly better) some Han characters can still remain in an ENGLISH
+ * section when a weak model keeps leaking. This unconditional mechanical
+ * backstop removes CJK ideographs from every line of the EN body — a line
+ * that becomes (near-)empty is dropped entirely. Fullwidth punctuation was
+ * already converted by normalizeAsciiPunctuation; this catches ideographs.
+ * NEVER apply to contentZh / the Chinese half of a bilingual article.
+ */
+export function stripResidualCJK(text: string): { content: string; removed: number } {
+  const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u2e80-\u2eff]/g;
+  let removed = 0;
+  const outLines: string[] = [];
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const hits = line.match(CJK);
+    if (hits && hits.length) {
+      removed += hits.length;
+      const stripped = line.replace(CJK, "").replace(/\s{2,}/g, " ").trim();
+      // Keep the line only if meaningful ASCII content survives.
+      if (stripped.length >= 8) outLines.push(stripped);
+    } else {
+      outLines.push(line);
+    }
+  }
+  return { content: outLines.join("\n"), removed };
+}
+
+/**
+ * round-RT2 (multi-model truncation detection): heuristics for an LLM answer
+ * cut mid-generation (max_tokens cliff on non-GLM providers, hard timeouts).
+ * A truncated section renders as an obviously broken "messy format": the
+ * last sentence stops mid-word or mid-citation-key, never reaches terminal
+ * punctuation, and can leave dangling brace pairs.
+ *
+ * Conservative by design: short outputs (< 60 words) and outputs ending in
+ * legitimate terminal punctuation (including quotes/parens/formula tails)
+ * are never flagged.
+ */
+export function looksTruncated(text: string): boolean {
+  const t = String(text || "").trim();
+  if (!t) return false;
+  const words = t.split(/\s+/).length;
+  if (words < 60) return false;
+  // Definite: cut in the middle of a citation key or an open brace pair.
+  if (/\{\{R?\d*,?$/.test(t)) return true;
+  const open = (t.match(/\{/g) || []).length;
+  const close = (t.match(/\}/g) || []).length;
+  if (Math.abs(open - close) >= 2) return true;
+  // Last non-space character: terminal punctuation (incl. closing
+  // quotes/brackets after it) means complete.
+  const last = t.slice(-1);
+  if (/[.!?;:"'”’)\]]/.test(last)) return false;
+  // Ends in a word character or comma with no terminal punctuation — a
+  // >60-word section that just stops.
+  return /[a-zA-Z\d,]/.test(last);
+}
+
 /** Count the format violations a section body carries against the
  *  "plain 2-4 prose paragraphs" template. Citation markers like "[1]" are
  *  NOT list markers and never count. */
@@ -1028,6 +1085,15 @@ export function sanitizeSectionContent(content: string): string {
   content = reasoningStripped;
 
   let cleaned = content.trim();
+
+  // Step 0a (round-RT2 — role-label echo): weaker models echo the chat
+  // scaffold labels llm-session injects ("ASSISTANT:", "SYSTEM:", "USER:")
+  // at the start of their answer. A leading label line is never article
+  // text — strip it (only the FIRST line, and only when the label is
+  // alone on that line).
+  cleaned = cleaned
+    .replace(/^\s*(?:ASSISTANT|SYSTEM|USER|AI|MODEL)\s*:\s*\n?/i, "")
+    .trim();
 
   // Step 0: Detect if the ENTIRE content is a summary/meta-commentary rather
   // than actual article text. This happens when the LLM outputs a summary of

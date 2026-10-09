@@ -222,11 +222,18 @@ export async function scoreSources(
   let fallbackBatches = 0;
 
   const { llmCacheKey, getCachedLLMResult, setCachedLLMResult } = await import("@/lib/llm-cache");
+  // round-RT2 (score acceleration): batches previously ran strictly serial
+  // (~18 batches × 30-90s each ≈ 4-8 min). Writes go to distinct `scores`
+  // indices and the per-batch LLM calls are independent — a bounded pool of
+  // 3 overlaps the response waits. The rate limiter still paces call STARTS.
+  const { runWithConcurrency } = await import("@/lib/search-enhance");
+  const batchStarts: number[] = [];
+  for (let b = 0; b < refs.length; b += batchSize) batchStarts.push(b);
+  const totalBatches = batchStarts.length;
 
-  for (let b = 0; b < refs.length; b += batchSize) {
+  await runWithConcurrency(batchStarts, 3, async (b: number) => {
     const batch = refs.slice(b, b + batchSize);
     const batchNo = Math.floor(b / batchSize) + 1;
-    const totalBatches = Math.ceil(refs.length / batchSize);
 
     const refList = batch
       .map((r, j) => {
@@ -267,7 +274,7 @@ Respond as STRICT JSON only:
 "ref" is the [n] number. Score EVERY source. Output JSON only.`;
 
     try {
-      const cacheKey = llmCacheKey(prompt, { system, temperature: 0.2, taskType: "score", maxTokens: opts.maxTokens });
+      const cacheKey = await llmCacheKey(prompt, { system, temperature: 0.2, taskType: "score", maxTokens: opts.maxTokens });
       const cached = getCachedLLMResult(cacheKey);
       let raw: string;
       if (cached) {
@@ -326,7 +333,7 @@ Respond as STRICT JSON only:
     opts.onProgress?.(
       `Scored ${Math.min(b + batchSize, refs.length)}/${refs.length} sources — batch ${batchNo}/${totalBatches}${usedFallback ? " (mechanical fallback)" : ""}`
     );
-  }
+  });
 
   // Anyhow-fill (defensive — e.g. empty refs edge)
   for (let i = 0; i < refs.length; i++) {
@@ -439,7 +446,7 @@ Respond as STRICT JSON only:
 
   try {
     const { llmCacheKey, getCachedLLMResult, setCachedLLMResult } = await import("@/lib/llm-cache");
-    const cacheKey = llmCacheKey(prompt, { system, temperature: 0.2, taskType: "curate-smart", maxTokens: opts.maxTokens });
+    const cacheKey = await llmCacheKey(prompt, { system, temperature: 0.2, taskType: "curate-smart", maxTokens: opts.maxTokens });
     const cached = getCachedLLMResult(cacheKey);
     let raw: string;
     if (cached) {

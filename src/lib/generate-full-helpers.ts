@@ -10,7 +10,11 @@
  */
 
 import { chatWithSession } from "@/lib/llm-session";
-import JSON5 from "json5";
+// round-RT2: safeParseJSON is now the canonical shared extractor in
+// lib/llm-json.ts (fences / top-level arrays / JSON5 / repair) — re-exported
+// here for backward compatibility with the ~15 existing import sites.
+export { safeParseJSON } from "@/lib/llm-json";
+import { safeParseJSON as safeParseJSONImpl } from "@/lib/llm-json";
 
 export function ncbiItemsCount(items: any[]): number {
   return items.filter((i) => i.source === "pubmed" || i.source === "ncbi").length;
@@ -408,7 +412,7 @@ Use 1-based indices. Select exactly ${maxCount} references.`;
     // reference list, the curation result is reusable. This saves a 5-15s
     // LLM call on every regeneration.
     const { llmCacheKey, getCachedLLMResult, setCachedLLMResult } = await import("@/lib/llm-cache");
-    const cacheKey = llmCacheKey(prompt, { system, temperature: 0.3, taskType: "curate", maxTokens });
+    const cacheKey = await llmCacheKey(prompt, { system, temperature: 0.3, taskType: "curate", maxTokens });
     const cached = getCachedLLMResult(cacheKey);
     let raw: string;
     if (cached) {
@@ -455,62 +459,10 @@ export function inferFormat(title: string, index: number, total: number): string
   return "background";
 }
 
-export function safeParseJSON(raw: string, fallback: any): any {
-  // Strategy 1: Try to find a JSON code block ```json ... ```
-  // Use greedy match to capture the FULL JSON object inside code block
-  const codeBlockMatch = raw.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
-  if (codeBlockMatch) {
-    try {
-      return JSON.parse(codeBlockMatch[1]);
-    } catch {}
-  }
-
-  // Strategy 1b: Try code block without closing ``` (LLM may have forgotten it)
-  const codeBlockMatch2 = raw.match(/```(?:json)?\s*(\{[\s\S]*\})/);
-  if (codeBlockMatch2) {
-    try {
-      return JSON.parse(codeBlockMatch2[1]);
-    } catch {}
-  }
-
-  // Strategy 2: Greedy match — find the largest { ... } block
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) {
-    console.warn("[safeParseJSON] No JSON found in response (length=" + raw.length + ")");
-    console.warn("[safeParseJSON] First 500 chars: " + raw.slice(0, 500));
-    return fallback;
-  }
-  try {
-    return JSON.parse(match[0]);
-  } catch (e: any) {
-    console.warn("[safeParseJSON] Failed to parse JSON (length=" + match[0].length + ")");
-    console.warn("[safeParseJSON] Error: " + (e?.message || "unknown"));
-    console.warn("[safeParseJSON] First 200 chars: " + match[0].slice(0, 200));
-    console.warn("[safeParseJSON] Last 200 chars: " + match[0].slice(-200));
-
-    // Strategy 3: Tolerant parse — JSON5 handles trailing commas, unquoted
-    // keys, and single-quoted strings CORRECTLY (unlike the regex repair
-    // below, which mangles numeric keys and apostrophes inside values).
-    try {
-      return JSON5.parse(match[0]);
-    } catch {
-      // fall through to the last-ditch regex repair
-    }
-
-    // Strategy 4 (last resort): regex repair of common JSON issues
-    let fixed = match[0]
-      .replace(/,\s*}/g, "}")  // trailing comma
-      .replace(/,\s*]/g, "]")  // trailing comma in array
-      .replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3')  // unquoted keys
-      .replace(/'/g, '"');  // single quotes
-    try {
-      return JSON.parse(fixed);
-    } catch (e2: any) {
-      console.warn("[safeParseJSON] Fix attempt also failed: " + (e2?.message || "unknown"));
-      return fallback;
-    }
-  }
-}
+// round-RT2: the implementation moved to lib/llm-json.ts (see import above).
+// This alias keeps every existing internal call site (`safeParseJSON(...)`)
+// working verbatim while guaranteeing the identical robust extraction logic.
+const safeParseJSON = safeParseJSONImpl;
 
 /**
  * Extract meaningful keywords from a section's title + focus text.

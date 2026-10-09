@@ -38,6 +38,11 @@
 import { webSearch, type WebSearchItem } from "@/lib/ai";
 import { chatWithSession } from "@/lib/llm-session";
 import { splitBodyAndReferences } from "@/lib/citation-audit";
+// round-RT2: robust LLM-JSON extraction — the old bare `JSON.parse` on a
+// greedy-brace slice threw on trailing commas / fenced output from
+// non-GLM review models, degrading every adjudication to an ERROR verdict
+// (which the review layer then treated as ground truth).
+import { parseLlmJson } from "@/lib/llm-json";
 
 /* ------------------------------------------------------------------ *
  * Types
@@ -370,10 +375,11 @@ Adjudicate CHECK ${claim.id}. Respond as STRICT JSON:
     },
   });
 
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("arbiter returned no JSON");
-  const parsed = JSON.parse(match[0]);
-  const check = (parsed.checks || [])[0] || {};
+  // round-RT2: parseLlmJson handles fences / preamble prose / JSON5 shapes;
+  // `ok:false` is the explicit no-JSON error (replaces the old throw).
+  const parsed = parseLlmJson<any>(raw, { checks: [] });
+  if (!parsed.ok) throw new Error("arbiter returned no JSON");
+  const check = (parsed.value.checks || [])[0] || {};
   let verdict = String(check.verdict || "").toUpperCase();
   if (!["VERIFIED", "CONTRADICTED", "UNVERIFIABLE"].includes(verdict)) {
     verdict = "UNVERIFIABLE";

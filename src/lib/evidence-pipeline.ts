@@ -114,7 +114,12 @@ Your ONLY job is to extract claims that each source ACTUALLY makes. You are the 
 
   const allEvidence: EvidenceItem[] = [];
 
-  for (let b = 0; b < limited.length; b += batchSize) {
+  // round-RT2 (evidence acceleration): serial batch loop → bounded pool of 3.
+  // Per-batch failures degrade that batch only (unchanged semantics).
+  const { runWithConcurrency } = await import("@/lib/search-enhance");
+  const batchStarts: number[] = [];
+  for (let b = 0; b < limited.length; b += batchSize) batchStarts.push(b);
+  await runWithConcurrency(batchStarts, 3, async (b: number) => {
     const batch = limited.slice(b, b + batchSize);
     const refList = batch.map((r, j) => {
       const base = formatRefForAnalysis(r, b + j);
@@ -165,7 +170,7 @@ Respond as STRICT JSON only:
     } catch (err: any) {
       console.warn(`[extractEvidenceBank] batch ${Math.floor(b / batchSize) + 1} failed: ${err?.message?.slice(0, 100)}`);
     }
-  }
+  });
 
   return allEvidence;
 }

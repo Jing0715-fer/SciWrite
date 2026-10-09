@@ -28,6 +28,8 @@ import {
   detectSectionFormatViolations,
   enforceUniformSectionFormat,
   normalizeArticleBodySections,
+  looksTruncated,
+  stripResidualCJK,
 } from "@/lib/writing";
 import { generateArticleTitle, retranslateTitleZhWithGlossary } from "@/lib/article-title";
 import {
@@ -45,6 +47,7 @@ import {
   convertKeysToNumbers,
   keyedCitationsAreValid,
   removeCitationsAndRenumber,
+  normalizeCitationKeyVariants,
 } from "@/lib/citation-binding";
 import {
   extractEvidenceBank,
@@ -449,6 +452,14 @@ export async function POST(req: NextRequest) {
         knowledgeCrossrefAdded: 0,
         knowledgePromoted: 0,
         knowledgeUnverified: 0,
+        // round-RT2: coverage-driven gather telemetry
+        gatherCoverage: null as null | {
+          ratio: number;
+          uncovered: number;
+          weak: number;
+          facets: number;
+        },
+        gatherTopUpNewItems: 0,
         // round-42: citation-planning telemetry
         citationPlanned: 0,
         citationCoreCovered: 0,
@@ -906,22 +917,31 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           })
         );
 
-        const ncbiResults: PromiseSettledResult<any>[] = [];
-        for (const q of ncbiQueries) {
-          try {
-            const r = await runWithRetry(q.database, q.query);
-            ncbiResults.push({ status: "fulfilled", value: { ...r, rationale: q.query } });
-            send("step", {
-              step: "gather",
-              status: "progress",
-              message: `[${q.database}] "${q.query.slice(0, 50)}" → ${r.items?.length || 0} results`,
-              resultCount: r.items?.length || 0,
-            });
-          } catch (err: any) {
-            ncbiResults.push({ status: "rejected", reason: err });
-          }
-          await new Promise((r) => setTimeout(r, 250));
-        }
+        // round-RT2 (gather acceleration): NCBI queries previously ran a
+        // strictly serial for-loop with an unconditional 250ms sleep — with
+        // ~8-12 PubMed queries that phase alone cost several minutes. A
+        // bounded pool of 2 keeps well inside NCBI eutils' 3 req/s etiquette
+        // (each query is 2-4 sequential round-trips itself) while overlapping
+        // the response waits.
+        const { runWithConcurrency } = await import("@/lib/search-enhance");
+        const ncbiResults: PromiseSettledResult<any>[] = await runWithConcurrency(
+          ncbiQueries,
+          2,
+          async (q: any) => {
+            try {
+              const r = await runWithRetry(q.database, q.query);
+              send("step", {
+                step: "gather",
+                status: "progress",
+                message: `[${q.database}] "${q.query.slice(0, 50)}" → ${r.items?.length || 0} results`,
+                resultCount: r.items?.length || 0,
+              });
+              return { status: "fulfilled", value: { ...r, rationale: q.query } } as PromiseSettledResult<any>;
+            } catch (err: any) {
+              return { status: "rejected", reason: err } as PromiseSettledResult<any>;
+            }
+          },
+        );
 
         const dbItems: any[] = [];
         for (const r of [...otherResults, ...ncbiResults]) {
@@ -943,60 +963,76 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         // search API (429 storm) or a provider without hosted search. The
         // counts surface in the per-query events and the gather summary.
         const searchFailTally: Record<string, number> = {};
-        for (let wi = 0; wi < webSearchQueries.length; wi++) {
-          try {
-            const outcome = await webSearchDetailed(webSearchQueries[wi], 10);
-            const searchResults = outcome.items;
-            if (outcome.reason) {
-              searchFailTally[outcome.reason] = (searchFailTally[outcome.reason] || 0) + 1;
-              if (outcome.reason === "provider-unavailable") {
-                // Every remaining query would no-op identically — skip the
-                // whole theater (N × 1s sleep) and say why, once.
-                send("step", {
-                  step: "gather",
-                  status: "progress",
-                  message: `Web search unavailable — the selected provider has no hosted search tool. Skipping remaining ${webSearchQueries.length - wi} planned query(ies); gathering continues on database queries.`,
-                });
-                log(`gather: web search disabled for the selected provider — skipping ${webSearchQueries.length - wi} remaining queries`);
-                break;
+        // round-RT2 (gather acceleration): the web-search loop ran strictly
+        // serial with an unconditional 1s sleep per query (6 queries ≈ 6×
+        // (latency+1s)). webSearchDetailed bypasses the LLM rate limiter
+        // entirely (direct hosted-search call), so a pool of 3 overlaps the
+        // response waits without touching any provider limit. A shared
+        // `providerUnavailable` flag reproduces the old early-break: once a
+        // probe says the provider has no hosted search, queued queries
+        // return immediately instead of no-op'ing.
+        let providerUnavailable = false;
+        let providerUnavailableAnnounced = false;
+        await runWithConcurrency(
+          webSearchQueries,
+          3,
+          async (q: string, wi: number) => {
+            if (providerUnavailable) return;
+            try {
+              const outcome = await webSearchDetailed(q, 10);
+              const searchResults = outcome.items;
+              if (outcome.reason) {
+                searchFailTally[outcome.reason] = (searchFailTally[outcome.reason] || 0) + 1;
+                if (outcome.reason === "provider-unavailable") {
+                  providerUnavailable = true;
+                  if (!providerUnavailableAnnounced) {
+                    providerUnavailableAnnounced = true;
+                    send("step", {
+                      step: "gather",
+                      status: "progress",
+                      message: `Web search unavailable — the selected provider has no hosted search tool. Skipping remaining web-search query(ies); gathering continues on database queries.`,
+                    });
+                    log(`gather: web search disabled for the selected provider — skipping remaining queries`);
+                  }
+                  return;
+                }
               }
-            }
-            for (const item of searchResults) {
-              webItems.push({
-                source: "web",
-                externalId: item.url,
-                title: item.name || item.url,
-                // round-35: the search host is NOT an author — storing it as
-                // one put "www.nature.com" in authors for 40 rows of real
-                // project data. extra.host keeps the provenance display.
-                authors: undefined,
-                // round-35: dates like "Jul 15, 2024" sliced to "Jul " —
-                // extract a real 4-digit year or leave empty for the
-                // knowledge pass to fill.
-                year: item.date?.match(/\b(19|20)\d{2}\b/)?.[0] || undefined,
-                url: item.url,
-                abstract: item.snippet,
-                extra: { host: item.host_name, rank: item.rank },
-                queryUsed: "web_search",
-                gatherMethod: "web",
+              for (const item of searchResults) {
+                webItems.push({
+                  source: "web",
+                  externalId: item.url,
+                  title: item.name || item.url,
+                  // round-35: the search host is NOT an author — storing it as
+                  // one put "www.nature.com" in authors for 40 rows of real
+                  // project data. extra.host keeps the provenance display.
+                  authors: undefined,
+                  // round-35: dates like "Jul 15, 2024" sliced to "Jul " —
+                  // extract a real 4-digit year or leave empty for the
+                  // knowledge pass to fill.
+                  year: item.date?.match(/\b(19|20)\d{2}\b/)?.[0] || undefined,
+                  url: item.url,
+                  abstract: item.snippet,
+                  extra: { host: item.host_name, rank: item.rank },
+                  queryUsed: "web_search",
+                  gatherMethod: "web",
+                });
+              }
+              const failNote = outcome.reason
+                ? ` (degraded: ${outcome.reason}${searchFailTally[outcome.reason] > 1 ? ` ×${searchFailTally[outcome.reason]}` : ""})`
+                : "";
+              send("step", {
+                step: "gather",
+                status: "progress",
+                message: `Web search ${wi + 1}/${webSearchQueries.length}: "${q.slice(0, 50)}" → ${searchResults.length} results${failNote}`,
               });
+            } catch (webErr: any) {
+              // FIX (silent-catch telemetry): failed web-search queries were
+              // previously invisible, making "few sources gathered" bugs
+              // impossible to diagnose from the logs.
+              log(`gather: web search "${q.slice(0, 40)}" failed: ${String(webErr?.message ?? webErr).slice(0, 100)}`);
             }
-            const failNote = outcome.reason
-              ? ` (degraded: ${outcome.reason}${searchFailTally[outcome.reason] > 1 ? ` ×${searchFailTally[outcome.reason]}` : ""})`
-              : "";
-            send("step", {
-              step: "gather",
-              status: "progress",
-              message: `Web search ${wi + 1}/${webSearchQueries.length}: "${webSearchQueries[wi].slice(0, 50)}" → ${searchResults.length} results${failNote}`,
-            });
-          } catch (webErr: any) {
-            // FIX (silent-catch telemetry): failed web-search queries were
-            // previously invisible, making "few sources gathered" bugs
-            // impossible to diagnose from the logs.
-            log(`gather: web search "${webSearchQueries[wi].slice(0, 40)}" failed: ${String(webErr?.message ?? webErr).slice(0, 100)}`);
-          }
-          await new Promise((r) => setTimeout(r, 1000));
-        }
+          },
+        );
         const failTotal = Object.values(searchFailTally).reduce((a, b) => a + b, 0);
         if (failTotal > 0) {
           const breakdown = Object.entries(searchFailTally).map(([k, v]) => `${k}×${v}`).join(", ");
@@ -1027,11 +1063,147 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           return score(b) - score(a);
         });
 
+        // ============ STEP 1.2 (round-RT2): coverage-driven top-up ============
+        // The initial gather is one-shot with a fixed query plan designed
+        // BEFORE any results exist. This check measures — mechanically, no
+        // LLM — how well the actually-gathered items cover the topic's
+        // facets, and when a facet is UNCOVERED (0 hits) or WEAK (<3 hits)
+        // it runs ONE bounded, targeted top-up round purpose-built for those
+        // holes instead of blindly re-running more generic queries.
+        // Bounded: ≤1 extra round, ≤4 queries, merged through the same dedup.
+        {
+          const { assessTopicCoverage } = await import("@/lib/gather-coverage");
+          const coverage = assessTopicCoverage(project.topic, uniqueItems);
+          stats.gatherCoverage = {
+            ratio: Math.round(coverage.coverageRatio * 100) / 100,
+            uncovered: coverage.uncovered.length,
+            weak: coverage.weak.length,
+            facets: coverage.facets.length,
+          };
+          const holes = [...coverage.uncovered, ...coverage.weak].slice(0, 5);
+          send("step", {
+            step: "gather",
+            status: "progress",
+            message: `Coverage check: ${coverage.facets.length - coverage.uncovered.length}/${coverage.facets.length} topic facets covered by the gathered pool${coverage.uncovered.length > 0 ? ` — uncovered: ${coverage.uncovered.slice(0, 3).join(", ")}` : ""}.`,
+            coverage: stats.gatherCoverage,
+          });
+          log(
+            `gather: coverage — ratio ${coverage.coverageRatio.toFixed(2)}, uncovered=[${coverage.uncovered.join(", ")}], weak=[${coverage.weak.join(", ")}]`
+          );
+
+          const worthTopUp =
+            holes.length > 0 &&
+            coverage.totalItems >= 10 && // below this the pool is too small to judge
+            !isAborted() &&
+            !clientDisconnected;
+          if (worthTopUp) {
+            send("step", {
+              step: "gather",
+              status: "progress",
+              message: `Coverage-driven top-up: running targeted queries for ${holes.length} uncovered/weak facet(s)...`,
+            });
+            try {
+              // Targeted queries: one LLM call restricted to the holes; a
+              // mechanical fallback (facet + "review" / "mechanism") covers
+              // the parse-failure path so a weak model still gets its top-up.
+              const topUpPrompt = `TOPIC: ${project.topic}
+FIELD: ${project.field || "life sciences"}
+
+The literature pool gathered so far does NOT adequately cover these facets of the topic:
+${holes.map((h, i) => `${i + 1}. ${h}`).join("\n")}
+
+Design up to 4 targeted search queries that would find literature specifically about these uncovered facets. Prefer precise technical phrasing from the field.
+
+Respond as STRICT JSON only:
+{ "queries": [ { "database": "pubmed", "query": "..." } ] }
+Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queries under 12 words. Output JSON only.`;
+              const topUpRaw = await chatWithSession(projectId, topUpPrompt, {
+                system: "You are a search strategist designing precise literature queries for a specific evidence gap.",
+                temperature: 0.3,
+                taskType: "gather",
+                maxTokens,
+                metadata: { step: "gather", sub: "coverageTopUp" },
+              });
+              const { safeParseJSON } = await import("@/lib/llm-json");
+              const topUpParsed = safeParseJSON(topUpRaw, { queries: [] });
+              let topUpQueries: { database: string; query: string }[] = (
+                topUpParsed.queries || []
+              )
+                .filter(
+                  (q: any) =>
+                    q?.query &&
+                    (q.database === "pubmed" || q.database === "web")
+                )
+                .slice(0, 4);
+              if (topUpQueries.length === 0) {
+                topUpQueries = holes.slice(0, 3).map((h) => ({
+                  database: "pubmed",
+                  query: `${h} review`,
+                }));
+              }
+
+              let topUpItems = 0;
+              await runWithConcurrency(topUpQueries, 2, async (q: any) => {
+                try {
+                  if (q.database === "pubmed") {
+                    const r = await runWithRetry("pubmed", q.query);
+                    for (const item of r.items || []) {
+                      const dk = `pubmed:${item.externalId || item.url}`;
+                      if (seenExternalIds.has(dk)) continue;
+                      seenExternalIds.add(dk);
+                      uniqueItems.push({ ...item, queryUsed: q.query, gatherMethod: "database" });
+                      topUpItems++;
+                    }
+                    send("step", {
+                      step: "gather",
+                      status: "progress",
+                      message: `Top-up [pubmed] "${q.query.slice(0, 50)}" → ${r.items?.length || 0} results`,
+                    });
+                  } else {
+                    const outcome = await webSearchDetailed(q.query, 10);
+                    if (outcome.reason === "provider-unavailable") return;
+                    for (const item of outcome.items) {
+                      const dk = `web:${item.url}`;
+                      if (seenExternalIds.has(dk)) continue;
+                      seenExternalIds.add(dk);
+                      uniqueItems.push({
+                        source: "web",
+                        externalId: item.url,
+                        title: item.name || item.url,
+                        authors: undefined,
+                        year: item.date?.match(/\b(19|20)\d{2}\b/)?.[0] || undefined,
+                        url: item.url,
+                        abstract: item.snippet,
+                        extra: { host: item.host_name, rank: item.rank },
+                        queryUsed: q.query,
+                        gatherMethod: "web",
+                      });
+                      topUpItems++;
+                    }
+                  }
+                } catch (topUpErr: any) {
+                  log(`gather: top-up query "${q.query.slice(0, 40)}" failed: ${String(topUpErr?.message ?? topUpErr).slice(0, 80)}`);
+                }
+              });
+              stats.gatherTopUpNewItems = topUpItems;
+              log(`gather: coverage top-up merged ${topUpItems} new unique item(s) from ${topUpQueries.length} targeted query(ies)`);
+            } catch (topUpOuterErr: any) {
+              // Non-fatal by design: the pool from the initial gather stands.
+              log(`gather: coverage top-up skipped — ${String(topUpOuterErr?.message ?? topUpOuterErr).slice(0, 100)}`);
+            }
+          }
+        }
+
         // (savedDataSources / savedReferences are declared in the round-61
         // hoisted block above — populated here during gather, or from the DB
         // on resume — the complete-event stats read .length in both cases.)
         let skippedTitleless = 0;
-        for (const item of uniqueItems) {
+        // round-RT2 (gather acceleration): the save loop was a strictly
+        // serial await chain (~2 awaits × 272 items). SQLite serializes the
+        // writes internally (busy_timeout=5000 absorbs contention) so a
+        // chunked pool of 8 overlaps the per-write round-trip overhead while
+        // keeping error logging / junk-guard semantics identical.
+        const savableItems = uniqueItems.filter((item: any) => {
           // round-51 junk guard: an item with no real title (missing, or just
           // the external ID — the RCSB metadata-fetch failure fallback) is
           // unverifiable and un-citable; saving it floods the knowledge panel
@@ -1040,8 +1212,11 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           if (!itemTitle || itemTitle === String(item.externalId || "")) {
             skippedTitleless++;
             log(`gather: skipped titleless item ${item.source}:${item.externalId || item.url || "?"}`);
-            continue;
+            return false;
           }
+          return true;
+        });
+        await runWithConcurrency(savableItems, 8, async (item: any) => {
           try {
             const ds = await db.dataSource.create({
               data: {
@@ -1099,7 +1274,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           } catch (dsErr: any) {
             log(`gather: data source create failed for "${String(item.title).slice(0, 50)}": ${String(dsErr?.message ?? dsErr).slice(0, 100)}`);
           }
-        }
+        });
         if (skippedTitleless > 0) {
           log(`gather: junk guard skipped ${skippedTitleless} titleless item(s) — not saved`);
         }
@@ -1984,6 +2159,39 @@ Output JSON only.`;
               terminalSent = true;
               break;
             }
+            // round-RT2 (agent-controlled gathering — marginal-yield stop):
+            // before committing a second round, measure whether round 1
+            // actually moved the needle. A round that merged < 2 refs or left
+            // coverage essentially unchanged says the same queries would
+            // re-run the same misses — stop instead of burning budget.
+            {
+              const { assessTopicCoverage, shouldContinueGathering } = await import("@/lib/gather-coverage");
+              const cov = assessTopicCoverage(
+                project.topic,
+                curatedRefs.map((r: any) => ({ title: r.title, abstract: r.abstract })),
+              );
+              const verdict = shouldContinueGathering({
+                assessment: cov,
+                newRefsLastRound: newRefs.length,
+                poolSize: curatedRefs.length,
+                poolCeiling: GAP_AGENT_POOL_CEILING,
+              });
+              if (!verdict.continue) {
+                stats.gapAgent = { gaps: totalGaps, queries: totalQueries, newRefs: totalMerged };
+                send("step", {
+                  step: "gapAgent",
+                  status: "done",
+                  gapsFound: totalGaps,
+                  queriesRun: totalQueries,
+                  newRefs: totalMerged,
+                  message: `Gap agent: stopping after round ${gapRound} — ${verdict.reason} (${totalMerged} reference(s) merged).`,
+                  detail: mergedTitles.join("\n"),
+                });
+                log(`gapAgent: early stop after round ${gapRound} — ${verdict.reason}`);
+                terminalSent = true;
+                break;
+              }
+            }
             send("step", {
               step: "gapAgent",
               status: "progress",
@@ -2413,6 +2621,12 @@ Scientific precision rules (round-64):
 
           // Sanitize preambles/postscripts/meta-commentary
           chunkContent = sanitizeSectionContent(chunkContent);
+          // round-RT2 (multi-model keys): weak models emit near-miss marker
+          // forms ([R5], {{R1-3}}, {{R1;R2}}, ｛｛R5｝｝, {{{R5}}}) that
+          // previously leaked as literal junk text AND evaded the zero-cite
+          // gate. Normalize them to canonical {{Rn}} BEFORE every gate so
+          // both the gate counts and convertKeysToNumbers see clean keys.
+          chunkContent = normalizeCitationKeyVariants(chunkContent).content;
 
           // ---- ★ VALIDATION GATE (deepseek-harness-style step validation) ----
           // If the output contains raw numeric [n] markers, malformed keys,
@@ -2444,14 +2658,19 @@ Scientific precision rules (round-64):
           // enforceUniformSectionFormat below strips whatever survives.
           const fmtViolations = detectSectionFormatViolations(chunkContent);
           const formatGate = fmtViolations.total > 0;
-          if (zeroCite || trailingGate || uncitedGate || cjkGate || formatGate || (!gate.ok && (gate.rawNumericMarkers > 0 || gate.outOfRangeKeys > 0))) {
+          // round-RT2 (multi-model truncation): a section cut mid-generation
+          // (max_tokens cliff / hard timeout — the classic non-GLM symptom)
+          // renders as a broken tail. Retry once; adoption still requires
+          // the retry to look complete.
+          const truncated = looksTruncated(chunkContent);
+          if (zeroCite || trailingGate || uncitedGate || cjkGate || formatGate || truncated || (!gate.ok && (gate.rawNumericMarkers > 0 || gate.outOfRangeKeys > 0))) {
             stats.gateRetries++;
             if (zeroCite) stats.zeroCitationRetries++;
             if (trailingGate) stats.trailingUncitedRetries++;
             if (uncitedGate) stats.uncitedAssertionRetries = (stats.uncitedAssertionRetries || 0) + 1;
             if (cjkGate) stats.cjkLeakRetries = (stats.cjkLeakRetries || 0) + 1;
             if (formatGate) stats.formatRetries = (stats.formatRetries || 0) + 1;
-            log(`generate: section ${sectionNum} FAILED validation gate (zeroCite=${zeroCite}, trailing=${trailingGate ? `${trailingBlock}w` : "no"}, uncitedAssert=${uncitedGate ? uncitedAssertions.length : 0}, cjkLeak=${cjkLeak}, fmt=${formatGate ? `${fmtViolations.internalHeadings}h/${fmtViolations.listLines}l/${fmtViolations.tableRows}t/${fmtViolations.hrLines}hr` : "clean"}, raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
+            log(`generate: section ${sectionNum} FAILED validation gate (zeroCite=${zeroCite}, trailing=${trailingGate ? `${trailingBlock}w` : "no"}, uncitedAssert=${uncitedGate ? uncitedAssertions.length : 0}, cjkLeak=${cjkLeak}, fmt=${formatGate ? `${fmtViolations.internalHeadings}h/${fmtViolations.listLines}l/${fmtViolations.tableRows}t/${fmtViolations.hrLines}hr` : "clean"}, truncated=${truncated}, raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
             send("step", {
               step: "generate",
               status: "progress",
@@ -2467,7 +2686,9 @@ Scientific precision rules (round-64):
                       ? `Section ${sectionNum}: validation gate triggered (${cjkLeak} Chinese characters leaked into the English text) — retrying with language correction...`
                       : formatGate
                         ? `Section ${sectionNum}: validation gate triggered (${fmtViolations.internalHeadings} heading(s), ${fmtViolations.listLines} list line(s), ${fmtViolations.tableRows} table row(s) — template is plain prose) — retrying with format correction...`
-                        : `Section ${sectionNum}: validation gate triggered (raw numeric markers: ${gate.rawNumericMarkers}) — retrying with corrective instruction...`,
+                        : truncated
+                          ? `Section ${sectionNum}: output looks TRUNCATED (no terminal punctuation, dangling key) — retrying with completion instruction...`
+                          : `Section ${sectionNum}: validation gate triggered (raw numeric markers: ${gate.rawNumericMarkers}) — retrying with corrective instruction...`,
             });
             try {
               const retryPrompt = prompt + (zeroCite
@@ -2487,7 +2708,11 @@ ${uncitedAssertions.map((s: string, j: number) => `${j + 1}. "${s}"`).join("\n")
 Every factual assertion of this kind MUST cite the listed reference that supports it ({{Rn}} keys), or be removed/reframed as explicitly open. Do NOT leave checkable claims (specific quantities, existence claims, first-discovery claims) uncited anywhere in the section — including mid-paragraph. Rewrite the SAME section. Output the corrected section only.`
                     : `
 
-CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] or [2], or invalid keys. Rewrite the SAME section content using ONLY {{Rn}} citation keys from the list. Every citation must be a {{Rn}} key. Output the corrected section only.`) + (cjkGate
+CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] or [2], or invalid keys. Rewrite the SAME section content using ONLY {{Rn}} citation keys from the list. Every citation must be a {{Rn}} key. Output the corrected section only.`) + (truncated && !zeroCite && !trailingGate && !uncitedGate
+                ? `
+
+COMPLETION: your previous output appears cut off mid-sentence (it never reached terminal punctuation). Write the COMPLETE section — 2-4 full paragraphs ending in a properly finished sentence. Output the corrected section only.`
+                : "") + (cjkGate
                 ? `\n\nLANGUAGE CORRECTION: your previous output contained ${cjkLeak} Chinese characters. This article is written in ENGLISH ONLY — rewrite the section with ZERO Chinese characters (translate any Chinese terms into standard English scientific terminology, and use ASCII punctuation).`
                 : "") + (formatGate
                 ? `\n\nFORMAT CORRECTION: your previous output violated the uniform section template. Detected: ${fmtViolations.internalHeadings > 0 ? `${fmtViolations.internalHeadings} internal markdown heading line(s) ` : ""}${fmtViolations.listLines > 0 ? `${fmtViolations.listLines} bullet/numbered list line(s) ` : ""}${fmtViolations.tableRows > 0 ? `${fmtViolations.tableRows} table row(s) ` : ""}${fmtViolations.hrLines > 0 ? `${fmtViolations.hrLines} horizontal rule(s) ` : ""}. Rewrite the SAME section as 2-4 cohesive paragraphs of PLAIN PROSE ONLY: no markdown headings, no bullet or numbered lists (fold list content into flowing sentences), no tables, no horizontal rules. Inline *italics* and **bold** remain allowed. Output the corrected section only.`
@@ -2499,7 +2724,9 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
                 maxTokens,
                 metadata: { step: "generate", section: sectionNum, retry: true, zeroCite },
               });
-              const sanitizedRetry = sanitizeSectionContent(retryContent);
+              const sanitizedRetry = normalizeCitationKeyVariants(
+                sanitizeSectionContent(retryContent)
+              ).content;
               const retryGate = keyedCitationsAreValid(sanitizedRetry, sectionRefs.length);
               const retryKeyed = (sanitizedRetry.match(/\{\{R\d+\}\}/g) || []).length;
               const retryTrailing = trailingUncitedClaimWords(sanitizedRetry);
@@ -2522,6 +2749,9 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
               // round-cs-7: same for the format dimension — fewer structural
               // violations is a strictly better section.
               if (!improved && formatGate && retryFmt.total < fmtViolations.total) improved = true;
+              // round-RT2: a retry that looks COMPLETE beats a truncated
+              // original even when other dimensions are unchanged.
+              if (!improved && truncated && !looksTruncated(sanitizedRetry)) improved = true;
               if (improved) {
                 chunkContent = sanitizedRetry;
                 log(`generate: section ${sectionNum} retry improved (keyed ${keyedCount}→${retryKeyed}, raw ${gate.rawNumericMarkers}→${retryGate.rawNumericMarkers}, cjk ${cjkLeak}→${retryCjk}, fmt ${fmtViolations.total}→${retryFmt.total})`);
@@ -2541,6 +2771,17 @@ CORRECTION: your previous output contained FORBIDDEN numeric citations like [1] 
           // headings/lists survived the prompt + retry are stripped/flattened
           // here, so EVERY section lands in the DB as plain prose.
           chunkContent = enforceUniformSectionFormat(chunkContent);
+          // round-RT2 (CJK final backstop): the cjkGate retry adopts only
+          // when strictly better, so a stubborn weak model can still leave
+          // Han characters in the EN body. Strip them unconditionally here —
+          // lines reduced to <8 ASCII chars are dropped.
+          {
+            const cjkStripped = stripResidualCJK(chunkContent);
+            if (cjkStripped.removed > 0) {
+              log(`generate: section ${sectionNum} CJK backstop removed ${cjkStripped.removed} residual Han character(s)`);
+              chunkContent = cjkStripped.content;
+            }
+          }
 
           // ---- ★ MECHANICAL key→number conversion (no LLM numbering) ----
           const converted = convertKeysToNumbers(chunkContent, sectionRefs);

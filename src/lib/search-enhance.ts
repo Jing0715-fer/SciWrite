@@ -145,7 +145,7 @@ export async function expandQueryWithLlm(query: string, context?: string): Promi
     .filter(Boolean)
     .join("\n");
 
-  const key = llmCacheKey(prompt, { taskType: "query-expand" });
+  const key = await llmCacheKey(prompt, { taskType: "query-expand" });
   const cached = getCachedLLMResult(key);
   if (Array.isArray(cached)) return cached as string[];
 
@@ -322,7 +322,7 @@ export async function filterItemsByRelevance(
       `- Do not drop entries for studying the target in a different organism.\n\n` +
       `Respond ONLY with JSON: {"keep": [numbers], "drop": [{"i": number, "reason": "short reason"}]}`;
 
-    const key = llmCacheKey(prompt, { taskType: "result-filter" });
+    const key = await llmCacheKey(prompt, { taskType: "result-filter" });
     let parsed = getCachedLLMResult(key);
     let fromCache = parsed != null;
     if (!parsed) {

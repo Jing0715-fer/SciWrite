@@ -114,14 +114,8 @@ Output JSON only. Ensure each paragraph builds logically on the previous.`;
   return new Response(stream, { headers: SSE_HEADERS });
 }
 
-function safeParseJSON(raw: string, fallback: any): any {
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return fallback;
-  try {
-    return JSON.parse(match[0]);
-  } catch {
-    return fallback;
-  }
-}
+// round-RT2: local weak copy replaced by the canonical shared extractor
+// (fences / top-level arrays / JSON5 / mechanical repair) — see lib/llm-json.ts.
+import { safeParseJSON } from "@/lib/llm-json";
 
 export { formatLabel, scenarioLabel };

@@ -7,8 +7,13 @@
  */
 
 /** Verification passes batch citations in groups of this size. Larger batches
- *  risk LLM output truncation; smaller ones add round-trips. */
-export const VERIFY_BATCH_SIZE = 10;
+ *  risk LLM output truncation; smaller ones add round-trips.
+ *  round-RT2 (verify acceleration): 10 → 20. The measured verify stage was
+ *  470s of a 12.4-min run (IMPROVEMENT_PLAN A3): each batch is one LLM
+ *  round-trip, and the (sentence, citation, title/abstract) tuples fit
+ *  comfortably ~20 per prompt under the token ceiling — halving the call
+ *  count with no accuracy change. */
+export const VERIFY_BATCH_SIZE = 20;
 
 /** A citation is removed from the article when the adversarial verifier's
  *  confidence (0-100) that it is unsupported is >= this threshold. */

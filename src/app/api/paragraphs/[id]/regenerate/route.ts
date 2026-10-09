@@ -2,7 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chatStream } from "@/lib/ai";
 import { saveSessionMessage } from "@/lib/llm-session";
-import { countWords, sanitizeSectionContent, renumberByAppearance } from "@/lib/writing";
+import {
+  countWords,
+  sanitizeSectionContent,
+  renumberByAppearance,
+  normalizeAsciiPunctuation,
+  normalizeSectionMarkdown,
+  enforceUniformSectionFormat,
+  stripResidualCJK,
+  looksTruncated,
+} from "@/lib/writing";
 import {
   sanitizeOutOfRangeCitations,
   validateCitationsInline,
@@ -149,6 +158,27 @@ Compose ONE cohesive section without markdown headers. Do NOT add any preamble, 
 
     // Sanitize content — remove preambles, postscripts, meta-commentary
     newContent = sanitizeSectionContent(newContent);
+    // round-RT2 (multi-model format hardening): regenerate previously ran
+    // ONLY sanitizeSectionContent — no ASCII punctuation normalization, no
+    // markdown normalization, no uniform-template enforcement, no CJK
+    // backstop. A weaker model than GLM-4.6 left fullwidth punctuation,
+    // internal headings, bullet lists and Chinese fragments in regenerated
+    // paragraphs (the exact "switching models breaks the format" symptom).
+    // The v2 generate loop has run this gauntlet since round-cs-6/7; now
+    // every user-triggered regeneration gets the same guarantees.
+    newContent = normalizeAsciiPunctuation(newContent);
+    newContent = normalizeSectionMarkdown(newContent);
+    newContent = enforceUniformSectionFormat(newContent);
+    {
+      const cjkStripped = stripResidualCJK(newContent);
+      if (cjkStripped.removed > 0) {
+        console.warn(`[regenerate] CJK backstop removed ${cjkStripped.removed} residual Han character(s)`);
+        newContent = cjkStripped.content;
+      }
+    }
+    if (looksTruncated(newContent)) {
+      console.warn("[regenerate] output looks truncated (no terminal punctuation on a long section)");
+    }
 
     if (!newContent || newContent.length < 50) {
       return NextResponse.json(

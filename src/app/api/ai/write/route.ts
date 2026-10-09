@@ -192,6 +192,23 @@ export async function POST(req: NextRequest) {
       // strips it at the adapter layer; strip again here so this route stays
       // safe even if a future code path returns raw provider output.
       content = stripReasoning(content);
+      // round-RT2 (multi-model format hardening): this route had NO output
+      // normalization beyond stripReasoning — weak models' fullwidth
+      // punctuation, internal headings and stray lists landed directly in
+      // paragraph.content. Apply the same format gauntlet the v2 generate
+      // loop runs (numeric-citation routes get the format layers only).
+      {
+        const { normalizeAsciiPunctuation, normalizeSectionMarkdown, enforceUniformSectionFormat, stripResidualCJK } = await import("@/lib/writing");
+        let cleaned = normalizeAsciiPunctuation(content);
+        cleaned = normalizeSectionMarkdown(cleaned);
+        cleaned = enforceUniformSectionFormat(cleaned);
+        const cjkStripped = stripResidualCJK(cleaned);
+        if (cjkStripped.removed > 0) {
+          send("step", { status: "progress", message: `Removed ${cjkStripped.removed} residual non-English character(s).` });
+          cleaned = cjkStripped.content;
+        }
+        content = cleaned;
+      }
 
       send("step", { status: "progress", message: "Sanitizing out-of-range citations..." });
 

@@ -354,15 +354,9 @@ async function runVerify(body: GatherBody, sendLog: (msg: string) => void) {
   };
 }
 
-function safeParseJSON(raw: string, fallback: any): any {
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return fallback;
-  try {
-    return JSON.parse(match[0]);
-  } catch {
-    return fallback;
-  }
-}
+// round-RT2: local weak copy replaced by the canonical shared extractor
+// (fences / top-level arrays / JSON5 / mechanical repair) — see lib/llm-json.ts.
+import { safeParseJSON } from "@/lib/llm-json";
 
 // Fallback for when projectId is not available (no session context)
 import { chat as _chat } from "@/lib/ai";

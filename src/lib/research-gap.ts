@@ -33,7 +33,7 @@
 import { chatWithSession } from "@/lib/llm-session";
 import { webSearch } from "@/lib/ai";
 import { queryDatabase } from "@/lib/databases";
-import { safeParseJSON } from "@/lib/generate-full-helpers";
+import { parseLlmJson } from "@/lib/llm-json";
 import { logger } from "@/lib/logger";
 import { isAborted } from "@/lib/rate-limiter";
 
@@ -47,6 +47,16 @@ export const GAP_AGENT_MAX_NEW_REFS = 6;
 export const GAP_AGENT_POOL_CEILING = 40;
 /** Web results per individual web search call. */
 const GAP_WEB_RESULT_COUNT = 8;
+
+/** round-RT2: generic-corpus stopwords for the keep-0 mechanical ranker. */
+const GAP_STOPWORDS = new Set([
+  "this", "that", "with", "from", "have", "been", "were", "which", "their",
+  "these", "those", "about", "would", "could", "should", "between", "into",
+  "such", "than", "then", "them", "there", "where", "while", "also", "both",
+  "each", "more", "most", "other", "over", "some", "such", "only", "same",
+  "very", "just", "does", "doing", "when", "what", "will", "shall", "using",
+  "used", "study", "studies", "paper", "papers", "review", "article",
+]);
 
 export interface GapQuery {
   database: "pubmed" | "web";
@@ -185,7 +195,7 @@ sectionIndex is 0-based. Output JSON only. If every section is adequately covere
       maxTokens: opts.maxTokens,
       metadata: { step: "gapAgent", sub: "identify" },
     });
-    const parsed = safeParseJSON(raw, { gaps: [] });
+    const parsed = parseLlmJson<any>(raw, { gaps: [] }).value;
     for (const g of parsed.gaps || []) {
       if (gaps.length >= GAP_AGENT_MAX_GAPS) break;
       const idx = parseInt(String(g.sectionIndex), 10);
@@ -369,9 +379,9 @@ Output JSON only.`,
         metadata: { step: "gapAgent", sub: "relevanceGate" },
       },
     );
-    const gateParsed = safeParseJSON(gateRaw, { keep: [] });
+    const gateResult = parseLlmJson<any>(gateRaw, { keep: [] });
     const keepSet = new Set(
-      (Array.isArray(gateParsed.keep) ? gateParsed.keep : [])
+      (Array.isArray(gateResult.value.keep) ? gateResult.value.keep : [])
         .map((k: any) => String(k).trim().toUpperCase())
         .filter((k: string) => /^C\d+$/.test(k)),
     );
@@ -381,10 +391,44 @@ Output JSON only.`,
       gated.sort((a, b) => (a.source === "pubmed" ? -1 : 1) - (b.source === "pubmed" ? -1 : 1));
       return { candidates: gated.slice(0, maxNewRefs), queriesRun: queriesRun.length, rejected };
     }
-    // Gate kept nothing: trust PubMed candidates only (deterministic fallback).
-    const pubmedOnly = candidates.filter((c) => c.source === "pubmed").slice(0, maxNewRefs);
-    rejected.push(`relevance gate kept 0 of ${candidates.length} — fell back to ${pubmedOnly.length} PubMed candidate(s)`);
-    return { candidates: pubmedOnly, queriesRun: queriesRun.length, rejected };
+    // ── round-RT2 (keep-0 fallback intelligence): the old behavior blindly
+    // admitted every PubMed candidate whenever the gate kept nothing, which
+    // conflated two different situations: (a) the gate GENUINELY rejected
+    // all candidates as off-topic, and we admitted them anyway — the LLM's
+    // judgment was silently overridden; (b) the gate's JSON failed to parse
+    // (weak review model wrapped it in prose) and `{keep:[]}` was the
+    // FALLBACK, not a verdict. Now:
+    //   • parse failure (gateResult.ok === false) → old PubMed-candidate
+    //     fallback (database provenance is a reasonable proxy when the gate
+    //     never actually spoke);
+    //   • genuine keep-0 → mechanical topical ranking of ALL candidates
+    //     against the gap texts; only candidates with real keyword overlap
+    //     with a named gap survive (PubMed preferred on ties).
+    if (!gateResult.ok) {
+      const pubmedOnly = candidates.filter((c) => c.source === "pubmed").slice(0, maxNewRefs);
+      rejected.push(
+        `relevance gate response unparseable — fell back to ${pubmedOnly.length} PubMed candidate(s)`,
+      );
+      return { candidates: pubmedOnly, queriesRun: queriesRun.length, rejected };
+    }
+    const gapText = gaps.map((g) => `${g.gap} ${g.sectionTitle}`).join(" ").toLowerCase();
+    const gapKeywords = new Set(
+      gapText.split(/[^a-z0-9+]+/).filter((w: string) => w.length > 3 && !GAP_STOPWORDS.has(w))
+    );
+    const ranked = candidates
+      .map((c) => {
+        const text = `${c.title || ""} ${String(c.abstract || "")}`.toLowerCase();
+        let overlap = 0;
+        for (const w of gapKeywords) if (text.includes(w)) overlap++;
+        return { c, overlap, pubmed: c.source === "pubmed" ? 1 : 0 };
+      })
+      .filter((r) => r.overlap >= 2) // ≥2 distinct gap keywords to count as on-topic
+      .sort((a, b) => b.overlap - a.overlap || b.pubmed - a.pubmed);
+    const survivors = ranked.slice(0, Math.min(3, maxNewRefs)).map((r) => r.c);
+    rejected.push(
+      `relevance gate kept 0 of ${candidates.length} — mechanical ranking kept ${survivors.length} topical candidate(s) (≥2 gap keywords)`,
+    );
+    return { candidates: survivors, queriesRun: queriesRun.length, rejected };
   } catch (err: any) {
     const pubmedOnly = candidates.filter((c) => c.source === "pubmed").slice(0, maxNewRefs);
     rejected.push(`relevance gate failed: ${String(err?.message ?? err).slice(0, 80)} — fell back to ${pubmedOnly.length} PubMed candidate(s)`);

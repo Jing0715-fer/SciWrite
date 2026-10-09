@@ -44,14 +44,45 @@ function hashString(s: string): string {
  * Two calls with the same key will produce the same LLM response (assuming
  * the LLM is deterministic at temperature 0, which is approximately true
  * for low temperatures).
+ *
+ * round-RT2 (multi-model hardening): the key now includes the CURRENT
+ * provider + model selection for the call's role. Previously a model
+ * switch replayed the PREVIOUS model's cached JSON for 30 minutes
+ * ("switching models changed nothing") and mixed-model artifacts could
+ * leak into one run. The role is derived from taskType the same way
+ * llm-session.ts derives it; dynamic import keeps this module's import
+ * graph free of a static server-only dependency.
  */
-function buildCacheKey(prompt: string, opts: Record<string, any>): string {
+async function buildCacheKeyWithSelection(
+  prompt: string,
+  opts: Record<string, any>,
+): Promise<string> {
+  const taskType = String(opts.taskType || "");
+  const role =
+    taskType === "review" ||
+    taskType === "verify" ||
+    taskType === "adversarial-review" ||
+    taskType === "fact-check" ||
+    taskType === "topicality"
+      ? "review"
+      : "generate";
+  let providerTag = "zai-sdk";
+  try {
+    const { getSelectedProvider, getSelectedModel } = await import("@/lib/llm-selection");
+    const provider = getSelectedProvider(role);
+    const model = getSelectedModel(role);
+    providerTag = `${provider || "zai-sdk"}/${model || ""}`;
+  } catch {
+    // selection store unavailable (fresh boot / non-server context) — the
+    // default tag applies.
+  }
   const keyParts = [
     prompt,
     opts.system || "",
     String(opts.temperature ?? ""),
     String(opts.maxTokens ?? ""),
-    String(opts.taskType || ""),
+    taskType,
+    providerTag,
   ];
   return hashString(keyParts.join("|"));
 }
@@ -95,9 +126,16 @@ export function setCachedLLMResult(key: string, result: any): void {
 /**
  * Build a cache key for an LLM call. Exported so callers can log the key
  * for debugging ("cache hit" vs "cache miss").
+ *
+ * round-RT2: async so the key can include the current provider/model
+ * selection (see buildCacheKeyWithSelection). Returns the same shape as
+ * before for call sites that haven't been awaited yet.
  */
-export function llmCacheKey(prompt: string, opts: Record<string, any>): string {
-  return buildCacheKey(prompt, opts);
+export async function llmCacheKey(
+  prompt: string,
+  opts: Record<string, any>,
+): Promise<string> {
+  return buildCacheKeyWithSelection(prompt, opts);
 }
 
 /**

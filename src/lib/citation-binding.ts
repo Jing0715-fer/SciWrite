@@ -42,6 +42,97 @@ export const CITE_KEY_RE = /\{\{\s*R(\d{1,3})\s*(?:,\s*R(\d{1,3})\s*)*\}\}/g;
  */
 const CITE_KEY_LOOSE_RE = /\{\{[\s]*[rR]?[\s]*\d{1,3}[\s]*(?:,[\s]*[rR]?[\s]*\d{1,3}[\s]*)*\}\}/g;
 
+/**
+ * round-RT2 (multi-model format hardening): weak / non-GLM models emit a
+ * whole zoo of near-miss citation markers that previously survived EVERY
+ * gate as literal junk text in the final article (and never counted toward
+ * the zero-citation gate). All of these are normalized to canonical
+ * {{Rn}} form BEFORE conversion:
+ *
+ *   [R5] / [R5,R6]        — square bracket + R prefix (classic DeepSeek /
+ *                            GPT-style mutation of the {{Rn}} contract)
+ *   {{R1-3}} / {{R1–3}}   — range keys (expand to {{R1,R2,R3}}, capped at 12
+ *                            to guard against {{R1-999}})
+ *   {{R1;R2}}             — semicolon separators
+ *   ｛｛R5｝｝               — fullwidth braces from CJK-context models
+ *   {{{R5}}}              — tripled braces (leftover from escaping)
+ */
+const SQUARE_R_KEY_RE = /\[\s*R(\d{1,3})\s*(?:[,;]\s*R(\d{1,3})\s*)*\]/g;
+const FULLWIDTH_KEY_RE = /｛｛\s*([rR]?\s*\d{1,3}(?:\s*[,;]\s*[rR]?\s*\d{1,3})*)\s*｝｝/g;
+const TRIPLE_KEY_RE = /\{\{\{\s*([rR]?\s*\d{1,3}(?:\s*[,;]\s*[rR]?\s*\d{1,3})*)\s*\}\}\}/g;
+const KEY_RANGE_RE = /\{\{\s*R(\d{1,3})\s*[-–]\s*R?(\d{1,3})\s*\}\}/g;
+
+/**
+ * Normalize the full zoo of near-miss marker forms to canonical {{Rn}}
+ * groups. Pure string function — safe to run at every save boundary.
+ * Order matters: fullwidth/tripled braces first, then ranges, then
+ * semicolon lists, then square-bracket forms.
+ */
+export function normalizeCitationKeyVariants(content: string): {
+  content: string;
+  repaired: number;
+} {
+  let working = content;
+  let repaired = 0;
+
+  // 0a. Fullwidth braces ｛｛R5｝｝ → {{R5}} (dedicated regex — never touches
+  // normal ASCII keys).
+  working = working.replace(FULLWIDTH_KEY_RE, (match, inner: string) => {
+    const nums = inner.match(/\d{1,3}/g);
+    if (!nums || nums.length === 0) return match;
+    repaired++;
+    const rs = nums.map((n) => `R${parseInt(n, 10)}`);
+    return `{{${rs.join(",")}}}`;
+  });
+
+  // 0b. Tripled braces {{{R5}}} → {{R5}} (run BEFORE range handling so
+  // {{{R1-3}}} normalizes to {{{...}}} first, then the range form).
+  working = working.replace(TRIPLE_KEY_RE, (match, inner: string) => {
+    const nums = inner.match(/\d{1,3}/g);
+    if (!nums || nums.length === 0) return match;
+    repaired++;
+    const rs = nums.map((n) => `R${parseInt(n, 10)}`);
+    return `{{${rs.join(",")}}}`;
+  });
+
+  // 0c. Range keys {{R1-3}} → {{R1,R2,R3}} (cap span at 12).
+  working = working.replace(KEY_RANGE_RE, (match, loS: string, hiS: string) => {
+    const lo = parseInt(loS, 10);
+    const hi = parseInt(hiS, 10);
+    if (isNaN(lo) || isNaN(hi) || hi < lo) return match;
+    const cappedHi = Math.min(hi, lo + 11);
+    if (cappedHi - lo + 1 < 2) return match;
+    repaired++;
+    const rs: string[] = [];
+    for (let n = lo; n <= cappedHi; n++) rs.push(`R${n}`);
+    return `{{${rs.join(",")}}}`;
+  });
+
+  // 0d. Semicolon lists {{R1;R2}} → {{R1,R2}} — only fires when a semicolon
+  // is present, so normal comma lists are untouched.
+  working = working.replace(/\{\{\s*([rR]?\d{1,3}(?:\s*[;,]\s*[rR]?\d{1,3})*)\s*\}\}/g, (match, inner: string) => {
+    if (!inner.includes(";")) return match;
+    const nums = inner.match(/\d{1,3}/g);
+    if (!nums || nums.length === 0) return match;
+    repaired++;
+    const rs = nums.map((n) => `R${parseInt(n, 10)}`);
+    return `{{${rs.join(",")}}}`;
+  });
+
+  // 0e. Square-bracket R keys [R5] / [R5,R6] / [R5;R7] → {{R5}} form.
+  // The regex only matches inner text made EXCLUSIVELY of R/digits/separators
+  // — ordinary bracketed prose like "[R5 domain]" is never touched.
+  working = working.replace(SQUARE_R_KEY_RE, (match) => {
+    const nums = match.match(/\d{1,3}/g);
+    if (!nums || nums.length === 0) return match;
+    repaired++;
+    const rs = nums.map((n) => `R${parseInt(n, 10)}`);
+    return `{{${rs.join(",")}}}`;
+  });
+
+  return { content: working, repaired };
+}
+
 export interface BindableRef {
   title: string;
   authors?: string | null;
@@ -139,6 +230,11 @@ export function convertKeysToNumbers<T extends BindableRef>(
   refs: T[]
 ): KeyConversionResult<T> {
   let working = content;
+
+  // Pass 0a (round-RT2): normalize the multi-model near-miss zoo
+  // ([R5], {{R1-3}}, {{R1;R2}}, ｛｛R5｝｝, {{{R5}}}) to canonical form.
+  const zoo = normalizeCitationKeyVariants(working);
+  working = zoo.content;
 
   // Pass 0: repair near-miss keys — {{ r2 }}, {{R 2}}, {{r7}} → {{R7}}
   working = working.replace(CITE_KEY_LOOSE_RE, (match) => {

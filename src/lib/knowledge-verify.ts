@@ -167,19 +167,19 @@ export async function verifySourcesWithKnowledge(
     /** Hard per-batch time budget (default 150s). JSON fills are short —
      * a batch that exceeds this is a stalled connection, not slow work. */
     timeoutMs?: number;
+    /** round-RT2 (gather acceleration): how many fill batches run
+     * concurrently. The rate limiter already paces call STARTS (1 per 2s)
+     * and the sliding window caps the total, so this only overlaps the
+     * ~30-90s response WAIT — the wall-clock win without flooding. */
+    concurrency?: number;
   } = {}
 ): Promise<KnowledgeVerifyResult> {
   const batchSize = opts.batchSize ?? 12;
   const maxMissing = opts.maxMissing ?? 8;
+  const concurrency = Math.max(1, Math.min(opts.concurrency ?? 3, 6));
   const log = opts.onLog || (() => {});
   const onProgress = opts.onProgress || (() => {});
   const batchTimeoutMs = opts.timeoutMs ?? 150_000;
-  const totalBatches = Math.ceil(sources.length / batchSize);
-  let batchIndex = 0;
-  // round-cs-3: two consecutive hard timeouts = the provider is stalling
-  // every connection — skip the remaining batches instead of burning
-  // 150s × remaining on a dead endpoint.
-  let consecutiveTimeouts = 0;
 
   const completions: KVCompletion[] = [];
   const missingRaw: KVMissingSource[] = [];
@@ -192,24 +192,60 @@ You have TWO jobs:
 1. METADATA COMPLETION — for each source, some fields are marked MISSING. Fill a MISSING field ONLY if you are confident you know the correct value for THIS SPECIFIC work from your training knowledge. Never invent plausible-looking guesses — if unsure, leave it empty. NEVER provide a value for a field that is not marked MISSING.
 2. GAP DETECTION — using your knowledge of the field, name the most IMPORTANT works (landmark papers, key reviews, seminal methods, key database entries, or contradicting evidence) that are ABSENT from this list. Only suggest works you are confident actually exist.`;
 
-  for (let b = 0; b < sources.length; b += batchSize) {
-    const batch = sources.slice(b, b + batchSize);
-    // round-35: rows whose three fillable fields are ALL complete get a
-    // single compact line — the LLM has nothing to fill for them, they only
-    // matter for gap detection. Rows with gaps keep the detailed
-    // MISSING-marked form. This roughly halves prompt tokens on mature
-    // projects and focuses the model on the rows that need work.
+  // ── round-RT2 (need-based batches): rows whose three fillable fields are
+  // all present have NOTHING for the LLM to fill — they only feed gap
+  // detection. Previously every row (complete or not) occupied a 12-row LLM
+  // batch: a 272-source run burned 23 serial round-trips (~20 min) mostly
+  // re-reading metadata the DB already has. Now:
+  //   • INCOMPLETE rows → fill batches (the only rows the LLM can help)
+  //   • ALL rows → ONE compact title-only digest call for gap detection
+  // Fill batches run concurrently (`concurrency`), keeping the per-batch
+  // range validation and storm-abort semantics of the serial version.
+  const isRowComplete = (s: KVSourceInput) =>
+    Boolean(
+      s.authors && String(s.authors).trim() &&
+      s.year && String(s.year).trim() &&
+      s.journal && String(s.journal).trim()
+    );
+  const incompleteIdx: number[] = [];
+  for (let i = 0; i < sources.length; i++) {
+    if (!isRowComplete(sources[i])) incompleteIdx.push(i);
+  }
+
+  // Build fill batches over GLOBAL indices so fills keep mapping to
+  // sources[n-1] exactly as the serial version did.
+  const fillBatches: number[][] = [];
+  for (let i = 0; i < incompleteIdx.length; i += batchSize) {
+    fillBatches.push(incompleteIdx.slice(i, i + batchSize));
+  }
+  const totalSteps = fillBatches.length + 1; // +1 = the gap digest call
+  let doneSteps = 0;
+
+  log(
+    `knowledge-verify: ${sources.length} sources — ${incompleteIdx.length} need metadata fills (${fillBatches.length} batch(es)), ${sources.length - incompleteIdx.length} complete (skipped from LLM batches; covered by the gap digest)`
+  );
+  if (fillBatches.length === 0 && sources.length > 0) {
+    onProgress(
+      `LLM knowledge pass: all ${sources.length} sources already have complete metadata — running gap detection only.`,
+      0,
+      totalSteps,
+    );
+  }
+
+  // Shared storm/timeout state — with parallel batches one storm marker
+  // tells every queued batch to stand down (mirrors the old serial
+  // fail-fast, just across the pool).
+  let stormHit = false;
+  let consecutiveTimeouts = 0;
+
+  const runFillBatch = async (batch: number[], batchNo: number) => {
+    if (stormHit) return;
+    const b = batch[0]; // first GLOBAL index in this batch (for range validation)
     const list = batch
-      .map((s, j) => {
+      .map((idx, j) => {
+        const s = sources[idx];
         const marks = (f: string, v?: string | null) =>
           v && String(v).trim() ? ` [${f}=${String(v).slice(0, 160)}]` : ` [${f}=MISSING]`;
-        const complete =
-          s.authors && String(s.authors).trim() &&
-          s.year && String(s.year).trim() &&
-          s.journal && String(s.journal).trim();
-        if (complete) {
-          return `(${b + j + 1}) (${s.source}${s.externalId ? ":" + s.externalId : ""}) TITLE: ${s.title.slice(0, 200)} [complete]`;
-        }
         return (
           `(${b + j + 1}) (${s.source}${s.externalId ? ":" + s.externalId : ""}) ` +
           `TITLE: ${s.title.slice(0, 200)}` +
@@ -222,7 +258,7 @@ You have TWO jobs:
 
     const prompt = `TOPIC: ${topic}
 
-GATHERED SOURCES (batch ${Math.floor(b / batchSize) + 1} of ${Math.ceil(sources.length / batchSize)}):
+GATHERED SOURCES (batch ${batchNo} of ${fillBatches.length}):
 ${list}
 
 Respond as STRICT JSON only:
@@ -243,11 +279,10 @@ Rules:
 Output JSON only.`;
 
     try {
-      batchIndex += 1;
       onProgress(
-        `LLM knowledge pass — batch ${batchIndex}/${totalBatches}: assessing ${batch.length} sources (each batch is one LLM round-trip, ~30-90s)...`,
-        batchIndex,
-        totalBatches,
+        `LLM knowledge pass — batch ${batchNo}/${fillBatches.length}: assessing ${batch.length} sources (each batch is one LLM round-trip, ~30-90s)...`,
+        batchNo,
+        totalSteps,
       );
       const raw = await chatWithSession(projectId, prompt, {
         system,
@@ -255,21 +290,17 @@ Output JSON only.`;
         taskType: "gather",
         maxTokens: opts.maxTokens,
         timeoutMs: batchTimeoutMs,
-        metadata: { step: "knowledge-verify", batch: Math.floor(b / batchSize) + 1, sources: batch.length },
+        metadata: { step: "knowledge-verify", batch: batchNo, sources: batch.length },
       });
       consecutiveTimeouts = 0;
       const parsed = safeParseJSON(raw, { sources: [], missing: [] });
 
       for (const s of parsed.sources || []) {
         const n = parseInt(String(s.n), 10);
-        // CR-B#1 fix: the prompt numbers rows GLOBALLY (batch 3 shows rows
-        // (25)..(36)), but models routinely renumber locally (1..12). The old
-        // check (1..sources.length) let local numbers through, silently
-        // applying batch-3 metadata fills to DIFFERENT sources in batch 1 —
-        // corrupted citation metadata (authors/year/journal) written to the
-        // DB and mirrored into the bibliography. Only ids within THIS
-        // batch's global range are valid.
-        if (isNaN(n) || n < b + 1 || n > b + batch.length) continue;
+        // CR-B#1 fix (preserved from the serial version): the prompt numbers
+        // rows GLOBALLY, but models routinely renumber locally (1..12). Only
+        // ids within THIS batch's global range are valid.
+        if (isNaN(n) || n < b || n > b + batch.length - 1) continue;
         const fill: KVCompletion["fill"] = {};
         for (const f of FILLABLE_FIELDS) {
           // Fill ONLY if the original field was actually missing
@@ -307,13 +338,7 @@ Output JSON only.`;
       }
     } catch (err: any) {
       const errMsg = String(err?.message ?? err);
-      log(`knowledge-verify: batch ${Math.floor(b / batchSize) + 1} failed: ${errMsg.slice(0, 120)}`);
-      // Fail fast on process-wide aborts (429-quota / aborted-flag): trying
-      // the remaining batches just produces a wall of identical errors.
-      // round-cs-3: structured instanceof checks (the old message-regex
-      // missed raw "429 Too Many Requests" errors, so a storm ground through
-      // every remaining batch at ~3.5 min each) + two-consecutive-timeout
-      // bail-out for stalled connections.
+      log(`knowledge-verify: batch ${batchNo} failed: ${errMsg.slice(0, 120)}`);
       const stormAbort =
         err instanceof RateLimitAbortedError ||
         err instanceof QuotaExhaustedError ||
@@ -321,20 +346,91 @@ Output JSON only.`;
       if (err instanceof ChatTimeoutError) {
         consecutiveTimeouts += 1;
         if (consecutiveTimeouts >= 2) {
-          const remaining = totalBatches - batchIndex;
-          if (remaining > 0) {
-            log(`knowledge-verify: provider stalling (${consecutiveTimeouts} consecutive timeouts) — skipping ${remaining} remaining batch(es)`);
-          }
-          break;
+          stormHit = true;
+          log(`knowledge-verify: provider stalling (${consecutiveTimeouts} consecutive timeouts) — skipping remaining batch(es)`);
         }
       }
       if (stormAbort) {
-        const remaining = totalBatches - batchIndex;
-        if (remaining > 0) {
-          log(`knowledge-verify: LLM unavailable — skipping ${remaining} remaining batch(es); database backfill is already applied`);
-        }
-        break;
+        stormHit = true;
+        log(`knowledge-verify: LLM unavailable — skipping remaining batch(es); database backfill is already applied`);
       }
+    } finally {
+      doneSteps++;
+    }
+  };
+
+  // Bounded worker pool over the fill batches.
+  let nextBatch = 0;
+  const workers = Array.from({ length: Math.min(concurrency, fillBatches.length) }, async () => {
+    while (nextBatch < fillBatches.length && !stormHit) {
+      const my = nextBatch++;
+      await runFillBatch(fillBatches[my], my + 1);
+    }
+  });
+  await Promise.all(workers);
+  if (stormHit && doneSteps < totalSteps - 1) {
+    log(`knowledge-verify: storm abort — ${totalSteps - 1 - doneSteps} fill batch(es) skipped`);
+  }
+
+  // ── Gap digest (round-RT2): ONE compact call over the whole pool's titles
+  // for gap detection. Complete rows no longer ride the fill batches, so
+  // this is where they contribute. Capped at 160 titles (the compact line
+  // is ~25 tokens, well inside the session budget).
+  doneSteps = fillBatches.length; // digest is the last step
+  const digestTitles = sources
+    .slice(0, 160)
+    .map((s, i) => `(${i + 1}) ${s.title.slice(0, 160)}`)
+    .join("\n");
+  if (!stormHit && sources.length > 0) {
+    onProgress(
+      `LLM knowledge pass — gap-detection digest over ${Math.min(sources.length, 160)} titles...`,
+      totalSteps,
+      totalSteps,
+    );
+    try {
+      const digestRaw = await chatWithSession(
+        projectId,
+        `TOPIC: ${topic}
+
+GATHERED SOURCE TITLES (complete pool, compact view):
+${digestTitles}
+
+Using your knowledge of the field, name the most IMPORTANT works (landmark papers, key reviews, seminal methods, key database entries, or contradicting evidence) that are ABSENT from this list. Only suggest works you are confident actually exist.
+
+Respond as STRICT JSON only:
+{ "missing": [ { "title": "...", "authors": "...", "year": "...", "journal": "...", "doi": "...", "pmid": "...", "reason": "why essential for THIS topic", "kind": "landmark|review|method|database|contradicting" } ] }
+Up to 8 suggestions, most important first. Output JSON only.`,
+        {
+          system: `You are a domain expert librarian assessing literature coverage for a research article on: ${topic} (${field}).`,
+          temperature: 0.2,
+          taskType: "gather",
+          maxTokens: opts.maxTokens,
+          timeoutMs: batchTimeoutMs,
+          metadata: { step: "knowledge-verify", sub: "gapDigest" },
+        },
+      );
+      const digestParsed = safeParseJSON(digestRaw, { missing: [] });
+      for (const m of digestParsed.missing || []) {
+        const title = cleanFill(m.title, 300);
+        if (!title) continue;
+        const key = normalizeTitle(title);
+        if (!key || gatheredTitleKeys.has(key)) continue;
+        gatheredTitleKeys.add(key);
+        missingRaw.push({
+          title,
+          authors: cleanFill(m.authors, 400) || undefined,
+          year: cleanFill(m.year, 4) || undefined,
+          journal: cleanFill(m.journal, 200) || undefined,
+          doi: cleanFill(m.doi, 80) || undefined,
+          pmid: cleanFill(m.pmid, 12) || undefined,
+          reason: cleanFill(m.reason, 300) || "important for the topic",
+          kind: (["landmark", "review", "method", "database", "contradicting"].includes(m.kind)
+            ? m.kind
+            : "landmark") as KVMissingSource["kind"],
+        });
+      }
+    } catch (err: any) {
+      log(`knowledge-verify: gap digest failed: ${String(err?.message ?? err).slice(0, 120)}`);
     }
   }
 
@@ -342,6 +438,7 @@ Output JSON only.`;
   const missing = pickDiverse(missingRaw, maxMissing);
   return { completions, missing };
 }
+
 
 /** Pick up to `max` suggestions with a spread across kinds (landmarks first). */
 function pickDiverse(list: KVMissingSource[], max: number): KVMissingSource[] {
@@ -429,7 +526,11 @@ export async function verifyMissingViaPubMed(
   // different batches, both resolving to PMID 29464558). Claim each PMID once.
   const claimedExtIds = new Set<string>();
 
-  for (const suggestion of missing) {
+  // round-RT2: serial lookups (each with a 200ms tail sleep) → pool of 3.
+  // The claimedExtIds check-then-claim pair is synchronous (no await between
+  // has()/add()), so the dedupe stays atomic under the pool.
+  const { runWithConcurrency } = await import("@/lib/search-enhance");
+  await runWithConcurrency(missing, 3, async (suggestion: KVMissingSource) => {
     try {
       // round-50: title-exact-match verification — variant expansion would
       // manufacture false positives (a "TMC-1" paper matching a "TMC1"
@@ -448,7 +549,7 @@ export async function verifyMissingViaPubMed(
         const extId = String(best.item.externalId);
         if (claimedExtIds.has(extId)) {
           log(`knowledge-verify: "${suggestion.title.slice(0, 50)}" resolves to already-claimed PMID ${extId} — skipped`);
-          continue;
+          return; // duplicate of an earlier suggestion — skip (worker context)
         }
         claimedExtIds.add(extId);
         const it = best.item;
@@ -487,8 +588,7 @@ export async function verifyMissingViaPubMed(
       unverified.push(suggestion);
       log(`knowledge-verify: PubMed lookup failed for "${suggestion.title.slice(0, 50)}": ${String(err?.message ?? err).slice(0, 100)}`);
     }
-    await new Promise((r) => setTimeout(r, 200));
-  }
+  });
 
   return { verified, unverified };
 }
@@ -764,7 +864,10 @@ export async function verifyMissingViaCrossref(
   const unverified: KVMissingSource[] = [];
   const claimedDois = new Set<string>();
 
-  for (const suggestion of missing) {
+  // round-RT2: serial lookups (150ms tail sleep each) → pool of 3. The
+  // claimedDois check-then-claim pair is synchronous → dedupe stays atomic.
+  const { runWithConcurrency } = await import("@/lib/search-enhance");
+  await runWithConcurrency(missing, 3, async (suggestion: KVMissingSource) => {
     let matched: { item: any; sim: number; via: "doi" | "title" } | null = null;
     // E2E finding: bibliographic search surfaces wwPDB structure entries
     // ("10.2210/pdb2oar/pdb", crossrefType "component") whose titles ARE
@@ -812,7 +915,7 @@ export async function verifyMissingViaCrossref(
         const doiKey = String(matched.item.externalId).toLowerCase();
         if (claimedDois.has(doiKey)) {
           log(`knowledge-verify: "${suggestion.title.slice(0, 50)}" resolves to already-claimed DOI ${doiKey} — skipped`);
-          continue; // duplicate of an earlier suggestion — do not save twice
+          return; // duplicate of an earlier suggestion — do not save twice (worker context)
         }
         claimedDois.add(doiKey);
         const it = matched.item;
@@ -852,8 +955,7 @@ export async function verifyMissingViaCrossref(
       unverified.push(suggestion);
       log(`knowledge-verify: Crossref lookup failed for "${suggestion.title.slice(0, 50)}": ${String(err?.message ?? err).slice(0, 100)}`);
     }
-    await new Promise((r) => setTimeout(r, 150));
-  }
+  });
 
   return { verified, unverified };
 }

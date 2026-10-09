@@ -33,6 +33,7 @@
 import { chatWithSession } from "@/lib/llm-session";
 import { countWords } from "@/lib/writing";
 import { splitBodyAndReferences } from "@/lib/citation-audit";
+import { safeParseJSON } from "@/lib/llm-json";
 import {
   factCheckArticle,
   factFindingsPromptBlock,
@@ -787,16 +788,11 @@ export function restoreOriginalHeadings(body: string, titles: string[]): string 
 }
 
 /* ------------------------------------------------------------------ *
- * 5. Local JSON helper (same contract as the review route's)
+ * 5. JSON helper — round-RT2: the weak local copy (greedy brace + bare
+ *    JSON.parse, no fence stripping, no JSON5, no repair) is replaced by
+ *    the canonical shared extractor imported above (lib/llm-json.ts). A
+ *    review-role model that wraps its verdict JSON in prose or uses
+ *    trailing commas used to land here as a parse failure → the
+ *    “major-revision overall 5” fallback → PHANTOM repair rounds on a
+ *    perfectly fine article.
  * ------------------------------------------------------------------ */
-
-function safeParseJSON(raw: string, fallback: any): any {
-  if (typeof raw !== "string") return fallback;
-  const match = raw.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-  if (!match) return fallback;
-  try {
-    return JSON.parse(match[0]);
-  } catch {
-    return fallback;
-  }
-}
