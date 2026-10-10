@@ -76,3 +76,6 @@ iteration-state/scheduler.json
 # every clone. Back it up OUTSIDE the repo if needed.
 db/custom.db
 db/*.db
+
+# round-RT4 (P0-1): persisted rate-abort state is runtime-local, not source.
+db/rate-abort.json

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getQuotaSnapshot, getWindowCount, isAborted } from "@/lib/rate-limiter";
+import { getQuotaSnapshot, getWindowCount, isAborted, SLIDING_WINDOW_THRESHOLD } from "@/lib/rate-limiter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,8 +25,10 @@ export async function GET() {
     dailyRemaining: snap.dailyRemaining ?? null,
     dailyLimit: snap.dailyLimit ?? null,
     windowCount: win,
-    windowThreshold: 15,
-    coolDownActive: win >= 15,
+    // RT4: imported from the limiter — was hardcoded 15 while the window
+    // threshold moved to 20, so the UI showed cool-downs that never fired.
+    windowThreshold: SLIDING_WINDOW_THRESHOLD,
+    coolDownActive: win >= SLIDING_WINDOW_THRESHOLD,
     aborted: isAborted(),
     lastUpdated: new Date().toISOString(),
   });

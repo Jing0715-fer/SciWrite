@@ -16,6 +16,7 @@ import {
 } from "@/lib/v2-config";
 import { logger } from "@/lib/logger";
 import { webSearchDetailed } from "@/lib/ai";
+import { webSearchCacheStats } from "@/lib/web-search-cache";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
 import {
@@ -5014,6 +5015,12 @@ ${cleanEn}`;
             pipelineDurationSec: Math.round(totalMs / 1000),
             targetWords,
             achievementRate: Math.round((articleWordCount / targetWords) * 100),
+            // RT4 P0-2: observability — coverage-driven gathering (RT2 fields
+            // that never reached this payload) + web-search cache counters
+            // (hits/misses/stores/evictions — previously console-only).
+            gatherCoverage: stats.gatherCoverage,
+            gatherTopUpNewItems: stats.gatherTopUpNewItems,
+            webSearchCache: { hits: webSearchCacheStats.hits, misses: webSearchCacheStats.misses, stores: webSearchCacheStats.stores, evictions: webSearchCacheStats.evictions },
           },
           accuracy: {
             droppedKeys: stats.droppedKeys,

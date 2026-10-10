@@ -1,3 +1,5 @@
+import { loadRateAbort, persistRateAbort, rateAbortStorePath } from "@/lib/rate-abort-store";
+
 /**
  * Global rate-limiter & quota tracker for z-ai-web-dev-sdk calls.
  *
@@ -9,13 +11,18 @@
  *  - Single global TokenBucket (capacity = 2, refill = 1 token / 2s)
  *    Throttles request SPACING to <= 1 req / 2s — well under the
  *    provider's 30 req / 10min limit.
- *  - Sliding 10-minute window counts successful calls; when > 15,
- *    a 60s cool-down is enforced BEFORE the next call.
+ *  - Sliding 10-minute window counts successful calls; when > threshold,
+ *    a proportional cool-down is enforced BEFORE the next call.
  *  - Daily-quota state is read from `x-ratelimit-user-daily-remaining`
  *    response header and cached in memory. When it drops to 0, all
  *    subsequent calls abort with QuotaExhaustedError.
  *  - 429 / 5xx responses are retried with exponential backoff
  *    (1s, 2s, 4s, 8s, 16s — max 5 attempts).
+ *  - RT4 P0-1: the abort flag + storm ladder PERSIST to disk
+ *    (db/rate-abort.json) so a dev-server restart keeps its storm memory
+ *    instead of immediately re-probing a throttled account; provider
+ *    reset hints (Retry-After / X-RateLimit-Reset) extend the TTL when
+ *    present.
  */
 
 export class QuotaExhaustedError extends Error {
@@ -214,7 +221,10 @@ const bucket = new TokenBucket(2, 2000);
 // the provider allows 30 req/10min; 20 + 30s spacing keeps ~33% headroom
 // while letting bursts of 20 through unimpeded (the old 15@60s config
 // slowed every v2 run by 10+ minutes).
-const window = new SlidingWindow(10 * 60 * 1000, 20);
+// Exported for /api/quota-status (was hardcoded 15 there while the window
+// moved to 20 — RT4 consistency fix).
+export const SLIDING_WINDOW_THRESHOLD = 20;
+const window = new SlidingWindow(10 * 60 * 1000, SLIDING_WINDOW_THRESHOLD);
 const quota = new QuotaState();
 
 // In-memory abort flag — set by the first 429/quota-exhaustion event.
@@ -234,32 +244,113 @@ const quota = new QuotaState();
 // that kept the account throttled (client-side storm persistence). The TTL
 // now escalates on consecutive storms: 2 min → 10 min → 30 min → 60 min,
 // de-escalating only after a genuinely successful call.
+//
+// RT4 P0-1 fix (restart amnesia): the flag + ladder used to be lost on a
+// dev-server restart — a fresh process immediately re-probed a throttled
+// account with the full 5-attempt chain, re-triggering the 429 storm it
+// had just survived (observed live twice in the 2026-10-10 E2E). The state
+// now persists to db/rate-abort.json: isAborted() lazily hydrates from
+// disk when memory is empty; every mutation writes through; expiry and
+// clearAbort() remove the file. A provider reset hint (Retry-After /
+// X-RateLimit-Reset) can only LENGTHEN the TTL, never shorten it.
 const ABORT_TTL_STEPS_MS = [120_000, 600_000, 1_800_000, 3_600_000];
+const ABORT_TTL_CAP_MS = 24 * 3_600_000; // sanity cap — never trust a hint beyond a day
 let consecutiveStorms = 0;
 let lastAbortAt = 0;
 let abortInfo: { reason: string; at: number; ttl: number } | null = null;
 
 export function isAborted(): boolean {
+  // RT4 P0-1: hydrate from disk when memory is empty — a restarted server
+  // inherits the previous process's storm memory instead of re-probing.
+  if (!abortInfo) {
+    const persisted = loadRateAbort();
+    if (persisted) {
+      abortInfo = { reason: persisted.reason, at: persisted.at, ttl: persisted.ttl };
+      consecutiveStorms = persisted.consecutiveStorms;
+      lastAbortAt = persisted.lastAbortAt;
+      console.warn(
+        `[rate-limiter] restored persisted abort state (storm #${consecutiveStorms}, set ${Math.round((Date.now() - persisted.at) / 1000)}s ago, ttl ${Math.round(persisted.ttl / 1000)}s) from ${rateAbortStorePath()}`,
+      );
+    }
+  }
   if (!abortInfo) return false;
   if (Date.now() - abortInfo.at > abortInfo.ttl) {
     console.warn(`[rate-limiter] abort auto-expired (set ${Math.round((Date.now() - abortInfo.at) / 1000)}s ago, ttl ${Math.round(abortInfo.ttl / 1000)}s): ${abortInfo.reason.slice(0, 80)}`);
     abortInfo = null;
+    persistRateAbort(null); // RT4: expiry must also clear the disk marker
     return false;
   }
   return true;
 }
 
-/** Force-clear the abort flag (escape hatch; stale aborts also self-expire). */
+/** Force-clear the abort flag (escape hatch; stale aborts also self-expire).
+ *  RT4: also resets the storm ladder and removes the persisted marker —
+ *  a manual clear means "start over" in every sense. */
 export function clearAbort() {
   abortInfo = null;
+  consecutiveStorms = 0;
+  lastAbortAt = 0;
+  persistRateAbort(null);
 }
 
-export function setAbort(reason: string) {
+export function setAbort(reason: string, providerHintMs?: number | null) {
   const step = Math.min(consecutiveStorms, ABORT_TTL_STEPS_MS.length - 1);
-  abortInfo = { reason, at: Date.now(), ttl: ABORT_TTL_STEPS_MS[step] };
+  let ttl = ABORT_TTL_STEPS_MS[step];
+  // RT4 P0-1: honor a provider reset hint (Retry-After / X-RateLimit-Reset)
+  // when one was parsed — a 15-min Retry-After beats a 2-min ladder step.
+  // Hints can only lengthen the TTL, are capped at 24h, and sub-second
+  // hints are ignored (they carry no signal beyond the ladder).
+  if (typeof providerHintMs === "number" && Number.isFinite(providerHintMs) && providerHintMs > ttl) {
+    ttl = Math.min(providerHintMs, ABORT_TTL_CAP_MS);
+  }
+  abortInfo = { reason, at: Date.now(), ttl };
   lastAbortAt = Date.now();
   consecutiveStorms += 1;
-  console.warn(`[rate-limiter] ABORT set (storm #${consecutiveStorms}, ttl ${Math.round(ABORT_TTL_STEPS_MS[step] / 1000)}s): ${reason}`);
+  persistRateAbort({
+    reason,
+    at: abortInfo.at,
+    ttl,
+    consecutiveStorms,
+    lastAbortAt,
+  });
+  console.warn(`[rate-limiter] ABORT set (storm #${consecutiveStorms}, ttl ${Math.round(ttl / 1000)}s${providerHintMs && providerHintMs > ABORT_TTL_STEPS_MS[step] ? " — extended by provider hint" : ""}): ${reason}`);
+}
+
+/**
+ * Parse a provider reset hint from response headers (RT4 P0-1).
+ * Supports: `Retry-After: <seconds>` and `Retry-After: <HTTP-date>`;
+ * `X-RateLimit-Reset: <epoch-seconds-or-ms>`. Returns milliseconds-from-now,
+ * or null when no usable hint is present (missing header, past date,
+ * absurd >24h delta — a hint that cannot be trusted).
+ */
+export function parseRetryAfterMs(
+  h: { get(name: string): string | null } | null | undefined,
+): number | null {
+  if (!h || typeof h.get !== "function") return null;
+  const ra = h.get("retry-after") ?? h.get("Retry-After");
+  if (ra) {
+    const n = Number(ra);
+    if (Number.isFinite(n) && n >= 0 && n < ABORT_TTL_CAP_MS / 1000) {
+      return n * 1000;
+    }
+    const d = Date.parse(ra);
+    if (!Number.isNaN(d)) {
+      const delta = d - Date.now();
+      // A past date means "already reset" — no extension signal.
+      if (delta > 0 && delta < ABORT_TTL_CAP_MS) return delta;
+    }
+  }
+  const xrr = h.get("x-ratelimit-reset") ?? h.get("X-RateLimit-Reset");
+  if (xrr) {
+    const n = Number(xrr);
+    if (Number.isFinite(n) && n > 0) {
+      // Epoch seconds vs epoch ms — anything below ~1e12 is seconds.
+      const epochMs = n > 1e12 ? n : n * 1000;
+      const delta = epochMs - Date.now();
+      if (delta > 0 && delta < ABORT_TTL_CAP_MS) return delta;
+    }
+  }
+  return null;
 }
 
 export function getQuotaSnapshot(): RateLimitHeaders {
@@ -339,6 +430,14 @@ export async function withRateLimit<T>(
       // is over — de-escalate the abort TTL ladder (CR-A#3).
       if (consecutiveStorms > 0 && Date.now() - lastAbortAt > 10 * 60_000) {
         consecutiveStorms = 0;
+        // RT4 P0-1: ladder reset writes through — a restarted server must
+        // not inherit an escalated ladder that this process already
+        // earned its way out of.
+        if (abortInfo) {
+          persistRateAbort({ reason: abortInfo.reason, at: abortInfo.at, ttl: abortInfo.ttl, consecutiveStorms, lastAbortAt });
+        } else {
+          persistRateAbort(null);
+        }
       }
       return result;
     } catch (err: any) {
@@ -393,7 +492,12 @@ export async function withRateLimit<T>(
       // coherent wait-out + single retry instead of every batch re-entering
       // the full 5-attempt backoff chain against the same dead provider.
       if (attempt === maxRetries - 1 && is429) {
-        setAbort(`429 after ${maxRetries} retries on '${label}'`);
+        // RT4 P0-1: honor provider reset hints when the 429 error (or the
+        // captured headers of the failed response) carries them.
+        const errHeaders =
+          (err?.response?.headers ?? err?.headers ?? null) as Headers | null;
+        const hintMs = parseRetryAfterMs(errHeaders) ?? parseRetryAfterMs(capturedHeaders);
+        setAbort(`429 after ${maxRetries} retries on '${label}'`, hintMs);
         await new Promise((r) => setTimeout(r, jitter));
         throw new RateLimitAbortedError(
           `429 after ${maxRetries} retries on '${label}' — rate-limit storm, abort flag set`,

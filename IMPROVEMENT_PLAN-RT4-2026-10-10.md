@@ -5,6 +5,26 @@ E2E-RESULTS section), (b) a file-level implementation-scout of every item
 below (exact file:line targets already verified), and (c) the carried-over
 N1-N6 suggestions from RT3.
 
+> **STATUS 2026-10-10 (same day, second session): P0-1 and P0-2 are
+> IMPLEMENTED and verified.** New `lib/rate-abort-store.ts` (file-backed,
+> fault-tolerant, test-injectable path) + limiter write-through/hydration +
+> `parseRetryAfterMs` (Retry-After seconds & HTTP-date, X-RateLimit-Reset
+> epoch s/ms, 24h sanity cap, hints only lengthen) + quota-status threshold
+> consistency + complete-event stats now carry `gatherCoverage`,
+> `gatherTopUpNewItems` and `webSearchCache`. QA: 26 new unit tests (store
+> round-trip/corrupt-file/restart-hydration/ladder/hint semantics) →
+> **211/211 unit, 26/26 integration, lint 0 errors, tsc 4 baseline**.
+> LIVE verification of the restart-amnesia fix: an abort written by an
+> EXTERNAL process (`scripts/abort-store-cli.ts set`) was hydrated by a dev
+> server that never called setAbort itself (`/api/quota-status` →
+> `aborted:true`); TTL expiry self-cleared both memory and the disk marker.
+> `scripts/abort-store-cli.ts` remains as the ops tool. Still open from
+> P0-1: item 3 (in-stream backoff ladder on the SSE wire) — the plain-JSON
+> 503 pre-SSE path cannot carry events, so the ladder belongs inside the
+> stream; deferred to the next commit window. P0-2 verification completes
+> on the next full generation (the stats fields appear in the complete
+> payload).
+
 ## 0. E2E evidence driving this plan (2026-10-10 run, GLM-4.6, 1500 words)
 
 - 36.32 min end-to-end, all-green mechanical audit, 21/21 citations supported,
