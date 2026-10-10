@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 
-const BASE = "http://localhost:3000";
+const BASE = process.env.TEST_BASE ?? "http://localhost:3000";
 
 /**
  * Helper: make a JSON fetch against the dev server.

@@ -75,6 +75,41 @@ faster (pooled fact-check), web-search re-queries free (R7 cache).
 
 <!-- E2E-RESULTS:APPENDED-BELOW-WHEN-AVAILABLE -->
 
+### E2E RESULTS — 2026-10-10 run (RT4-1, GLM-4.6, 1500 words, fresh clone)
+
+**Completed end-to-end in 36.32 min.** Report:
+`tool-results/full-gen-test-report.json` (log: `tool-results/e2e-rt4.log` /
+`e2e-rt4-err.log`). NOTE: this run absorbed **two live 429 quota storms**
+(storm #1 TTL 2 min at knowledge-verify batch 4, storm #2 TTL 10 min during
+score) — the deltas below mix real RT3 wins with graceful-degradation
+shortcuts, and are labeled as such.
+
+| Metric | RT2 baseline | RT3/RT4-1 run | Verdict |
+| ------ | ------------ | ------------- | ------- |
+| Total wall clock | 41.3 min | **36.32 min (−12 %)** | real-but-degraded (see above) |
+| gather | 3.2 min | 3.19 min, 209 sources | parity (RT2 accel held) |
+| knowledge (full) | ~5 min (RT2 refactor) | **4.3 min** (5 batches + cross-check) | held / slightly better |
+| score | 4.5 min (LLM) | ~5 min, **100 % mechanical fallback** (storm #2) | degraded, not a timing claim |
+| generate + verify | 7.8 min serial | **~6.1 min, pipelined** — per-section verify (33-35 s) overlapped the next section's writing ("verification running in parallel" in every section message) | **R2 verified live** |
+| repair loop | 14.6 min / 3 rounds | 11.7 min, round-1 scoped revision (§1,4) applied; re-review hit abort → loop ended by **abort, not convergence** | R1/R4 gates NOT exercised — needs a clean re-run (RT4) |
+| Adversarial verify | 0 removed | **1 removed mid-pipeline** (sec 2, pre-compose); final export re-check: 21/21 supported, 0 removed, 0 flagged | held under degradation |
+| Final article | 1883 w / 19 refs | **1252 w / 13 refs** (83.5 % of target — polish+relationships+peer-review were storm-skipped) | format held; word count low (degraded tail) |
+| Mechanical audit | all green | **all green**: 0 CJK, 0 lists, 0 tables, 0 residual keys, 0 fullwidth punct, `**` balanced, 5 uniform `##` section heads, 27 markers → 13 cited = 13 listed, `[6,8]`-style multi-cites resolved | six-layer defense held through 2 storms |
+| New RT3 features live | — | numeric sweep fired (2 advisories, capped, Review-tab visible); gap agent early-stopped at 100 % coverage after round 1; web-search cache warmed (unmeasured — see N6 gap) | R6 + coverage-driven gathering verified live |
+
+What the storms proved (again, this time on the primary path):
+score → mechanical fallback, repair re-review → abort (article stands as
+repaired), polish/relationships/peer-review → skipped with honest messages,
+export → clean JSON report, server → 200s throughout. Zero partial state.
+
+**Observability gap found in this run**: `stats.gatherCoverage` /
+`gatherTopUpNewItems` (RT2) never reached the complete-event payload (stats
+keys omit them) and the web-search-cache counters are console-only — both
+folded into RT4 N6.
+
+**R1 (convergence) / R4 (fixable-vs-advisory) remain unvalidated on a clean
+run** — the highest-priority follow-up test for RT4 (see N2).
+
 ## 4. Next-phase development suggestions (RT4, ranked)
 
 ### N1. Adaptive rate-limiter window (carried over from R3 — now blocking)
