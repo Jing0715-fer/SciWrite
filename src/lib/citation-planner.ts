@@ -29,41 +29,22 @@ import { chatWithSession } from "@/lib/llm-session";
 import { safeParseJSON, scoreRelevance, extractSectionKeywords } from "@/lib/generate-full-helpers";
 import { fetchFullTextForPubMed } from "@/lib/databases";
 import { maxCitableRefsFor } from "@/lib/v2-config";
-
-/** Understanding depth available for a source. */
-export type SourceDepth = "fulltext" | "abstract" | "metadata";
-
-/** Mechanical (no-LLM) profile of what we can actually READ of a source. */
-export interface FullTextProfile {
-  /** A free full text is (very likely) retrievable for this source. */
-  hasFreeFullText: boolean;
-  /** PMC id when known (from PubMed esummary articleids, stored in extra). */
-  pmcId?: string;
-  /** Deep-read structured summary (DataSource.summary from the deep-read
-   * endpoint) — a compact full-text substitute for web sources. */
-  deepReadSummary?: string;
-  depth: SourceDepth;
-}
-
-/** LLM-produced importance assessment of one source. */
-export interface SourceScore {
-  /** 1-based index into the refs array the score was computed against. */
-  index: number;
-  /** Topical fit to the article topic, 1-10 (LLM judgment). */
-  relevance: number;
-  /** Scholarly weight — seminal/primary work ranks high, 1-10. */
-  importance: number;
-  /** Understanding depth available (mechanical input, echoed for context). */
-  depth: SourceDepth;
-  /** One-line justification from the scorer. */
-  reason: string;
-  /** Composite 0-10 citation priority: relevance dominates, importance
-   * second, full-text availability is a tiebreaker bonus. */
-  priority: number;
-  /** Mechanical tier derived from priority: core (>=7.5), important (>=5.5),
-   * marginal (below). Core refs are force-retained by the smart curator. */
-  tier: "core" | "important" | "marginal";
-}
+// RT5 skill framework: the scoring kernel (types + mechanical fallback)
+// moved to lib/scoring.ts; re-exported here so every legacy import site
+// (generate-full, generate-full-v2, tests) keeps working unchanged.
+export {
+  mechanicalScores,
+  computePriority,
+  tierFor,
+  type SourceDepth,
+  type FullTextProfile,
+  type SourceScore,
+} from "@/lib/scoring";
+// The score skill definition itself (prompt contract + per-item fill +
+// batch fallback) lives in the skill registry; imported for runSkill use.
+import { scoreSkill } from "@/lib/skill/registry";
+import { runSkill } from "@/lib/skill/executor";
+import { mechanicalScores, tierFor, computePriority, type FullTextProfile, type SourceDepth, type SourceScore } from "@/lib/scoring";
 
 export interface SmartCurationResult {
   /** Selected refs, priority-ordered (most important first) so downstream
@@ -77,18 +58,6 @@ export interface SmartCurationResult {
   rationale: string;
   /** false when the mechanical fallback produced the selection. */
   llmDriven: boolean;
-}
-
-/** Priority composition weights (sum with depth bonus ≤ 1 → max 10). */
-function computePriority(relevance: number, importance: number, depth: SourceDepth): number {
-  const depthBonus = depth === "fulltext" ? 1 : depth === "abstract" ? 0.5 : 0;
-  return Math.max(0, Math.min(10, relevance * 0.55 + importance * 0.35 + depthBonus));
-}
-
-function tierFor(priority: number): "core" | "important" | "marginal" {
-  if (priority >= 7.5) return "core";
-  if (priority >= 5.5) return "important";
-  return "marginal";
 }
 
 /**
@@ -164,40 +133,6 @@ export function buildFullTextProfiles(
 }
 
 /**
- * Mechanical fallback scorer — used per-batch when the LLM call fails, so a
- * rate-limited scoring stage degrades to keyword relevance + recency instead
- * of blocking the pipeline.
- */
-function mechanicalScores(
-  refs: any[],
-  profiles: Map<string, FullTextProfile>,
-  topic: string
-): SourceScore[] {
-  const topicKeywords = extractSectionKeywords(topic);
-  return refs.map((r, i) => {
-    // Keyword overlap normalized to 1-10 (scoreRelevance counts matches).
-    const kw = scoreRelevance(topicKeywords, `${r.title || ""} ${r.abstract || ""} ${r.journal || ""}`);
-    const relevance = Math.max(1, Math.min(10, Math.round(kw * 1.6) || 3));
-    // Recency + primary-type bias for the importance floor.
-    const year = parseInt(String(r.year || "0"), 10);
-    const recency = year >= 2018 ? 1.5 : year >= 2010 ? 0.75 : 0;
-    const typeBias = r.type === "pubmed" ? 1 : 0.5;
-    const importance = Math.max(1, Math.min(10, Math.round(4 + recency + typeBias)));
-    const depth = profiles.get(r.id)?.depth || (r.abstract ? "abstract" : "metadata");
-    const priority = computePriority(relevance, importance, depth);
-    return {
-      index: i + 1,
-      relevance,
-      importance,
-      depth,
-      reason: "mechanical fallback (keyword overlap + recency)",
-      priority,
-      tier: tierFor(priority),
-    };
-  });
-}
-
-/**
  * Stage 1 — LLM importance scoring for EVERY gathered reference.
  *
  * Batches of ~20 refs per call (compact single-line entries keep each prompt
@@ -221,7 +156,6 @@ export async function scoreSources(
   let llmBatches = 0;
   let fallbackBatches = 0;
 
-  const { llmCacheKey, getCachedLLMResult, setCachedLLMResult } = await import("@/lib/llm-cache");
   // round-RT2 (score acceleration): batches previously ran strictly serial
   // (~18 batches × 30-90s each ≈ 4-8 min). Writes go to distinct `scores`
   // indices and the per-batch LLM calls are independent — a bounded pool of
@@ -235,101 +169,33 @@ export async function scoreSources(
     const batch = refs.slice(b, b + batchSize);
     const batchNo = Math.floor(b / batchSize) + 1;
 
-    const refList = batch
-      .map((r, j) => {
-        const depth = profiles.get(r.id)?.depth || (r.abstract ? "abstract" : "metadata");
-        const ft = depth === "fulltext" ? "yes" : "no";
-        const yr = r.year ? ` | YEAR: ${r.year}` : "";
-        const abs = r.abstract
-          ? `\n    ABSTRACT: ${String(r.abstract).slice(0, 300).replace(/\s+/g, " ")}`
-          : "\n    ABSTRACT: (none — judge from the title)";
-        return `[${b + j + 1}] TYPE: ${r.type || "web"}${yr} | FULL TEXT: ${ft} | ${(r.authors || "Anon").slice(0, 40)}\n    TITLE: ${String(r.title || "").slice(0, 110)}${abs}`;
-      })
-      .join("\n");
+    // RT5 skill framework: the cache→chat→parse→per-item-fill→batch-fallback
+    // skeleton (previously hand-rolled here, verbatim in
+    // skill/registry.ts scoreSkill) now runs through the shared executor.
+    const result = await runSkill(scoreSkill, {
+      topic,
+      field,
+      batchNo,
+      totalBatches,
+      batch,
+      batchStartIndex: b,
+      profiles,
+    }, {
+      projectId,
+      fallbackValue: { scores: [] },
+      chatOverrides: opts.maxTokens ? { maxTokens: opts.maxTokens } : undefined,
+      log: (level, msg, data) => {
+        if (level === "warn") console.warn(`[scoreSources] ${msg}`, data ?? "");
+      },
+    });
 
-    const system =
-      "You are a meticulous research librarian assessing a citation pool for a review article. " +
-      "You judge ONLY from the metadata shown — no speculation beyond the given text.";
-
-    const prompt = `ARTICLE TOPIC: ${topic}
-FIELD: ${field}
-
-SOURCES TO SCORE (batch ${batchNo} of ${totalBatches}):
-${refList}
-
-Score EVERY source in this batch on two axes:
-- relevance (integer 1-10): how directly the source's subject matter serves the TOPIC. 10 = central to the topic; 6 = clearly related; 4 = peripherally related; 3 = barely related; 1 = unrelated.
-- importance (integer 1-10): scholarly weight for a review. Seminal/foundational works, primary studies that determined a key result, or definitive methods papers score 8-10; solid but routine studies 5-7; tangential or minor works 1-4.
-
-Rules:
-- Judge only from the title/abstract text shown.
-- FULL TEXT: yes means the complete article is readable — when two sources are otherwise close, the full-text one can support deeper and more accurate discussion.
-
-Respond as STRICT JSON only:
-{
-  "scores": [
-    { "ref": 1, "relevance": 8, "importance": 7, "reason": "short justification" }
-  ]
-}
-"ref" is the [n] number. Score EVERY source. Output JSON only.`;
-
-    try {
-      const cacheKey = await llmCacheKey(prompt, { system, temperature: 0.2, taskType: "score", maxTokens: opts.maxTokens });
-      const cached = getCachedLLMResult(cacheKey);
-      let raw: string;
-      if (cached) {
-        raw = cached;
-      } else {
-        raw = await chatWithSession(projectId, prompt, {
-          system,
-          temperature: 0.2,
-          taskType: "score",
-          maxTokens: opts.maxTokens,
-          metadata: { step: "score", batch: batchNo, total: totalBatches, refs: batch.length },
-        });
-        setCachedLLMResult(cacheKey, raw);
-      }
-      llmBatches++;
-
-      const parsed = safeParseJSON(raw, { scores: [] });
-      const byRef = new Map<number, any>();
-      for (const s of parsed.scores || []) {
-        const n = parseInt(String(s.ref), 10);
-        if (!isNaN(n)) byRef.set(n, s);
-      }
-      for (let j = 0; j < batch.length; j++) {
-        const idx = b + j + 1;
-        const s = byRef.get(idx);
-        const depth = profiles.get(refs[b + j].id)?.depth || (refs[b + j].abstract ? "abstract" : "metadata");
-        if (s && Number(s.relevance) >= 1 && Number(s.relevance) <= 10 && Number(s.importance) >= 1 && Number(s.importance) <= 10) {
-          const relevance = Math.round(Number(s.relevance));
-          const importance = Math.round(Number(s.importance));
-          const priority = computePriority(relevance, importance, depth);
-          scores[b + j] = {
-            index: idx,
-            relevance,
-            importance,
-            depth,
-            reason: String(s.reason || "").slice(0, 160),
-            priority,
-            tier: tierFor(priority),
-          };
-        } else {
-          // LLM skipped/malformed this one — mechanical single-ref fill.
-          scores[b + j] = mechanicalScores([refs[b + j]], profiles, topic)[0];
-        }
-      }
-    } catch (err: any) {
-      // Whole batch failed (rate limit / provider error) — mechanical fill.
-      fallbackBatches++;
-      console.warn(`[scoreSources] batch ${batchNo} fell back to mechanical scoring: ${err?.message?.slice(0, 100)}`);
-      const mech = mechanicalScores(batch, profiles, topic);
-      for (let j = 0; j < batch.length; j++) {
-        scores[b + j] = { ...mech[j], index: b + j + 1 };
-      }
+    if (result.degraded) fallbackBatches++;
+    else llmBatches++;
+    for (let j = 0; j < batch.length; j++) {
+      scores[b + j] = result.output.scores[j];
     }
 
-    const usedFallback = scores[b]?.reason.startsWith("mechanical") === true;
+    const usedFallback = result.degraded || scores[b]?.reason.startsWith("mechanical") === true;
     opts.onProgress?.(
       `Scored ${Math.min(b + batchSize, refs.length)}/${refs.length} sources — batch ${batchNo}/${totalBatches}${usedFallback ? " (mechanical fallback)" : ""}`
     );

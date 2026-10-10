@@ -2,6 +2,9 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+// RT5 skill framework: the shared step constants replace the stale
+// hardcoded v1 subset ("Step n/9") that drifted from the v2 pipeline.
+import { V2_MAIN_SEQUENCE } from "@/lib/skill/steps";
 import {
   Sparkles,
   Loader2,
@@ -133,20 +136,21 @@ export function TopicComposer({
             if (data.message) {
               setStreamText((prev) => prev + (prev ? "\n" : "") + `[${event}] ${data.message}`);
             }
-            // v84-1: Track current pipeline step for progress visualization
+            // v84-1: Track current pipeline step for progress visualization.
+            // RT5: derive the map from the SHARED step constants instead of
+            // a hardcoded 9-step v1 subset (stale drift: v2 runs showed
+            // "Step 2/9" during knowledge, score, gapAgent… all unmapped).
             if (event === "step" && data.step) {
-              const stepMap: Record<string, number> = {
-                init: 1, gather: 2, curate: 3, plan: 4, generate: 5,
-                compose: 6, audit: 7, translate: 8, done: 9,
-              };
-              const stepNum = stepMap[data.step] || 0;
+              const stepIndex = (V2_MAIN_SEQUENCE as readonly string[]).indexOf(data.step);
+              const stepNum = stepIndex >= 0 ? stepIndex + 1 : 0;
+              const totalSteps = V2_MAIN_SEQUENCE.length;
               if (stepNum > 0) {
                 setStreamText((prev) => {
                   // Update the last "step" line with a progress bar
                   const lines = prev.split("\n");
                   const lastStepLine = lines.findIndex((l) => l.includes("▰"));
-                  const progressBar = "▰".repeat(stepNum) + "▱".repeat(Math.max(0, 9 - stepNum));
-                  const stepLine = `[progress] ${progressBar} Step ${stepNum}/9: ${data.step}`;
+                  const progressBar = "▰".repeat(stepNum) + "▱".repeat(Math.max(0, totalSteps - stepNum));
+                  const stepLine = `[progress] ${progressBar} Step ${stepNum}/${totalSteps}: ${data.step}`;
                   if (lastStepLine >= 0) {
                     lines[lastStepLine] = stepLine;
                   } else {

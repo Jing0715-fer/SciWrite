@@ -17,6 +17,9 @@ import {
 import { logger } from "@/lib/logger";
 import { webSearchDetailed } from "@/lib/ai";
 import { webSearchCacheStats } from "@/lib/web-search-cache";
+// RT5 skill framework: the fixed article format contract (ordered gate
+// chain) replaces per-exit hand-assembled sanitize/enforce/CJK sequences.
+import { applyFormatContract } from "@/lib/skill/format-contract";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
 import {
@@ -30,7 +33,6 @@ import {
   enforceUniformSectionFormat,
   normalizeArticleBodySections,
   looksTruncated,
-  stripResidualCJK,
 } from "@/lib/writing";
 import { generateArticleTitle, retranslateTitleZhWithGlossary } from "@/lib/article-title";
 import {
@@ -2965,20 +2967,19 @@ COMPLETION: your previous output appears cut off mid-sentence (it never reached 
           // format. Applied to the ENGLISH body only — never contentZh.
           chunkContent = normalizeAsciiPunctuation(chunkContent);
           chunkContent = normalizeSectionMarkdown(chunkContent);
-          // round-cs-7: unconditional uniform-template backstop — whatever
-          // headings/lists survived the prompt + retry are stripped/flattened
-          // here, so EVERY section lands in the DB as plain prose.
-          chunkContent = enforceUniformSectionFormat(chunkContent);
-          // round-RT2 (CJK final backstop): the cjkGate retry adopts only
-          // when strictly better, so a stubborn weak model can still leave
-          // Han characters in the EN body. Strip them unconditionally here —
-          // lines reduced to <8 ASCII chars are dropped.
+          // RT5 format contract: the uniform-template backstop + CJK-final
+          // backstop now run as ONE fixed, ordered contract chain
+          // (applyFormatContract) shared by every article-text exit —
+          // previously each exit hand-assembled its own subset/order.
           {
-            const cjkStripped = stripResidualCJK(chunkContent);
-            if (cjkStripped.removed > 0) {
-              log(`generate: section ${sectionNum} CJK backstop removed ${cjkStripped.removed} residual Han character(s)`);
-              chunkContent = cjkStripped.content;
+            const fmt = applyFormatContract(chunkContent, {
+              gates: ["uniform-section", "cjk-residual"],
+              language: "en",
+            });
+            if (fmt.cjkRemoved > 0) {
+              log(`generate: section ${sectionNum} CJK backstop removed ${fmt.cjkRemoved} residual Han character(s)`);
             }
+            chunkContent = fmt.content;
           }
 
           // ---- ★ MECHANICAL key→number conversion (no LLM numbering) ----
@@ -4720,12 +4721,13 @@ ${cleanEn}`;
               zhContent = zhContent
                 .replace(/^(以下是|翻译如下|中文翻译：?|译文：?|Translation:?)\s*\n*/i, "")
                 .trim();
-              zhContent = sanitizeSectionContent(zhContent);
-              // round-cs-7: the translation must mirror the EN section's
-              // uniform template — strip internal headings/lists the
-              // translator may have introduced. (No ASCII-punctuation pass:
-              // fullwidth punctuation is correct Chinese typography.)
-              zhContent = enforceUniformSectionFormat(zhContent);
+              // RT5 format contract: sanitizer + uniform-template via the
+              // shared ordered chain; language "zh" skips the CJK gate
+              // (fullwidth punctuation is correct Chinese typography).
+              zhContent = applyFormatContract(zhContent, {
+                gates: ["sanitize", "uniform-section"],
+                language: "zh",
+              }).content;
 
               // Citation-integrity check (cheap, deterministic): the Chinese
               // section must cite EXACTLY the same global numbers as the
