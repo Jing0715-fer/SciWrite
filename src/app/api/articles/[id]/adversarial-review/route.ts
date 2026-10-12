@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { chatWithSession } from "@/lib/llm-session";
 import { safeParseJSON } from "@/lib/generate-full-helpers";
+import { VERIFY_BATCH_SIZE, VERIFY_REMOVE_CONFIDENCE } from "@/lib/v2-config";
 import {
   extractBodyCitations,
   splitBodyAndReferences,
@@ -36,8 +37,10 @@ export const maxDuration = 600;
  * GET returns the latest adversarial review report for the article.
  */
 
-const VERIFY_BATCH_SIZE = 10;
-const REMOVE_CONFIDENCE = 80;
+// RT8: batch size + removal threshold now come from the shared v2-config
+// (this standalone route was the last VERIFY_BATCH_SIZE=10 holdout while
+// the in-pipeline verifier runs 20 — one tuning source of truth).
+const BATCH_SIZE = VERIFY_BATCH_SIZE;
 
 export async function GET(
   _req: NextRequest,
@@ -120,10 +123,28 @@ export async function POST(
     .sort((a, b) => a[0] - b[0])
     .map(([, v]) => v);
 
-  // Load DB references for richer metadata (abstracts!) — keyed by number
+  // Load DB references for richer metadata (abstracts!) — keyed by number.
+  // RT8 (memory ceiling): projected to exactly the fields the reviewer
+  // prompt consumes — the previous `include: { references }` deserialized
+  // EVERY column of every paragraph×reference row (ids, notes, metadata
+  // JSON, full-text bodies …) into the request heap right before the LLM
+  // batch loop; on the ratcheted dev heap this re-review pass was the
+  // straw that OOM-killed the server after the RT7 E2E run.
   const dbParagraphs = await db.paragraph.findMany({
     where: { projectId, deletedAt: null },
-    include: { references: { orderBy: { citationOrder: "asc" } } },
+    select: {
+      references: {
+        orderBy: { citationOrder: "asc" },
+        select: {
+          title: true,
+          authors: true,
+          journal: true,
+          year: true,
+          abstract: true,
+          citationOrder: true,
+        },
+      },
+    },
   });
   const dbRefByNum = new Map<number, any>();
   for (const p of dbParagraphs) {
@@ -180,8 +201,8 @@ confidence is 0-100. Output JSON only.`;
     reason: string;
   }[] = [];
 
-  for (let b = 0; b < checks.length; b += VERIFY_BATCH_SIZE) {
-    const batch = checks.slice(b, b + VERIFY_BATCH_SIZE);
+  for (let b = 0; b < checks.length; b += BATCH_SIZE) {
+    const batch = checks.slice(b, b + BATCH_SIZE);
     const block = batch
       .map((c, i) => {
         const parsed = (parsedRefs.get(c.n) || {}) as Partial<{
@@ -219,7 +240,7 @@ confidence is 0-100. Output JSON only.`;
             system,
             temperature: 0.1,
             taskType: "adversarial-review",
-            metadata: { step: "adversarial-review", batch: Math.floor(b / VERIFY_BATCH_SIZE) + 1 },
+            metadata: { step: "adversarial-review", batch: Math.floor(b / BATCH_SIZE) + 1 },
           });
         } catch (err: any) {
           if (attempt === 0) {
@@ -249,6 +270,18 @@ confidence is 0-100. Output JSON only.`;
         });
       }
     } catch {}
+    // RT8 (memory ceiling): per-batch GC hint + RSS watermark — mirrors the
+    // v2 pipeline's round-cs-4 block. The re-review runs right after a full
+    // generation on the same ratcheted dev heap; surfacing the watermark per
+    // batch makes the next incident diagnosable from the server log instead
+    // of a silent container kill.
+    if (typeof (globalThis as any).gc === "function") {
+      try { (globalThis as any).gc(); } catch {}
+    }
+    const rssMb = Math.round(process.memoryUsage().rss / 1048576);
+    console.log(
+      `[adversarial-review] batch ${Math.floor(b / BATCH_SIZE) + 1}/${Math.ceil(checks.length / BATCH_SIZE)} done [mem ${rssMb}MB]`,
+    );
     await new Promise((r) => setTimeout(r, 1200));
   }
 
@@ -258,7 +291,7 @@ confidence is 0-100. Output JSON only.`;
   const toRemove = [
     ...new Set(
       results
-        .filter((r) => r.verdict === "UNSUPPORTED" && r.confidence >= REMOVE_CONFIDENCE)
+        .filter((r) => r.verdict === "UNSUPPORTED" && r.confidence >= VERIFY_REMOVE_CONFIDENCE)
         .map((r) => r.n)
     ),
   ];

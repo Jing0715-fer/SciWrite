@@ -25,6 +25,7 @@ import {
   Scissors,
   Wrench,
   Cpu,
+  TriangleAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -471,6 +472,33 @@ function RunCard({
               />
             </div>
           )}
+
+          {/* RT8 (RT7 backlog #5): per-skill degradation surfacing — the
+              complete-event stats block has carried `skillDegraded` since
+              RT7, but nothing showed it. A run that quietly degraded three
+              skills looked identical to a clean one in the timeline. Only
+              non-empty sets render (a clean run adds zero noise). */}
+          {(() => {
+            const degraded = (stats.skillDegraded ?? {}) as Record<string, number>;
+            const entries = Object.entries(degraded);
+            if (entries.length === 0) return null;
+            return (
+              <div className="flex items-center gap-2 flex-wrap mb-3">
+                <span className="eyebrow inline-flex items-center gap-1">
+                  <TriangleAlert className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+                  {t("timeline.skillDegraded")}
+                </span>
+                {entries.map(([skill, n]) => (
+                  <span
+                    key={skill}
+                    className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400"
+                  >
+                    {skill}×{n}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
 
           {/* Provider transparency */}
           <div className="flex items-center gap-2 flex-wrap mb-3">

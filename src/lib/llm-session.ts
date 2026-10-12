@@ -50,6 +50,68 @@ function estimateTokens(text: string): number {
 }
 
 /**
+ * RT8 (dev-mode memory ceiling): task types whose prompts are FULLY
+ * self-contained (the adversarial verify / fact-check / topicality passes
+ * carry the claim sentence + reference metadata in the prompt itself).
+ *
+ * For these, `loadSessionContext` was pure cost: a 20-row findMany (each
+ * row up to ~28KB of content) deserialized per LLM call just to build a
+ * 4-message generation-chatter preamble that a hostile reviewer has no
+ * business seeing. The RT7 E2E OOM analysis flagged this per-call DB read
+ * as an RSS churn contributor on the ratcheted dev heap (adversarial
+ * batches: 14+ verify calls + 4 standalone-route calls per run).
+ *
+ * Session rows are still SAVED (observability) — only the context LOAD
+ * is skipped. CLI session resume lookups are unaffected.
+ */
+const STATELESS_TASK_TYPES = new Set([
+  "verify",
+  "adversarial-review",
+  "fact-check",
+  "topicality",
+]);
+
+export function isStatelessTaskType(taskType: string): boolean {
+  return STATELESS_TASK_TYPES.has(taskType);
+}
+
+/**
+ * Assemble the final single-string prompt with context-window safety.
+ * Shared by chatWithSession and chatWithSessionStream (previously two
+ * duplicated copies).
+ *
+ * RT8: the drop-oldest loop used to re-join the whole message array on
+ * every splice iteration (O(n²) string churn per call — measured up to
+ * ~28KB joins × messages on the knowledge/adversarial prompts). The
+ * length is now tracked incrementally and the join happens at most once
+ * (twice in the rare compress path).
+ */
+async function assembleFinalPrompt(
+  messages: { role: "system" | "user" | "assistant"; content: string }[],
+): Promise<string> {
+  const msgLen = (m: { role: string; content: string }) =>
+    m.role.length + 2 + m.content.length + 2; // "ROLE: content\n\n"
+  let total = 0;
+  for (const m of messages) total += msgLen(m);
+  if (total <= MAX_TOTAL_CHARS) {
+    return messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
+  }
+  // Drop oldest non-system messages (front) until the estimate fits.
+  while (total > MAX_TOTAL_CHARS && messages.length > 2) {
+    total -= msgLen(messages[1]);
+    messages.splice(1, 1); // remove oldest non-system message
+  }
+  let finalPrompt = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
+  // If dropping messages wasn't enough (single message too long), compress
+  if (finalPrompt.length > MAX_TOTAL_CHARS) {
+    const { compressPrompt } = await import("@/lib/ai");
+    finalPrompt = compressPrompt(finalPrompt);
+    finalPrompt += "\n\n[...conversation history truncated for context-window safety...]";
+  }
+  return finalPrompt;
+}
+
+/**
  * Load conversation history for a project, filtered by task types.
  * Returns messages in chronological order, respecting the context window.
  *
@@ -179,13 +241,17 @@ export async function chatWithSession(
   prompt: string,
   opts: ChatSessionOptions
 ): Promise<string> {
-  // Load conversation context for this project (all task types, to maximize continuity)
-  const context = await loadSessionContext(
-    projectId,
-    undefined, // include ALL task types for full context
-    opts.maxContextMessages ?? 20,
-    opts.maxContextTokens ?? 8000
-  );
+  // Load conversation context for this project (all task types, to maximize
+  // continuity). RT8: stateless verification passes skip the load entirely —
+  // their prompts are self-contained and the DB read was pure RSS churn.
+  const context = isStatelessTaskType(opts.taskType)
+    ? []
+    : await loadSessionContext(
+        projectId,
+        undefined, // include ALL task types for full context
+        opts.maxContextMessages ?? 20,
+        opts.maxContextTokens ?? 8000
+      );
 
   // Build messages array: system → context → new prompt
   const messages: { role: "system" | "user" | "assistant"; content: string }[] = [];
@@ -236,23 +302,9 @@ export async function chatWithSession(
   // CRITICAL: CLI providers (codebuddy, codex, hermes) pass the prompt as a
   // command-line argument to spawn(). When the prompt exceeds the OS limit
   // (~32KB on Windows, ~128KB per-arg on Linux), spawn() throws ENAMETOOLONG.
-  //
-  // Strategy:
-  // 1. First, drop oldest context messages (keep system + latest prompt)
-  // 2. If still too long, use compressPrompt() to intelligently truncate
-  //    the longest context blocks (reference lists, full-text articles, etc.)
-  let finalPrompt = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
-  if (finalPrompt.length > MAX_TOTAL_CHARS) {
-    // Drop oldest non-system messages (front) one at a time until we fit.
-    while (finalPrompt.length > MAX_TOTAL_CHARS && messages.length > 2) {
-      messages.splice(1, 1); // remove oldest non-system message
-      finalPrompt = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
-    }
-    // If dropping messages wasn't enough (single message too long), compress
-    const { compressPrompt } = await import("@/lib/ai");
-    finalPrompt = compressPrompt(finalPrompt);
-    finalPrompt += "\n\n[...conversation history truncated for context-window safety...]";
-  }
+  // assembleFinalPrompt enforces the MAX_TOTAL_CHARS budget (drop-oldest,
+  // then compress) — see its doc block for the RT8 O(n²) fix.
+  let finalPrompt = await assembleFinalPrompt(messages);
   finalPrompt += "\n\nASSISTANT:";
   // Resolve which (if any) CLI session id to resume. We pull the most recent
   // assistant message for this (project, taskType, cliProvider) that carries
@@ -380,12 +432,15 @@ export async function chatWithSessionStream(
   // continuity). This is the SAME logic as chatWithSession() — the only
   // difference is that we call chatStream() instead of chatWithSessionId()
   // at the end so the caller gets token-by-token streaming.
-  const context = await loadSessionContext(
-    projectId,
-    undefined, // include ALL task types for full context
-    opts.maxContextMessages ?? 20,
-    opts.maxContextTokens ?? 8000
-  );
+  // RT8: stateless verification passes skip the load (see chatWithSession).
+  const context = isStatelessTaskType(opts.taskType)
+    ? []
+    : await loadSessionContext(
+        projectId,
+        undefined, // include ALL task types for full context
+        opts.maxContextMessages ?? 20,
+        opts.maxContextTokens ?? 8000
+      );
 
   // Build messages array: system → context → new prompt
   const messages: { role: "system" | "user" | "assistant"; content: string }[] = [];
@@ -421,17 +476,9 @@ export async function chatWithSessionStream(
   const _t0 = Date.now();
 
   // Build the full prompt + system into a single string, with the same
-  // context-window safety compression as chatWithSession().
-  let finalPrompt = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
-  if (finalPrompt.length > MAX_TOTAL_CHARS) {
-    while (finalPrompt.length > MAX_TOTAL_CHARS && messages.length > 2) {
-      messages.splice(1, 1);
-      finalPrompt = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
-    }
-    const { compressPrompt } = await import("@/lib/ai");
-    finalPrompt = compressPrompt(finalPrompt);
-    finalPrompt += "\n\n[...conversation history truncated for context-window safety...]";
-  }
+  // context-window safety compression as chatWithSession() (shared helper —
+  // see assembleFinalPrompt for the RT8 O(n²) fix).
+  let finalPrompt = await assembleFinalPrompt(messages);
   finalPrompt += "\n\nASSISTANT:";
 
   // Resolve the active provider so we can branch:

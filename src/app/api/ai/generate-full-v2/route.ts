@@ -2323,6 +2323,17 @@ Output JSON only.`;
         // fail the run.
         if (!resume) {
           try {
+            // RT8: the pool payload (curatedRefs + full texts + sections +
+            // allocations — the largest object graph the run ever strings)
+            // was serialized TWICE, once for the create branch and once for
+            // the update branch, even though upsert executes only one. Build
+            // the string once.
+            const poolPayload = JSON.stringify({
+              curatedRefs,
+              fullTexts: [...fullTexts.entries()],
+              sections,
+              allocations,
+            });
             await db.pipelineCheckpoint.upsert({
               where: { runId_stage: { runId: activeRunId, stage: "pool" } },
               create: {
@@ -2330,19 +2341,9 @@ Output JSON only.`;
                 runId: activeRunId,
                 stage: "pool",
                 topic: project.topic,
-                payload: JSON.stringify({
-                  curatedRefs,
-                  fullTexts: [...fullTexts.entries()],
-                  sections,
-                  allocations,
-                }),
+                payload: poolPayload,
               },
-              update: { payload: JSON.stringify({
-                curatedRefs,
-                fullTexts: [...fullTexts.entries()],
-                sections,
-                allocations,
-              }), updatedAt: new Date() },
+              update: { payload: poolPayload, updatedAt: new Date() },
             });
             log(`checkpoint: pool saved (${curatedRefs.length} refs, ${sections.length} sections, ${fullTexts.size} full texts)`);
           } catch (cpErr: any) {
@@ -5096,6 +5097,27 @@ ${cleanEn}`;
             },
             { stats: completePayload.stats, accuracy: completePayload.accuracy },
           );
+        } catch {}
+        // RT8 (memory ceiling): the run's working set is dead weight now —
+        // the SSE stream delivered, the DB holds the paragraphs/references,
+        // and the checkpoints were just cleared. On the dev runtime V8 had
+        // no pressure to collect any of it (the ~200-item gather arrays, the
+        // full-text map, every repair round's full article copies, the
+        // evidence bank), so RSS ratcheted run over run — the RT7 E2E
+        // re-review then hit the 2.3GB ceiling on that pre-loaded heap.
+        // Release + GC hint keeps the long-lived dev server lean.
+        try {
+          // (dbItems / uniqueItems / evidenceBank are phase-block-scoped and
+          // unreachable here — the GC hint below collects them together with
+          // the outer-scope sets released explicitly.)
+          savedDataSources.length = 0;
+          savedReferences.length = 0;
+          repairRounds.length = 0;
+          fullTexts.clear();
+          if (typeof (globalThis as any).gc === "function") {
+            try { (globalThis as any).gc(); } catch {}
+          }
+          log(`post-complete: run working set released [mem ${Math.round(process.memoryUsage().rss / 1048576)}MB]`);
         } catch {}
         safeClose();
       } catch (err: any) {

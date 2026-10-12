@@ -16,9 +16,8 @@ import { chatWithSession } from "@/lib/llm-session";
 export { safeParseJSON } from "@/lib/llm-json";
 import { safeParseJSON as safeParseJSONImpl } from "@/lib/llm-json";
 
-export function ncbiItemsCount(items: any[]): number {
-  return items.filter((i) => i.source === "pubmed" || i.source === "ncbi").length;
-}
+// RT8: ncbiItemsCount was v1-route-only and went away with the v1
+// pipeline (v2 computes per-source counts via countBySource).
 
 export function countBySource(items: any[], source: string): number {
   return items.filter((i) => i.source === source).length;
@@ -454,21 +453,12 @@ const STOPWORDS = new Set([
   "your", "he", "she", "his", "her", "its", "our", "their",
 ]);
 
-export function extractKeywords(text: string): string[] {
-  const lower = text.toLowerCase();
-  // Match word-like tokens including TMC1, CRISPR-Cas9, cryo-EM, etc.
-  const tokens = lower.match(/[a-z][a-z0-9\-]{2,}/g) || [];
-  const seen = new Set<string>();
-  const keywords: string[] = [];
-  for (const t of tokens) {
-    if (STOPWORDS.has(t)) continue;
-    if (t.length < 4 && !/^[a-z]+\d+$/.test(t)) continue; // keep TMC1-style short names
-    if (seen.has(t)) continue;
-    seen.add(t);
-    keywords.push(t);
-  }
-  return keywords;
-}
+// RT8: the helpers-local extractKeywords was v1-route-only (the keyword
+// filter for per-section source ranking). v2 uses extractSectionKeywords /
+// scoreRelevance, and the canonical Set-returning extractKeywords lives in
+// lib/citation-audit.ts — this duplicate is deleted with the v1 pipeline.
+
+
 
 /**
  * v99-3: Enhanced keyword extraction for section ref filtering.

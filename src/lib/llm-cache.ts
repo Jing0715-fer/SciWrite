@@ -24,6 +24,20 @@ interface CacheEntry {
 
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
+/**
+ * RT8 (dev-mode memory ceiling): hard LRU cap on live entries.
+ *
+ * The r37 sweep only removed EXPIRED entries — a bursty run (E2E full
+ * generation: 40+ distinct skill calls, search-enhance, adversarial
+ * batches) writes ~50-100 entries of up to ~32KB each and the Map held
+ * them all for 30 minutes. On the dev server this was one of the RSS
+ * ratchet contributors behind the RT7 OOM (2.3GB → container kill).
+ * When the cache exceeds this cap the OLDEST entries (Map insertion
+ * order ≈ least-recently-written) are evicted — a cache miss is always
+ * a safe outcome, unlike an OOM kill mid-run.
+ */
+const CACHE_MAX_ENTRIES = 500;
+
 const cache = new Map<string, CacheEntry>();
 
 // Hit/miss counters for the cache stats UI. Reset by clearLLMCache().
@@ -91,6 +105,8 @@ async function buildCacheKeyWithSelection(
  * Get a cached LLM response if present and not expired.
  */
 export function getCachedLLMResult(key: string): any | null {
+  // RT8: refresh recency so the write-order LRU evicts the genuinely
+  // least-recently-USED entries, not just the oldest writes.
   const entry = cache.get(key);
   if (!entry) {
     _misses++;
@@ -101,6 +117,8 @@ export function getCachedLLMResult(key: string): any | null {
     _misses++;
     return null;
   }
+  cache.delete(key);
+  cache.set(key, entry);
   _hits++;
   return entry.result;
 }
@@ -116,6 +134,18 @@ export function setCachedLLMResult(key: string, result: any): void {
   const now = Date.now();
   for (const [k, entry] of cache) {
     if (entry.expiresAt <= now) cache.delete(k);
+  }
+  // RT8: LRU entry cap — evict oldest (insertion-order front) entries until
+  // the new write fits under CACHE_MAX_ENTRIES. Never blocks a cache write
+  // on eviction; a cache miss downstream is always safe.
+  if (cache.size >= CACHE_MAX_ENTRIES) {
+    const evictCount = cache.size - CACHE_MAX_ENTRIES + 1;
+    let evicted = 0;
+    for (const k of cache.keys()) {
+      if (evicted >= evictCount) break;
+      cache.delete(k);
+      evicted++;
+    }
   }
   cache.set(key, {
     result,

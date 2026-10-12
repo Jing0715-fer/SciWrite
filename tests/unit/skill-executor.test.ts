@@ -7,11 +7,29 @@
  * no-fallback rethrow, telemetry envelope, chatOverrides passthrough.
  */
 
-import { test, expect, describe, mock, beforeEach } from "bun:test";
+import { test, expect, describe, mock, beforeEach, afterAll } from "bun:test";
 
 // ---------------------------------------------------------------------------
 // Module mocks — BEFORE importing the executor (ESM live-binding order).
 // ---------------------------------------------------------------------------
+
+// RT8 (test-suite isolation): bun runs test files in ONE process in
+// non-alphabetical order, and mock.module is process-global with no
+// rollback (a later mock.module call does NOT override — verified against
+// bun 1.3.14). The module-level mock below therefore used to leak into
+// llm-cache.test.ts (historical "8 env-dependent failures" documented as
+// suite-order interference since RT6). Fix: a query-suffixed dynamic import
+// ("…?real") bypasses the path-keyed mock registry and loads the REAL
+// module; every mocked function delegates to it once `mockActive` flips
+// false in afterAll. Later files then exercise the real implementation.
+let actualCache: typeof import("@/lib/llm-cache") | null = null;
+let mockActive = true;
+const actualCachePromise: Promise<any> = import("@/lib/llm-cache?real").then(
+  (m) => {
+    actualCache = m as any;
+    return m;
+  },
+);
 
 let lastChatCall: { prompt: string; opts: any } | null = null;
 let chatReply = '```json\n{"scores":[]}\n```';
@@ -28,15 +46,28 @@ mock.module("@/lib/llm-session", () => ({
 }));
 
 mock.module("@/lib/llm-cache", () => ({
-  llmCacheKey: async (prompt: string) => `k:${prompt.slice(0, 24)}`,
+  llmCacheKey: (prompt: string, _opts: Record<string, any>) =>
+    mockActive
+      ? Promise.resolve(`k:${prompt.slice(0, 24)}`)
+      : actualCache!.llmCacheKey(prompt, _opts),
   getCachedLLMResult: (key: string) => {
+    if (!mockActive) return actualCache!.getCachedLLMResult(key);
     const v = cacheStore.get(key);
     if (v !== undefined) cacheHits++;
     return v ?? null;
   },
   setCachedLLMResult: (key: string, value: string) => {
+    if (!mockActive) return actualCache!.setCachedLLMResult(key, value);
     cacheStore.set(key, value);
   },
+  // The mock replaces the WHOLE module namespace — every export the real
+  // module has must exist here or later files' imports resolve to
+  // undefined. These two are only ever exercised AFTER the flag flips
+  // (this file's own tests never call them), so a plain passthrough is
+  // enough (optional-chained for the load race, defensively).
+  clearLLMCache: () => actualCache?.clearLLMCache(),
+  getLLMCacheStats: () =>
+    actualCache?.getLLMCacheStats() ?? { size: 0, hits: 0, misses: 0, hitRate: 0 },
 }));
 
 import { runSkill } from "@/lib/skill/executor";
@@ -48,6 +79,15 @@ beforeEach(() => {
   cacheStore = new Map();
   cacheHits = 0;
   chatReply = '```json\n{"items":[]}\n```';
+});
+
+// RT8: once this file's tests are done, flip the delegation flag so any
+// LATER-loaded test file (llm-cache.test.ts among them) exercises the real
+// llm-cache implementation instead of this file's 2-function test double.
+// (mock.module cannot be un-registered — the flag is the rollback.)
+afterAll(async () => {
+  await actualCachePromise; // ensure the real module is loaded before flipping
+  mockActive = false;
 });
 
 /** Minimal test skill — one string field in/out, JSON reply shape {items}. */

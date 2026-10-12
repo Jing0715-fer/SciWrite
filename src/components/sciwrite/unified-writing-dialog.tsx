@@ -830,9 +830,10 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
   const { t } = useI18n();
   const [language, setLanguage] = React.useState("English");
   const [targetWords, setTargetWords] = React.useState(5000);
-  // v2 evidence-grounded pipeline — default ON. "v1" keeps the legacy
-  // one-pass numbering pipeline for comparison.
-  const [pipeline, setPipeline] = React.useState<"v1" | "v2">("v2");
+  // RT8 (one-orchestrator merge): the pipeline toggle is gone — the dialog
+  // always launches the v2 evidence-grounded pipeline (the v1 URL now
+  // delegates to v2 server-side; see generate-full/route.ts). All
+  // `pipeline === "v2"` conditionals collapsed to their v2 arms.
   const [currentStep, setCurrentStep] = React.useState(-1);
   const [stepProgress, setStepProgress] = React.useState<Record<string, string>>({});
   const [result, setResult] = React.useState<any>(null);
@@ -840,14 +841,15 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
   const [livePreview, setLivePreview] = React.useState<string>("");
   const [confirmClearOpen, setConfirmClearOpen] = React.useState(false);
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
-  // Advanced tuning parameters — the four data-source caps default to 0 =
-  // unlimited (backend maps 0 to a 9999 sentinel; v1 prompts and
-  // generateWebSearchQueries have dedicated unlimited branches). maxTokens
-  // defaults to 20480 with a hard range of 4096–81920.
+  // Advanced tuning parameters — the data-source caps default to 0 =
+  // unlimited (backend maps 0 to a 9999 sentinel; the
+  // generateWebSearchQueries prompt has a dedicated unlimited branch).
+  // maxTokens defaults to 20480 with a hard range of 4096–81920.
+  // (RT8: the v1-only per-section filtering knobs sectionRefTopN /
+  // sectionDsTopN were removed with the v1 pipeline — v2 always ignored
+  // them, so the inputs did nothing.)
   const [maxDbQueries, setMaxDbQueries] = React.useState(0);
   const [maxWebSearchQueries, setMaxWebSearchQueries] = React.useState(0);
-  const [sectionRefTopN, setSectionRefTopN] = React.useState(0);
-  const [sectionDsTopN, setSectionDsTopN] = React.useState(0);
   const [maxTokens, setMaxTokens] = React.useState(20480);
   // Prompt template selection — lets the user pick a saved template whose
   // instruction is appended to the section-generation prompt.
@@ -927,7 +929,7 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
       fetch(`/api/projects/${projectId}/pipeline-checkpoint`).then((r) => r.json()),
     // currentStep === -1 ⇔ not running (isRunning is derived further below;
     // referencing it here would be a TDZ error).
-    enabled: !!projectId && pipeline === "v2" && currentStep === -1,
+    enabled: !!projectId && currentStep === -1,
     refetchInterval: 30_000,
     staleTime: 10_000,
   });
@@ -946,14 +948,11 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
   const isBothMode = language === "both";
   // round-27: the v2 evidence-grounded pipeline ALWAYS writes English first
   // (its citation-key machinery is English-first by design), so "中文" and
-  // "both" BOTH mean "generate English → translate to 中文" in v2. The old
-  // code hard-forced language="English" for v2 and the Chinese half was
-  // silently dropped — bilingual users never got the translation.
-  const v2Bilingual = pipeline === "v2" && (isBothMode || language === "中文");
+  // "both" BOTH mean "generate English → translate to 中文".
+  const v2Bilingual = isBothMode || language === "中文";
   // Whether THIS run will include a translate stage (drives estimates, the
-  // strategy panel and the step list). v1 only translates in "both" mode;
-  // v2 translates in "both" AND "中文" mode.
-  const willTranslate = pipeline === "v2" ? v2Bilingual : isBothMode;
+  // strategy panel and the step list).
+  const willTranslate = v2Bilingual;
 
   // Localized display label for the current output-language selection —
   // used by the Task Brief's Constraints summary chips.
@@ -1029,57 +1028,41 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
   };
 
   const STEPS = React.useMemo(() => {
-    if (pipeline === "v2") {
-      const base = [
-        { id: STEP.gather, label: t("oneClick.stepGather"), icon: Database },
-        // round-33: LLM-knowledge cross-check runs between gather and curate
-        // (fills missing metadata + adds PubMed-verified gap sources).
-        { id: STEP.knowledge, label: t("oneClick.stepKnowledge") || "Knowledge cross-check", icon: BookCheck },
-        // round-42: every gathered source is scored for importance/relevance
-        // (full-text availability as a depth tiebreaker) BEFORE curation, so
-        // the citation count follows source quality instead of a fixed quota.
-        { id: STEP.score, label: t("oneClick.stepScore") || "Score source importance", icon: Gauge },
-        { id: STEP.curate, label: t("oneClick.stepCurate"), icon: Filter },
-        { id: STEP.plan, label: t("oneClick.stepPlan"), icon: ListTree },
-        // round-cs-2: research gap agent — audits the planned outline against
-        // the allocated evidence and runs targeted supplementary searches
-        // (ClawsGO-inspired autonomous research, bounded ≤3 gaps/≤6 refs).
-        { id: STEP.gapAgent, label: t("oneClick.stepGapAgent") || "Gap agent — targeted research", icon: SearchCheck },
-        { id: STEP.analyze, label: t("oneClick.stepAnalyze") || "Analyze Evidence", icon: Microscope },
-        { id: STEP.allocate, label: t("oneClick.stepAllocate") || "Allocate Evidence", icon: Target },
-        { id: STEP.generate, label: t("oneClick.stepGenerate"), icon: PenLine },
-        { id: STEP.verify, label: t("oneClick.stepVerify") || "Adversarial Verify", icon: ShieldCheck },
-        { id: STEP.compose, label: t("oneClick.stepCompose"), icon: FileStack },
-        // round-59: the pipeline now repairs review findings (external
-        // fact-check verdicts included) BEFORE translation — one click ends
-        // with a fact-hardened final article, not a to-do list.
-        { id: STEP.repair, label: t("oneClick.stepRepair") || "AI review & auto-repair", icon: Wrench },
-        // round-cs-2: whole-article coherence polish — cross-section review
-        // (repetition/contradiction/terminology/numeric/transition) followed
-        // by context-aware per-section re-editing (不断根据上下文打磨).
-        { id: STEP.polish, label: t("oneClick.stepPolish") || "Coherence polish", icon: Sparkles },
-      ];
-      // round-27: v2 translates AFTER compose (sections already carry final
-      // global citation numbers), so the translate step comes last.
-      return v2Bilingual
-        ? [...base, { id: STEP.translate, label: t("oneClick.stepTranslate"), icon: Languages }]
-        : base;
-    }
     const base = [
       { id: STEP.gather, label: t("oneClick.stepGather"), icon: Database },
-      // round-42: importance scoring before curation (same as v2).
+      // round-33: LLM-knowledge cross-check runs between gather and curate
+      // (fills missing metadata + adds PubMed-verified gap sources).
+      { id: STEP.knowledge, label: t("oneClick.stepKnowledge") || "Knowledge cross-check", icon: BookCheck },
+      // round-42: every gathered source is scored for importance/relevance
+      // (full-text availability as a depth tiebreaker) BEFORE curation, so
+      // the citation count follows source quality instead of a fixed quota.
       { id: STEP.score, label: t("oneClick.stepScore") || "Score source importance", icon: Gauge },
       { id: STEP.curate, label: t("oneClick.stepCurate"), icon: Filter },
-      { id: STEP.relationships, label: t("oneClick.stepRelationships"), icon: Network },
       { id: STEP.plan, label: t("oneClick.stepPlan"), icon: ListTree },
+      // round-cs-2: research gap agent — audits the planned outline against
+      // the allocated evidence and runs targeted supplementary searches
+      // (ClawsGO-inspired autonomous research, bounded ≤3 gaps/≤6 refs).
+      { id: STEP.gapAgent, label: t("oneClick.stepGapAgent") || "Gap agent — targeted research", icon: SearchCheck },
+      { id: STEP.analyze, label: t("oneClick.stepAnalyze") || "Analyze Evidence", icon: Microscope },
+      { id: STEP.allocate, label: t("oneClick.stepAllocate") || "Allocate Evidence", icon: Target },
       { id: STEP.generate, label: t("oneClick.stepGenerate"), icon: PenLine },
-      ...(isBothMode
-        ? [{ id: STEP.translate, label: t("oneClick.stepTranslate"), icon: Languages }]
-        : []),
+      { id: STEP.verify, label: t("oneClick.stepVerify") || "Adversarial Verify", icon: ShieldCheck },
       { id: STEP.compose, label: t("oneClick.stepCompose"), icon: FileStack },
+      // round-59: the pipeline now repairs review findings (external
+      // fact-check verdicts included) BEFORE translation — one click ends
+      // with a fact-hardened final article, not a to-do list.
+      { id: STEP.repair, label: t("oneClick.stepRepair") || "AI review & auto-repair", icon: Wrench },
+      // round-cs-2: whole-article coherence polish — cross-section review
+      // (repetition/contradiction/terminology/numeric/transition) followed
+      // by context-aware per-section re-editing (不断根据上下文打磨).
+      { id: STEP.polish, label: t("oneClick.stepPolish") || "Coherence polish", icon: Sparkles },
     ];
-    return base;
-  }, [t, isBothMode, pipeline, v2Bilingual]);
+    // round-27: v2 translates AFTER compose (sections already carry final
+    // global citation numbers), so the translate step comes last.
+    return v2Bilingual
+      ? [...base, { id: STEP.translate, label: t("oneClick.stepTranslate"), icon: Languages }]
+      : base;
+  }, [t, v2Bilingual]);
 
   // Auto-scroll the right-side log panel to bottom when new entries arrive
   React.useEffect(() => {
@@ -1186,19 +1169,20 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
     );
   };
 
-  // Stall watchdog (v2 only — v1 has no keepalive pings, so silence between
-  // its step events is normal): while a v2 run is live, ≥90s without ANY
-  // event (pings included) means the wire is dead → enter recovery. Any
-  // later live event hands control back to the stream automatically.
+  // Stall watchdog: while a run is live, ≥90s without ANY event (keepalive
+  // pings included) means the wire is dead → enter recovery. Any later live
+  // event hands control back to the stream automatically. (v2 emits a
+  // keepalive ping every ≤20s — RT8: v1 is gone, so the former v2-only gate
+  // is unconditional.)
   React.useEffect(() => {
-    if (!isRunning || recovering || pipeline !== "v2") return;
+    if (!isRunning || recovering) return;
     const id = setInterval(() => {
       if (Date.now() - lastActivityRef.current >= 90_000) {
         setRecovering(true);
       }
     }, 5_000);
     return () => clearInterval(id);
-  }, [isRunning, recovering, pipeline]);
+  }, [isRunning, recovering]);
 
   // Recovery poller: while recovering, pull the persisted timeline every 8s
   // and render it. Terminal states resolve the run exactly like the live
@@ -1300,7 +1284,9 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
     // tracks THIS run's goal (round 26 — no more fixed 1000w bar).
     onGenerationTargetWords?.(targetWords);
     try {
-      const streamFn = pipeline === "v2" ? api.aiGenerateFullV2Stream : api.aiGenerateFullStream;
+      // RT8: v2 is the only pipeline — the v1 stream fn (and its
+      // sectionRefTopN/sectionDsTopN knobs) went away with the merge.
+      const streamFn = api.aiGenerateFullV2Stream;
       const data = await streamFn(
         {
           projectId,
@@ -1311,9 +1297,9 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
           // the Chinese half of bilingual runs was silently dropped.
           language,
           targetWords,
-          ...(pipeline === "v2"
-            ? { maxDbQueries, maxWebSearchQueries, maxTokens }
-            : { maxDbQueries, maxWebSearchQueries, sectionRefTopN, sectionDsTopN, maxTokens }),
+          maxDbQueries,
+          maxWebSearchQueries,
+          maxTokens,
           // Pass the selected template's instruction to customize section
           // generation. Empty string = no custom instruction (default behavior).
           // Task Brief (ClawsGO-style): when the send-brief checkbox is armed
@@ -1728,12 +1714,8 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
                   {languageLabel}
                 </span>
                 <span className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-2 py-1 text-[9px] font-medium text-foreground/70">
-                  {pipeline === "v2" ? (
-                    <ShieldCheck className="h-3 w-3" />
-                  ) : (
-                    <PenLine className="h-3 w-3" />
-                  )}
-                  {pipeline === "v2" ? t("oneClick.pipelineV2") : t("oneClick.pipelineV1")}
+                  <ShieldCheck className="h-3 w-3" />
+                  {t("oneClick.pipelineV2")}
                 </span>
               </div>
               <div className="space-y-1">
@@ -1754,51 +1736,25 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
         )}
       </div>
 
-      {/* Pipeline selector — v2 evidence-grounded (default) vs v1 legacy */}
+      {/* RT8: the v1/v2 pipeline selector is gone — v2 is the only pipeline
+          (the v1 URL delegates server-side). What remains is the pipeline
+          identity card, so the user still sees WHICH pipeline will run and
+          what it guarantees. */}
       <ConfigCard label={t("oneClick.pipelineLabel") || "Generation Pipeline"}>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => setPipeline("v2")}
-            className={`rounded-lg border p-2.5 text-left transition-all ${
-              pipeline === "v2"
-                ? "border-primary/60 bg-primary/[0.06] ring-academic"
-                : "border-border hover:border-primary/30 hover:bg-muted/40"
-            }`}
-          >
-            <div className="flex items-center gap-1.5">
-              <ShieldCheck className={`h-3.5 w-3.5 ${pipeline === "v2" ? "text-primary" : "text-muted-foreground"}`} />
-              <span className="text-xs font-semibold">{t("oneClick.pipelineV2") || "v2 · Evidence-Grounded"}</span>
-              {pipeline === "v2" && <Badge className="ml-auto h-4 px-1 text-[8px] bg-primary">DEFAULT</Badge>}
-            </div>
-            <p className="mt-1 text-[9px] leading-relaxed text-muted-foreground">
-              {t("oneClick.pipelineV2Desc") ||
-                "Score every source's importance → curate with a dynamic citation count → co-plan outline + citations → extract evidence (full texts when available) → write with structural keys → adversarially verify. Highest citation accuracy."}
-            </p>
-          </button>
-          <button
-            type="button"
-            onClick={() => setPipeline("v1")}
-            className={`rounded-lg border p-2.5 text-left transition-all ${
-              pipeline === "v1"
-                ? "border-primary/60 bg-primary/[0.06] ring-academic"
-                : "border-border hover:border-primary/30 hover:bg-muted/40"
-            }`}
-          >
-            <div className="flex items-center gap-1.5">
-              <PenLine className={`h-3.5 w-3.5 ${pipeline === "v1" ? "text-primary" : "text-muted-foreground"}`} />
-              <span className="text-xs font-semibold">{t("oneClick.pipelineV1") || "v1 · Standard"}</span>
-            </div>
-            <p className="mt-1 text-[9px] leading-relaxed text-muted-foreground">
-              {t("oneClick.pipelineV1Desc") ||
-                "Legacy pipeline: importance scoring + relationship analysis + per-section keyword filtering + LLM-written numeric citations."}
-            </p>
-          </button>
+        <div className="rounded-lg border border-primary/60 bg-primary/[0.06] p-2.5">
+          <div className="flex items-center gap-1.5">
+            <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+            <span className="text-xs font-semibold">{t("oneClick.pipelineV2") || "v2 · Evidence-Grounded"}</span>
+            <Badge className="ml-auto h-4 px-1 text-[8px] bg-primary">DEFAULT</Badge>
+          </div>
+          <p className="mt-1 text-[9px] leading-relaxed text-muted-foreground">
+            {t("oneClick.pipelineV2Desc") ||
+              "Score every source's importance → curate with a dynamic citation count → co-plan outline + citations → extract evidence (full texts when available) → write with structural keys → adversarially verify. Highest citation accuracy."}
+          </p>
         </div>
       </ConfigCard>
 
-      {pipeline === "v2" && (
-        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
+      <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
           <div className="flex items-start gap-2">
             <ShieldCheck className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
             <div className="space-y-1">
@@ -1816,7 +1772,6 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
             </div>
           </div>
         </div>
-      )}
 
       {/* Feature chips — unified brand-tint chip language */}
       <div className="flex flex-wrap gap-1.5">
@@ -1842,8 +1797,8 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
       </ConfigCard>
 
       {/* Bilingual strategy info — shown when the run will produce a Chinese
-          half ("both" in either pipeline, or "中文" in v2 which maps to
-          English-first + translation) */}
+          half ("both" or "中文", both of which map to English-first +
+          translation in v2) */}
       {willTranslate && (
         <div className="rounded-lg border border-fuchsia-200/60 dark:border-fuchsia-900/40 bg-fuchsia-50/40 dark:bg-fuchsia-950/20 p-3">
           <div className="flex items-start gap-2">
@@ -1857,9 +1812,9 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
               </p>
               <ol className="text-[10px] text-muted-foreground leading-relaxed list-decimal ml-3 space-y-0.5">
                 <li>Generate English full article (sections 1→N)</li>
-                <li>{pipeline === "v2" ? "Compose + verify the English article with global citation numbers" : "Translate each section EN → 中文 (one by one)"}</li>
-                <li>{pipeline === "v2" ? "Translate every section EN → 中文 (citations [n] preserved verbatim)" : "Compose bilingual article with shared references"}</li>
-                {pipeline === "v2" && <li>Compose bilingual article with shared references</li>}
+                <li>Compose + verify the English article with global citation numbers</li>
+                <li>Translate every section EN → 中文 (citations [n] preserved verbatim)</li>
+                <li>Compose bilingual article with shared references</li>
               </ol>
             </div>
           </div>
@@ -1969,11 +1924,13 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
         </p>
       </div>
 
-      {/* Advanced settings — collapsible panel for tuning gathering + filtering.
-          Collapsed by default so casual users see the same clean UI as before.
-          Expanded reveals sliders/inputs for the parameters that were previously
-          hard-coded in the backend (maxDbQueries, maxWebSearchQueries,
-          sectionRefTopN, sectionDsTopN, maxTokens). */}
+      {/* Advanced settings — collapsible panel for tuning gathering + LLM
+          budgets. Collapsed by default so casual users see the same clean UI
+          as before. Expanded reveals inputs for the parameters that were
+          previously hard-coded in the backend (maxDbQueries,
+          maxWebSearchQueries, maxTokens). RT8: the per-section reference
+          filtering knobs (sectionRefTopN/sectionDsTopN) were v1-only and
+          went away with the v1 pipeline. */}
       <div className="rounded-lg border border-border/60 bg-muted/20">
         <button
           type="button"
@@ -2059,27 +2016,6 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
                     </div>
                   </div>
 
-                  {/* Reference filtering section */}
-                  <div className="space-y-2">
-                    <p className="eyebrow">
-                      {t("oneClick.advRefFiltering") || "Per-section reference filtering"}
-                    </p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <NumField
-                        label={t("oneClick.advRefTopN") || "Top refs per section"}
-                        hint={t("oneClick.advRefTopNHint") || "Higher = more refs. 0 = no limit (keep all)"}
-                        value={sectionRefTopN} min={0} max={40}
-                        onChange={setSectionRefTopN}
-                      />
-                      <NumField
-                        label={t("oneClick.advDsTopN") || "Top data sources per section"}
-                        hint={t("oneClick.advDsTopNHint") || "Structural/sequence data. 0 = no limit (keep all)"}
-                        value={sectionDsTopN} min={0} max={30}
-                        onChange={setSectionDsTopN}
-                      />
-                    </div>
-                  </div>
-
                   {/* LLM section — maxTokens does NOT support 0 (hard floor 4096) */}
                   <div className="space-y-2">
                     <p className="eyebrow">
@@ -2156,8 +2092,6 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
                 onClick={() => {
                   setMaxDbQueries(0);
                   setMaxWebSearchQueries(0);
-                  setSectionRefTopN(0);
-                  setSectionDsTopN(0);
                   setMaxTokens(20480);
                 }}
               >

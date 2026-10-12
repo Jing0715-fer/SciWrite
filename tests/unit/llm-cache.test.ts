@@ -149,3 +149,60 @@ describe("integration: llmCacheKey + cache round-trip", () => {
     expect(getCachedLLMResult(k2)).toBe("b");
   });
 });
+
+// RT8 (dev-mode memory ceiling): the Map had TTL-only expiry with no entry
+// cap — bursty runs wrote 50-100 entries of up to ~32KB and held them all
+// for 30 minutes (an RSS ratchet contributor behind the RT7 OOM).
+describe("RT8: LRU entry cap", () => {
+  const CAP = 500; // must mirror CACHE_MAX_ENTRIES in src/lib/llm-cache.ts
+
+  test("cache never exceeds the entry cap", () => {
+    for (let i = 0; i < CAP + 60; i++) {
+      setCachedLLMResult(`lru-key-${i}`, { i });
+    }
+    const stats = getLLMCacheStats();
+    expect(stats.size).toBeLessThanOrEqual(CAP);
+    expect(stats.size).toBe(CAP); // exactly at cap, not under
+  });
+
+  test("oldest entries are evicted first (insertion order)", () => {
+    for (let i = 0; i < CAP + 10; i++) {
+      setCachedLLMResult(`lru-order-${i}`, { i });
+    }
+    // The first 10 written keys were evicted to make room for the last 10.
+    for (let i = 0; i < 10; i++) {
+      expect(getCachedLLMResult(`lru-order-${i}`)).toBeNull();
+    }
+    // The most recent 10 survive.
+    for (let i = CAP; i < CAP + 10; i++) {
+      expect(getCachedLLMResult(`lru-order-${i}`)).toEqual({ i });
+    }
+  });
+
+  test("a get refreshes recency — the read entry survives the next eviction wave", () => {
+    // Fill the cache exactly to cap.
+    for (let i = 0; i < CAP; i++) {
+      setCachedLLMResult(`lru-recency-${i}`, { i });
+    }
+    // Touch the OLDEST entry — its recency is refreshed to newest.
+    expect(getCachedLLMResult("lru-recency-0")).toEqual({ i: 0 });
+    // Write one more entry → the eviction wave must NOT take key 0.
+    setCachedLLMResult("lru-recency-new", { i: -1 });
+    expect(getCachedLLMResult("lru-recency-0")).toEqual({ i: 0 });
+    // Instead, the second-oldest (never read) key was evicted.
+    expect(getCachedLLMResult("lru-recency-1")).toBeNull();
+    expect(getCachedLLMResult("lru-recency-new")).toEqual({ i: -1 });
+  });
+
+  test("overflow evicts exactly one entry per write (no over-eviction)", () => {
+    for (let i = 0; i < CAP; i++) {
+      setCachedLLMResult(`lru-exact-${i}`, { i });
+    }
+    // Exactly at cap: the next write evicts exactly ONE oldest entry.
+    setCachedLLMResult("lru-exact-new", { i: -1 });
+    expect(getLLMCacheStats().size).toBe(CAP);
+    expect(getCachedLLMResult("lru-exact-0")).toBeNull(); // the one evicted
+    expect(getCachedLLMResult("lru-exact-1")).toEqual({ i: 1 }); // untouched
+    expect(getCachedLLMResult("lru-exact-new")).toEqual({ i: -1 });
+  });
+});
