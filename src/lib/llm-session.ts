@@ -1,6 +1,8 @@
 import { db } from "@/lib/db";
 import { chat } from "@/lib/ai";
 import { SESSION_MAX_TOTAL_CHARS as MAX_TOTAL_CHARS } from "@/lib/v2-config";
+// RT9: observer-only prompt-size accounting (see session-context-stats.ts).
+import { recordSessionPromptSize } from "@/lib/session-context-stats";
 
 /**
  * LLM Session Manager
@@ -69,6 +71,19 @@ const STATELESS_TASK_TYPES = new Set([
   "adversarial-review",
   "fact-check",
   "topicality",
+  // RT9: the review family joins the stateless set. RT8's E2E ran the
+  // verify family stateless with zero verdict drift (28 checks, 0 removed,
+  // 8 flagged — same adjudication behavior), and the review-family prompts
+  // are likewise fully self-contained: fact-check carries each claim +
+  // reference metadata, review carries the article + weakness classes,
+  // coherence-review carries the full section set. The generation-chatter
+  // preamble a context load built was noise for a hostile reviewer, and the
+  // RT8 plan explicitly gated this flip on "next E2E shows no verdict
+  // drift" — the RT8 run provided that evidence. This removes ~12 ×
+  // 20-row findMany deserializations per run (fact-check ×8, review ×2,
+  // coherence-review ×2). "revise" stays generation-side (context-loaded)
+  // by design — the RT8 data covers verdict passes only.
+  "review",
 ]);
 
 export function isStatelessTaskType(taskType: string): boolean {
@@ -306,6 +321,10 @@ export async function chatWithSession(
   // then compress) — see its doc block for the RT8 O(n²) fix.
   let finalPrompt = await assembleFinalPrompt(messages);
   finalPrompt += "\n\nASSISTANT:";
+  // RT9: session-context cost telemetry — the assembled prompt (context
+  // preamble + task prompt + ASSISTANT suffix) is what the provider
+  // actually receives; record its size per taskType (observer-only).
+  recordSessionPromptSize(opts.taskType, finalPrompt.length);
   // Resolve which (if any) CLI session id to resume. We pull the most recent
   // assistant message for this (project, taskType, cliProvider) that carries
   // a cliSessionId. The cliProvider scope is critical: each CLI keeps its
@@ -480,6 +499,8 @@ export async function chatWithSessionStream(
   // see assembleFinalPrompt for the RT8 O(n²) fix).
   let finalPrompt = await assembleFinalPrompt(messages);
   finalPrompt += "\n\nASSISTANT:";
+  // RT9: session-context cost telemetry (see chatWithSession).
+  recordSessionPromptSize(opts.taskType, finalPrompt.length);
 
   // Resolve the active provider so we can branch:
   //  - CLI providers (hermes, codex, codebuddy, ...): use chatWithSessionId()

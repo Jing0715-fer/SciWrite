@@ -25,6 +25,7 @@ import {
   Scissors,
   Wrench,
   Cpu,
+  Database,
   TriangleAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -37,7 +38,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { useI18n, type TranslationKey } from "@/lib/i18n";
-import { STEP, type PipelineStep } from "@/lib/skill/steps";
+import { STEP_LABEL_KEYS } from "@/lib/skill/step-labels";
 
 /**
  * RunTimelineDialog — round-cs-1 (ClawsGO Science-inspired upgrade).
@@ -103,43 +104,9 @@ interface Props {
   onOpenArticle?: (a: any) => void;
 }
 
+// RT9: the STEP → i18n key map now lives in @/lib/skill/step-labels (shared
+// with the writing dialog's stepper — single label set for the whole UI).
 // Typed key maps for dynamic lookups (all keys exist in both dictionaries).
-// RT7: keys reference the shared step namespace (STEP.*) so a wire-name
-// drift between server routes and this dialog fails the compiler instead
-// of silently rendering a blank label.
-const STEP_LABEL_KEYS: Record<PipelineStep, TranslationKey> = {
-  [STEP.init]: "timeline.step.init",
-  [STEP.gather]: "timeline.step.gather",
-  [STEP.knowledge]: "timeline.step.knowledge",
-  [STEP.score]: "timeline.step.score",
-  [STEP.curate]: "timeline.step.curate",
-  [STEP.plan]: "timeline.step.plan",
-  // round-cs-2: research gap agent (STEP 3.5) + coherence polish (STEP 8.6)
-  [STEP.gapAgent]: "timeline.step.gapAgent",
-  [STEP.analyze]: "timeline.step.analyze",
-  [STEP.allocate]: "timeline.step.allocate",
-  [STEP.generate]: "timeline.step.generate",
-  [STEP.verify]: "timeline.step.verify",
-  [STEP.compose]: "timeline.step.compose",
-  [STEP.repair]: "timeline.step.repair",
-  [STEP.polish]: "timeline.step.polish",
-  [STEP.translate]: "timeline.step.translate",
-  [STEP.review]: "timeline.step.review",
-  [STEP.audit]: "timeline.step.audit",
-  [STEP.relationships]: "timeline.step.relationships",
-  [STEP.pipeline]: "timeline.step.pipeline",
-  [STEP.recovery]: "timeline.step.recovery",
-  // namespace-only steps that never appear on the timeline still need a
-  // label slot (Record<PipelineStep, …> is exhaustive):
-  [STEP.title]: "timeline.step.compose",
-  [STEP["generate-wordcount-retry"]]: "timeline.step.generate",
-  [STEP["generate-density-retry"]]: "timeline.step.generate",
-  [STEP["translate-glossary"]]: "timeline.step.translate",
-  [STEP["adversarial-verify"]]: "timeline.step.verify",
-  [STEP.paragraph]: "timeline.step.pipeline",
-  [STEP.done]: "timeline.status.completed",
-};
-
 const STATUS_LABEL_KEYS: Record<string, TranslationKey> = {
   completed: "timeline.status.completed",
   failed: "timeline.status.failed",
@@ -417,7 +384,7 @@ function RunCard({
         <div className="px-3 pb-3 pt-1 border-t border-border/40 acad-fade-in">
           {/* Outcome stats grid */}
           {summary && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
               <MiniStat
                 icon={<WordsIcon className="h-3 w-3 text-primary" />}
                 label={t("timeline.words")}
@@ -469,6 +436,31 @@ function RunCard({
                 icon={<Clock className="h-3 w-3 text-muted-foreground" />}
                 label={t("timeline.totalTime")}
                 value={fmtDuration(run.durationMs ?? summary.totalMs)}
+              />
+              {/* RT9 (RT8 backlog #6): skill-invocation observability. The
+                  stats block has carried `skillCalls` since RT7 but only the
+                  JSON ever showed it — the 12-of-15 skill coverage of a run
+                  is now visible without opening the raw payload. Same for
+                  `skillCacheHits` (added to the payload this round — the
+                  collector always counted them, they only reached the
+                  console). 10 tiles → 2×5 grid. */}
+              <MiniStat
+                icon={<Zap className="h-3 w-3 text-primary" />}
+                label={t("timeline.skillInvocations")}
+                value={(() => {
+                  const calls = (stats.skillCalls ?? {}) as Record<string, number>;
+                  const total = Object.values(calls).reduce((a, b) => a + (b || 0), 0);
+                  return total > 0 ? String(total) : "—";
+                })()}
+              />
+              <MiniStat
+                icon={<Database className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />}
+                label={t("timeline.skillCacheHits")}
+                value={(() => {
+                  const hits = (stats.skillCacheHits ?? {}) as Record<string, number>;
+                  const total = Object.values(hits).reduce((a, b) => a + (b || 0), 0);
+                  return total > 0 ? String(total) : "—";
+                })()}
               />
             </div>
           )}

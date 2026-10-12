@@ -8,6 +8,8 @@ import {
   formatRelativeForLang,
   type Lang,
 } from "@/lib/i18n";
+import { STEP_LABEL_KEYS } from "@/lib/skill/step-labels";
+import { PIPELINE_STEPS, V2_MAIN_SEQUENCE } from "@/lib/skill/steps";
 
 const ALL_LANGS: Lang[] = ["en", "zh", "ja", "ko", "fr"];
 
@@ -79,6 +81,39 @@ describe("translations", () => {
     expect(Object.keys(translations.ja).length).toBeGreaterThanOrEqual(50);
     expect(Object.keys(translations.ko).length).toBeGreaterThanOrEqual(50);
     expect(Object.keys(translations.fr).length).toBeGreaterThanOrEqual(50);
+  });
+});
+
+// RT9: the oneClick.stepXxx label set was deleted — timeline.step.* (via the
+// shared STEP_LABEL_KEYS map) is the single label source for both dialogs.
+describe("step-labels (RT9 unification)", () => {
+  test("STEP_LABEL_KEYS is exhaustive over PIPELINE_STEPS (no missing label slot)", () => {
+    expect(Object.keys(STEP_LABEL_KEYS).length).toBe(PIPELINE_STEPS.length);
+    for (const step of PIPELINE_STEPS) {
+      expect(STEP_LABEL_KEYS[step]).toBeDefined();
+    }
+  });
+
+  test("every mapped key exists in both en and zh dictionaries", () => {
+    for (const key of Object.values(STEP_LABEL_KEYS)) {
+      expect(key in translations.en).toBe(true);
+      expect(key in translations.zh).toBe(true);
+    }
+  });
+
+  test("every V2 main-sequence step maps to a timeline.step.* label", () => {
+    for (const step of V2_MAIN_SEQUENCE) {
+      expect(STEP_LABEL_KEYS[step].startsWith("timeline.step.")).toBe(true);
+    }
+  });
+
+  test("no oneClick.step* keys remain in en or zh (dead dual label set removed)", () => {
+    for (const k of Object.keys(translations.en)) {
+      expect(k.startsWith("oneClick.step")).toBe(false);
+    }
+    for (const k of Object.keys(translations.zh)) {
+      expect(k.startsWith("oneClick.step")).toBe(false);
+    }
   });
 });
 

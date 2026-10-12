@@ -20,13 +20,19 @@ describe("RT8: isStatelessTaskType", () => {
     expect(isStatelessTaskType("topicality")).toBe(true); // reserved
   });
 
+  test("RT9: the review family is stateless (verdict passes, self-contained prompts)", () => {
+    // fact-check ×8, review ×2, coherence-review ×2 all ride taskType
+    // "review" — their prompts carry the full article/claim payload, and
+    // the RT8 E2E showed no verdict drift for the stateless verify family.
+    expect(isStatelessTaskType("review")).toBe(true);
+  });
+
   test("generation-side task types keep session context", () => {
     for (const tt of [
       "gather",
       "generate",
       "translate",
       "revise",
-      "review",
       "relationships",
       "plan",
       "write",

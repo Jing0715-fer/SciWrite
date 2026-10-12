@@ -79,6 +79,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useI18n } from "@/lib/i18n";
 // RT7: step ids reference the shared namespace (server wire names stay in lockstep).
 import { STEP } from "@/lib/skill/steps";
+import { STEP_LABEL_KEYS } from "@/lib/skill/step-labels";
 import { PARAGRAPH_FORMATS, PARAGRAPH_SCENARIOS } from "@/lib/constants";
 
 type WriteTab = "outline" | "gather" | "paragraph" | "compose" | "full";
@@ -1028,39 +1029,42 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
   };
 
   const STEPS = React.useMemo(() => {
+    // RT9: labels derive from the shared STEP_LABEL_KEYS map (same keys the
+    // run timeline uses) — the oneClick.stepXxx dictionary set was deleted;
+    // TranslationKey typing guarantees the key exists, so no fallback chains.
     const base = [
-      { id: STEP.gather, label: t("oneClick.stepGather"), icon: Database },
+      { id: STEP.gather, label: t(STEP_LABEL_KEYS[STEP.gather]), icon: Database },
       // round-33: LLM-knowledge cross-check runs between gather and curate
       // (fills missing metadata + adds PubMed-verified gap sources).
-      { id: STEP.knowledge, label: t("oneClick.stepKnowledge") || "Knowledge cross-check", icon: BookCheck },
+      { id: STEP.knowledge, label: t(STEP_LABEL_KEYS[STEP.knowledge]), icon: BookCheck },
       // round-42: every gathered source is scored for importance/relevance
       // (full-text availability as a depth tiebreaker) BEFORE curation, so
       // the citation count follows source quality instead of a fixed quota.
-      { id: STEP.score, label: t("oneClick.stepScore") || "Score source importance", icon: Gauge },
-      { id: STEP.curate, label: t("oneClick.stepCurate"), icon: Filter },
-      { id: STEP.plan, label: t("oneClick.stepPlan"), icon: ListTree },
+      { id: STEP.score, label: t(STEP_LABEL_KEYS[STEP.score]), icon: Gauge },
+      { id: STEP.curate, label: t(STEP_LABEL_KEYS[STEP.curate]), icon: Filter },
+      { id: STEP.plan, label: t(STEP_LABEL_KEYS[STEP.plan]), icon: ListTree },
       // round-cs-2: research gap agent — audits the planned outline against
       // the allocated evidence and runs targeted supplementary searches
       // (ClawsGO-inspired autonomous research, bounded ≤3 gaps/≤6 refs).
-      { id: STEP.gapAgent, label: t("oneClick.stepGapAgent") || "Gap agent — targeted research", icon: SearchCheck },
-      { id: STEP.analyze, label: t("oneClick.stepAnalyze") || "Analyze Evidence", icon: Microscope },
-      { id: STEP.allocate, label: t("oneClick.stepAllocate") || "Allocate Evidence", icon: Target },
-      { id: STEP.generate, label: t("oneClick.stepGenerate"), icon: PenLine },
-      { id: STEP.verify, label: t("oneClick.stepVerify") || "Adversarial Verify", icon: ShieldCheck },
-      { id: STEP.compose, label: t("oneClick.stepCompose"), icon: FileStack },
+      { id: STEP.gapAgent, label: t(STEP_LABEL_KEYS[STEP.gapAgent]), icon: SearchCheck },
+      { id: STEP.analyze, label: t(STEP_LABEL_KEYS[STEP.analyze]), icon: Microscope },
+      { id: STEP.allocate, label: t(STEP_LABEL_KEYS[STEP.allocate]), icon: Target },
+      { id: STEP.generate, label: t(STEP_LABEL_KEYS[STEP.generate]), icon: PenLine },
+      { id: STEP.verify, label: t(STEP_LABEL_KEYS[STEP.verify]), icon: ShieldCheck },
+      { id: STEP.compose, label: t(STEP_LABEL_KEYS[STEP.compose]), icon: FileStack },
       // round-59: the pipeline now repairs review findings (external
       // fact-check verdicts included) BEFORE translation — one click ends
       // with a fact-hardened final article, not a to-do list.
-      { id: STEP.repair, label: t("oneClick.stepRepair") || "AI review & auto-repair", icon: Wrench },
+      { id: STEP.repair, label: t(STEP_LABEL_KEYS[STEP.repair]), icon: Wrench },
       // round-cs-2: whole-article coherence polish — cross-section review
       // (repetition/contradiction/terminology/numeric/transition) followed
       // by context-aware per-section re-editing (不断根据上下文打磨).
-      { id: STEP.polish, label: t("oneClick.stepPolish") || "Coherence polish", icon: Sparkles },
+      { id: STEP.polish, label: t(STEP_LABEL_KEYS[STEP.polish]), icon: Sparkles },
     ];
     // round-27: v2 translates AFTER compose (sections already carry final
     // global citation numbers), so the translate step comes last.
     return v2Bilingual
-      ? [...base, { id: STEP.translate, label: t("oneClick.stepTranslate"), icon: Languages }]
+      ? [...base, { id: STEP.translate, label: t(STEP_LABEL_KEYS[STEP.translate]), icon: Languages }]
       : base;
   }, [t, v2Bilingual]);
 
