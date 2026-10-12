@@ -177,10 +177,11 @@ describe("skill/registry scoreSkill", () => {
     expect(scoreSkill.taskType).toBe("score");
     expect(scoreSkill.sseStep).toBe("score");
     expect(SKILLS.score).toBe(scoreSkill);
-    // RT6: the catalog grew to 9 skills — every entry is coherent and the
-    // registry stays the single catalog (no rogue entries).
+    // RT7: the catalog grew to 15 skills (9 + coherence×2 + gap×2 +
+    // knowledge×2) — every entry is coherent and the registry stays the
+    // single catalog (no rogue entries).
     const catalog = listSkills();
-    expect(catalog).toHaveLength(9);
+    expect(catalog).toHaveLength(15);
     expect(catalog[0]).toEqual({
       id: "score", taskType: "score", sseStep: "score", title: "Score source importance", hasFallback: true,
     });

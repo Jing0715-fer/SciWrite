@@ -28,19 +28,27 @@
  * information after seeing what the outline needs, the way a human writer
  * keeps searching while drafting. All failures are non-fatal: an empty or
  * errored gap round leaves the pool exactly as curation built it.
+ *
+ * RT7: the two LLM calls are now skills (skills-gap.ts — gap-design for the
+ * identify pass, gap-research for the relevance gate). This module keeps the
+ * pool orchestration (the mechanical-gap pass, the search loop, dedupe sets,
+ * the storm-guard short-circuit, the keep-0 keyword ranking) and the legacy
+ * function signatures the v2 route consumes.
  */
 
-import { chatWithSession } from "@/lib/llm-session";
 import { webSearch } from "@/lib/ai";
 import { queryDatabase } from "@/lib/databases";
-import { parseLlmJson } from "@/lib/llm-json";
 import { logger } from "@/lib/logger";
 import { isAborted } from "@/lib/rate-limiter";
+import { runSkill } from "@/lib/skill/executor";
+import { gapDesignSkill, gapResearchSkill, GAP_AGENT_MAX_GAPS } from "@/lib/skill/registry";
+import type { EvidenceGap, GapCandidate, GapDesignInput, GapResearchInput } from "@/lib/skill/registry";
 
-/** Maximum distinct evidence gaps pursued per pipeline run. */
-export const GAP_AGENT_MAX_GAPS = 3;
-/** Maximum search queries executed per gap (1 scholarly + 1 web is typical). */
-export const GAP_AGENT_MAX_QUERIES_PER_GAP = 2;
+// RT7: shared contracts moved to the skill family file; re-exported here so
+// existing imports (the v2 route, tests) keep working unchanged.
+export { GAP_AGENT_MAX_GAPS, GAP_AGENT_MAX_QUERIES_PER_GAP } from "@/lib/skill/skills-gap";
+export type { EvidenceGap, GapQuery, GapCandidate } from "@/lib/skill/skills-gap";
+
 /** Hard cap on new references merged into the pool per run. */
 export const GAP_AGENT_MAX_NEW_REFS = 6;
 /** Do not grow the analyze-stage pool beyond this (extractEvidenceBank cap). */
@@ -57,37 +65,6 @@ const GAP_STOPWORDS = new Set([
   "very", "just", "does", "doing", "when", "what", "will", "shall", "using",
   "used", "study", "studies", "paper", "papers", "review", "article",
 ]);
-
-export interface GapQuery {
-  database: "pubmed" | "web";
-  query: string;
-}
-
-export interface EvidenceGap {
-  /** 0-based index into the plan's sections array. */
-  sectionIndex: number;
-  sectionTitle: string;
-  /** What specific evidence is missing (used as the relevance-gate target). */
-  gap: string;
-  queries: GapQuery[];
-}
-
-/** Normalized candidate reference — same shape gather-stage items have. */
-export interface GapCandidate {
-  source: "pubmed" | "web";
-  externalId?: string | null;
-  title: string;
-  authors?: string | null;
-  journal?: string | null;
-  year?: string | null;
-  url?: string | null;
-  doi?: string | null;
-  abstract?: string | null;
-  extra?: any;
-  /** Which gap's search produced this candidate. */
-  gapIndex: number;
-  queryUsed: string;
-}
 
 export interface GapAgentReport {
   ran: boolean;
@@ -164,65 +141,32 @@ export async function identifyEvidenceGaps(
     })
     .join("\n\n");
 
-  const system = `You are a rigorous evidence auditor for a ${field} review article on: ${topic}.
-Your ONLY job is to find EVIDENCE GAPS: specific claims or subject areas a planned section must cover that its allocated references do NOT support (judging from titles/abstracts). You do not write content.`;
+  const input: GapDesignInput = {
+    topic,
+    field,
+    coverageLines,
+    sectionCount: sections.length,
+    sectionTitles: sections.map((s: any) => String(s?.title || "")),
+    // Mechanical gaps already occupy the budget — the LLM tops up to the cap.
+    remainingCapacity: Math.max(0, GAP_AGENT_MAX_GAPS - gaps.length),
+  };
+  const result = await runSkill(gapDesignSkill, input, {
+    projectId,
+    fallbackValue: { gaps: [] },
+    noCache: true,
+    chatOverrides: opts.maxTokens != null ? { maxTokens: opts.maxTokens } : undefined,
+  });
 
-  const prompt = `RESEARCH TOPIC: ${topic}
-PLANNED OUTLINE + CURRENTLY ALLOCATED SOURCES:
-${coverageLines}
-
-Identify up to ${GAP_AGENT_MAX_GAPS} CRITICAL evidence gaps — where a section promises something (a structure, a mechanism, a disease link, a method, a quantitative comparison) that NO allocated source visibly supports.
-
-Rules:
-- Only name a gap when the section FOCUS requires the missing evidence — not stylistic wishes.
-- A gap must be SPECIFIC enough to search for ("cryo-EM structure of the human xCT/GPATC3 heterodimer" not "more structural details").
-- For each gap give 1-${GAP_AGENT_MAX_QUERIES_PER_GAP} precise queries: one PubMed query (scholarly, keyword-style) and optionally one web query (broader, may add review/context).
-- Queries must center on the specific molecule/method named in the gap — never generic phrases.
-
-Respond as STRICT JSON:
-{
-  "gaps": [
-    { "sectionIndex": 1, "gap": "specific missing evidence", "queries": [ { "database": "pubmed", "query": "..." } ] }
-  ]
-}
-sectionIndex is 0-based. Output JSON only. If every section is adequately covered, output {"gaps":[]}.`;
-
-  try {
-    const raw = await chatWithSession(projectId, prompt, {
-      system,
-      temperature: 0.3,
-      taskType: "gather",
-      maxTokens: opts.maxTokens,
-      metadata: { step: "gapAgent", sub: "identify" },
-    });
-    const parsed = parseLlmJson<any>(raw, { gaps: [] }).value;
-    for (const g of parsed.gaps || []) {
-      if (gaps.length >= GAP_AGENT_MAX_GAPS) break;
-      const idx = parseInt(String(g.sectionIndex), 10);
-      if (isNaN(idx) || idx < 0 || idx >= sections.length) continue;
-      if (!g.gap || typeof g.gap !== "string") continue;
-      const queries: GapQuery[] = (Array.isArray(g.queries) ? g.queries : [])
-        .filter((q: any) => q?.query && (q.database === "pubmed" || q.database === "web"))
-        .slice(0, GAP_AGENT_MAX_QUERIES_PER_GAP)
-        .map((q: any) => ({ database: q.database, query: String(q.query).slice(0, 240) }));
-      if (queries.length === 0) continue;
-      gaps.push({
-        sectionIndex: idx,
-        sectionTitle: String(sections[idx]?.title || `Section ${idx + 1}`),
-        gap: String(g.gap).slice(0, 400),
-        queries,
-      });
-    }
-  } catch (err: any) {
-    // Non-fatal: mechanical gaps (if any) still run; the pool is unchanged.
+  // Non-fatal: mechanical gaps (if any) still run; the pool is unchanged.
+  if (result.degraded) {
     return {
       gaps,
       mechanicalGaps,
-      llmError: String(err?.message ?? err).slice(0, 160),
+      llmError: (result.issues[0] || "identify unavailable").replace(/^fallback:\s*/, "").slice(0, 160),
     };
   }
 
-  return { gaps, mechanicalGaps };
+  return { gaps: [...gaps, ...result.output.gaps], mechanicalGaps };
 }
 
 /**
@@ -349,94 +293,73 @@ export async function runGapResearch(
     return { candidates: pubmedOnly, queriesRun: queriesRun.length, rejected };
   }
 
-  // --- Relevance gate (LLM): only keep candidates that genuinely fill a
-  //     named gap. Fallback on LLM failure: keep PubMed candidates (database
-  //     provenance is a strong-enough signal) capped at maxNewRefs. ---
-  try {
-    const gapLines = gaps.map((g, i) => `GAP ${i + 1} (§${g.sectionIndex + 1} ${g.sectionTitle}): ${g.gap}`).join("\n");
-    const candLines = candidates
-      .slice(0, 24)
-      .map((c, i) => `C${i + 1} [${c.source}] ${String(c.title).slice(0, 110)} | ${String(c.abstract || "").replace(/\s+/g, " ").slice(0, 160)}`)
-      .join("\n");
-    const gateRaw = await chatWithSession(
-      projectId,
-      `RESEARCH TOPIC: ${topic}
-EVIDENCE GAPS:
-${gapLines}
+  // --- Relevance gate (LLM skill): only keep candidates that genuinely
+  //     fill a named gap. Fallback on LLM failure: keep PubMed candidates
+  //     (database provenance is a strong-enough signal) capped at maxNewRefs. ---
+  const gateInput: GapResearchInput = { topic, gaps, candidates, maxNewRefs };
+  const gate = await runSkill(gapResearchSkill, gateInput, {
+    projectId,
+    fallbackValue: { keep: [], parseOk: false },
+    noCache: true,
+    chatOverrides: opts.maxTokens != null ? { maxTokens: opts.maxTokens } : undefined,
+  });
+  if (gate.degraded) {
+    // Provider failure — the skill fallback already selected the PubMed
+    // candidates' C-ids; surface the reason on the report.
+    rejected.push(`relevance gate failed: ${(gate.issues[0] || "unknown").replace(/^fallback:\s*/, "").slice(0, 80)} — fell back to PubMed candidate(s)`);
+  }
 
-SEARCH CANDIDATES:
-${candLines}
-
-Which candidates genuinely help fill one of the gaps (a source can fill any gap, not only the one that found it)? A candidate is IRRELEVANT if it merely mentions the topic without containing the missing evidence. Prefer primary research papers over news/encyclopedia pages.
-
-Respond as STRICT JSON: { "keep": ["C1", "C3"] }
-Output JSON only.`,
-      {
-        system: "You are a precise literature-screening assistant. Judge each candidate only by its title and snippet against the stated gaps.",
-        temperature: 0.2,
-        taskType: "gather",
-        maxTokens: opts.maxTokens,
-        metadata: { step: "gapAgent", sub: "relevanceGate" },
-      },
-    );
-    const gateResult = parseLlmJson<any>(gateRaw, { keep: [] });
-    const keepSet = new Set(
-      (Array.isArray(gateResult.value.keep) ? gateResult.value.keep : [])
-        .map((k: any) => String(k).trim().toUpperCase())
-        .filter((k: string) => /^C\d+$/.test(k)),
-    );
-    const gated = candidates.filter((_, i) => keepSet.has(`C${i + 1}`));
-    if (gated.length > 0) {
-      // PubMed first, then web — scholarly sources carry the missing claims.
-      gated.sort((a, b) => (a.source === "pubmed" ? -1 : 1) - (b.source === "pubmed" ? -1 : 1));
-      return { candidates: gated.slice(0, maxNewRefs), queriesRun: queriesRun.length, rejected };
-    }
-    // ── round-RT2 (keep-0 fallback intelligence): the old behavior blindly
-    // admitted every PubMed candidate whenever the gate kept nothing, which
-    // conflated two different situations: (a) the gate GENUINELY rejected
-    // all candidates as off-topic, and we admitted them anyway — the LLM's
-    // judgment was silently overridden; (b) the gate's JSON failed to parse
-    // (weak review model wrapped it in prose) and `{keep:[]}` was the
-    // FALLBACK, not a verdict. Now:
-    //   • parse failure (gateResult.ok === false) → old PubMed-candidate
-    //     fallback (database provenance is a reasonable proxy when the gate
-    //     never actually spoke);
-    //   • genuine keep-0 → mechanical topical ranking of ALL candidates
-    //     against the gap texts; only candidates with real keyword overlap
-    //     with a named gap survive (PubMed preferred on ties).
-    if (!gateResult.ok) {
-      const pubmedOnly = candidates.filter((c) => c.source === "pubmed").slice(0, maxNewRefs);
-      rejected.push(
-        `relevance gate response unparseable — fell back to ${pubmedOnly.length} PubMed candidate(s)`,
-      );
-      return { candidates: pubmedOnly, queriesRun: queriesRun.length, rejected };
-    }
-    const gapText = gaps.map((g) => `${g.gap} ${g.sectionTitle}`).join(" ").toLowerCase();
-    const gapKeywords = new Set(
-      gapText.split(/[^a-z0-9+]+/).filter((w: string) => w.length > 3 && !GAP_STOPWORDS.has(w))
-    );
-    const ranked = candidates
-      .map((c) => {
-        const text = `${c.title || ""} ${String(c.abstract || "")}`.toLowerCase();
-        let overlap = 0;
-        for (const w of gapKeywords) if (text.includes(w)) overlap++;
-        return { c, overlap, pubmed: c.source === "pubmed" ? 1 : 0 };
-      })
-      .filter((r) => r.overlap >= 2) // ≥2 distinct gap keywords to count as on-topic
-      .sort((a, b) => b.overlap - a.overlap || b.pubmed - a.pubmed);
-    const survivors = ranked.slice(0, Math.min(3, maxNewRefs)).map((r) => r.c);
-    rejected.push(
-      `relevance gate kept 0 of ${candidates.length} — mechanical ranking kept ${survivors.length} topical candidate(s) (≥2 gap keywords)`,
-    );
-    return { candidates: survivors, queriesRun: queriesRun.length, rejected };
-  } catch (err: any) {
-    const pubmedOnly = candidates.filter((c) => c.source === "pubmed").slice(0, maxNewRefs);
-    rejected.push(`relevance gate failed: ${String(err?.message ?? err).slice(0, 80)} — fell back to ${pubmedOnly.length} PubMed candidate(s)`);
+  const keepSet = new Set(gate.output.keep);
+  const gated = candidates.filter((_, i) => keepSet.has(`C${i + 1}`));
+  if (gated.length > 0) {
+    // PubMed first, then web — scholarly sources carry the missing claims.
+    gated.sort((a, b) => (a.source === "pubmed" ? -1 : 1) - (b.source === "pubmed" ? -1 : 1));
     return {
-      candidates: pubmedOnly,
+      candidates: gated.slice(0, maxNewRefs),
       queriesRun: queriesRun.length,
       rejected,
-      relevanceGateError: String(err?.message ?? err).slice(0, 160),
+      relevanceGateError: gate.degraded
+        ? (gate.issues[0] || "").replace(/^fallback:\s*/, "").slice(0, 160)
+        : undefined,
     };
   }
+
+  // ── round-RT2 (keep-0 fallback intelligence): the old behavior blindly
+  // admitted every PubMed candidate whenever the gate kept nothing, which
+  // conflated two different situations: (a) the gate GENUINELY rejected
+  // all candidates as off-topic, and we admitted them anyway — the LLM's
+  // judgment was silently overridden; (b) the gate's JSON failed to parse
+  // (weak review model wrapped it in prose) and `{keep:[]}` was the
+  // FALLBACK, not a verdict. Now:
+  //   • parse failure (output.parseOk === false) → old PubMed-candidate
+  //     fallback (database provenance is a reasonable proxy when the gate
+  //     never actually spoke);
+  //   • genuine keep-0 → mechanical topical ranking of ALL candidates
+  //     against the gap texts; only candidates with real keyword overlap
+  //     with a named gap survive (PubMed preferred on ties).
+  if (!gate.output.parseOk) {
+    const pubmedOnly = candidates.filter((c) => c.source === "pubmed").slice(0, maxNewRefs);
+    rejected.push(
+      `relevance gate response unparseable — fell back to ${pubmedOnly.length} PubMed candidate(s)`,
+    );
+    return { candidates: pubmedOnly, queriesRun: queriesRun.length, rejected };
+  }
+  const gapText = gaps.map((g) => `${g.gap} ${g.sectionTitle}`).join(" ").toLowerCase();
+  const gapKeywords = new Set(
+    gapText.split(/[^a-z0-9+]+/).filter((w: string) => w.length > 3 && !GAP_STOPWORDS.has(w))
+  );
+  const ranked = candidates
+    .map((c) => {
+      const text = `${c.title || ""} ${String(c.abstract || "")}`.toLowerCase();
+      let overlap = 0;
+      for (const w of gapKeywords) if (text.includes(w)) overlap++;
+      return { c, overlap, pubmed: c.source === "pubmed" ? 1 : 0 };
+    })
+    .filter((r) => r.overlap >= 2) // ≥2 distinct gap keywords to count as on-topic
+    .sort((a, b) => b.overlap - a.overlap || b.pubmed - a.pubmed);
+  const survivors = ranked.slice(0, Math.min(3, maxNewRefs)).map((r) => r.c);
+  rejected.push(
+    `relevance gate kept 0 of ${candidates.length} — mechanical ranking kept ${survivors.length} topical candidate(s) (≥2 gap keywords)`,
+  );
+  return { candidates: survivors, queriesRun: queriesRun.length, rejected };
 }

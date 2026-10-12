@@ -77,6 +77,8 @@ import { PromptTemplateManager } from "./prompt-template-manager";
 import { api } from "@/lib/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useI18n } from "@/lib/i18n";
+// RT7: step ids reference the shared namespace (server wire names stay in lockstep).
+import { STEP } from "@/lib/skill/steps";
 import { PARAGRAPH_FORMATS, PARAGRAPH_SCENARIOS } from "@/lib/constants";
 
 type WriteTab = "outline" | "gather" | "paragraph" | "compose" | "full";
@@ -1029,52 +1031,52 @@ function FullArticleTab({ projectId, topic, field, paragraphCount, sourceCount =
   const STEPS = React.useMemo(() => {
     if (pipeline === "v2") {
       const base = [
-        { id: "gather", label: t("oneClick.stepGather"), icon: Database },
+        { id: STEP.gather, label: t("oneClick.stepGather"), icon: Database },
         // round-33: LLM-knowledge cross-check runs between gather and curate
         // (fills missing metadata + adds PubMed-verified gap sources).
-        { id: "knowledge", label: t("oneClick.stepKnowledge") || "Knowledge cross-check", icon: BookCheck },
+        { id: STEP.knowledge, label: t("oneClick.stepKnowledge") || "Knowledge cross-check", icon: BookCheck },
         // round-42: every gathered source is scored for importance/relevance
         // (full-text availability as a depth tiebreaker) BEFORE curation, so
         // the citation count follows source quality instead of a fixed quota.
-        { id: "score", label: t("oneClick.stepScore") || "Score source importance", icon: Gauge },
-        { id: "curate", label: t("oneClick.stepCurate"), icon: Filter },
-        { id: "plan", label: t("oneClick.stepPlan"), icon: ListTree },
+        { id: STEP.score, label: t("oneClick.stepScore") || "Score source importance", icon: Gauge },
+        { id: STEP.curate, label: t("oneClick.stepCurate"), icon: Filter },
+        { id: STEP.plan, label: t("oneClick.stepPlan"), icon: ListTree },
         // round-cs-2: research gap agent — audits the planned outline against
         // the allocated evidence and runs targeted supplementary searches
         // (ClawsGO-inspired autonomous research, bounded ≤3 gaps/≤6 refs).
-        { id: "gapAgent", label: t("oneClick.stepGapAgent") || "Gap agent — targeted research", icon: SearchCheck },
-        { id: "analyze", label: t("oneClick.stepAnalyze") || "Analyze Evidence", icon: Microscope },
-        { id: "allocate", label: t("oneClick.stepAllocate") || "Allocate Evidence", icon: Target },
-        { id: "generate", label: t("oneClick.stepGenerate"), icon: PenLine },
-        { id: "verify", label: t("oneClick.stepVerify") || "Adversarial Verify", icon: ShieldCheck },
-        { id: "compose", label: t("oneClick.stepCompose"), icon: FileStack },
+        { id: STEP.gapAgent, label: t("oneClick.stepGapAgent") || "Gap agent — targeted research", icon: SearchCheck },
+        { id: STEP.analyze, label: t("oneClick.stepAnalyze") || "Analyze Evidence", icon: Microscope },
+        { id: STEP.allocate, label: t("oneClick.stepAllocate") || "Allocate Evidence", icon: Target },
+        { id: STEP.generate, label: t("oneClick.stepGenerate"), icon: PenLine },
+        { id: STEP.verify, label: t("oneClick.stepVerify") || "Adversarial Verify", icon: ShieldCheck },
+        { id: STEP.compose, label: t("oneClick.stepCompose"), icon: FileStack },
         // round-59: the pipeline now repairs review findings (external
         // fact-check verdicts included) BEFORE translation — one click ends
         // with a fact-hardened final article, not a to-do list.
-        { id: "repair", label: t("oneClick.stepRepair") || "AI review & auto-repair", icon: Wrench },
+        { id: STEP.repair, label: t("oneClick.stepRepair") || "AI review & auto-repair", icon: Wrench },
         // round-cs-2: whole-article coherence polish — cross-section review
         // (repetition/contradiction/terminology/numeric/transition) followed
         // by context-aware per-section re-editing (不断根据上下文打磨).
-        { id: "polish", label: t("oneClick.stepPolish") || "Coherence polish", icon: Sparkles },
+        { id: STEP.polish, label: t("oneClick.stepPolish") || "Coherence polish", icon: Sparkles },
       ];
       // round-27: v2 translates AFTER compose (sections already carry final
       // global citation numbers), so the translate step comes last.
       return v2Bilingual
-        ? [...base, { id: "translate", label: t("oneClick.stepTranslate"), icon: Languages }]
+        ? [...base, { id: STEP.translate, label: t("oneClick.stepTranslate"), icon: Languages }]
         : base;
     }
     const base = [
-      { id: "gather", label: t("oneClick.stepGather"), icon: Database },
+      { id: STEP.gather, label: t("oneClick.stepGather"), icon: Database },
       // round-42: importance scoring before curation (same as v2).
-      { id: "score", label: t("oneClick.stepScore") || "Score source importance", icon: Gauge },
-      { id: "curate", label: t("oneClick.stepCurate"), icon: Filter },
-      { id: "relationships", label: t("oneClick.stepRelationships"), icon: Network },
-      { id: "plan", label: t("oneClick.stepPlan"), icon: ListTree },
-      { id: "generate", label: t("oneClick.stepGenerate"), icon: PenLine },
+      { id: STEP.score, label: t("oneClick.stepScore") || "Score source importance", icon: Gauge },
+      { id: STEP.curate, label: t("oneClick.stepCurate"), icon: Filter },
+      { id: STEP.relationships, label: t("oneClick.stepRelationships"), icon: Network },
+      { id: STEP.plan, label: t("oneClick.stepPlan"), icon: ListTree },
+      { id: STEP.generate, label: t("oneClick.stepGenerate"), icon: PenLine },
       ...(isBothMode
-        ? [{ id: "translate", label: t("oneClick.stepTranslate"), icon: Languages }]
+        ? [{ id: STEP.translate, label: t("oneClick.stepTranslate"), icon: Languages }]
         : []),
-      { id: "compose", label: t("oneClick.stepCompose"), icon: FileStack },
+      { id: STEP.compose, label: t("oneClick.stepCompose"), icon: FileStack },
     ];
     return base;
   }, [t, isBothMode, pipeline, v2Bilingual]);

@@ -52,6 +52,18 @@ export const PIPELINE_STEPS = [
 export type PipelineStep = (typeof PIPELINE_STEPS)[number];
 
 /**
+ * RT7: the property-access form of the step namespace. Routes used to carry
+ * ~245 inline `step: "name"` string literals in their send() calls — a typo
+ * there was invisible to the compiler AND silently broke the client's
+ * progress mapping. Referencing STEP.<name> (or STEP["name-with-dashes"])
+ * makes the compiler the gate: only names in PIPELINE_STEPS exist, and a
+ * typo fails `bunx tsc` instead of shipping a dead progress step.
+ */
+export const STEP = Object.fromEntries(
+  PIPELINE_STEPS.map((s) => [s, s]),
+) as { [K in PipelineStep]: K };
+
+/**
  * The v2 main-sequence order (progress-bar order; generate/verify interleave
  * per section). topic-composer's hardcoded v1 subset ("Step n/9") was a
  * stale drift — importing THIS array fixes it.

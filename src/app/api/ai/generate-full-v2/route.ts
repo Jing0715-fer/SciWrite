@@ -20,6 +20,10 @@ import { webSearchCacheStats } from "@/lib/web-search-cache";
 // RT5 skill framework: the fixed article format contract (ordered gate
 // chain) replaces per-exit hand-assembled sanitize/enforce/CJK sequences.
 import { applyFormatContract } from "@/lib/skill/format-contract";
+// RT7: step literals reference the shared namespace — a typo now fails tsc.
+import { STEP } from "@/lib/skill/steps";
+// RT7: per-skill degraded counts ride the complete-event stats block.
+import { getSkillDegradedCounts, getSkillStats, resetSkillTelemetry } from "@/lib/skill/telemetry-collector";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
 import {
@@ -368,29 +372,29 @@ export async function POST(req: NextRequest) {
       // emits monotonic values. `progress` rides on every step event.
       const trackerBothMode = (body.language || "English") === "both";
       const progressTracker = new PipelineProgressTracker([
-        { step: "gather", weight: 2.2 },
-        { step: "knowledge", weight: 1.4 },
-        { step: "score", weight: 0.9 },
-        { step: "curate", weight: 0.7 },
-        { step: "plan", weight: 0.9 },
+        { step: STEP.gather, weight: 2.2 },
+        { step: STEP.knowledge, weight: 1.4 },
+        { step: STEP.score, weight: 0.9 },
+        { step: STEP.curate, weight: 0.7 },
+        { step: STEP.plan, weight: 0.9 },
         // round-cs-2: gap agent between plan and analyze — usually quick
         // (≤3 gaps × ≤2 searches), occasionally skipped.
-        { step: "gapAgent", weight: 0.6 },
-        { step: "analyze", weight: 1.1 },
-        { step: "allocate", weight: 0.2 },
+        { step: STEP.gapAgent, weight: 0.6 },
+        { step: STEP.analyze, weight: 1.1 },
+        { step: STEP.allocate, weight: 0.2 },
         // generate+verify interleave PER SECTION — consecutive loop phases
         // share one family region so the bar sweeps forward through the
         // whole loop instead of bouncing between two step slots.
-        { step: "generate", unitWeight: 2 },
-        { step: "verify", unitWeight: 0.9 },
-        { step: "compose", weight: 0.5 },
+        { step: STEP.generate, unitWeight: 2 },
+        { step: STEP.verify, unitWeight: 0.9 },
+        { step: STEP.compose, weight: 0.5 },
         // round-59: auto review & repair between compose and translate —
         // external fact-check + peer review + surgical revision run BEFORE
         // the Chinese half exists (the final EN text is translated once).
-        { step: "repair", weight: 1.2 },
+        { step: STEP.repair, weight: 1.2 },
         // round-cs-2: whole-article coherence polish after the repair loop.
-        { step: "polish", weight: 0.9 },
-        ...(trackerBothMode ? [{ step: "translate", unitWeight: 0.75 }] : []),
+        { step: STEP.polish, weight: 0.9 },
+        ...(trackerBothMode ? [{ step: STEP.translate, unitWeight: 0.75 }] : []),
       ]);
       const send = (event: string, data: any) => {
         // round-cs-8: decorate FIRST, then record + send. The recorder used
@@ -421,6 +425,9 @@ export async function POST(req: NextRequest) {
       };
 
       const t0 = Date.now();
+      // RT7: the skill telemetry aggregate is per-run (module-level state) —
+      // reset it here so the complete-event stats describe THIS run only.
+      resetSkillTelemetry();
       const slog = logger("generate-full-v2");
       const log = (msg: string) => {
         // Structured single-line JSON (grep-able by level/scope/ms); replaces
@@ -523,7 +530,7 @@ export async function POST(req: NextRequest) {
         const isBothMode = requestedLanguage === "both";
 
         send("step", {
-          step: "init",
+          step: STEP.init,
           status: "done",
           message: `v2 evidence-grounded pipeline initialized. Target: ${targetWords} words${isBothMode ? ". Language: English-first, then translate to 中文" : ""}.`,
           config: {
@@ -615,7 +622,7 @@ export async function POST(req: NextRequest) {
         // The init event fired before the recorder existed — replay it so
         // the timeline starts with the run's configuration record.
         recorder.onEvent("step", {
-          step: "init",
+          step: STEP.init,
           status: "done",
           message: `v2 evidence-grounded pipeline initialized. Target: ${targetWords} words${isBothMode ? ". Language: English-first, then translate to 中文" : ""}.`,
         });
@@ -623,7 +630,7 @@ export async function POST(req: NextRequest) {
         if (resume) {
           // ---- RESTORE PATH: rebuild the in-memory state + DB paragraphs ----
           send("step", {
-            step: "gather",
+            step: STEP.gather,
             status: "skipped",
             resumed: true,
             message:
@@ -795,7 +802,7 @@ export async function POST(req: NextRequest) {
         if (!resume) {
         // ============ STEP 1: FORCE re-gather data sources ============
         send("step", {
-          step: "gather",
+          step: STEP.gather,
           status: "started",
           message: "Clearing existing sources and re-gathering fresh data...",
         });
@@ -869,7 +876,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           temperature: 0.4,
           taskType: "gather",
           maxTokens,
-          metadata: { step: "gather" },
+          metadata: { step: STEP.gather },
         });
         const gatherParsed = safeParseJSON(gatherRaw, { queries: [] });
         let dbQueries = (gatherParsed.queries || []).filter(
@@ -888,7 +895,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         }
 
         send("step", {
-          step: "gather",
+          step: STEP.gather,
           status: "progress",
           message: `Executing ${dbQueries.length} database queries...`,
           queries: dbQueries.length,
@@ -920,7 +927,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           otherQueries.map(async (q: any) => {
             const r = await runWithRetry(q.database, q.query);
             send("step", {
-              step: "gather",
+              step: STEP.gather,
               status: "progress",
               message: `[${q.database}] "${q.query.slice(0, 50)}" → ${r.items?.length || 0} results`,
               resultCount: r.items?.length || 0,
@@ -943,7 +950,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
             try {
               const r = await runWithRetry(q.database, q.query);
               send("step", {
-                step: "gather",
+                step: STEP.gather,
                 status: "progress",
                 message: `[${q.database}] "${q.query.slice(0, 50)}" → ${r.items?.length || 0} results`,
                 resultCount: r.items?.length || 0,
@@ -1000,7 +1007,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
                   if (!providerUnavailableAnnounced) {
                     providerUnavailableAnnounced = true;
                     send("step", {
-                      step: "gather",
+                      step: STEP.gather,
                       status: "progress",
                       message: `Web search unavailable — the selected provider has no hosted search tool. Skipping remaining web-search query(ies); gathering continues on database queries.`,
                     });
@@ -1033,7 +1040,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
                 ? ` (degraded: ${outcome.reason}${searchFailTally[outcome.reason] > 1 ? ` ×${searchFailTally[outcome.reason]}` : ""})`
                 : "";
               send("step", {
-                step: "gather",
+                step: STEP.gather,
                 status: "progress",
                 message: `Web search ${wi + 1}/${webSearchQueries.length}: "${q.slice(0, 50)}" → ${searchResults.length} results${failNote}`,
               });
@@ -1049,7 +1056,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         if (failTotal > 0) {
           const breakdown = Object.entries(searchFailTally).map(([k, v]) => `${k}×${v}`).join(", ");
           send("step", {
-            step: "gather",
+            step: STEP.gather,
             status: "progress",
             message: `Web search phase: ${failTotal}/${webSearchQueries.length} query(ies) degraded (${breakdown}) — database-gathered sources are unaffected.`,
           });
@@ -1094,7 +1101,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           };
           const holes = [...coverage.uncovered, ...coverage.weak].slice(0, 5);
           send("step", {
-            step: "gather",
+            step: STEP.gather,
             status: "progress",
             message: `Coverage check: ${coverage.facets.length - coverage.uncovered.length}/${coverage.facets.length} topic facets covered by the gathered pool${coverage.uncovered.length > 0 ? ` — uncovered: ${coverage.uncovered.slice(0, 3).join(", ")}` : ""}.`,
             coverage: stats.gatherCoverage,
@@ -1110,7 +1117,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
             !clientDisconnected;
           if (worthTopUp) {
             send("step", {
-              step: "gather",
+              step: STEP.gather,
               status: "progress",
               message: `Coverage-driven top-up: running targeted queries for ${holes.length} uncovered/weak facet(s)...`,
             });
@@ -1134,7 +1141,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
                 temperature: 0.3,
                 taskType: "gather",
                 maxTokens,
-                metadata: { step: "gather", sub: "coverageTopUp" },
+                metadata: { step: STEP.gather, sub: "coverageTopUp" },
               });
               const { safeParseJSON } = await import("@/lib/llm-json");
               const topUpParsed = safeParseJSON(topUpRaw, { queries: [] });
@@ -1167,7 +1174,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
                       topUpItems++;
                     }
                     send("step", {
-                      step: "gather",
+                      step: STEP.gather,
                       status: "progress",
                       message: `Top-up [pubmed] "${q.query.slice(0, 50)}" → ${r.items?.length || 0} results`,
                     });
@@ -1292,7 +1299,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
         }
 
         send("step", {
-          step: "gather",
+          step: STEP.gather,
           status: "done",
           sourcesGathered: savedDataSources.length,
           referencesSaved: savedReferences.length,
@@ -1323,7 +1330,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
         //      for review but are NOT citable, protecting the article from
         //      hallucinated refs.
         send("step", {
-          step: "knowledge",
+          step: STEP.knowledge,
           status: "started",
           message: "Cross-checking gathered sources with LLM knowledge...",
         });
@@ -1334,7 +1341,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
           );
           if (backfill.fieldsCompleted || backfill.repairedGarbage) {
             send("step", {
-              step: "knowledge",
+              step: STEP.knowledge,
               status: "progress",
               message: `PubMed backfill: ${backfill.fieldsCompleted} fields completed from PubMed records, ${backfill.repairedGarbage} rows of garbage metadata reset.`,
             });
@@ -1362,7 +1369,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
           // count) — this pre-announcement no longer hardcodes the old
           // ceil(total/12) math, which overstated the work.
           send("step", {
-            step: "knowledge",
+            step: STEP.knowledge,
             status: "progress",
             message: `LLM knowledge pass starting on ${kvInputs.length} sources — need-based batches (complete rows are covered by a single gap-detection digest); progress is reported per batch.`,
           });
@@ -1373,7 +1380,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
               maxTokens, onLog: (m) => log(m),
               onProgress: (msg, done, total) => {
                 send("step", {
-                  step: "knowledge",
+                  step: STEP.knowledge,
                   status: "progress",
                   message: msg,
                   batch: done,
@@ -1384,7 +1391,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
             }
           );
           send("step", {
-            step: "knowledge",
+            step: STEP.knowledge,
             status: "progress",
             message: `LLM knowledge pass done: ${kvResult.completions.length} sources assessed, ${kvResult.missing.length} gap suggestions.`,
           });
@@ -1428,7 +1435,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
           stats.knowledgePromoted = persisted.promoted;
           stats.knowledgeUnverified = persisted.unverifiedSaved.length;
           send("step", {
-            step: "knowledge",
+            step: STEP.knowledge,
             status: "done",
             fieldsCompleted: applied.fieldsCompleted + backfill.fieldsCompleted,
             sourcesAdded: persisted.addedSources.length,
@@ -1460,7 +1467,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
         // depth tiebreaker. The preprint dedupe runs BEFORE scoring so the
         // scores align with the deduplicated pool the curator will see.
         send("step", {
-          step: "score",
+          step: STEP.score,
           status: "started",
           message: `Scoring ${savedReferences.length} sources for importance (relevance × importance × full-text depth)...`,
         });
@@ -1486,7 +1493,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
           project.field || "life sciences",
           {
             maxTokens,
-            onProgress: (m) => send("step", { step: "score", status: "progress", message: m }),
+            onProgress: (m) => send("step", { step: STEP.score, status: "progress", message: m }),
           }
         );
         const allScores = scoring.scores;
@@ -1496,7 +1503,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
           const marginal = allScores.length - core - important;
           const withFullText = allScores.filter((s) => s.depth === "fulltext").length;
           send("step", {
-            step: "score",
+            step: STEP.score,
             status: "done",
             scoredCount: allScores.length,
             coreCount: core,
@@ -1516,7 +1523,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
         // old fixed-count selection. A thin pool yields a smaller citation
         // list; a rich pool feeding a short article drops marginal sources.
         send("step", {
-          step: "curate",
+          step: STEP.curate,
           status: "started",
           message: `Selecting the citation pool — the count follows source quality, not a fixed quota...`,
         });
@@ -1529,7 +1536,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
           targetWords,
           {
             maxTokens,
-            onProgress: (m) => send("step", { step: "curate", status: "progress", message: m }),
+            onProgress: (m) => send("step", { step: STEP.curate, status: "progress", message: m }),
           }
         );
         curatedRefs = smart.refs;
@@ -1537,7 +1544,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
         stats.citationPlanned = smart.plannedCount;
         stats.citationLLMDriven = smart.llmDriven;
         send("step", {
-          step: "curate",
+          step: STEP.curate,
           status: "done",
           curatedCount: curatedRefs.length,
           plannedCitations: smart.plannedCount,
@@ -1565,7 +1572,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
                 tier.dropped.map((d) => `[${d.reason}]`).join(" | "),
             );
             send("step", {
-              step: "curate",
+              step: STEP.curate,
               status: "progress",
               message: `Source-tier gate: ${tier.dropped.length} non-primary web source(s) removed from the citation pool (${curatedRefs.length} → ${tier.keptRefs.length}).`,
               detail: tier.dropped.map((d) => `dropped: ${d.reason} — ${String(d.ref?.title || "").slice(0, 70)}`).join("\n"),
@@ -1575,7 +1582,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
           } else if (tier.fellBackToUnfiltered) {
             log(`source-tier: gate would have emptied the pool (${tier.dropped.length} candidates) — kept unfiltered pool as fail-safe`);
             send("step", {
-              step: "curate",
+              step: STEP.curate,
               status: "progress",
               message: `Source-tier gate skipped — every candidate was non-primary; pool kept unfiltered as fail-safe.`,
             });
@@ -1587,18 +1594,18 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
         // the fetch budget goes to the most important sources first. Deep-read
         // summaries ride along free; PMC fetches are capped at 8 × 15k chars.
         send("step", {
-          step: "curate",
+          step: STEP.curate,
           status: "progress",
           message: `Fetching full texts for the highest-priority sources (enables deeper discussion)...`,
         });
         fullTexts = await fetchFullTextsForRefs(curatedRefs, fullTextProfiles, {
           maxCount: 8,
           maxChars: 15000,
-          onProgress: (m, extra) => send("step", { step: "curate", status: "progress", message: m, ...extra }),
+          onProgress: (m, extra) => send("step", { step: STEP.curate, status: "progress", message: m, ...extra }),
         });
         stats.fullTextsUsed = fullTexts.size;
         send("step", {
-          step: "curate",
+          step: STEP.curate,
           status: "progress",
           message: `Full-text stage complete: ${fullTexts.size} source(s) readable in depth.`,
         });
@@ -1609,7 +1616,7 @@ Rules: database must be "pubmed" or "web". 1 query per facet maximum. Keep queri
         // now co-designs the outline AND which pool sources each section
         // cites — the allocation stage downstream only refines this map.
         send("step", {
-          step: "plan",
+          step: STEP.plan,
           status: "started",
           message: `Planning the outline + citation map for a ${targetWords}-word article from ${curatedRefs.length} scored sources...`,
         });
@@ -1668,7 +1675,7 @@ Output JSON only.`;
               if (!/429|too many|rate.?limit|quota/i.test(msg) || a >= attempts) throw e;
               log(`${label}: provider throttled (attempt ${a}/${attempts}) — waiting 4 min for the storm to pass`);
               send("step", {
-                step: "plan",
+                step: STEP.plan,
                 status: "progress",
                 message: `${label}: provider rate-limited (attempt ${a}/${attempts}) — waiting out the 429 storm before retrying...`,
               });
@@ -1682,7 +1689,7 @@ Output JSON only.`;
           temperature: 0.5,
           taskType: "plan",
           maxTokens,
-          metadata: { step: "plan", targetWords },
+          metadata: { step: STEP.plan, targetWords },
         }));
         const planParsed = safeParseJSON(planRaw, { sections: [] });
         sections = (planParsed.sections || []).filter((s: any) => s.title && s.targetWords);
@@ -1724,7 +1731,7 @@ Output JSON only.`;
         if (sections.some((s: any) => hasCJKText(String(s.title || "")))) {
           const cjkCount = sections.filter((s: any) => hasCJKText(String(s.title || ""))).length;
           send("step", {
-            step: "plan",
+            step: STEP.plan,
             status: "progress",
             message: `Translating ${cjkCount} Chinese section title(s) to English for the English article...`,
           });
@@ -1765,7 +1772,7 @@ Output JSON only.`;
         }
 
         send("step", {
-          step: "plan",
+          step: STEP.plan,
           status: "done",
           sectionCount: sections.length,
           sections: sections.map((s: any) => ({ title: s.title, targetWords: s.targetWords })),
@@ -1832,7 +1839,7 @@ Output JSON only.`;
                 backfillTier.dropped.map((d) => `[${d.reason}] ${String(d.ref?.title || "").slice(0, 50)}`).join(" | "),
             );
             send("step", {
-              step: "plan",
+              step: STEP.plan,
               status: "progress",
               message: `Source-tier gate (post-backfill): ${backfillTier.dropped.length} non-primary web source(s) removed from the backfilled pool.`,
             });
@@ -1847,7 +1854,7 @@ Output JSON only.`;
                 .join(" | ")
           );
           send("step", {
-            step: "plan",
+            step: STEP.plan,
             status: "progress",
             message: `Coverage assertion: backfilled ${coverage.backfilled.length} primary paper(s) — ${coverage.backfilled.map((b) => b.signal).join(", ")}.`,
           });
@@ -1866,7 +1873,7 @@ Output JSON only.`;
         stats.citationPlanned = citationPlanSummary.totalPlanned;
         stats.citationCoreCovered = citationPlanSummary.coreCovered;
         send("step", {
-          step: "plan",
+          step: STEP.plan,
           status: "progress",
           message: `Citation map: ${citationPlanSummary.totalPlanned}/${curatedRefs.length} pool sources cited — ${citationPlanSummary.coreCovered} core retained${citationPlanSummary.toppedUp ? `, ${citationPlanSummary.toppedUp} priority top-up(s)` : ""}${citationPlanSummary.coreMissing ? `, ${citationPlanSummary.coreMissing} core UNCOVERED (sections at capacity)` : ""}.`,
         });
@@ -1894,7 +1901,7 @@ Output JSON only.`;
         // and the whole loop shares one new-refs budget.
         const GAP_AGENT_MAX_ROUNDS = 2;
         send("step", {
-          step: "gapAgent",
+          step: STEP.gapAgent,
           status: "started",
           message: "Research gap agent: auditing the outline against the allocated evidence...",
         });
@@ -1904,7 +1911,7 @@ Output JSON only.`;
         // own abort handling takes over from here.
         if (isAborted() || clientDisconnected) {
           send("step", {
-            step: "gapAgent",
+            step: STEP.gapAgent,
             status: "skipped",
             message: `Gap agent skipped — ${clientDisconnected ? "client disconnected" : "provider rate-limit abort"}; the pipeline continues with the curated pool.`,
           });
@@ -1933,7 +1940,7 @@ Output JSON only.`;
                 break;
               }
               send("step", {
-                step: "gapAgent",
+                step: STEP.gapAgent,
                 status: "progress",
                 message: `Gap agent round ${gapRound}/${GAP_AGENT_MAX_ROUNDS}: re-auditing the outline against the updated evidence allocations...`,
               });
@@ -1969,7 +1976,7 @@ Output JSON only.`;
             if (freshGaps.length === 0) {
               if (gapRound === 1) {
                 send("step", {
-                  step: "gapAgent",
+                  step: STEP.gapAgent,
                   status: "done",
                   gapsFound: 0,
                   message: gapIdentify.llmError
@@ -1980,7 +1987,7 @@ Output JSON only.`;
               } else {
                 stats.gapAgent = { gaps: totalGaps, queries: totalQueries, newRefs: totalMerged };
                 send("step", {
-                  step: "gapAgent",
+                  step: STEP.gapAgent,
                   status: "done",
                   gapsFound: totalGaps,
                   queriesRun: totalQueries,
@@ -1996,7 +2003,7 @@ Output JSON only.`;
             if (gapBudget <= 0) {
               stats.gapAgent = { gaps: totalGaps, queries: totalQueries, newRefs: totalMerged };
               send("step", {
-                step: "gapAgent",
+                step: STEP.gapAgent,
                 status: "done",
                 gapsFound: totalGaps,
                 queriesRun: totalQueries,
@@ -2011,7 +2018,7 @@ Output JSON only.`;
               break;
             }
             send("step", {
-              step: "gapAgent",
+              step: STEP.gapAgent,
               status: "progress",
               gapsFound: totalGaps + freshGaps.length,
               message: `${gapRound > 1 ? `Round ${gapRound}: ` : ""}${freshGaps.length} evidence gap(s) identified${gapIdentify.mechanicalGaps > 0 ? ` (${gapIdentify.mechanicalGaps} section(s) with zero allocated refs)` : ""} — running targeted searches...`,
@@ -2020,7 +2027,7 @@ Output JSON only.`;
             const gapResearch = await runGapResearch(projectId, project.topic, freshGaps, [...deduped.refs, ...curatedRefs], {
               maxNewRefs: gapBudget,
               maxTokens,
-              onProgress: (m) => send("step", { step: "gapAgent", status: "progress", message: `Gap agent${gapRound > 1 ? ` [round ${gapRound}]` : ""}: ${m}` }),
+              onProgress: (m) => send("step", { step: STEP.gapAgent, status: "progress", message: `Gap agent${gapRound > 1 ? ` [round ${gapRound}]` : ""}: ${m}` }),
             });
             totalGaps += freshGaps.length;
             totalQueries += gapResearch.queriesRun;
@@ -2028,7 +2035,7 @@ Output JSON only.`;
             if (gapResearch.candidates.length === 0) {
               if (gapRound === 1) {
                 send("step", {
-                  step: "gapAgent",
+                  step: STEP.gapAgent,
                   status: "done",
                   gapsFound: totalGaps,
                   queriesRun: totalQueries,
@@ -2038,7 +2045,7 @@ Output JSON only.`;
               } else {
                 stats.gapAgent = { gaps: totalGaps, queries: totalQueries, newRefs: totalMerged };
                 send("step", {
-                  step: "gapAgent",
+                  step: STEP.gapAgent,
                   status: "done",
                   gapsFound: totalGaps,
                   queriesRun: totalQueries,
@@ -2158,7 +2165,7 @@ Output JSON only.`;
 
             if (gapRound >= GAP_AGENT_MAX_ROUNDS) {
               send("step", {
-                step: "gapAgent",
+                step: STEP.gapAgent,
                 status: "done",
                 gapsFound: totalGaps,
                 queriesRun: totalQueries,
@@ -2192,7 +2199,7 @@ Output JSON only.`;
               if (!verdict.continue) {
                 stats.gapAgent = { gaps: totalGaps, queries: totalQueries, newRefs: totalMerged };
                 send("step", {
-                  step: "gapAgent",
+                  step: STEP.gapAgent,
                   status: "done",
                   gapsFound: totalGaps,
                   queriesRun: totalQueries,
@@ -2206,7 +2213,7 @@ Output JSON only.`;
               }
             }
             send("step", {
-              step: "gapAgent",
+              step: STEP.gapAgent,
               status: "progress",
               gapsFound: totalGaps,
               queriesRun: totalQueries,
@@ -2225,7 +2232,7 @@ Output JSON only.`;
             // productive round — emit the aggregate terminal event here.
             stats.gapAgent = { gaps: totalGaps, queries: totalQueries, newRefs: totalMerged };
             send("step", {
-              step: "gapAgent",
+              step: STEP.gapAgent,
               status: "done",
               gapsFound: totalGaps,
               queriesRun: totalQueries,
@@ -2240,7 +2247,7 @@ Output JSON only.`;
           // curation built it.
           log(`gapAgent: FAILED — ${String(gapErr?.message ?? gapErr).slice(0, 160)}`);
           send("step", {
-            step: "gapAgent",
+            step: STEP.gapAgent,
             status: "skipped",
             message: `Gap agent skipped after an error (the pipeline continues unchanged): ${gapErr?.message?.slice(0, 80) || "LLM error"}.`,
           });
@@ -2252,7 +2259,7 @@ Output JSON only.`;
         // claims come from the COMPLETE article, deeper than abstract-only
         // refs (能获取到全文的一定要看全文).
         send("step", {
-          step: "analyze",
+          step: STEP.analyze,
           status: "started",
           message: `Analyzing ${curatedRefs.length} sources and extracting an evidence bank (${fullTexts.size} with full text)...`,
         });
@@ -2266,7 +2273,7 @@ Output JSON only.`;
         );
 
         send("step", {
-          step: "analyze",
+          step: STEP.analyze,
           status: "done",
           evidenceItems: evidenceBank.length,
           refsAnalyzed: Math.min(curatedRefs.length, 40),
@@ -2281,7 +2288,7 @@ Output JSON only.`;
         // instead of re-deciding from scratch. minRefsPerSection drops 5→3:
         // a thin pool must not be padded with irrelevant sources just to
         // reach a per-section quota (数据源有限时宁缺毋滥).
-        send("step", { step: "allocate", status: "started", message: "Allocating references + evidence to sections per the citation map..." });
+        send("step", { step: STEP.allocate, status: "started", message: "Allocating references + evidence to sections per the citation map..." });
 
         const preallocatedRefs = sections.map((s: any) =>
           Array.isArray(s.refIndices) ? s.refIndices : []
@@ -2302,7 +2309,7 @@ Output JSON only.`;
         );
 
         send("step", {
-          step: "allocate",
+          step: STEP.allocate,
           status: "done",
           message: `Allocated references to ${allocations.length} sections (avg ${Math.round(allocations.reduce((s, a) => s + a.refIndices.length, 0) / Math.max(1, allocations.length))} refs/section${hasPreallocation ? ", from the plan's citation map" : ""}).`,
           detail: allocations.map((a, i) => `§${i + 1}: ${a.refIndices.length} refs, ${a.evidence.length} claims (${a.rationale})`).join("\n"),
@@ -2345,7 +2352,7 @@ Output JSON only.`;
 
         // ============ STEP 6: Generate sections with keyed citations ============
         send("step", {
-          step: "generate",
+          step: STEP.generate,
           status: "started",
           message: `Generating ${sections.length} sections with structural citation keys...`,
         });
@@ -2443,7 +2450,7 @@ Output JSON only.`;
           }
 
           send("step", {
-            step: "verify",
+            step: STEP.verify,
             status: "done",
             section: sectionNum,
             total: sections.length,
@@ -2543,7 +2550,7 @@ Output JSON only.`;
               pendingVerify = null;
             }
             send("step", {
-              step: "generate",
+              step: STEP.generate,
               status: "skipped",
               section: sectionNum,
               total: sections.length,
@@ -2564,7 +2571,7 @@ Output JSON only.`;
           // IS sections[i].
           if (resume?.sectionsDone && i < resume.sectionsDone.length) {
             send("step", {
-              step: "generate",
+              step: STEP.generate,
               status: "progress",
               section: sectionNum,
               total: sections.length,
@@ -2575,7 +2582,7 @@ Output JSON only.`;
           }
 
           send("step", {
-            step: "generate",
+            step: STEP.generate,
             status: "started",
             section: sectionNum,
             total: sections.length,
@@ -2745,14 +2752,14 @@ Scientific precision rules (round-64):
                 thinking: false,
                 taskType: "generate",
                 maxTokens,
-                metadata: { step: "generate", section: sectionNum, sectionTitle: section.title, pipeline: "v2" },
+                metadata: { step: STEP.generate, section: sectionNum, sectionTitle: section.title, pipeline: "v2" },
               },
               (delta, accumulated) => {
                 const now = Date.now();
                 if (now - lastStreamEmit > 100) {
                   lastStreamEmit = now;
                   send("step", {
-                    step: "generate",
+                    step: STEP.generate,
                     status: "streaming",
                     section: sectionNum,
                     total: sections.length,
@@ -2773,7 +2780,7 @@ Scientific precision rules (round-64):
             if (err instanceof RateLimitAbortedError || err instanceof QuotaExhaustedError) {
               abortedDueToRateLimit = true;
               send("step", {
-                step: "generate",
+                step: STEP.generate,
                 status: "skipped",
                 section: sectionNum,
                 total: sections.length,
@@ -2782,7 +2789,7 @@ Scientific precision rules (round-64):
               continue;
             }
             send("step", {
-              step: "generate",
+              step: STEP.generate,
               status: "progress",
               section: sectionNum,
               message: `Streaming failed, falling back: ${err?.message?.slice(0, 80) || ""}`,
@@ -2793,13 +2800,13 @@ Scientific precision rules (round-64):
                 temperature: 0.6,
                 taskType: "generate",
                 maxTokens,
-                metadata: { step: "generate", section: sectionNum, fallback: true },
+                metadata: { step: STEP.generate, section: sectionNum, fallback: true },
               });
             } catch (fbErr: any) {
               if (fbErr instanceof RateLimitAbortedError || fbErr instanceof QuotaExhaustedError) {
                 abortedDueToRateLimit = true;
                 send("step", {
-                  step: "generate",
+                  step: STEP.generate,
                   status: "skipped",
                   section: sectionNum,
                   total: sections.length,
@@ -2866,7 +2873,7 @@ Scientific precision rules (round-64):
             if (formatGate) stats.formatRetries = (stats.formatRetries || 0) + 1;
             log(`generate: section ${sectionNum} FAILED validation gate (zeroCite=${zeroCite}, trailing=${trailingGate ? `${trailingBlock}w` : "no"}, uncitedAssert=${uncitedGate ? uncitedAssertions.length : 0}, cjkLeak=${cjkLeak}, fmt=${formatGate ? `${fmtViolations.internalHeadings}h/${fmtViolations.listLines}l/${fmtViolations.tableRows}t/${fmtViolations.hrLines}hr` : "clean"}, truncated=${truncated}, raw=${gate.rawNumericMarkers}, oor=${gate.outOfRangeKeys}) — retrying`);
             send("step", {
-              step: "generate",
+              step: STEP.generate,
               status: "progress",
               section: sectionNum,
               total: sections.length,
@@ -2916,7 +2923,7 @@ COMPLETION: your previous output appears cut off mid-sentence (it never reached 
                 temperature: 0.5,
                 taskType: "generate",
                 maxTokens,
-                metadata: { step: "generate", section: sectionNum, retry: true, zeroCite },
+                metadata: { step: STEP.generate, section: sectionNum, retry: true, zeroCite },
               });
               const sanitizedRetry = applyFormatContract(retryContent, {
                 gates: ["sanitize", "citation-keys"],
@@ -2994,7 +3001,7 @@ COMPLETION: your previous output appears cut off mid-sentence (it never reached 
           // in finalizePendingVerify() at the tail of the NEXT section (or
           // after the loop for the final section).
           send("step", {
-            step: "verify",
+            step: STEP.verify,
             status: "started",
             section: sectionNum,
             total: sections.length,
@@ -3087,7 +3094,7 @@ COMPLETION: your previous output appears cut off mid-sentence (it never reached 
               // in real time instead of a silent freeze when the OOM killer
               // fires. Checkpointing is per-section, so a resume recovers.
               send("step", {
-                step: "generate",
+                step: STEP.generate,
                 status: "progress",
                 section: sectionNum,
                 total: sections.length,
@@ -3095,7 +3102,7 @@ COMPLETION: your previous output appears cut off mid-sentence (it never reached 
               });
             }
             send("step", {
-              step: "generate",
+              step: STEP.generate,
               status: "done",
               section: sectionNum,
               total: sections.length,
@@ -3129,7 +3136,7 @@ COMPLETION: your previous output appears cut off mid-sentence (it never reached 
         }
 
         // ============ STEP 8: Compose with global renumbering ============
-        send("step", { step: "compose", status: "started", message: "Composing final article with global citation renumbering..." });
+        send("step", { step: STEP.compose, status: "started", message: "Composing final article with global citation renumbering..." });
 
         // ★ round-cs-6: uniform ENGLISH section headings for the EN article.
         // Titles are normalized (leading "3." numbering / quotes / trailing
@@ -3293,7 +3300,7 @@ ${c}`)
             stats.outOfRangeCitationsStripped = oorStripped;
             log(`compose: stripped ${oorStripped} out-of-range citation number(s) (pool has ${maxGlobal} refs)`);
             send("step", {
-              step: "compose",
+              step: STEP.compose,
               status: "progress",
               message: `Compose guard: removed ${oorStripped} citation marker(s) pointing beyond the reference list (${maxGlobal} refs).`,
             });
@@ -3371,7 +3378,7 @@ ${c}`)
         let articleTitle = project.topic;
         let articleTitleZh: string | null = null;
         try {
-          send("step", { status: "progress", message: "Generating article title..." });
+          send("step", { step: STEP.title, status: "progress", message: "Generating article title..." });
           const titleResult = await generateArticleTitle({
             topic: project.topic,
             sectionTitles: sections.map((s: any) => s?.title).filter(Boolean),
@@ -3421,7 +3428,7 @@ ${c}`)
           finalOverall: null as number | null,
         };
         send("step", {
-          step: "repair",
+          step: STEP.repair,
           status: "started",
           message: "Auto-review & repair: fact-checking the composed article before translation...",
         });
@@ -3472,7 +3479,7 @@ ${c}`)
               repairTelemetry.stopReason = convergence.reason;
               log(`repair: round ${round} EARLY EXIT — ${convergence.reason}`);
               send("step", {
-                step: "repair",
+                step: STEP.repair,
                 status: "progress",
                 round,
                 message: `Round ${round}: ${convergence.reason}.`,
@@ -3516,7 +3523,7 @@ ${c}`)
                   `repair: numeric sweep — ${sweep.sentencesExamined} numeric sentence(s) examined, ${sweep.covered} covered, ${sweep.findings.length} gap(s) (advisory)`,
                 );
                 send("step", {
-                  step: "repair",
+                  step: STEP.repair,
                   status: "progress",
                   round,
                   message: `Numeric coverage sweep: ${sweep.findings.length} value(s) not found in their cited abstract(s) — flagged as advisory for the reviewer.`,
@@ -3559,7 +3566,7 @@ ${c}`)
               const kinds = structuralFindings.map((f: any) => f.verdict).join(", ");
               log(`repair: round ${round} structural citation audit: ${kinds}`);
               send("step", {
-                step: "repair",
+                step: STEP.repair,
                 status: "progress",
                 round,
                 message: `Structural citation audit: ${structuralFindings.length} issue(s) (${kinds}).`,
@@ -3590,7 +3597,7 @@ ${c}`)
               ? ` fact={v${rc.factReport.summary.verified} c${rc.factReport.summary.contradicted} u${rc.factReport.summary.unverifiable} e${rc.factReport.summary.errors}}`
               : "";
             send("step", {
-              step: "repair",
+              step: STEP.repair,
               status: "progress",
               round,
               message:
@@ -3609,7 +3616,7 @@ ${c}`)
             if (revisionsDone >= REPAIR_MAX_REVISIONS) {
               repairTelemetry.stopReason =
                 "revision budget exhausted — remaining issues are disclosed in the Review tab";
-              send("step", { step: "repair", status: "progress", message: `${repairTelemetry.stopReason}.` });
+              send("step", { step: STEP.repair, status: "progress", message: `${repairTelemetry.stopReason}.` });
               break;
             }
 
@@ -3688,7 +3695,7 @@ ${c}`)
               repairTelemetry.guardRejections++;
               log(`repair: round ${round} surgical attempt ${attempt} REJECTED by guard: ${guard.reasons.join("; ")}`);
               send("step", {
-                step: "repair",
+                step: STEP.repair,
                 status: "progress",
                 round,
                 message: `Round ${round} revision attempt ${attempt} rejected by mechanical guard (${guard.reasons[0]})${attempt === 1 ? " — retrying with structural feedback..." : ""}`,
@@ -3698,7 +3705,7 @@ ${c}`)
             if (candidate === null) {
               repairTelemetry.stopReason = "revision failed the mechanical guard (all attempts)";
               send("step", {
-                step: "repair",
+                step: STEP.repair,
                 status: "progress",
                 message: `Round ${round}: every revision attempt failed the mechanical guard — keeping the pre-revision article.`,
               });
@@ -3738,7 +3745,7 @@ ${c}`)
               abstractMap = remapped;
             }
             send("step", {
-              step: "repair",
+              step: STEP.repair,
               status: "progress",
               round,
               message:
@@ -3831,7 +3838,7 @@ ${c}`)
             }
           }
           send("step", {
-            step: "repair",
+            step: STEP.repair,
             status: "done",
             message:
               repairTelemetry.triggered
@@ -3852,7 +3859,7 @@ ${c}`)
           repairTelemetry.stopReason = `loop failed: ${String(repairErr?.message ?? repairErr).slice(0, 120)}`;
           log(`repair: FAILED — ${repairTelemetry.stopReason}`);
           send("step", {
-            step: "repair",
+            step: STEP.repair,
             status: "skipped",
             message: `Auto-repair skipped after an error (the composed article is unaffected): ${repairErr?.message?.slice(0, 80) || "LLM error"}.`,
           });
@@ -3894,7 +3901,7 @@ ${c}`)
         // polish, or the pass budget (POLISH_MAX_PASSES).
         const POLISH_MAX_PASSES = 2;
         send("step", {
-          step: "polish",
+          step: STEP.polish,
           status: "started",
           message: "Coherence pass: reviewing the full article for cross-section issues (repetition, contradictions, terminology drift, broken bridges)...",
         });
@@ -3902,7 +3909,7 @@ ${c}`)
         // must not burn the coherence review's retry budget.
         if (isAborted() || clientDisconnected) {
           send("step", {
-            step: "polish",
+            step: STEP.polish,
             status: "skipped",
             message: `Coherence pass skipped — ${clientDisconnected ? "client disconnected" : "provider rate-limit abort"}; the article stands as repaired.`,
           });
@@ -3928,7 +3935,7 @@ ${c}`)
                   revisedContent: articleContent,
                 };
                 send("step", {
-                  step: "polish",
+                  step: STEP.polish,
                   status: "done",
                   findings: totalFindings,
                   revisedSections: revisedSectionSet.size,
@@ -3938,7 +3945,7 @@ ${c}`)
                 break;
               }
               send("step", {
-                step: "polish",
+                step: STEP.polish,
                 status: "progress",
                 message: `Coherence pass ${pass}/${POLISH_MAX_PASSES}: re-reviewing the polished article for remaining or newly exposed cross-section issues...`,
               });
@@ -3955,7 +3962,7 @@ ${c}`)
                 : coherence.summary || "not applicable";
               if (pass === 1) {
                 send("step", {
-                  step: "polish",
+                  step: STEP.polish,
                   status: "skipped",
                   message: `Coherence pass skipped: ${polishTelemetry.stopReason}.`,
                 });
@@ -3969,7 +3976,7 @@ ${c}`)
                   revisedContent: articleContent,
                 };
                 send("step", {
-                  step: "polish",
+                  step: STEP.polish,
                   status: "done",
                   findings: totalFindings,
                   revisedSections: revisedSectionSet.size,
@@ -3991,7 +3998,7 @@ ${c}`)
                   revisedContent: null,
                 };
                 send("step", {
-                  step: "polish",
+                  step: STEP.polish,
                   status: "done",
                   findings: 0,
                   message: `Coherence pass: ${coherence.summary || "no cross-section defects found"} — the article reads as one connected piece.`,
@@ -4006,7 +4013,7 @@ ${c}`)
                   revisedContent: articleContent,
                 };
                 send("step", {
-                  step: "polish",
+                  step: STEP.polish,
                   status: "done",
                   findings: totalFindings,
                   revisedSections: revisedSectionSet.size,
@@ -4023,7 +4030,7 @@ ${c}`)
             polishTelemetry.findings = totalFindings;
             const kinds = [...new Set(coherence.findings.map((f) => f.type))].join(", ");
             send("step", {
-              step: "polish",
+              step: STEP.polish,
               status: "progress",
               findings: totalFindings,
               message: `${pass > 1 ? `Pass ${pass}/${POLISH_MAX_PASSES}: ` : ""}${coherence.findings.length} cross-section finding(s) (${kinds}) — polishing the affected sections with full-article context...`,
@@ -4040,7 +4047,7 @@ ${c}`)
               {
                 topic: project.topic,
                 maxTokens,
-                onProgress: (m) => send("step", { step: "polish", status: "progress", message: `Coherence polish: ${m}` }),
+                onProgress: (m) => send("step", { step: STEP.polish, status: "progress", message: `Coherence polish: ${m}` }),
               },
             );
 
@@ -4064,7 +4071,7 @@ ${c}`)
                   revisedContent: null,
                 };
                 send("step", {
-                  step: "polish",
+                  step: STEP.polish,
                   status: "done",
                   findings: coherence.findings.length,
                   revisedSections: 0,
@@ -4079,7 +4086,7 @@ ${c}`)
                   revisedContent: articleContent,
                 };
                 send("step", {
-                  step: "polish",
+                  step: STEP.polish,
                   status: "done",
                   findings: totalFindings,
                   revisedSections: revisedSectionSet.size,
@@ -4133,7 +4140,7 @@ ${c}`)
                     suggestions: coherenceSuggestions,
                     revisedContent: null,
                   };
-              send("step", { step: "polish", status: "done", findings: totalFindings, revisedSections: revisedSectionSet.size, findingsAddressed: totalAddressed, message: `${priorPassNote}Coherence polish rejected by the citation-preservation guard — the pre-polish article stands; findings disclosed in the Review tab.` });
+              send("step", { step: STEP.polish, status: "done", findings: totalFindings, revisedSections: revisedSectionSet.size, findingsAddressed: totalAddressed, message: `${priorPassNote}Coherence polish rejected by the citation-preservation guard — the pre-polish article stands; findings disclosed in the Review tab.` });
               log(`polish[pass ${pass}]: REJECTED (citation additions: ${added.join(",")})`);
               break;
             }
@@ -4154,7 +4161,7 @@ ${c}`)
                     suggestions: coherenceSuggestions,
                     revisedContent: null,
                   };
-              send("step", { step: "polish", status: "done", findings: totalFindings, revisedSections: revisedSectionSet.size, findingsAddressed: totalAddressed, message: `${priorPassNote}Coherence polish rejected (heading structure mismatch) — the pre-polish article stands; findings disclosed in the Review tab.` });
+              send("step", { step: STEP.polish, status: "done", findings: totalFindings, revisedSections: revisedSectionSet.size, findingsAddressed: totalAddressed, message: `${priorPassNote}Coherence polish rejected (heading structure mismatch) — the pre-polish article stands; findings disclosed in the Review tab.` });
               log(`polish[pass ${pass}]: REJECTED (heading mismatch)`);
               break;
             }
@@ -4175,7 +4182,7 @@ ${c}`)
                     suggestions: coherenceSuggestions,
                     revisedContent: null,
                   };
-              send("step", { step: "polish", status: "done", findings: totalFindings, revisedSections: revisedSectionSet.size, findingsAddressed: totalAddressed, message: `${priorPassNote}Coherence polish rejected by the revision guard — the pre-polish article stands; findings disclosed in the Review tab.` });
+              send("step", { step: STEP.polish, status: "done", findings: totalFindings, revisedSections: revisedSectionSet.size, findingsAddressed: totalAddressed, message: `${priorPassNote}Coherence polish rejected by the revision guard — the pre-polish article stands; findings disclosed in the Review tab.` });
               log(`polish[pass ${pass}]: REJECTED by guard — ${(guard?.reasons || []).join("; ")}`);
               break;
             }
@@ -4266,7 +4273,7 @@ ${c}`)
                 revisedContent: candidate,
               };
               send("step", {
-                step: "polish",
+                step: STEP.polish,
                 status: "done",
                 findings: totalFindings,
                 revisedSections: revisedSectionSet.size,
@@ -4283,7 +4290,7 @@ ${c}`)
               revisedContent: candidate,
             };
             send("step", {
-              step: "polish",
+              step: STEP.polish,
               status: "progress",
               findings: totalFindings,
               revisedSections: revisedSectionSet.size,
@@ -4298,7 +4305,7 @@ ${c}`)
           polishTelemetry.stopReason = `pass failed: ${String(polishErr?.message ?? polishErr).slice(0, 120)}`;
           log(`polish: FAILED — ${polishTelemetry.stopReason}`);
           send("step", {
-            step: "polish",
+            step: STEP.polish,
             status: "skipped",
             message: `Coherence pass skipped after an error (the article is unaffected): ${polishErr?.message?.slice(0, 80) || "LLM error"}.`,
           });
@@ -4481,7 +4488,7 @@ ${c}`)
         );
 
         send("step", {
-          step: "compose",
+          step: STEP.compose,
           status: "done",
           message: `Article composed: ${countWords(articleContent)} words, ${globalRefs.length} references.`,
           wordCount: countWords(articleContent),
@@ -4500,7 +4507,7 @@ ${c}`)
         let articleContentZh: string | null = null;
         if (isBothMode) {
           send("step", {
-            step: "translate",
+            step: STEP.translate,
             status: "started",
             message: `Translating ${generatedParagraphs.length} sections from English to Chinese (one by one)...`,
             detail: "Each section is translated independently to preserve citations and structure",
@@ -4552,7 +4559,7 @@ ${articleContent.slice(0, 3500)}`;
               thinking: false,
               taskType: "translate",
               maxTokens: 2000,
-              metadata: { step: "translate-glossary" },
+              metadata: { step: STEP["translate-glossary"] },
             });
             const glossaryParsed = safeParseJSON(glossaryRaw, { glossary: [] });
             const entries = (glossaryParsed.glossary || [])
@@ -4615,7 +4622,7 @@ ${articleContent.slice(0, 3500)}`;
             if (abortedDueToRateLimit || isAborted() || clientDisconnected) {
               translatedContents.push("");
               send("step", {
-                step: "translate",
+                step: STEP.translate,
                 status: "skipped",
                 section: sectionNum,
                 total: generatedParagraphs.length,
@@ -4636,7 +4643,7 @@ ${articleContent.slice(0, 3500)}`;
               const cleanEn = citIdx >= 0 ? enContent.slice(0, citIdx).trim() : enContent.trim();
 
               send("step", {
-                step: "translate",
+                step: STEP.translate,
                 status: "started",
                 section: sectionNum,
                 total: generatedParagraphs.length,
@@ -4684,7 +4691,7 @@ ${cleanEn}`;
                     taskType: "translate",
                     maxTokens,
                     metadata: {
-                      step: "translate",
+                      step: STEP.translate,
                       section: sectionNum,
                       sectionTitle: para.title,
                       sourceChars: cleanEn.length,
@@ -4695,7 +4702,7 @@ ${cleanEn}`;
                     if (now - lastZhStream > 100) {
                       lastZhStream = now;
                       send("step", {
-                        step: "translate",
+                        step: STEP.translate,
                         status: "streaming",
                         section: sectionNum,
                         total: generatedParagraphs.length,
@@ -4709,7 +4716,7 @@ ${cleanEn}`;
                 );
               } catch (err: any) {
                 send("step", {
-                  step: "translate",
+                  step: STEP.translate,
                   status: "progress",
                   section: sectionNum,
                   total: generatedParagraphs.length,
@@ -4720,7 +4727,7 @@ ${cleanEn}`;
                   temperature: 0.3,
                   taskType: "translate",
                   maxTokens,
-                  metadata: { step: "translate", section: sectionNum, fallback: true },
+                  metadata: { step: STEP.translate, section: sectionNum, fallback: true },
                 });
               }
 
@@ -4780,7 +4787,7 @@ ${cleanEn}`;
               translatedContents.push(zhContent);
 
               send("step", {
-                step: "translate",
+                step: STEP.translate,
                 status: "done",
                 section: sectionNum,
                 total: generatedParagraphs.length,
@@ -4798,7 +4805,7 @@ ${cleanEn}`;
               log(`translate: section ${sectionNum} FAILED: ${trErr?.message?.slice(0, 120) || "unknown"}`);
               translatedContents.push("");
               send("step", {
-                step: "translate",
+                step: STEP.translate,
                 status: "progress",
                 section: sectionNum,
                 total: generatedParagraphs.length,
@@ -4817,7 +4824,7 @@ ${cleanEn}`;
           const translatedCount = translatedContents.filter((c) => c.trim().length > 0).length;
           if (translatedCount === 0) {
             send("step", {
-              step: "translate",
+              step: STEP.translate,
               status: "done",
               message: `Chinese translation FAILED for all ${generatedParagraphs.length} sections — the English article was saved without a Chinese half. You can batch-retranslate from the article viewer.`,
               failed: true,
@@ -4825,7 +4832,7 @@ ${cleanEn}`;
             log(`translate: all ${generatedParagraphs.length} sections failed — skipping zh compose`);
           } else {
           send("step", {
-            step: "translate",
+            step: STEP.translate,
             status: "progress",
             message: `Composing Chinese full article from ${translatedCount}/${translatedContents.length} translated sections...`,
           });
@@ -4883,7 +4890,7 @@ ${cleanEn}`;
           });
 
           send("step", {
-            step: "translate",
+            step: STEP.translate,
             status: "done",
             message: `Chinese translation complete: ${countWords(articleContentZh)} chars across ${translatedCount}/${translatedContents.length} sections.`,
             articleWordCountZh: countWords(articleContentZh),
@@ -4918,7 +4925,7 @@ ${cleanEn}`;
         // req.nextUrl.origin, never a hardcoded host). Both endpoints
         // persist their results, so the tabs have content immediately.
         try {
-          send("step", { step: "relationships", status: "started", message: "Analyzing source relationships..." });
+          send("step", { step: STEP.relationships, status: "started", message: "Analyzing source relationships..." });
           const relRes = await fetch(`${req.nextUrl.origin}/api/ai/source-relationships`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -4928,17 +4935,17 @@ ${cleanEn}`;
           if (relRes.ok) {
             const relJson = await relRes.json();
             send("step", {
-              step: "relationships",
+              step: STEP.relationships,
               status: "done",
               message: `Relationship analysis saved: ${relJson.themes?.length || 0} themes, ${relJson.edges?.length || 0} connections — see the Relationships tab.`,
             });
             log(`relationships: auto analysis saved (${relJson.themes?.length || 0} themes)`);
           } else {
-            send("step", { step: "relationships", status: "skipped", message: `Relationship analysis skipped (${relRes.status}) — run it manually from the Relationships tab.` });
+            send("step", { step: STEP.relationships, status: "skipped", message: `Relationship analysis skipped (${relRes.status}) — run it manually from the Relationships tab.` });
             log(`relationships: auto analysis FAILED (${relRes.status})`);
           }
         } catch (relErr: any) {
-          send("step", { step: "relationships", status: "skipped", message: "Relationship analysis skipped (timeout or LLM error)." });
+          send("step", { step: STEP.relationships, status: "skipped", message: "Relationship analysis skipped (timeout or LLM error)." });
           log(`relationships: auto analysis ERROR: ${String(relErr?.message ?? relErr).slice(0, 100)}`);
         }
         // round-59: the repair loop already reviewed the FINAL article
@@ -4949,7 +4956,7 @@ ${cleanEn}`;
         if (repairRounds.length > 0) {
           const lastRound = repairRounds[repairRounds.length - 1];
           send("step", {
-            step: "review",
+            step: STEP.review,
             status: "done",
             verdict: lastRound.core.parsed.verdict,
             message:
@@ -4962,7 +4969,7 @@ ${cleanEn}`;
           );
         } else {
         try {
-          send("step", { step: "review", status: "started", message: "Running peer review of the final article..." });
+          send("step", { step: STEP.review, status: "started", message: "Running peer review of the final article..." });
           const reviewRes = await fetch(`${req.nextUrl.origin}/api/ai/review`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -4972,18 +4979,18 @@ ${cleanEn}`;
           if (reviewRes.ok) {
             const rv = await reviewRes.json();
             send("step", {
-              step: "review",
+              step: STEP.review,
               status: "done",
               verdict: rv.verdict,
               message: `Peer review saved: ${rv.verdict || "done"}${rv.scores?.overall != null ? ` (overall ${rv.scores.overall}/10)` : ""} — see the Review tab.`,
             });
             log(`review: auto peer review saved (verdict=${rv.verdict}, overall=${rv.scores?.overall ?? "?"})`);
           } else {
-            send("step", { step: "review", status: "skipped", message: `Peer review skipped (${reviewRes.status}) — run it manually from the Review tab.` });
+            send("step", { step: STEP.review, status: "skipped", message: `Peer review skipped (${reviewRes.status}) — run it manually from the Review tab.` });
             log(`review: auto review FAILED (${reviewRes.status})`);
           }
         } catch (revErr: any) {
-          send("step", { step: "review", status: "skipped", message: "Peer review skipped (timeout or LLM error)." });
+          send("step", { step: STEP.review, status: "skipped", message: "Peer review skipped (timeout or LLM error)." });
           log(`review: auto review ERROR: ${String(revErr?.message ?? revErr).slice(0, 100)}`);
         }
         } // end round-59 fallback review fetch
@@ -5031,6 +5038,11 @@ ${cleanEn}`;
             gatherCoverage: stats.gatherCoverage,
             gatherTopUpNewItems: stats.gatherTopUpNewItems,
             webSearchCache: { hits: webSearchCacheStats.hits, misses: webSearchCacheStats.misses, stores: webSearchCacheStats.stores, evictions: webSearchCacheStats.evictions },
+            // RT7 (RT6 backlog #5): per-skill degradation surfacing — a run
+            // that quietly degraded three skills no longer looks identical
+            // to a fully clean one in the final stats block.
+            skillDegraded: getSkillDegradedCounts(),
+            skillCalls: getSkillStats().calls,
           },
           accuracy: {
             droppedKeys: stats.droppedKeys,
@@ -5324,7 +5336,7 @@ Adjudicate every check. Respond as STRICT JSON:
         temperature: 0.1,
         taskType: "verify",
         maxTokens: opts.maxTokens,
-        metadata: { step: "adversarial-verify", batch: Math.floor(b / batchSize) + 1 },
+        metadata: { step: STEP["adversarial-verify"], batch: Math.floor(b / batchSize) + 1 },
       });
       const parsed = safeParseJSON(raw, { checks: [] });
       for (const c of parsed.checks || []) {

@@ -3773,3 +3773,37 @@ Stage Summary:
 - 代码审查完成：4 层 60+ 发现，6 条测试前关键修复已入库推送；双实例/僵尸进程清理完毕。
 - 供应商 429 风暴是真实测试的唯一阻塞项；探测器+调度器+监控脚本三件套就绪，恢复后自动开跑。
 - 历史产物质量基线：EN 格式修复（round-cs-6/7）在真实文章上验证有效；中断运行的 ZH 缺失与自引用瑕疵记入改进计划。
+
+---
+Task ID: RT7 (main)
+Agent: main (Z.ai Code orchestrator)
+Task: 用户指令"进行下一阶段开发，并进行qa测试和e2e测试，并根据测试结果规划后续开发计划" — 执行 RT6 文档的 RT7 backlog（B-family stragglers skill 迁移 + SSE step 常量化 + 降级标志透出）。
+
+Work Log:
+- 沙箱第四次重置恢复：重克隆 df904c7（上会话已将 RT6 wave2 push）、bun install、bunx next dev -p 3001 后台、.env 从 example 恢复、prisma db push 初始化 SQLite（沙箱重置清空了 /home/z/my-project/db 与 ~/.sciwrite）、z-ai quota 探测 QUOTA_OK。
+- RT7-A（6 站点 → 6 skills，3 个新 family 文件）：
+  - skills-coherence.ts：coherence-review（STRICT-JSON，findings 白名单/section 范围/cap/截断，fallback=空 review）+ coherence-edit（prose：identity parse、codefence/heading-echo 剥离、≤80 chars fatal→fallback=原文节）。
+  - skills-gap.ts：gap-design（identify：sectionIndex 范围/query 白名单/remainingCapacity cap，fallback=空 gaps）+ gap-research（gate：parseLlmJson 保 parseOk 标志区分 parse 失败 vs genuine keep-0（round-RT2 语义）；provider 失败 fallback=PubMed 候选 C 编号）。
+  - skills-knowledge.ts：knowledge（fill 批次：CR-B#1 批内区间校验、MISSING-only 填充、cleanFill/validFill/sentinel 拒绝、confidence clamp；NO fallback——rethrow 保 caller 的 storm 语义）+ knowledge-summary（digest：soft fallback=空 missing）。KVCompletion/KVMissingSource/cleanFill/SENTINEL_VALUES 等移入 skill 文件，knowledge-verify re-export。
+  - registry 15 skills；coherence-polish/research-gap/knowledge-verify 三个业务模块内部改调 runSkill（对外签名不变，route 零改动）；池编排（split/分组/≤5 循环/搜索循环/去重集/storm 标志/keep-0 机械排名）留在 call-site。
+  - step 归一：legacy metadata.step "coherence"/"knowledge-verify"（越界值）→ "polish"/"knowledge"。
+- RT7-B（SSE 常量化）：steps.ts 增 STEP 映射（{[K in PipelineStep]: K} 字面量类型）；v2 route 145 处 + v1 route 100 处 `step: "x"` → `step: STEP.x`（带连字符 STEP["x"]）；统一前先统计 245 处字面量全在命名空间内（wire 一致性顺带验证）；客户端 unified-writing-dialog STEPS 22 处 id + run-timeline-dialog STEP_LABEL_KEYS 全量常量化（Record<PipelineStep,…> 穷举 + 7 个命名空间补位标签）。
+- RT7-C（降级透出）：telemetry-collector.ts（模块级聚合 calls/degraded/cacheHits/totalMs，observer-only）；executor finish() 挂 recordSkillTelemetry；v2 route 启动 reset + complete-event stats 增 skillDegraded/skillCalls。
+- QA：单测 320（291 基线 + 30 RT7 新增：6 skill 契约+cleanFill kernel lock+collector）——312 pass / 8 fail（全部为既有 llm-cache 环境性套件干扰，单文件跑 18/18 过；pristine df904c7 同样 8 fail，非回归）；集成 26/26（DB 初始化后）；lint 0 errors/193 warnings；tsc 4 基线 0 新增。
+- Live smoke：scripts/skill-smoke-rt7.ts（4 skills 真实调用）— RT7_SMOKE_PASS：knowledge-summary 8 篇真实缺失文献（Jinek 2012 等）、gap-design 3 gaps queriesOk、coherence-review 5 findings（注入缺陷全识别）、coherence-edit 394 chars ok；session 三名归一 DB 验证（step=knowledge/gapAgent/polish + sub 行全对）。
+- E2E 1500 词全管线启动（后台 e2e-rt7.log），结果待补。
+
+Stage Summary:
+- RT6 backlog 1/3/5 全部落地：skill catalog 9→15，SSE 245 处字面量常量化（typo 现在编译期失败），降级计数进 complete-event stats。
+- 行为锁验证通过：CR-B#1、MISSING-only、sentinel 拒绝、round-RT2 keep-0 三分支、≤80 chars 守卫全部有单测钉死。
+- 待 E2E 结果后：IMPROVEMENT_PLAN-RT7 定稿 + push。
+- E2E 结果（34.3 min，全绿）：196 gathered→20 final refs（12/12 facets 100%）、7 sections、1695 EN words（113%）、37 citations verified/1 removed、独立复审 33 checked 27 supported 1 partial 5 unsupported 0 removed、repair major 5/10→minor 6/10 收敛、polish 2 passes（pass2 修新暴露 7 findings）、audit 0 blocking/0 orphan、**skillDegraded {} 零降级 + skillCalls 41 次/12 skills**（knowledge×4/knowledge-summary/score×8/curate-smart/gap-design/gap-research/evidence-extract×3/fact-check×8/review×2/revision×3/coherence-review×2/coherence-edit×7）。
+- E2E 顺手修复：title 生成事件补 step: STEP.title（两 route 唯一缺 step 字段的 step 事件，progress 日志曾显示 "unknown"）。
+- 事故记录（环境性）：E2E 后段 adversarial-review 期间 next dev 进程 2.3GB RSS 被 OOM kill（3.9GB 容器）——E2E 产物已先落盘，重启后全部浏览器验证通过；RT8 候选项（backlog #3）。
+- 浏览器验证：home（E2E 项目自动选中、1695 词/7 段/39 引用/100% 覆盖）、article 全 7 章渲染（桥接句证明 coherence polish 真实生效）、run-timeline 展开（step 标签全部解析=STEP 常量化客户端验证）、390px 移动端无横向溢出；全程零 console/page 错误。shots/rt7-article.png、shots/rt7-home-mobile.png。
+- 交付物：IMPROVEMENT_PLAN-RT7-2026-10-12.md（含 RT8 backlog 6 项排名）、skills-coherence/gap/knowledge 三个 family 文件、telemetry-collector、skill-smoke-rt7、30 个新单测。
+
+Stage Summary:
+- RT6 backlog 1/3/5 全部完成并验证：catalog 9→15、245 字面量+客户端拷贝编译器强制、降级计数进 stats（E2E 实测 skillDegraded {} + skillCalls 41）。
+- 首个干净窗口 E2E（RT4 遗留目标达成）：34.3min 零风暴零降级，修复循环+polish+审计全绿。
+- RT8 方向（据测试结果）：v1+v2 stage 合并（最大结构收益）、generate/translate prose skill 化（用 skillCalls 数据决策）、dev 模式内存上限（OOM 事故）、i18n 标签统一、降级 UI 徽章、knowledge-summary/gap-design 合并候选。

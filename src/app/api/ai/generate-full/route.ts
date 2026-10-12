@@ -8,6 +8,8 @@ import { countWords, renumberByAppearance, buildStructureContextFromDataSources,
 // RT6: the format gauntlet on every article-text exit is the registered
 // fixed-order gate chain (format-contract).
 import { applyFormatContract } from "@/lib/skill/format-contract";
+// RT7: step literals reference the shared namespace — a typo now fails tsc.
+import { STEP } from "@/lib/skill/steps";
 import { generateArticleTitle } from "@/lib/article-title";
 import { translateSectionTitles } from "@/lib/section-title-zh";
 import { validateCitationsInline } from "@/lib/citation-audit";
@@ -167,14 +169,14 @@ export async function POST(req: NextRequest) {
       // monotonic values. `progress` rides on every step event.
       const trackerBothMode = (body.language || "English") === "both";
       const progressTracker = new PipelineProgressTracker([
-        { step: "gather", weight: 2.2 },
-        { step: "score", weight: 0.9 },
-        { step: "curate", weight: 0.7 },
-        { step: "relationships", weight: 0.6 },
-        { step: "plan", weight: 0.9 },
-        { step: "generate", unitWeight: 1 },
-        ...(trackerBothMode ? [{ step: "translate", unitWeight: 0.75 }] : []),
-        { step: "compose", weight: 0.8 },
+        { step: STEP.gather, weight: 2.2 },
+        { step: STEP.score, weight: 0.9 },
+        { step: STEP.curate, weight: 0.7 },
+        { step: STEP.relationships, weight: 0.6 },
+        { step: STEP.plan, weight: 0.9 },
+        { step: STEP.generate, unitWeight: 1 },
+        ...(trackerBothMode ? [{ step: STEP.translate, unitWeight: 0.75 }] : []),
+        { step: STEP.compose, weight: 0.8 },
       ]);
       const send = (event: string, data: any) => {
         // round-cs-1: observe everything that goes on the wire (observer
@@ -302,7 +304,7 @@ export async function POST(req: NextRequest) {
         const promptInstruction = (body.promptInstruction || "").trim();
 
         send("step", {
-          step: "init",
+          step: STEP.init,
           status: "done",
           message: `Pipeline initialized. Language: ${requestedLanguage}${isBothMode ? " (English-first, then translate)" : ""}. Target: ${targetWords} words.`,
           config: {
@@ -327,7 +329,7 @@ export async function POST(req: NextRequest) {
         // ============ STEP 1: FORCE re-gather data sources ============
         // Delete ALL existing data sources for this project first (fresh start)
         send("step", {
-          step: "gather",
+          step: STEP.gather,
           status: "started",
           message: "Clearing existing data sources and re-gathering fresh sources...",
         });
@@ -364,7 +366,7 @@ export async function POST(req: NextRequest) {
 
         // Strategy 1: LLM-designed multi-database queries (capped at maxDbQueries)
         send("step", {
-          step: "gather",
+          step: STEP.gather,
           status: "progress",
           message: "Designing multi-database search queries (PubMed, RCSB, UniProt, NCBI)...",
           detail: `Asking LLM to design up to ${maxDbQueries} queries across databases`,
@@ -436,7 +438,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           system: gatherSystem,
           temperature: 0.4,
           taskType: "gather",
-          metadata: { step: "gather" },
+          metadata: { step: STEP.gather },
           maxTokens,
         });
         const gatherParsed = safeParseJSON(gatherRaw, { queries: [] });
@@ -449,7 +451,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         if (dbQueries.length === 0) {
           log(`gather: LLM returned 0 queries (JSON parse failed), using fallback queries`);
           send("step", {
-            step: "gather",
+            step: STEP.gather,
             status: "progress",
             message: `LLM JSON parse failed — using fallback search queries based on topic...`,
           });
@@ -476,7 +478,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         }
 
         send("step", {
-          step: "gather",
+          step: STEP.gather,
           status: "progress",
           message: `LLM designed ${dbQueries.length} database queries. Executing in parallel (rate-limited for NCBI)...`,
           queries: dbQueries.length,
@@ -515,7 +517,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
                   // Exponential backoff: 1s, 2s
                   const delay = 1000 * Math.pow(2, attempt);
                   send("step", {
-                    step: "gather",
+                    step: STEP.gather,
                     status: "progress",
                     message: `[${q.database}] "${q.query.slice(0, 50)}..." retry ${attempt + 1}/2 (${delay}ms delay)...`,
                     queryDatabase: q.database,
@@ -528,7 +530,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
               }
               if (!r) throw lastErr;
               send("step", {
-                step: "gather",
+                step: STEP.gather,
                 status: "progress",
                 message: `[${q.database}] "${q.query.slice(0, 50)}${q.query.length > 50 ? "..." : ""}" → ${r.items?.length || 0} results`,
                 queryDatabase: q.database,
@@ -538,7 +540,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
               return { status: "fulfilled", value: { ...r, rationale: q.query } } as PromiseSettledResult<any>;
             } catch (err: any) {
               send("step", {
-                step: "gather",
+                step: STEP.gather,
                 status: "progress",
                 message: `[${q.database}] "${q.query.slice(0, 50)}..." FAILED: ${err?.message?.slice(0, 80) || "unknown"}`,
                 queryDatabase: q.database,
@@ -570,7 +572,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
                 if (attempt >= 2) break;
                 const delay = 1000 * Math.pow(2, attempt);
                 send("step", {
-                  step: "gather",
+                  step: STEP.gather,
                   status: "progress",
                   message: `[${q.database} ${qi + 1}/${ncbiQueries.length}] retry ${attempt + 1}/2 (${delay}ms delay)...`,
                   queryDatabase: q.database,
@@ -586,7 +588,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
             if (!r) throw lastErr;
             ncbiResults.push({ status: "fulfilled", value: { ...r, rationale: q.query } });
             send("step", {
-              step: "gather",
+              step: STEP.gather,
               status: "progress",
               message: `[${q.database} ${qi + 1}/${ncbiQueries.length}] "${q.query.slice(0, 50)}${q.query.length > 50 ? "..." : ""}" → ${r.items?.length || 0} results`,
               queryDatabase: q.database,
@@ -598,7 +600,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           } catch (err: any) {
             ncbiResults.push({ status: "rejected", reason: err });
             send("step", {
-              step: "gather",
+              step: STEP.gather,
               status: "progress",
               message: `[${q.database} ${qi + 1}/${ncbiQueries.length}] "${q.query.slice(0, 50)}..." FAILED: ${err?.message?.slice(0, 80) || "unknown"}`,
               queryDatabase: q.database,
@@ -627,7 +629,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         }
 
         send("step", {
-          step: "gather",
+          step: STEP.gather,
           status: "progress",
           message: `Database phase complete: ${dbItems.length} items from ${dbQueryResults.length - failedQueries}/${dbQueryResults.length} successful queries (${failedQueries} failed). Starting web searches...`,
           itemsFound: dbItems.length,
@@ -640,7 +642,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         // (capped only by a sane upper bound to avoid runaway costs).
         const webSearchQueries = await generateWebSearchQueries(projectId, project.topic, project.field || "life sciences", targetWords, maxWebSearchQueries, maxTokens);
         send("step", {
-          step: "gather",
+          step: STEP.gather,
           status: "progress",
           message: `Running ${webSearchQueries.length} web searches (sequential to avoid rate limits)...`,
           detail: webSearchQueries.map((q, i) => `${i + 1}. ${q}`).join("\n"),
@@ -671,7 +673,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
               });
             }
             send("step", {
-              step: "gather",
+              step: STEP.gather,
               status: "progress",
               message: `Web search ${wi + 1}/${webSearchQueries.length} (${Date.now() - wsStart}ms): "${webSearchQueries[wi].slice(0, 50)}${webSearchQueries[wi].length > 50 ? "..." : ""}" → ${searchResults.length} results`,
               queryIndex: wi + 1,
@@ -681,7 +683,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
             });
           } catch (err: any) {
             send("step", {
-              step: "gather",
+              step: STEP.gather,
               status: "progress",
               message: `Web search ${wi + 1}/${webSearchQueries.length} FAILED: ${err?.message?.slice(0, 80) || "rate limit"}`,
               queryIndex: wi + 1,
@@ -696,7 +698,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
 
         const allItems = [...dbItems, ...webItems];
         send("step", {
-          step: "gather",
+          step: STEP.gather,
           status: "progress",
           message: `Total gathered: ${allItems.length} raw sources (${dbItems.length} from databases + ${webItems.length} from web). Deduplicating...`,
           itemsFound: allItems.length,
@@ -736,7 +738,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         });
         const itemsToSave = uniqueItems; // NO cap — keep all unique sources
         send("step", {
-          step: "gather",
+          step: STEP.gather,
           status: "progress",
           message: `Saving ALL ${itemsToSave.length} unique sources (no cap — full coverage)...`,
           detail: `Dedup removed ${allItems.length - itemsToSave.length} duplicates`,
@@ -754,7 +756,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           if (!itemTitle || itemTitle === String(item.externalId || "")) {
             skippedTitleless++;
             send("step", {
-              step: "gather",
+              step: STEP.gather,
               status: "progress",
               message: `Skipped titleless item ${item.source}:${item.externalId || "?"} (no usable metadata — not saved)`,
             });
@@ -821,7 +823,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           if ((i + 1) % 5 === 0 || i === itemsToSave.length - 1) {
             log(`gather: saved ${i + 1}/${itemsToSave.length} sources (last insert took ${elapsed}ms)`);
             send("step", {
-              step: "gather",
+              step: STEP.gather,
               status: "progress",
               message: `Saved ${i + 1}/${itemsToSave.length} sources... [${item.source}] ${item.title?.slice(0, 60) || ""}`,
               sourcesGathered: i + 1,
@@ -837,7 +839,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
 
         log("gather: status=done emitted");
         send("step", {
-          step: "gather",
+          step: STEP.gather,
           status: "done",
           sourcesGathered: savedDataSources.length,
           referencesSaved: savedReferences.length,
@@ -858,7 +860,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         // depth tiebreaker. Curating only AFTER scoring lets the citation
         // count follow source quality instead of a fixed quota.
         send("step", {
-          step: "score",
+          step: STEP.score,
           status: "started",
           message: `Scoring ${savedReferences.length} sources for importance (relevance × importance × full-text depth)...`,
         });
@@ -871,7 +873,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           project.field || "life sciences",
           {
             maxTokens,
-            onProgress: (m) => send("step", { step: "score", status: "progress", message: m }),
+            onProgress: (m) => send("step", { step: STEP.score, status: "progress", message: m }),
           }
         );
         const allScores = scoring.scores;
@@ -881,7 +883,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           const marginal = allScores.length - core - important;
           const withFullText = allScores.filter((s: SourceScore) => s.depth === "fulltext").length;
           send("step", {
-            step: "score",
+            step: STEP.score,
             status: "done",
             scoredCount: allScores.length,
             coreCount: core,
@@ -901,7 +903,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         // `max(20, targetWords/200)` selection. We still SAVE every source —
         // curation only selects which ones enter the LLM's context.
         send("step", {
-          step: "curate",
+          step: STEP.curate,
           status: "started",
           message: `Selecting the citation pool for a ${targetWords}-word article — the count follows source quality, not a fixed quota...`,
         });
@@ -915,13 +917,13 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
           targetWords,
           {
             maxTokens,
-            onProgress: (m) => send("step", { step: "curate", status: "progress", message: m }),
+            onProgress: (m) => send("step", { step: STEP.curate, status: "progress", message: m }),
           }
         );
         const curatedRefs = smart.refs;
         const curatedScores = smart.scores;
         send("step", {
-          step: "curate",
+          step: STEP.curate,
           status: "done",
           curatedCount: curatedRefs.length,
           totalAvailable: savedReferences.length,
@@ -938,7 +940,7 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         // sources first, and deep-read summaries for web sources ride along
         // as compact full-text substitutes (能获取到全文的一定要看全文).
         send("step", {
-          step: "curate",
+          step: STEP.curate,
           status: "progress",
           message: `Fetching full text for the highest-priority sources (enables deeper discussion)...`,
           detail: "Up to 8 PMC free articles, 15k chars each + deep-read summaries",
@@ -948,17 +950,17 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
         const fullTexts = await fetchFullTextsForRefs(curatedRefs, fullTextProfiles, {
           maxCount: 8,
           maxChars: 15000,
-          onProgress: (m, extra) => send("step", { step: "curate", status: "progress", message: m, ...extra }),
+          onProgress: (m, extra) => send("step", { step: STEP.curate, status: "progress", message: m, ...extra }),
         });
 
         send("step", {
-          step: "curate",
+          step: STEP.curate,
           status: "progress",
           message: `Full text retrieval complete: ${fullTexts.size} source(s) readable in depth (of ${pmcCandidates.length} PMC candidates + deep-read summaries).`,
         });
 
         // ============ STEP 3: Analyze source relationships ============
-        send("step", { step: "relationships", status: "started", message: "Analyzing source relationships..." });
+        send("step", { step: STEP.relationships, status: "started", message: "Analyzing source relationships..." });
 
         let relationshipContext = "";
         let relationshipSummary = "";
@@ -1004,7 +1006,7 @@ Analyze how these sources relate. Respond as STRICT JSON:
               system: relSystem,
               temperature: 0.4,
               taskType: "relationships",
-              metadata: { step: "relationships", sourceCount: curatedRefs.length },
+              metadata: { step: STEP.relationships, sourceCount: curatedRefs.length },
               maxTokens,
             });
             relSetCache(relCacheKey, relRaw);
@@ -1067,7 +1069,7 @@ Analyze how these sources relate. Respond as STRICT JSON:
           }
 
           send("step", {
-            step: "relationships",
+            step: STEP.relationships,
             status: "done",
             summary: relationshipSummary,
             themes: relParsed.themes?.length || 0,
@@ -1076,14 +1078,14 @@ Analyze how these sources relate. Respond as STRICT JSON:
             detail: relationshipSummary,
           });
         } catch {
-          send("step", { step: "relationships", status: "skipped", message: "Relationship analysis skipped." });
+          send("step", { step: STEP.relationships, status: "skipped", message: "Relationship analysis skipped." });
         }
 
         // ============ STEP 4: Plan outline + citation map (round-42) ============
         // 先根据主题、长度确定大纲和引用哪些参考文献，再细化内容：the plan
         // co-designs the outline AND which pool sources each section cites;
         // the per-section filtering in STEP 6 now honors these suggestions.
-        send("step", { step: "plan", status: "started", message: `Planning the outline + citation map for a ${targetWords}-word article from ${curatedRefs.length} scored sources...` });
+        send("step", { step: STEP.plan, status: "started", message: `Planning the outline + citation map for a ${targetWords}-word article from ${curatedRefs.length} scored sources...` });
 
         const planSystem =
           "You are a senior research advisor who designs publication-ready article outlines. " +
@@ -1156,7 +1158,7 @@ Output JSON only.`;
             system: planSystem,
             temperature: 0.5,
             taskType: "plan",
-            metadata: { step: "plan", targetWords, refCount: curatedRefs.length },
+            metadata: { step: STEP.plan, targetWords, refCount: curatedRefs.length },
             maxTokens,
           });
           planSetCache(planCacheKey, planRaw);
@@ -1279,7 +1281,7 @@ Output JSON only.`;
         );
 
         send("step", {
-          step: "plan",
+          step: STEP.plan,
           status: "done",
           sections: sections.map((s: any) => ({ title: s.title, targetWords: s.targetWords })),
           sectionCount: sections.length,
@@ -1336,7 +1338,7 @@ Output JSON only.`;
         } catch (e: any) {
           abortedDueToRateLimit = true;
           send("step", {
-            step: "generate",
+            step: STEP.generate,
             status: "error",
             message: `Pre-flight quota check failed: ${e.message}. Aborting before section generation.`,
             aborted: true,
@@ -1362,7 +1364,7 @@ Output JSON only.`;
           if (abortedDueToRateLimit || isAborted()) {
             abortedDueToRateLimit = true;
             send("step", {
-              step: "generate",
+              step: STEP.generate,
               status: "skipped",
               section: sectionNum,
               total: sections.length,
@@ -1376,7 +1378,7 @@ Output JSON only.`;
           }
 
           send("step", {
-            step: "generate",
+            step: STEP.generate,
             status: "started",
             section: sectionNum,
             total: sections.length,
@@ -1396,7 +1398,7 @@ Output JSON only.`;
             if (preemptiveWc >= 11 && i > 0) {
               log(`generate: section ${sectionNum} preemptive slow-down — window count ${preemptiveWc}/15, waiting 25s`);
               send("step", {
-                step: "generate",
+                step: STEP.generate,
                 status: "progress",
                 section: sectionNum,
                 total: sections.length,
@@ -1536,7 +1538,7 @@ Output JSON only.`;
 
           log(`generate: section ${sectionNum} — filtered ${curatedRefs.length}→${sectionRefs.length} refs, ${savedDataSources.length}→${sectionDataSources.length} data sources (keywords: ${sectionKeywords.slice(0, 8).join(",")})`);
           send("step", {
-            step: "generate",
+            step: STEP.generate,
             status: "progress",
             section: sectionNum,
             total: sections.length,
@@ -1555,7 +1557,7 @@ Output JSON only.`;
             const chunkStart = Date.now();
             if (chunkCount > 1) {
               send("step", {
-                step: "generate",
+                step: STEP.generate,
                 status: "progress",
                 section: sectionNum,
                 total: sections.length,
@@ -1741,7 +1743,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                   taskType: "generate",
                   maxTokens,
                   metadata: {
-                    step: "generate",
+                    step: STEP.generate,
                     section: sectionNum,
                     sectionTitle: section.title,
                     chunk: chunkCount > 1 ? `${chunkNum}/${chunkCount}` : undefined,
@@ -1754,7 +1756,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                   if (now - lastStreamEmit > 100) {
                     lastStreamEmit = now;
                     send("step", {
-                      step: "generate",
+                      step: STEP.generate,
                       status: "streaming",
                       section: sectionNum,
                       total: sections.length,
@@ -1772,7 +1774,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               // Fallback to non-streaming chat if chatWithSessionStream fails.
               // We still save to session so the next section can see this one.
               send("step", {
-                step: "generate",
+                step: STEP.generate,
                 status: "progress",
                 section: sectionNum,
                 total: sections.length,
@@ -1787,7 +1789,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                 taskType: "generate",
                 maxTokens,
                 metadata: {
-                  step: "generate",
+                  step: STEP.generate,
                   section: sectionNum,
                   sectionTitle: section.title,
                   chunk: chunkCount > 1 ? `${chunkNum}/${chunkCount}` : undefined,
@@ -1843,7 +1845,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             if (chunkContent.startsWith("[Content generation issue")) {
               log(`generate: section ${sectionNum} chunk ${chunkNum} — meta-commentary detected, retrying...`);
               send("step", {
-                step: "generate",
+                step: STEP.generate,
                 status: "progress",
                 section: sectionNum,
                 total: sections.length,
@@ -1855,11 +1857,11 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                   ? await chatWithSessionStream(projectId, retryPrompt, {
                       system, temperature: 0.65, thinking: false,
                       taskType: "generate", maxTokens,
-                      metadata: { step: "generate", section: sectionNum, chunk: chunkNum, retry: true },
+                      metadata: { step: STEP.generate, section: sectionNum, chunk: chunkNum, retry: true },
                     })
                   : await chatWithSession(projectId, retryPrompt, {
                       system, temperature: 0.65, taskType: "generate", maxTokens,
-                      metadata: { step: "generate", section: sectionNum, retry: true },
+                      metadata: { step: STEP.generate, section: sectionNum, retry: true },
                     });
                 // Sanitize the retry output
                 const sanitizedRetry = applyFormatContract(retryContent, { gates: ["sanitize"], language: "en" }).content;
@@ -1877,7 +1879,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             fullSectionContent += (chunk > 0 ? "\n\n" : "") + chunkContent;
 
             send("step", {
-              step: "generate",
+              step: STEP.generate,
               status: "progress",
               section: sectionNum,
               total: sections.length,
@@ -1918,7 +1920,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           ) {
             retryBudgetDensityUsed++; // v61-2: consume from density budget
             send("step", {
-              step: "generate",
+              step: STEP.generate,
               status: "progress",
               section: sectionNum,
               total: sections.length,
@@ -1940,7 +1942,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                   taskType: "generate",
                   maxTokens,
                   metadata: {
-                    step: "generate-density-retry",
+                    step: STEP["generate-density-retry"],
                     section: sectionNum,
                     sectionTitle: section.title,
                   },
@@ -1950,7 +1952,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                   if (now - retryLastEmit > 100) {
                     retryLastEmit = now;
                     send("step", {
-                      step: "generate",
+                      step: STEP.generate,
                       status: "streaming",
                       section: sectionNum,
                       total: sections.length,
@@ -2000,7 +2002,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           ) {
             retryBudgetWcUsed++; // v61-2: consume from WC budget
             send("step", {
-              step: "generate",
+              step: STEP.generate,
               status: "progress",
               section: sectionNum,
               total: sections.length,
@@ -2022,7 +2024,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                   taskType: "generate",
                   maxTokens,
                   metadata: {
-                    step: "generate-wordcount-retry",
+                    step: STEP["generate-wordcount-retry"],
                     section: sectionNum,
                     sectionTitle: section.title,
                   },
@@ -2032,7 +2034,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                   if (now - wcRetryLastEmit > 100) {
                     wcRetryLastEmit = now;
                     send("step", {
-                      step: "generate",
+                      step: STEP.generate,
                       status: "streaming",
                       section: sectionNum,
                       total: sections.length,
@@ -2122,7 +2124,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               }
               log(`generate: section ${sectionNum} WORD-COUNT INJECTION +${wcInjectCount} refs (wc ${postRetryWordCount}→${countWords(renumberedContent)}, top score=${uncitedForWc[0]?.score ?? 0})`);
               send("step", {
-                step: "generate",
+                step: STEP.generate,
                 status: "progress",
                 section: sectionNum,
                 total: sections.length,
@@ -2173,7 +2175,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               }
               log(`generate: section ${sectionNum} POST-AUDIT INJECTION +${injectCount} refs (density ${citedRefs.length - injectCount}→${citedRefs.length}, top score=${uncited[0]?.score ?? 0})${densityRetried ? " after retry" : ""}`);
               send("step", {
-                step: "generate",
+                step: STEP.generate,
                 status: "progress",
                 section: sectionNum,
                 total: sections.length,
@@ -2261,7 +2263,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               `generate: section ${sectionNum} citation audit — ${blocking} blocking, ${suspect} topicality warning(s) (density=${citedRefs.length}${densityRetried ? ", retried" : ""}${wordCountRetried ? ", wc-retried" : ""}${refPlaceholderCount > 0 ? `, cleaned ${refPlaceholderCount} [\$REF]` : ""})`
             );
             send("step", {
-              step: "generate",
+              step: STEP.generate,
               status: "progress",
               section: sectionNum,
               total: sections.length,
@@ -2350,7 +2352,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             .join("\n");
 
           send("step", {
-            step: "generate",
+            step: STEP.generate,
             status: "done",
             section: sectionNum,
             total: sections.length,
@@ -2376,7 +2378,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
               log(`generate: section ${sectionNum} ABORTED (rate limit): ${errMsg.slice(0, 120)}`);
               failedSections.push(i);
               send("step", {
-                step: "generate",
+                step: STEP.generate,
                 status: "error",
                 section: sectionNum,
                 total: sections.length,
@@ -2394,7 +2396,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             log(`generate: section ${sectionNum} FAILED: ${sectionErr?.message?.slice(0, 120) || "unknown"}`);
             failedSections.push(i);
             send("step", {
-              step: "generate",
+              step: STEP.generate,
               status: "progress",
               section: sectionNum,
               total: sections.length,
@@ -2425,7 +2427,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         if (postGenWindowCount >= 8) {
           log(`generate: post-generate cool-down — window count ${postGenWindowCount} >= 8, waiting 45s before compose/audit`);
           send("step", {
-            step: "compose",
+            step: STEP.compose,
             status: "progress",
             message: `Waiting 45s for rate-limit cool-down (window at ${postGenWindowCount}/15) before composing and auditing...`,
             coolDownWait: true,
@@ -2437,7 +2439,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         }
 
         // ============ STEP 7: Compose the final English article ============
-        send("step", { step: "compose", status: "started", message: "Composing final English article with global citation renumbering..." });
+        send("step", { step: STEP.compose, status: "started", message: "Composing final English article with global citation renumbering..." });
 
         // Merge short paragraphs into the previous paragraph to avoid tiny
         // sections that look unprofessional in the final article.
@@ -2684,7 +2686,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           .join("\n\n");
 
         send("step", {
-          step: "compose",
+          step: STEP.compose,
           status: "progress",
           message: `Assembling ${renumberedContents.length} English sections directly (${generatedParagraphs.reduce((s, p) => s + p.wordCount, 0)} words total).`,
         });
@@ -2796,7 +2798,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         // the outline + opening of the composed body; fall back to the topic
         // on any failure so compose never breaks.
         try {
-          send("step", { status: "progress", message: "Generating article title..." });
+          send("step", { step: STEP.title, status: "progress", message: "Generating article title..." });
           const titleResult = await generateArticleTitle({
             topic: project.topic,
             sectionTitles: sections.map((s: any) => s?.title).filter(Boolean),
@@ -2903,7 +2905,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         if (generatedParagraphs.length > 0 && memAvailable < MEM_THRESHOLD) {
           log(`audit: SKIPPED — low memory (available=${Math.round(memAvailable / 1024 / 1024)}MiB < ${MEM_THRESHOLD / 1024 / 1024}MiB threshold)`);
           send("step", {
-            step: "audit",
+            step: STEP.audit,
             status: "skipped",
             message: `Citation audit skipped due to low memory (${Math.round(memAvailable / 1024 / 1024)}MiB available). You can run it manually from the Citation Health tab.`,
             skipped: true,
@@ -2911,7 +2913,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           });
         } else if (generatedParagraphs.length > 0) {
           send("step", {
-            step: "audit",
+            step: STEP.audit,
             status: "started",
             message: `Auto-auditing citations for ${generatedParagraphs.length} sections (sequential)...`,
           });
@@ -2930,7 +2932,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             const batchNum = i + 1;
             const totalBatches = generatedParagraphs.length;
             send("step", {
-              step: "audit",
+              step: STEP.audit,
               status: "progress",
               message: `Auditing section ${batchNum}/${totalBatches} (${auditDone}/${generatedParagraphs.length} done, ${auditIssues} issues, ${auditFixed} fixed)...`,
             });
@@ -2943,7 +2945,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             if (memNow < 500 * 1024 * 1024) {
               log(`audit: BREAKING loop at paragraph ${batchNum}/${totalBatches} — low memory (${Math.round(memNow / 1024 / 1024)}MiB < 500MiB). ${auditDone}/${generatedParagraphs.length} audited. Article already saved (v104-1).`);
               send("step", {
-                step: "audit",
+                step: STEP.audit,
                 status: "progress",
                 message: `Audit stopped at section ${batchNum}/${totalBatches} — low memory (${Math.round(memNow / 1024 / 1024)}MiB). Article already saved. ${generatedParagraphs.length - auditDone} section(s) not audited.`,
                 earlyExit: true,
@@ -2970,7 +2972,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             if (wc >= 22) {
               log(`audit: BREAKING loop at paragraph ${batchNum}/${totalBatches} — window count ${wc} >= 22 (safety valve). ${auditDone}/${generatedParagraphs.length} audited, rest skipped.`);
               send("step", {
-                step: "audit",
+                step: STEP.audit,
                 status: "progress",
                 message: `Audit stopped at section ${batchNum}/${totalBatches} — rate limit window at ${wc}/15 (safety valve). ${generatedParagraphs.length - auditDone} section(s) not audited (auto-fix will still run).`,
                 earlyExit: true,
@@ -3009,7 +3011,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           }
 
           send("step", {
-            step: "audit",
+            step: STEP.audit,
             status: "done",
             message: `Citation audit complete: ${auditChecked} checked, ${auditIssues} issues found, ${auditFixed} auto-fixed.`,
             auditChecked, auditIssues, auditFixed,
@@ -3051,7 +3053,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           if (preFixMem < 300 * 1024 * 1024) {
             log(`audit: SKIPPING auto-fix — low memory (${Math.round(preFixMem / 1024 / 1024)}MiB < 300MiB). Article already saved (v104-1).`);
             send("step", {
-              step: "audit",
+              step: STEP.audit,
               status: "skipped",
               message: `Auto-fix skipped due to low memory (${Math.round(preFixMem / 1024 / 1024)}MiB). Article already saved. You can run auto-fix manually from the Citation Health tab.`,
               skipped: true,
@@ -3060,7 +3062,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           } else {
           {
             send("step", {
-              step: "audit",
+              step: STEP.audit,
               status: "progress",
               message: `Auto-fixing citation issues (window at ${getWindowCount()}/15)...`,
               autoFixStarted: true,
@@ -3137,7 +3139,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                 }
 
                 send("step", {
-                  step: "audit",
+                  step: STEP.audit,
                   status: "progress",
                   message: `Auto-fix complete: ${fixData.totalFixed || 0} of ${fixData.totalBlocking || 0} blocking issues fixed.`,
                   autoFixDone: true,
@@ -3277,7 +3279,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                     }
 
                     send("step", {
-                      step: "audit",
+                      step: STEP.audit,
                       status: "done",
                       message: remainingBlocking === 0
                         ? `Citation audit + auto-fix complete: 0 blocking errors, ${remainingWarnings} warnings. Article is ready.`
@@ -3370,7 +3372,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
           if (postCleanupWordCount < Math.floor(targetWords * 0.9)) {
             log(`compose: WARNING — post-cleanup word count ${postCleanupWordCount}w is ${wordCountPct}% of target ${targetWords}w (below 90%). Placeholders removal reduced word count.`);
             send("step", {
-              step: "compose",
+              step: STEP.compose,
               status: "progress",
               message: `Note: Final word count ${postCleanupWordCount}w is ${wordCountPct}% of target (placeholders were removed). You can regenerate or manually expand sections.`,
               wordCountWarning: true,
@@ -3387,7 +3389,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         let articleContentZh: string | null = null;
         if (isBothMode) {
           send("step", {
-            step: "translate",
+            step: STEP.translate,
             status: "started",
             message: `Translating ${generatedParagraphs.length} sections from English to Chinese (one by one)...`,
             detail: "Each section is translated independently to preserve citations and structure",
@@ -3428,7 +3430,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             const cleanEn = citIdx >= 0 ? enContent.slice(0, citIdx).trim() : enContent.trim();
 
             send("step", {
-              step: "translate",
+              step: STEP.translate,
               status: "started",
               section: sectionNum,
               total: generatedParagraphs.length,
@@ -3476,7 +3478,7 @@ ${cleanEn}`;
                   taskType: "translate",
                   maxTokens,
                   metadata: {
-                    step: "translate",
+                    step: STEP.translate,
                     section: sectionNum,
                     sectionTitle: para.title,
                     sourceChars: cleanEn.length,
@@ -3487,7 +3489,7 @@ ${cleanEn}`;
                   if (now - lastZhStream > 100) {
                     lastZhStream = now;
                     send("step", {
-                      step: "translate",
+                      step: STEP.translate,
                       status: "streaming",
                       section: sectionNum,
                       total: generatedParagraphs.length,
@@ -3501,7 +3503,7 @@ ${cleanEn}`;
               );
             } catch (err: any) {
               send("step", {
-                step: "translate",
+                step: STEP.translate,
                 status: "progress",
                 section: sectionNum,
                 total: generatedParagraphs.length,
@@ -3513,7 +3515,7 @@ ${cleanEn}`;
                 temperature: 0.3,
                 taskType: "translate",
                 maxTokens,
-                metadata: { step: "translate", section: sectionNum, fallback: true },
+                metadata: { step: STEP.translate, section: sectionNum, fallback: true },
               });
             }
 
@@ -3544,7 +3546,7 @@ ${cleanEn}`;
             translatedParagraphContents.push(zhContent);
 
             send("step", {
-              step: "translate",
+              step: STEP.translate,
               status: "done",
               section: sectionNum,
               total: generatedParagraphs.length,
@@ -3562,7 +3564,7 @@ ${cleanEn}`;
               log(`translate: section ${sectionNum} FAILED: ${trErr?.message?.slice(0, 120) || "unknown"}`);
               translatedParagraphContents.push("");
               send("step", {
-                step: "translate",
+                step: STEP.translate,
                 status: "progress",
                 section: sectionNum,
                 total: generatedParagraphs.length,
@@ -3576,7 +3578,7 @@ ${cleanEn}`;
 
           // Compose the Chinese article by assembling translated sections
           send("step", {
-            step: "translate",
+            step: STEP.translate,
             status: "progress",
             message: `Composing Chinese full article from ${translatedParagraphContents.length} translated sections...`,
           });
@@ -3608,7 +3610,7 @@ ${cleanEn}`;
           articleContentZh = cleanZhBody + "\n\n## 参考文献\n\n" + zhRefList;
 
           send("step", {
-            step: "translate",
+            step: STEP.translate,
             status: "done",
             message: `Chinese translation complete: ${countWords(articleContentZh)} chars across ${translatedParagraphContents.length} sections.`,
             articleWordCountZh: countWords(articleContentZh),
@@ -3693,7 +3695,7 @@ ${cleanEn}`;
         }
 
         send("step", {
-          step: "compose",
+          step: STEP.compose,
           status: "done",
           articleId: article.id,
           articleWordCount: countWords(articleContent),
@@ -3712,7 +3714,7 @@ ${cleanEn}`;
         // (r37: req.nextUrl.origin, never a hardcoded host).
         try {
           send("step", {
-            step: "review",
+            step: STEP.review,
             status: "started",
             message: "Running peer review of the final article...",
           });
@@ -3725,7 +3727,7 @@ ${cleanEn}`;
           if (reviewRes.ok) {
             const rv = await reviewRes.json();
             send("step", {
-              step: "review",
+              step: STEP.review,
               status: "done",
               verdict: rv.verdict,
               message: `Peer review saved: ${rv.verdict || "done"}${rv.scores?.overall != null ? ` (overall ${rv.scores.overall}/10)` : ""} — see the Review tab.`,
@@ -3734,7 +3736,7 @@ ${cleanEn}`;
           } else {
             const errTxt = await reviewRes.text().catch(() => "");
             send("step", {
-              step: "review",
+              step: STEP.review,
               status: "skipped",
               message: `Peer review skipped (service returned ${reviewRes.status}) — run it manually from the Review tab.`,
             });
@@ -3742,7 +3744,7 @@ ${cleanEn}`;
           }
         } catch (e: any) {
           send("step", {
-            step: "review",
+            step: STEP.review,
             status: "skipped",
             message: "Peer review skipped (timeout or LLM error) — run it manually from the Review tab.",
           });

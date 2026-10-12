@@ -25,6 +25,7 @@
 import { chatWithSession } from "@/lib/llm-session";
 import { getCachedLLMResult, llmCacheKey, setCachedLLMResult } from "@/lib/llm-cache";
 import { safeParseJSON } from "@/lib/llm-json";
+import { recordSkillTelemetry } from "./telemetry-collector";
 import type { SkillDefinition, SkillResult, SkillTelemetry } from "./types";
 
 export interface RunSkillOptions<O> {
@@ -75,6 +76,9 @@ export async function runSkill<I, O>(
       outputChars:
         typeof output === "string" ? output.length : JSON.stringify(output ?? "").length,
     };
+    // RT7: aggregate every invocation (all outcomes) for the run's complete-
+    // event stats block — observer-only, never throws into the pipeline.
+    try { recordSkillTelemetry(telemetry); } catch {}
     log(
       meta.degraded ? "warn" : "info",
       `skill ${skill.id} ${meta.degraded ? "DEGRADED" : meta.fromCache ? "cache-hit" : "ok"}`,

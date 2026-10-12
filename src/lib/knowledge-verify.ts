@@ -34,11 +34,25 @@
  *       ≥ 0.72) before they can be cited
  */
 
-import { chatWithSession } from "@/lib/llm-session";
 import { ChatTimeoutError } from "@/lib/ai";
 import { RateLimitAbortedError, QuotaExhaustedError } from "@/lib/rate-limiter";
 import { queryDatabase, fetchPubMedSummaries, searchCrossref, lookupCrossrefDoi } from "@/lib/databases";
-import { safeParseJSON } from "@/lib/generate-full-helpers";
+import { runSkill } from "@/lib/skill/executor";
+import { knowledgeDigestSkill, knowledgeFillSkill } from "@/lib/skill/registry";
+import type { KnowledgeFillInput } from "@/lib/skill/registry";
+
+// RT7: the two LLM calls (per-batch fill + gap digest) are now skills
+// (skills-knowledge.ts); shared contracts re-exported here for the existing
+// import surface (the v2 route, tests).
+export {
+  cleanFill,
+  validFill,
+  FILLABLE_FIELDS,
+  SENTINEL_VALUES,
+  type KVCompletion,
+  type KVMissingSource,
+} from "@/lib/skill/skills-knowledge";
+import { FILLABLE_FIELDS, SENTINEL_VALUES, type KVCompletion, type KVMissingSource } from "@/lib/skill/skills-knowledge";
 
 export interface KVSourceInput {
   /** DB id of the saved data source (used to apply patches). */
@@ -53,91 +67,9 @@ export interface KVSourceInput {
   abstract?: string | null;
 }
 
-export interface KVCompletion {
-  /** 1-based index into the input sources array. */
-  index: number;
-  /** Whether the LLM recognizes this specific work. */
-  known: boolean;
-  /** Fill values for fields that were MISSING in the input. */
-  fill: {
-    authors?: string;
-    year?: string;
-    journal?: string;
-  };
-  confidence: number;
-}
-
-export interface KVMissingSource {
-  title: string;
-  authors?: string;
-  year?: string;
-  journal?: string;
-  doi?: string;
-  pmid?: string;
-  reason: string;
-  kind: "landmark" | "review" | "method" | "database" | "contradicting";
-}
-
 export interface KnowledgeVerifyResult {
   completions: KVCompletion[];
   missing: KVMissingSource[];
-}
-
-const FILLABLE_FIELDS = ["authors", "year", "journal"] as const;
-type FillField = (typeof FILLABLE_FIELDS)[number];
-// NOTE: "doi" is deliberately NOT fillable. E2E on the MscL/MscS project
-// showed the LLM fills plausible-but-WRONG DOIs (a FEBS Lett 2002 paper got
-// an Annual Reviews DOI; a Nature structure paper got a Science DOI).
-// DOIs are machine-checkable identifiers — a wrong one is worse than none.
-// (Real DOIs arrive via database gather or the reference-enrich flow.)
-
-/**
- * Values that are placeholders, not data. Round-35 audit found the LLM
- * echoing the prompt's "[journal=MISSING]" sentinel straight back — that
- * landed as journal="MISSING" in the DB (cleanFill only rejected
- * unknown/n/a/none). Reject every sentinel-ish string, case-insensitive,
- * including punctuation-wrapped variants.
- */
-const SENTINEL_VALUES = new Set([
-  "missing", "missng", "unknown", "n/a", "na", "none", "null", "nil",
-  "not available", "not applicable", "not known", "unavailable", "no data",
-  "no record", "tbd", "uncertain", "-", "—", "?", "??",
-]);
-
-/** Sanitize a single LLM-provided fill value. Returns null when unusable. */
-function cleanFill(value: unknown, maxLen: number): string | null {
-  if (typeof value !== "string") return null;
-  let v = value.replace(/[\u0000-\u001f\u007f]/g, "").trim();
-  if (!v) return null;
-  // The prompt marks gaps with [field=MISSING]; the LLM sometimes wraps
-  // echoes in quotes or trailing periods before/after the sentinel.
-  // r37 fix: it ALSO echoes the bracketed/prefixed sentinel itself —
-  // "[journal=MISSING]" or "(journal=MISSING)". Strip wrapper brackets
-  // and an optional "field=" prefix before the sentinel test, or the
-  // literal sentinel string gets written to the DB (verified: the round-35
-  // bare check passed "[journal=MISSING]" straight through).
-  v = v.replace(/^["'`]([\s\S]*)["'`]$/, "$1").replace(/[.\s]+$/, "").trim();
-  const bare = v
-    .toLowerCase()
-    .replace(/^[\[(]\s*/, "")
-    .replace(/[\])]$/, "")
-    .replace(/^[a-z]+\s*=\s*/, "")
-    .replace(/[.:;]+$/, "")
-    .trim();
-  if (SENTINEL_VALUES.has(bare)) return null;
-  if (!v) return null;
-  return v.slice(0, maxLen);
-}
-
-function validFill(field: FillField, value: string): boolean {
-  switch (field) {
-    case "year":
-      return /^(19|20)\d{2}$/.test(value);
-    case "authors":
-      return value.length >= 3 && value.length <= 400;
-    case "journal":
-      return value.length >= 2 && value.length <= 200;
-  }
 }
 
 /**
@@ -186,11 +118,6 @@ export async function verifySourcesWithKnowledge(
   const gatheredTitleKeys = new Set(
     sources.map((s) => normalizeTitle(s.title)).filter(Boolean)
   );
-
-  const system = `You are a domain expert librarian cross-checking a gathered source list for a research article on: ${topic} (${field}).
-You have TWO jobs:
-1. METADATA COMPLETION — for each source, some fields are marked MISSING. Fill a MISSING field ONLY if you are confident you know the correct value for THIS SPECIFIC work from your training knowledge. Never invent plausible-looking guesses — if unsure, leave it empty. NEVER provide a value for a field that is not marked MISSING.
-2. GAP DETECTION — using your knowledge of the field, name the most IMPORTANT works (landmark papers, key reviews, seminal methods, key database entries, or contradicting evidence) that are ABSENT from this list. Only suggest works you are confident actually exist.`;
 
   // ── round-RT2 (need-based batches): rows whose three fillable fields are
   // all present have NOTHING for the LLM to fill — they only feed gap
@@ -256,27 +183,20 @@ You have TWO jobs:
       })
       .join("\n");
 
-    const prompt = `TOPIC: ${topic}
-
-GATHERED SOURCES (batch ${batchNo} of ${fillBatches.length}):
-${list}
-
-Respond as STRICT JSON only:
-{
-  "sources": [
-    { "n": 1, "known": true, "authors": "", "year": "", "journal": "", "confidence": 0.0 }
-  ],
-  "missing": [
-    { "title": "...", "authors": "...", "year": "...", "journal": "...", "doi": "...", "pmid": "...", "reason": "why this work is essential for THIS topic", "kind": "landmark|review|method|database|contradicting" }
-  ]
-}
-Rules:
-- "n" is the (number) from the list above.
-- Include ONLY fields you are filling (omit empty ones). Only fill fields marked MISSING (authors, year, journal).
-- "known": whether you recognize this specific work (true/false).
-- "confidence": your confidence in the fills (0.0-1.0).
-- "missing": up to 4 most-important absent works for this batch's view of the topic. Only works that truly exist. Include doi/pmid there when you know them (they will be verified against PubMed before use).
-Output JSON only.`;
+    const input: KnowledgeFillInput = {
+      topic,
+      field,
+      batchNo,
+      totalBatches: fillBatches.length,
+      list,
+      firstIndex: b,
+      batchSize: batch.length,
+      rows: batch.map((idx) => ({
+        authors: sources[idx].authors,
+        year: sources[idx].year,
+        journal: sources[idx].journal,
+      })),
+    };
 
     try {
       onProgress(
@@ -284,57 +204,31 @@ Output JSON only.`;
         batchNo,
         totalSteps,
       );
-      const raw = await chatWithSession(projectId, prompt, {
-        system,
-        temperature: 0.2,
-        taskType: "gather",
-        maxTokens: opts.maxTokens,
-        timeoutMs: batchTimeoutMs,
-        metadata: { step: "knowledge-verify", batch: batchNo, sources: batch.length },
+      // RT7: the batch LLM call is the `knowledge` skill — prompt text,
+      // the CR-B#1 batch-range check, the MISSING-only fill policy, and
+      // cleanFill/validFill normalization live in skills-knowledge.ts.
+      // The skill has NO fallback: provider failures rethrow, so this
+      // catch keeps the legacy storm/timeout semantics verbatim.
+      const result = await runSkill(knowledgeFillSkill, input, {
+        projectId,
+        fallbackValue: { sources: [], missing: [] },
+        noCache: true,
+        chatOverrides: {
+          timeoutMs: batchTimeoutMs,
+          ...(opts.maxTokens != null ? { maxTokens: opts.maxTokens } : {}),
+        },
       });
       consecutiveTimeouts = 0;
-      const parsed = safeParseJSON(raw, { sources: [], missing: [] });
 
-      for (const s of parsed.sources || []) {
-        const n = parseInt(String(s.n), 10);
-        // CR-B#1 fix (preserved from the serial version): the prompt numbers
-        // rows GLOBALLY, but models routinely renumber locally (1..12). Only
-        // ids within THIS batch's global range are valid.
-        if (isNaN(n) || n < b || n > b + batch.length - 1) continue;
-        const fill: KVCompletion["fill"] = {};
-        for (const f of FILLABLE_FIELDS) {
-          // Fill ONLY if the original field was actually missing
-          const orig = sources[n - 1][f];
-          if (orig && String(orig).trim()) continue;
-          const cleaned = cleanFill(s[f], f === "year" ? 4 : f === "authors" ? 400 : 200);
-          if (cleaned && validFill(f, cleaned)) fill[f] = cleaned;
-        }
-        completions.push({
-          index: n,
-          known: Boolean(s.known),
-          fill,
-          confidence: Math.min(1, Math.max(0, Number(s.confidence) || 0)),
-        });
+      for (const c of result.output.sources) {
+        completions.push(c);
       }
 
-      for (const m of parsed.missing || []) {
-        const title = cleanFill(m.title, 300);
-        if (!title) continue;
-        const key = normalizeTitle(title);
+      for (const m of result.output.missing) {
+        const key = normalizeTitle(m.title);
         if (!key || gatheredTitleKeys.has(key)) continue;
         gatheredTitleKeys.add(key);
-        missingRaw.push({
-          title,
-          authors: cleanFill(m.authors, 400) || undefined,
-          year: cleanFill(m.year, 4) || undefined,
-          journal: cleanFill(m.journal, 200) || undefined,
-          doi: cleanFill(m.doi, 80) || undefined,
-          pmid: cleanFill(m.pmid, 12) || undefined,
-          reason: cleanFill(m.reason, 300) || "important for the topic",
-          kind: (["landmark", "review", "method", "database", "contradicting"].includes(m.kind)
-            ? m.kind
-            : "landmark") as KVMissingSource["kind"],
-        });
+        missingRaw.push(m);
       }
     } catch (err: any) {
       const errMsg = String(err?.message ?? err);
@@ -387,50 +281,31 @@ Output JSON only.`;
       totalSteps,
       totalSteps,
     );
-    try {
-      const digestRaw = await chatWithSession(
+    // RT7: the digest call is the `knowledge-summary` skill — an LLM
+    // failure degrades to empty suggestions (additive stage, never
+    // load-bearing); the cross-pool title dedupe stays HERE (it is shared
+    // state with the fill batches above).
+    const digest = await runSkill(
+      knowledgeDigestSkill,
+      { topic, field, digestTitles },
+      {
         projectId,
-        `TOPIC: ${topic}
-
-GATHERED SOURCE TITLES (complete pool, compact view):
-${digestTitles}
-
-Using your knowledge of the field, name the most IMPORTANT works (landmark papers, key reviews, seminal methods, key database entries, or contradicting evidence) that are ABSENT from this list. Only suggest works you are confident actually exist.
-
-Respond as STRICT JSON only:
-{ "missing": [ { "title": "...", "authors": "...", "year": "...", "journal": "...", "doi": "...", "pmid": "...", "reason": "why essential for THIS topic", "kind": "landmark|review|method|database|contradicting" } ] }
-Up to 8 suggestions, most important first. Output JSON only.`,
-        {
-          system: `You are a domain expert librarian assessing literature coverage for a research article on: ${topic} (${field}).`,
-          temperature: 0.2,
-          taskType: "gather",
-          maxTokens: opts.maxTokens,
+        fallbackValue: { missing: [] },
+        noCache: true,
+        chatOverrides: {
           timeoutMs: batchTimeoutMs,
-          metadata: { step: "knowledge-verify", sub: "gapDigest" },
+          ...(opts.maxTokens != null ? { maxTokens: opts.maxTokens } : {}),
         },
-      );
-      const digestParsed = safeParseJSON(digestRaw, { missing: [] });
-      for (const m of digestParsed.missing || []) {
-        const title = cleanFill(m.title, 300);
-        if (!title) continue;
-        const key = normalizeTitle(title);
-        if (!key || gatheredTitleKeys.has(key)) continue;
-        gatheredTitleKeys.add(key);
-        missingRaw.push({
-          title,
-          authors: cleanFill(m.authors, 400) || undefined,
-          year: cleanFill(m.year, 4) || undefined,
-          journal: cleanFill(m.journal, 200) || undefined,
-          doi: cleanFill(m.doi, 80) || undefined,
-          pmid: cleanFill(m.pmid, 12) || undefined,
-          reason: cleanFill(m.reason, 300) || "important for the topic",
-          kind: (["landmark", "review", "method", "database", "contradicting"].includes(m.kind)
-            ? m.kind
-            : "landmark") as KVMissingSource["kind"],
-        });
-      }
-    } catch (err: any) {
-      log(`knowledge-verify: gap digest failed: ${String(err?.message ?? err).slice(0, 120)}`);
+      },
+    );
+    if (digest.degraded) {
+      log(`knowledge-verify: gap digest failed: ${(digest.issues[0] || "unknown").slice(0, 120)}`);
+    }
+    for (const m of digest.output.missing) {
+      const key = normalizeTitle(m.title);
+      if (!key || gatheredTitleKeys.has(key)) continue;
+      gatheredTitleKeys.add(key);
+      missingRaw.push(m);
     }
   }
 

@@ -5,12 +5,15 @@
  * the A-family remainder (curate / curate-smart), the B-family reviewers
  * (review / revision / revision-scoped / fact-check / evidence-extract /
  * evidence-allocate) — see skills-curation.ts / skills-review.ts /
- * skills-evidence.ts. Each file owns ONE family's prompt text; this file
- * keeps `score` (the reference pattern) and the aggregate catalog.
+ * skills-evidence.ts. RT7 migrates the B-family stragglers (coherence
+ * review/edit, the gap agents, knowledge-verify fill + digest) — see
+ * skills-coherence.ts / skills-gap.ts / skills-knowledge.ts. Each file owns
+ * ONE family's prompt text; this file keeps `score` (the reference
+ * pattern) and the aggregate catalog.
  *
- * Migration backlog after RT6 (IMPROVEMENT_PLAN-RT6): coherence review/edit,
- * research-gap agents, knowledge-verify, plan/generate/verify v1+v2 merge,
- * prose multi-turn skills (gather/knowledge).
+ * Migration backlog after RT7 (IMPROVEMENT_PLAN-RT7): plan/generate/verify
+ * v1+v2 merge, prose multi-turn skills (gather), SSE-step literal →
+ * PIPELINE_STEPS constant migration in the routes.
  */
 
 import {
@@ -28,6 +31,9 @@ import {
   evidenceExtractSkill,
   factCheckArbitrateSkill,
 } from "./skills-evidence";
+import { coherenceEditSkill, coherenceReviewSkill } from "./skills-coherence";
+import { gapDesignSkill, gapResearchSkill } from "./skills-gap";
+import { knowledgeDigestSkill, knowledgeFillSkill } from "./skills-knowledge";
 import type { SkillDefinition } from "./types";
 
 // Convenience re-exports so call-sites can `import { curateSkill } from
@@ -60,6 +66,44 @@ export {
   type EvidenceAllocateInput,
   type EvidenceAllocateOutput,
 } from "./skills-evidence";
+export {
+  coherenceEditSkill,
+  coherenceReviewSkill,
+  COHERENCE_MAX_FINDINGS,
+  COHERENCE_MAX_SECTIONS,
+  type CoherenceEditInput,
+  type CoherenceFinding,
+  type CoherenceFindingType,
+  type CoherenceReviewInput,
+  type CoherenceReviewOutput,
+} from "./skills-coherence";
+export {
+  gapDesignSkill,
+  gapResearchSkill,
+  GAP_AGENT_MAX_GAPS,
+  GAP_AGENT_MAX_QUERIES_PER_GAP,
+  type EvidenceGap,
+  type GapCandidate,
+  type GapDesignInput,
+  type GapDesignOutput,
+  type GapQuery,
+  type GapResearchInput,
+  type GapResearchOutput,
+} from "./skills-gap";
+export {
+  knowledgeDigestSkill,
+  knowledgeFillSkill,
+  cleanFill,
+  validFill,
+  FILLABLE_FIELDS,
+  SENTINEL_VALUES,
+  type KVCompletion,
+  type KVMissingSource,
+  type KnowledgeDigestInput,
+  type KnowledgeDigestOutput,
+  type KnowledgeFillInput,
+  type KnowledgeFillOutput,
+} from "./skills-knowledge";
 
 // ---------------------------------------------------------------------------
 // score — LLM importance scoring for a batch of gathered references
@@ -216,6 +260,12 @@ export const SKILLS = {
   factCheck: factCheckArbitrateSkill,
   evidenceExtract: evidenceExtractSkill,
   evidenceAllocate: evidenceAllocateSkill,
+  coherenceReview: coherenceReviewSkill,
+  coherenceEdit: coherenceEditSkill,
+  gapDesign: gapDesignSkill,
+  gapResearch: gapResearchSkill,
+  knowledge: knowledgeFillSkill,
+  knowledgeSummary: knowledgeDigestSkill,
 } as const;
 
 export type RegisteredSkillId = keyof typeof SKILLS;
