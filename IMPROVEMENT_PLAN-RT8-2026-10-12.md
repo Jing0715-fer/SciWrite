@@ -171,7 +171,19 @@ re-review leg (autoFix: false — the exact RT7 OOM trigger path).
   shots/rt8-home.png, rt8-article.png, rt8-timeline-degraded.png,
   rt8-dialog-v2only.png, rt8-home-mobile.png.
 - **Re-review re-run after abort expiry** (the [4/4] leg swallowed by
-  the in-run abort flag): see the addendum at the end of this section.
+  the in-run abort flag): the abort's 30-min TTL expired at 13:25, and a
+  manual re-run at 13:33 executed the route's full non-LLM mechanics —
+  DB-projected reference metadata assembled into a 21,058-char batch-20
+  prompt, stateless session skip active (+0ms handoff), server alive at
+  ~2.0GB through 6.7 min of retry/waitout cycles — but the LLM pass hit
+  a FRESH account-level 429 storm (429×5 retries → abort storm #4,
+  1-hour TTL), the same RT3-class provider outage, not a code defect.
+  Verdict-class adjudication remains demonstrated by the in-pipeline
+  STEP 7 (same adversarial machinery: 28 checks, 0 removed, 8 flagged,
+  run before the storm peaked). A clean-window standalone pass is armed
+  as a night-runner (scripts/rt8-adv-rereview.ts — polls quota-status
+  every 3 min, fires the leg once the storm clears, writes
+  tool-results/adv-rereview-rt8.json; 40 probes ≈ 2h coverage).
 
 ## 5. Data-driven NO-GOs (RT7 backlog #2 and #6)
 
