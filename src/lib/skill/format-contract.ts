@@ -21,9 +21,22 @@
  *
  * GATE ORDER IS FIXED (applyFormatContract runs them in registry order);
  * call sites may SUBSET via opts.gates but never reorder or append.
+ *
+ * RT6: the three "structural prelude" normalizers that every hand-assembled
+ * sequence ran first (removeReferenceBlocks / normalizeAsciiPunctuation /
+ * normalizeSectionMarkdown — the guts of writing.ts's
+ * normalizeArticleBodySections) join the registry as gates, so the ~10
+ * per-exit hand-rolled chains collapse into subsetting ONE ordered chain.
  */
 
-import { sanitizeSectionContent, stripResidualCJK, enforceUniformSectionFormat } from "@/lib/writing";
+import {
+  sanitizeSectionContent,
+  stripResidualCJK,
+  enforceUniformSectionFormat,
+  normalizeSectionMarkdown,
+  normalizeAsciiPunctuation,
+  removeReferenceBlocks,
+} from "@/lib/writing";
 import { normalizeCitationKeyVariants } from "@/lib/citation-binding";
 
 /** The human/machine-readable fixed rules (docs + prompt injection). */
@@ -36,7 +49,15 @@ export const ARTICLE_FORMAT_RULES: readonly string[] = [
   "No residual {{Rn}} keys in final text; bold '**' pairs balance; no fullwidth punctuation in English text",
 ] as const;
 
-export const FORMAT_GATE_IDS = ["sanitize", "citation-keys", "uniform-section", "cjk-residual"] as const;
+export const FORMAT_GATE_IDS = [
+  "remove-ref-blocks",
+  "ascii-punctuation",
+  "section-markdown",
+  "sanitize",
+  "citation-keys",
+  "uniform-section",
+  "cjk-residual",
+] as const;
 export type FormatGateId = (typeof FORMAT_GATE_IDS)[number];
 
 /** What each gate does + which fixed rule(s) it enforces (rule indexes). */
@@ -49,6 +70,22 @@ export interface FormatGateSpec {
 }
 
 export const FORMAT_GATES: readonly FormatGateSpec[] = [
+  {
+    id: "remove-ref-blocks",
+    description: "Strip trailing '## References' / '### Citations' blocks (reassembled by the composer)",
+    rules: [0],
+  },
+  {
+    id: "ascii-punctuation",
+    description: "Normalize fullwidth punctuation to ASCII in English text",
+    rules: [5],
+    englishOnly: true,
+  },
+  {
+    id: "section-markdown",
+    description: "Demote stray ### sub-headings and normalize heading spacing",
+    rules: [0],
+  },
   {
     id: "sanitize",
     description: "Strip protocol/role-label/code-fence/JSON-shard residue",
@@ -104,6 +141,15 @@ export function applyFormatContract(
     if (!requested.includes(gate.id)) continue;
     if (gate.englishOnly && language === "zh") continue;
     switch (gate.id) {
+      case "remove-ref-blocks":
+        out = removeReferenceBlocks(out);
+        break;
+      case "ascii-punctuation":
+        out = normalizeAsciiPunctuation(out);
+        break;
+      case "section-markdown":
+        out = normalizeSectionMarkdown(out);
+        break;
       case "sanitize":
         out = sanitizeSectionContent(out);
         break;

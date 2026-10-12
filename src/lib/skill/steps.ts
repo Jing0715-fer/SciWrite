@@ -14,7 +14,11 @@
  * import the same names.
  */
 
-/** Every step name the v2 pipeline has ever emitted on the SSE wire. */
+/** Every step name the v1/v2 pipelines have ever emitted on the SSE wire
+ * (or written to session metadata.step). RT6: the four values that were
+ * previously emitted but missing from this registry (two v1 retry events,
+ * two v2 metadata-only steps) are now covered — no live emitter is outside
+ * the namespace anymore. */
 export const PIPELINE_STEPS = [
   "init",
   "gather",
@@ -26,6 +30,8 @@ export const PIPELINE_STEPS = [
   "analyze",
   "allocate",
   "generate",
+  "generate-wordcount-retry",
+  "generate-density-retry",
   "verify",
   "compose",
   "title",
@@ -34,6 +40,8 @@ export const PIPELINE_STEPS = [
   "relationships",
   "review",
   "translate",
+  "translate-glossary",
+  "adversarial-verify",
   "audit",
   "recovery",
   "pipeline",
@@ -87,6 +95,10 @@ export const STEP_TITLES: Record<PipelineStep, string> = {
   relationships: "Analyze source relationships",
   review: "Peer review",
   translate: "Translate",
+  "translate-glossary": "Translate glossary",
+  "adversarial-verify": "Adversarial verification",
+  "generate-wordcount-retry": "Regenerate (word count)",
+  "generate-density-retry": "Regenerate (citation density)",
   audit: "Audit citations",
   recovery: "Recover pipeline",
   pipeline: "Pipeline",

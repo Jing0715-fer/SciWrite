@@ -30,10 +30,8 @@
  *     into a broken state.
  */
 
-import { chatWithSession } from "@/lib/llm-session";
 import { countWords } from "@/lib/writing";
 import { splitBodyAndReferences } from "@/lib/citation-audit";
-import { safeParseJSON } from "@/lib/llm-json";
 import {
   factCheckArticle,
   factFindingsPromptBlock,
@@ -45,6 +43,21 @@ import {
   REVISION_MIN_CITATION_RATIO,
   REVISION_MIN_WORD_RATIO,
 } from "@/lib/v2-config";
+// RT6 (B-family migration): the review/revision LLM calls run through the
+// shared skill executor. The skills import ReviewCoreParsed TYPE-ONLY from
+// this module (compile-time, no runtime cycle); this module imports the
+// skill definitions at runtime (one direction only).
+import { runSkill } from "@/lib/skill/executor";
+import {
+  reviewCoreSkill,
+  REVIEW_CORE_PARSE_FALLBACK,
+  reviseArticleSkill,
+  reviseSectionSkill,
+} from "@/lib/skill/skills-review";
+import { stripRevisionWrappers } from "@/lib/writing";
+
+// Backward-compat re-export (the function now lives in writing.ts).
+export { stripRevisionWrappers };
 
 /* ------------------------------------------------------------------ *
  * Types
@@ -162,69 +175,24 @@ export async function reviewArticleCore(
     );
   }
 
-  const system =
-    "You are a rigorous scientific peer reviewer in the style of a top-tier journal " +
-    "(Nature/Science/Cell). You evaluate manuscripts on multiple dimensions and " +
-    "provide structured, actionable feedback. Be specific, critical, and constructive.";
-
-  const prompt = `ARTICLE TITLE: ${article.title}
-${article.abstract ? `ABSTRACT: ${article.abstract}\n` : ""}
-ARTICLE CONTENT:
-${article.content}
-${factBlock}
-Provide a comprehensive peer review. Score each dimension 0-10 (10 = excellent).
-Respond as STRICT JSON:
-{
-  "scores": {
-    "novelty": 0,
-    "significance": 0,
-    "clarity": 0,
-    "methodology": 0,
-    "citations": 0,
-    "overall": 0
-  },
-  "verdict": "accept|minor-revision|major-revision|reject",
-  "summary": "2-3 sentence overall assessment",
-  "strengths": ["specific strength 1", "specific strength 2", "specific strength 3"],
-  "weaknesses": ["specific weakness 1", "specific weakness 2", "specific weakness 3"],
-  "weakness_classes": ["fixable", "advisory"],
-  "suggestions": [
-    {"section": "Introduction", "issue": "what's wrong", "fix": "how to fix it"},
-    {"section": "Results", "issue": "...", "fix": "..."}
-  ]
-}
-CLASSIFY each weakness in "weakness_classes" (same order, exactly one entry per weakness):
-- "fixable" — a revision of THIS manuscript can repair it: factual errors, misattributed citations, unsupported claims, missing citations for stated facts, structural/organizational problems, unclear or contradictory prose.
-- "advisory" — a revision cannot repair it: insufficient breadth/depth, missing subtopics, lack of novelty or experimental data, scope limitations inherent to a literature review. These are disclosed to the author, not repaired.
-Be demanding but fair. Focus on scientific rigor, citation completeness, and clarity.
-Output JSON only.`;
-
-  const raw = await chatWithSession(projectId, prompt, {
-    system,
-    temperature: 0.4,
-    taskType: "review",
-    metadata: { mode: "review-core", title: article.title },
-  });
-  const parsed = safeParseJSON(raw, {
-    scores: { overall: 5 },
-    verdict: "major-revision",
-    summary: "Review parsing failed.",
-    strengths: [],
-    weaknesses: [],
-    suggestions: [],
-  });
-  // round-RT3 (R4): normalize the per-weakness classes (garbage values →
-  // "fixable" so legacy behavior is preserved when a model drops or mangles
-  // the field — over-triggering the loop is the old bug, under-triggering on
-  // a parsing quirk would be a new one).
-  const rawClasses: unknown = (parsed as any).weakness_classes;
+  // RT6 (B-family migration): the review LLM call + prompt + weakness-class
+  // normalization run in the skill (skills-review.ts reviewCoreSkill). No
+  // fallback ⇒ provider failures rethrow exactly like the legacy call; a
+  // garbage-JSON reply degrades to REVIEW_CORE_PARSE_FALLBACK via the
+  // executor's shared safeParseJSON.
+  const reviewResult = await runSkill(
+    reviewCoreSkill,
+    { title: article.title, abstract: article.abstract, content: article.content, factBlock },
+    {
+      projectId,
+      fallbackValue: REVIEW_CORE_PARSE_FALLBACK,
+      noCache: true, // legacy: no LLM cache on the review path
+    },
+  );
+  const parsed = reviewResult.output;
   const llmWeaknesses: string[] = Array.isArray(parsed.weaknesses) ? parsed.weaknesses : [];
-  const weaknessClasses = llmWeaknesses.map((_, i) => {
-    const c = Array.isArray(rawClasses) ? String((rawClasses as any[])[i] ?? "") : "";
-    return /advis/i.test(c) ? "advisory" : "fixable";
-  });
+  const weaknessClasses = parsed.weaknessClasses ?? [];
   const fixableWeaknessCount = weaknessClasses.filter((c) => c === "fixable").length;
-  parsed.weaknessClasses = weaknessClasses;
 
   // Force-merge the external fact-check findings into the weaknesses (deduped
   // against the LLM's own) — the reviewing LLM is *told* to keep them, but a
@@ -419,13 +387,11 @@ REVISION SUGGESTIONS:
 ${(f.suggestions || []).map((x: any, i: number) => `${i + 1}. [${x?.section ?? "?"}] ${x?.issue ?? ""} → ${x?.fix ?? ""}`).join("\n")}`;
 }
 
-/** Strip the wrappers LLMs love to add around a "revised article". */
-function stripRevisionWrappers(text: string): string {
-  let t = (text || "").trim();
-  t = t.replace(/^```(?:markdown|md)?\s*\n?/i, "").replace(/\n?```\s*$/i, "");
-  t = t.replace(/^(?:here(?:'s| is)[^\n:]{0,80}|revised article[^\n:]{0,40}|the revised article[^\n:]{0,40})[:：]\s*\n*/i, "");
-  return t.trim();
-}
+/**
+ * Strip the wrappers LLMs love to add around a "revised article".
+ * (RT6: moved verbatim to lib/writing.ts — shared with the revision skills;
+ * re-exported above.)
+ */
 
 /**
  * Revise an article against reviewer feedback. Two modes:
@@ -446,79 +412,47 @@ export async function reviseArticleCore(
 ): Promise<string> {
   const feedbackBlock = buildFeedbackBlock(feedback);
 
-  let system: string;
-  let prompt: string;
+  // round-61 (P0-B): STRUCTURAL CONTRACT — derive the exact section
+  // headings from the input and pin them in the prompt (the skill renders
+  // the contract block). The round-60 production showed an LLM "surgical"
+  // revision merging 9 sections into 7 (guard caught it, but the revision
+  // budget was wasted). The contract makes the constraint explicit instead
+  // of implicit.
+  const contractTitles: string[] = [];
   if (mode === "surgical") {
-    // round-61 (P0-B): STRUCTURAL CONTRACT — derive the exact section
-    // headings from the input and pin them in the prompt. The round-60
-    // production showed an LLM "surgical" revision merging 9 sections into
-    // 7 (guard caught it, but the revision budget was wasted). The contract
-    // makes the constraint explicit instead of implicit.
-    const contractTitles: string[] = [];
-    {
-      const split = splitBodyAndReferences(article.content);
-      const headingRe = /^##\s+(.+)$/gm;
-      let hm: RegExpExecArray | null;
-      while ((hm = headingRe.exec(split.body)) !== null) contractTitles.push(hm[1].trim());
-    }
-    const structuralContract =
-      contractTitles.length > 0
-        ? `\nSTRUCTURAL CONTRACT (NON-NEGOTIABLE — any violation rejects your revision):\nThe article has EXACTLY ${contractTitles.length} "## " section headings. Your output must contain EXACTLY ${contractTitles.length} "## " headings, in this exact order, with this exact wording:\n${contractTitles.map((t, i) => `${i + 1}. ## ${t}`).join("\n")}\nDo NOT merge, split, add, remove, reword, or reorder sections. Edit section CONTENTS only.\n`
-        : "";
-    const retryBlock =
-      opts.retryFeedback
-        ? `\n⚠ YOUR PREVIOUS REVISION ATTEMPT WAS REJECTED by the mechanical guard for these exact violations:\n${opts.retryFeedback}\nFix ONLY these structural violations and produce the full revised article again.\n`
-        : "";
-    system =
-      "You are a meticulous scientific editor who repairs review articles before publication. " +
-      "You make the MINIMAL set of precise edits that resolve verified factual problems and " +
-      "citation-level findings. You never invent new facts, never remove citations, and never " +
-      "restructure the article.";
-    prompt = `ARTICLE TITLE: ${article.title}
-CURRENT ARTICLE (markdown):
-${article.content}
-
-${feedbackBlock}
-${structuralContract}${retryBlock}
-REVISION RULES (STRICT — violating any of these rejects your revision):
-1. FACT-CHECK entries in the weaknesses describe claims that were externally verified against independent evidence:
-   - "CONTRADICTED" → the claim conflicts with independent evidence. Remove the claim, or rewrite it to say only what the evidence supports. If two cited sources genuinely conflict, either remove the statement or explicitly acknowledge the discrepancy.
-   - "UNVERIFIABLE" → no independent evidence was found. Soften the sentence with attribution or hedging ("has been reported to", "one study suggested", "according to [n]") or remove it if it is load-bearing. Never leave it as an unqualified definitive assertion.
-   - Claims the fact-check marked VERIFIED must NOT be altered.
-2. Make the MINIMAL edits — do not rewrite sections that have no findings. Do not polish style.
-3. Do NOT add new facts, numbers, or claims that are not already in the article.
-4. Preserve every inline citation marker [n] EXACTLY as-is (same numbers, attached to the same statements they currently support).
-5. Keep the "## References" list at the end EXACTLY as-is (same entries, same order, same numbering).
-6. Keep every "## " section heading text EXACTLY as-is (see the STRUCTURAL CONTRACT above).
-7. Address the remaining (non-fact-check) reviewer weaknesses ONLY where they concern factual accuracy, citation usage, or unsupported statements — ignore stylistic preferences.
-
-Output the complete revised article in Markdown. Do NOT add commentary — output only the revised article.`;
-  } else {
-    system =
-      "You are a scientific editor who revises articles to address peer-review feedback " +
-      "while preserving scientific accuracy and all inline citations [n] / [SOURCE:ID].";
-    prompt = `ARTICLE TITLE: ${article.title}
-CURRENT CONTENT:
-${article.content}
-
-${feedbackBlock}
-
-Revise the article to address ALL weaknesses and suggestions. Preserve:
-- All inline citations [n] and [SOURCE:ID] markers exactly.
-- The section structure (## headings).
-- The ### Citations / ## References block at the end.
-
-Output the revised article in Markdown. Do NOT add commentary — output only the revised article.`;
+    const split = splitBodyAndReferences(article.content);
+    const headingRe = /^##\s+(.+)$/gm;
+    let hm: RegExpExecArray | null;
+    while ((hm = headingRe.exec(split.body)) !== null) contractTitles.push(hm[1].trim());
   }
 
-  const revised = await chatWithSession(projectId, prompt, {
-    system,
-    temperature: mode === "surgical" ? 0.3 : 0.5,
-    taskType: "revise",
-    maxTokens: opts.maxTokens ?? 16384,
-    metadata: { mode: `revise-${mode}`, round: feedback.round },
-  });
-  return stripRevisionWrappers(revised);
+  // RT6 (B-family migration): prompt/parse/wrapper-stripping live in the
+  // skill (skills-review.ts reviseArticleSkill, prose slot). Surgical mode
+  // overrides the temperature (0.3 vs full's 0.5) exactly like the legacy
+  // call. No fallback ⇒ provider failures rethrow to the caller (the v2
+  // repair loop's per-attempt catch owns the degradation).
+  const result = await runSkill(
+    reviseArticleSkill,
+    {
+      title: article.title,
+      content: article.content,
+      feedbackBlock,
+      mode,
+      round: feedback.round,
+      contractTitles,
+      retryFeedback: opts.retryFeedback,
+    },
+    {
+      projectId,
+      fallbackValue: "",
+      noCache: true, // legacy: no LLM cache on the revision path
+      chatOverrides: {
+        temperature: mode === "surgical" ? 0.3 : 0.5,
+        ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
+      },
+    },
+  );
+  return result.output;
 }
 
 /* ------------------------------------------------------------------ *
@@ -612,44 +546,30 @@ export async function reviseArticleScoped(
   for (const idx of sectionIdxs) {
     const findingsBlock = affected.get(idx)!.join("\n");
     findingsPerSection[idx] = affected.get(idx)!.length;
-    const system =
-      "You are a meticulous scientific editor who repairs ONE section of a review article. " +
-      "You make the MINIMAL set of precise edits that resolve the verified factual problems " +
-      "listed for this section. You never invent new facts, never add citations, and never " +
-      "touch anything outside this section.";
-    const prompt = `ARTICLE TITLE: ${article.title}
-SECTION HEADING (context only — do NOT output it): "## ${sec.headings[idx]}"
-REVIEW CONTEXT (whole article): ${scoresLine}
 
-CURRENT SECTION TEXT (revise ONLY this):
-${sec.contents[idx]}
-
-FINDINGS TO RESOLVE IN THIS SECTION:
-${findingsBlock}
-
-REVISION RULES (STRICT — violating any of these rejects your revision):
-1. FACT-CHECK entries:
-   - "CONTRADICTED" → the claim conflicts with evidence. Remove the claim, or rewrite it to say only what the evidence supports. If two cited sources genuinely conflict, either remove the statement or explicitly acknowledge the discrepancy.
-   - "UNVERIFIABLE" (unhedged) → soften the sentence with attribution or hedging ("has been reported to", "one study suggested", "according to [n]") or remove it if it is load-bearing. Never leave it as an unqualified definitive assertion.
-   - Claims the fact-check marked VERIFIED must NOT be altered.
-2. MINIMAL edits — every paragraph without a finding stays byte-identical. Do not polish style.
-3. Do NOT add new facts, numbers, or claims that are not already in this section.
-4. Inline citation markers [n] stay attached to the same statements; remove a marker ONLY together with removing its flagged claim.
-5. Output ONLY the revised section body text — no heading, no commentary, no markdown fences, no "here is" preamble.
-
-Output the revised section text now.`;
-
+    // RT6 (B-family migration): per-section prose skill (skills-review.ts
+    // reviseSectionSkill) — wrapper/heading stripping in postProcess. The
+    // per-section try/catch stays HERE: one failed section keeps its
+    // original text (legacy semantics — no skill fallback by design).
     try {
-      const raw = await chatWithSession(projectId, prompt, {
-        system,
-        temperature: 0.3,
-        taskType: "revise",
-        maxTokens: 8192,
-        metadata: { mode: "revise-scoped", round: feedback.round, section: idx + 1 },
-      });
-      let revised = stripRevisionWrappers(raw);
-      // Strip a leading "## heading" echo if the model added one.
-      revised = revised.replace(/^##\s+[^\n]*\n+/, "").trim();
+      const result = await runSkill(
+        reviseSectionSkill,
+        {
+          title: article.title,
+          heading: sec.headings[idx],
+          sectionText: sec.contents[idx],
+          findingsBlock,
+          scoresLine,
+          round: feedback.round,
+          sectionIdx: idx,
+        },
+        {
+          projectId,
+          fallbackValue: "",
+          noCache: true, // legacy: no LLM cache on the revision path
+        },
+      );
+      const revised = result.output;
       if (revised.length < 40) continue; // degenerate output — keep original
       revisedContents[idx] = revised;
       revisedDone.push(idx);

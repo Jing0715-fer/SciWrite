@@ -173,6 +173,7 @@ async function callChat<I, O>(
     maxTokens: chatOpts.maxTokens,
     timeoutMs: chatOpts.timeoutMs,
     role: chatOpts.role,
+    thinking: chatOpts.thinking,
     metadata,
   });
 }

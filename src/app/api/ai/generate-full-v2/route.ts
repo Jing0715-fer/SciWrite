@@ -24,15 +24,10 @@ import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-
 import { queryDatabase } from "@/lib/databases";
 import {
   countWords,
-  sanitizeSectionContent,
   normalizeSectionTitle,
-  normalizeSectionMarkdown,
-  normalizeAsciiPunctuation,
-  removeReferenceBlocks,
   detectSectionFormatViolations,
-  enforceUniformSectionFormat,
-  normalizeArticleBodySections,
   looksTruncated,
+  normalizeArticleBodySections,
 } from "@/lib/writing";
 import { generateArticleTitle, retranslateTitleZhWithGlossary } from "@/lib/article-title";
 import {
@@ -50,7 +45,6 @@ import {
   convertKeysToNumbers,
   keyedCitationsAreValid,
   removeCitationsAndRenumber,
-  normalizeCitationKeyVariants,
 } from "@/lib/citation-binding";
 import {
   extractEvidenceBank,
@@ -2819,14 +2813,14 @@ Scientific precision rules (round-64):
 
           await new Promise((r) => setTimeout(r, 2000));
 
-          // Sanitize preambles/postscripts/meta-commentary
-          chunkContent = sanitizeSectionContent(chunkContent);
-          // round-RT2 (multi-model keys): weak models emit near-miss marker
-          // forms ([R5], {{R1-3}}, {{R1;R2}}, ｛｛R5｝｝, {{{R5}}}) that
-          // previously leaked as literal junk text AND evaded the zero-cite
-          // gate. Normalize them to canonical {{Rn}} BEFORE every gate so
-          // both the gate counts and convertKeysToNumbers see clean keys.
-          chunkContent = normalizeCitationKeyVariants(chunkContent).content;
+          // Sanitize preambles/postscripts/meta-commentary + normalize
+          // near-miss citation keys (round-RT2 multi-model defense) — as
+          // ONE fixed-order contract chain (RT6: both gates registered in
+          // FORMAT_GATES; previously two hand-assembled calls).
+          chunkContent = applyFormatContract(chunkContent, {
+            gates: ["sanitize", "citation-keys"],
+            language: "en",
+          }).content;
 
           // ---- ★ VALIDATION GATE (deepseek-harness-style step validation) ----
           // If the output contains raw numeric [n] markers, malformed keys,
@@ -2924,9 +2918,10 @@ COMPLETION: your previous output appears cut off mid-sentence (it never reached 
                 maxTokens,
                 metadata: { step: "generate", section: sectionNum, retry: true, zeroCite },
               });
-              const sanitizedRetry = normalizeCitationKeyVariants(
-                sanitizeSectionContent(retryContent)
-              ).content;
+              const sanitizedRetry = applyFormatContract(retryContent, {
+                gates: ["sanitize", "citation-keys"],
+                language: "en",
+              }).content;
               const retryGate = keyedCitationsAreValid(sanitizedRetry, sectionRefs.length);
               const retryKeyed = (sanitizedRetry.match(/\{\{R\d+\}\}/g) || []).length;
               const retryTrailing = trailingUncitedClaimWords(sanitizedRetry);
@@ -2965,15 +2960,12 @@ COMPLETION: your previous output appears cut off mid-sentence (it never reached 
           // markdown normalization (LaTeX math delimiters, stray bold markers,
           // block spacing) so every section shares a uniform render-safe
           // format. Applied to the ENGLISH body only — never contentZh.
-          chunkContent = normalizeAsciiPunctuation(chunkContent);
-          chunkContent = normalizeSectionMarkdown(chunkContent);
-          // RT5 format contract: the uniform-template backstop + CJK-final
-          // backstop now run as ONE fixed, ordered contract chain
-          // (applyFormatContract) shared by every article-text exit —
-          // previously each exit hand-assembled its own subset/order.
+          // RT6: ascii-punctuation + section-markdown joined the registered
+          // gate chain, so the whole enforce tail is ONE applyFormatContract
+          // call (fixed order: ascii → section-md → uniform → cjk).
           {
             const fmt = applyFormatContract(chunkContent, {
-              gates: ["uniform-section", "cjk-residual"],
+              gates: ["ascii-punctuation", "section-markdown", "uniform-section", "cjk-residual"],
               language: "en",
             });
             if (fmt.cjkRemoved > 0) {
@@ -3180,7 +3172,13 @@ COMPLETION: your previous output appears cut off mid-sentence (it never reached 
             // round-cs-7: enforceUniformSectionFormat also drops internal
             // headings / flattens lists — sections restored from pre-cs-7
             // checkpoints are healed to the uniform prose template too.
-            content = enforceUniformSectionFormat(normalizeSectionMarkdown(removeReferenceBlocks(content)));
+            // RT6: the three-step hand assembly is now the registered
+            // fixed-order gate chain (remove-ref-blocks → section-markdown →
+            // uniform-section).
+            content = applyFormatContract(content, {
+              gates: ["remove-ref-blocks", "section-markdown", "uniform-section"],
+              language: "en",
+            }).content;
             return { content: content.trim(), refs: para?.references || [] };
           })
         );
@@ -3763,6 +3761,12 @@ ${c}`)
             // the per-section pipeline already stripped. Re-run the full
             // per-section normalization gauntlet over the revised body (##
             // section headings stay pinned; citation numbering is untouched).
+            // RT6 note: normalizeArticleBodySections stays AS-IS here — it is
+            // the CHUNKED combinator (per-##-section, headings pinned,
+            // preamble preserved), which is NOT equivalent to running the
+            // registered whole-text gate chain over a multi-section body.
+            // The gate chain serves single-section/paragraph exits; this
+            // whole-article exit keeps the chunked combinator.
             try {
               const rs = splitBodyAndReferences(articleContent);
               const normalizedBody = normalizeArticleBodySections(rs.body);
@@ -4181,6 +4185,10 @@ ${c}`)
             // sections — run the per-section format gauntlet over the pinned
             // body BEFORE adopting (same rationale as the repair path), so
             // no reference lists / headings / lists leak back in.
+            // RT6 note: normalizeArticleBodySections stays AS-IS here —
+            // chunked combinator semantics (headings pinned per section),
+            // not equivalent to the whole-text gate chain on a multi-section
+            // body. See the repair-adoption block above.
             const polishedBody = normalizeArticleBodySections(pinned);
             const candidate = polishedBody.trimEnd() + "\n\n" + postSplit.referencesText.trim();
             articleContent = candidate;

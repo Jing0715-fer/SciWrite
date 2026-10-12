@@ -156,8 +156,8 @@ Compose ONE cohesive section without markdown headers. Do NOT add any preamble, 
       );
     }
 
-    // Sanitize content — remove preambles, postscripts, meta-commentary
-    newContent = sanitizeSectionContent(newContent);
+    // Sanitize content — remove preambles, postscripts, meta-commentary, then
+    // the full format gauntlet.
     // round-RT2 (multi-model format hardening): regenerate previously ran
     // ONLY sanitizeSectionContent — no ASCII punctuation normalization, no
     // markdown normalization, no uniform-template enforcement, no CJK
@@ -166,15 +166,19 @@ Compose ONE cohesive section without markdown headers. Do NOT add any preamble, 
     // paragraphs (the exact "switching models breaks the format" symptom).
     // The v2 generate loop has run this gauntlet since round-cs-6/7; now
     // every user-triggered regeneration gets the same guarantees.
-    newContent = normalizeAsciiPunctuation(newContent);
-    newContent = normalizeSectionMarkdown(newContent);
-    newContent = enforceUniformSectionFormat(newContent);
+    // RT6: the five-step hand assembly is now the ONE registered fixed-order
+    // gate chain (sanitize → ascii → section-md → uniform → cjk; EN by
+    // contract — the prompt mandates English).
     {
-      const cjkStripped = stripResidualCJK(newContent);
-      if (cjkStripped.removed > 0) {
-        console.warn(`[regenerate] CJK backstop removed ${cjkStripped.removed} residual Han character(s)`);
-        newContent = cjkStripped.content;
+      const { applyFormatContract } = await import("@/lib/skill/format-contract");
+      const fmt = applyFormatContract(newContent, {
+        gates: ["sanitize", "ascii-punctuation", "section-markdown", "uniform-section", "cjk-residual"],
+        language: "en",
+      });
+      if (fmt.cjkRemoved > 0) {
+        console.warn(`[regenerate] CJK backstop removed ${fmt.cjkRemoved} residual Han character(s)`);
       }
+      newContent = fmt.content;
     }
     if (looksTruncated(newContent)) {
       console.warn("[regenerate] output looks truncated (no terminal punctuation on a long section)");

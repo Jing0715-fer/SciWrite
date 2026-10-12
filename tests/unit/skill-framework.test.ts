@@ -22,6 +22,7 @@ import {
   applyFormatContract,
 } from "@/lib/skill/format-contract";
 import { scoreSkill, SKILLS, listSkills } from "@/lib/skill/registry";
+import { SKILL_IDS } from "@/lib/skill/types";
 import { mechanicalScores } from "@/lib/scoring";
 
 // ---------------------------------------------------------------------------
@@ -176,9 +177,19 @@ describe("skill/registry scoreSkill", () => {
     expect(scoreSkill.taskType).toBe("score");
     expect(scoreSkill.sseStep).toBe("score");
     expect(SKILLS.score).toBe(scoreSkill);
-    expect(listSkills()).toEqual([
-      { id: "score", taskType: "score", sseStep: "score", title: "Score source importance", hasFallback: true },
-    ]);
+    // RT6: the catalog grew to 9 skills — every entry is coherent and the
+    // registry stays the single catalog (no rogue entries).
+    const catalog = listSkills();
+    expect(catalog).toHaveLength(9);
+    expect(catalog[0]).toEqual({
+      id: "score", taskType: "score", sseStep: "score", title: "Score source importance", hasFallback: true,
+    });
+    for (const s of catalog) {
+      expect(SKILL_IDS.includes(s.id)).toBe(true);
+      expect(s.taskType.length).toBeGreaterThan(0);
+      expect(isPipelineStep(s.sseStep)).toBe(true);
+      expect(s.title.length).toBeGreaterThan(0);
+    }
   });
 
   test("prompt contract carries topic, batch ordinals and global ref numbers", () => {

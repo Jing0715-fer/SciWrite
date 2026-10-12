@@ -4,7 +4,10 @@ import { webSearch } from "@/lib/ai";
 import { chatWithSession, chatWithSessionStream, clearSession } from "@/lib/llm-session";
 import { queryDatabase } from "@/lib/databases";
 import { PipelineProgressTracker } from "@/lib/progress-tracker";
-import { countWords, renumberByAppearance, sanitizeSectionContent, buildStructureContextFromDataSources, normalizeArticleBodySections } from "@/lib/writing";
+import { countWords, renumberByAppearance, buildStructureContextFromDataSources, normalizeArticleBodySections } from "@/lib/writing";
+// RT6: the format gauntlet on every article-text exit is the registered
+// fixed-order gate chain (format-contract).
+import { applyFormatContract } from "@/lib/skill/format-contract";
 import { generateArticleTitle } from "@/lib/article-title";
 import { translateSectionTitles } from "@/lib/section-title-zh";
 import { validateCitationsInline } from "@/lib/citation-audit";
@@ -1831,7 +1834,8 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
             // horizontal rules, "### Citations" blocks, and redundant section headers.
             // This prevents non-article text (e.g. "Now I'll compose...", "Word count:
             // ~790 words", "A note on the full text...") from appearing in the UI.
-            chunkContent = sanitizeSectionContent(chunkContent);
+            // RT6: via the registered format-contract chain (sanitize gate, EN).
+            chunkContent = applyFormatContract(chunkContent, { gates: ["sanitize"], language: "en" }).content;
 
             // AUTO-RETRY: if sanitization detected meta-commentary or bullet-point
             // outline (returns a "[Content generation issue..." placeholder), retry
@@ -1858,7 +1862,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                       metadata: { step: "generate", section: sectionNum, retry: true },
                     });
                 // Sanitize the retry output
-                const sanitizedRetry = sanitizeSectionContent(retryContent);
+                const sanitizedRetry = applyFormatContract(retryContent, { gates: ["sanitize"], language: "en" }).content;
                 if (!sanitizedRetry.startsWith("[Content generation issue")) {
                   chunkContent = sanitizedRetry;
                   log(`generate: section ${sectionNum} chunk ${chunkNum} — retry succeeded (${chunkContent.length} chars)`);
@@ -1957,7 +1961,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                   }
                 },
               );
-              const retryCleaned = sanitizeSectionContent(retryContent);
+              const retryCleaned = applyFormatContract(retryContent, { gates: ["sanitize"], language: "en" }).content;
               const retryResult = renumberByAppearance(retryCleaned, sectionRefs);
               if (retryResult.references.length > citedRefs.length) {
                 log(`generate: section ${sectionNum} DENSITY RETRY improved ${citedRefs.length}→${retryResult.references.length}`);
@@ -2039,7 +2043,7 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
                   }
                 },
               );
-              const wcRetryCleaned = sanitizeSectionContent(wcRetryContent);
+              const wcRetryCleaned = applyFormatContract(wcRetryContent, { gates: ["sanitize"], language: "en" }).content;
               const wcRetryResult = renumberByAppearance(wcRetryCleaned, sectionRefs);
               const wcRetryWordCount = countWords(wcRetryResult.content);
               // v61-3: Further relaxed WC retry acceptance — accept if:
@@ -2764,6 +2768,9 @@ ${sectionStructureContext ? "When a PROTEIN STRUCTURE ANALYSIS block is provided
         // now v1 gets the same mechanical guarantee at compose time (H2
         // section headings are pinned by the helper; ZH halves in bilingual
         // content must be handled by the caller — v1 composes EN body here).
+        // RT6 note: normalizeArticleBodySections stays AS-IS here — the
+        // CHUNKED combinator (per-##-section) is not equivalent to the
+        // whole-text registered gate chain on a multi-section body.
         cleanBody = normalizeArticleBodySections(cleanBody);
         cleanBody = cleanBody.replace(/^#{1}\s+.+\n*/m, "").trim();
 
@@ -3519,7 +3526,9 @@ ${cleanEn}`;
               .trim();
             // Also apply general section sanitization to remove postscripts,
             // meta-commentary, horizontal rules, etc.
-            zhContent = sanitizeSectionContent(zhContent);
+            // RT6: via the registered format-contract chain (sanitize gate, zh —
+            // paragraph-level output takes no uniform-section).
+            zhContent = applyFormatContract(zhContent, { gates: ["sanitize"], language: "zh" }).content;
 
             // Save the Chinese version to the paragraph
             const zhWordCount = countWords(zhContent);

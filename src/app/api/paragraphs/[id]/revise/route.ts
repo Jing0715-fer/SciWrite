@@ -65,16 +65,17 @@ export async function POST(
     // into every export. Run the same gauntlet the generate loop uses (the
     // citation protocol here is numeric [n], so only the format layers
     // apply — renumbering stays with the caller's existing logic).
-    const { normalizeAsciiPunctuation, normalizeSectionMarkdown, enforceUniformSectionFormat, stripResidualCJK } = await import("@/lib/writing");
-    let cleaned = normalizeAsciiPunctuation(revised);
-    cleaned = normalizeSectionMarkdown(cleaned);
-    cleaned = enforceUniformSectionFormat(cleaned);
-    const cjkStripped = stripResidualCJK(cleaned);
-    if (cjkStripped.removed > 0) {
-      console.warn(`[revise] CJK backstop removed ${cjkStripped.removed} residual Han character(s)`);
-      cleaned = cjkStripped.content;
+    // RT6: the four-step hand assembly is now the registered fixed-order
+    // gate chain (EN by contract — the route revises English paragraphs).
+    const { applyFormatContract } = await import("@/lib/skill/format-contract");
+    const fmt = applyFormatContract(revised, {
+      gates: ["ascii-punctuation", "section-markdown", "uniform-section", "cjk-residual"],
+      language: "en",
+    });
+    if (fmt.cjkRemoved > 0) {
+      console.warn(`[revise] CJK backstop removed ${fmt.cjkRemoved} residual Han character(s)`);
     }
-    const revisedClean = cleaned;
+    const revisedClean = fmt.content;
     const updated = await db.paragraph.update({
       where: { id },
       data: {

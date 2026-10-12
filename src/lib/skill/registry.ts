@@ -1,16 +1,16 @@
 /**
- * Skill registry (RT5) — the declarative catalog of agent operations.
+ * Skill registry (RT5 + RT6) — the declarative catalog of agent operations.
  *
- * Migrated first (the "A-family" isomorphic pattern): `score` — importance
- * scoring of gathered references. Its prompt contract, per-item validation
- * and mechanical fallback move HERE from citation-planner.ts verbatim;
- * scoreSources (citation-planner) keeps only the batch/pool orchestration
- * and calls runSkill per batch.
+ * RT5 landed the framework + the first migration (`score`). RT6 migrates
+ * the A-family remainder (curate / curate-smart), the B-family reviewers
+ * (review / revision / revision-scoped / fact-check / evidence-extract /
+ * evidence-allocate) — see skills-curation.ts / skills-review.ts /
+ * skills-evidence.ts. Each file owns ONE family's prompt text; this file
+ * keeps `score` (the reference pattern) and the aggregate catalog.
  *
- * Migration backlog (IMPROVEMENT_PLAN-RT5): curate / curate-smart (the other
- * two A-family triplets), the B-family STRICT-JSON reviewers
- * (review-engine / fact-check / evidence pipeline), the C-family translate
- * post-processing chains, plan/generate/verify/review v1+v2 merge.
+ * Migration backlog after RT6 (IMPROVEMENT_PLAN-RT6): coherence review/edit,
+ * research-gap agents, knowledge-verify, plan/generate/verify v1+v2 merge,
+ * prose multi-turn skills (gather/knowledge).
  */
 
 import {
@@ -21,7 +21,45 @@ import {
   type SourceDepth,
   type SourceScore,
 } from "@/lib/scoring";
+import { curateSkill, curateSmartSkill } from "./skills-curation";
+import { reviewCoreSkill, reviseArticleSkill, reviseSectionSkill } from "./skills-review";
+import {
+  evidenceAllocateSkill,
+  evidenceExtractSkill,
+  factCheckArbitrateSkill,
+} from "./skills-evidence";
 import type { SkillDefinition } from "./types";
+
+// Convenience re-exports so call-sites can `import { curateSkill } from
+// "@/lib/skill/registry"" (one import path for the whole catalog).
+export {
+  curateSkill,
+  curateSmartSkill,
+  deriveScoredOrder,
+  type CurateInput,
+  type CurateOutput,
+  type CurateSmartInput,
+  type CurateSmartOutput,
+} from "./skills-curation";
+export {
+  reviewCoreSkill,
+  reviseArticleSkill,
+  reviseSectionSkill,
+  REVIEW_CORE_PARSE_FALLBACK,
+  type ReviewSkillInput,
+  type ReviseSkillInput,
+  type ReviseSectionSkillInput,
+} from "./skills-review";
+export {
+  factCheckArbitrateSkill,
+  evidenceExtractSkill,
+  evidenceAllocateSkill,
+  type ArbitrateInput,
+  type EvidenceExtractInput,
+  type EvidenceExtractOutput,
+  type EvidenceAllocateInput,
+  type EvidenceAllocateOutput,
+} from "./skills-evidence";
 
 // ---------------------------------------------------------------------------
 // score — LLM importance scoring for a batch of gathered references
@@ -170,6 +208,14 @@ Respond as STRICT JSON only:
 /** All registered skills, keyed by their authority id. */
 export const SKILLS = {
   score: scoreSkill,
+  curate: curateSkill,
+  curateSmart: curateSmartSkill,
+  review: reviewCoreSkill,
+  revision: reviseArticleSkill,
+  revisionScoped: reviseSectionSkill,
+  factCheck: factCheckArbitrateSkill,
+  evidenceExtract: evidenceExtractSkill,
+  evidenceAllocate: evidenceAllocateSkill,
 } as const;
 
 export type RegisteredSkillId = keyof typeof SKILLS;

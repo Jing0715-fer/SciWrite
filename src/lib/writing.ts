@@ -1070,6 +1070,20 @@ export function normalizeExportArticle(md: string): string {
  * @param content  The raw LLM output for a single section
  * @returns        The cleaned content containing only the article text
  */
+/**
+ * Strip the wrappers LLMs love to add around a "revised article":
+ * markdown code fences and "Here's the revised article:"-style preambles.
+ * (RT6: moved verbatim from review-engine.ts so the revision skills can
+ * share it without a runtime import cycle — review-engine re-exports it
+ * for its own call-sites.)
+ */
+export function stripRevisionWrappers(text: string): string {
+  let t = (text || "").trim();
+  t = t.replace(/^```(?:markdown|md)?\s*\n?/i, "").replace(/\n?```\s*$/i, "");
+  t = t.replace(/^(?:here(?:'s| is)[^\n:]{0,80}|revised article[^\n:]{0,40}|the revised article[^\n:]{0,40})[:：]\s*\n*/i, "");
+  return t.trim();
+}
+
 export function sanitizeSectionContent(content: string): string {
   if (!content) return content;
 

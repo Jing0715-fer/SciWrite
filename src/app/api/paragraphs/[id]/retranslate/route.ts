@@ -91,7 +91,13 @@ ${cleanEn}`;
       .trim();
     // Also apply general section sanitization to remove postscripts,
     // meta-commentary, horizontal rules, etc.
-    zhContent = sanitizeSectionContent(zhContent);
+    // RT6: via the registered format-contract chain (sanitize gate, zh —
+    // paragraph-level output takes no uniform-section: it has no ## heading
+    // structure of its own).
+    {
+      const { applyFormatContract } = await import("@/lib/skill/format-contract");
+      zhContent = applyFormatContract(zhContent, { gates: ["sanitize"], language: "zh" }).content;
+    }
 
     if (!zhContent) {
       return NextResponse.json(

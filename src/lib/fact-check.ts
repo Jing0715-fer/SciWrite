@@ -36,15 +36,16 @@
  */
 
 import { webSearch, type WebSearchItem } from "@/lib/ai";
-import { chatWithSession } from "@/lib/llm-session";
 import { splitBodyAndReferences } from "@/lib/citation-audit";
-// round-RT2: robust LLM-JSON extraction — the old bare `JSON.parse` on a
-// greedy-brace slice threw on trailing commas / fenced output from
-// non-GLM review models, degrading every adjudication to an ERROR verdict
-// (which the review layer then treated as ground truth).
-import { parseLlmJson } from "@/lib/llm-json";
 // round-RT3 (R1): pooled claim adjudication — see checkClaim() below.
 import { runWithConcurrency } from "@/lib/search-enhance";
+// RT6 (B-family migration): arbitration runs through the shared skill
+// executor (skills-evidence.ts factCheckArbitrateSkill — ARBITER_SYSTEM and
+// the parseLlmJson semantics live there now). No skill fallback by design —
+// the POOL layer keeps its two distinct catch semantics (pass-1
+// fall-through to web, pass-2 ERROR finding).
+import { runSkill } from "@/lib/skill/executor";
+import { factCheckArbitrateSkill } from "@/lib/skill/skills-evidence";
 
 /* ------------------------------------------------------------------ *
  * Types
@@ -297,22 +298,7 @@ async function searchForClaim(claim: FactCheckClaim): Promise<WebSearchItem[]> {
  * 3. LLM arbitration
  * ------------------------------------------------------------------ */
 
-const ARBITER_SYSTEM = `You are a forensic fact-checker for scientific manuscripts. For each CHECK you receive ONE claim sentence and EVIDENCE in up to two forms:
-- [A#] blocks — ABSTRACTS of the paper(s) the sentence itself cites. These are AUTHORITATIVE for whether the citation faithfully reports its source: a claim cited to [n] whose substance appears in [A#] (the abstract of [n]) is VERIFIED — the citation supports the claim. A claim cited to [n] that [A#] directly refutes is CONTRADICTED — the citation misreports its source.
-- [E#] blocks — WEB SEARCH results (independent external evidence).
-Adjudicate the claim strictly against this EVIDENCE.
-
-VERDICT RULES (apply exactly):
-- VERIFIED — evidence literally corroborates the claim. For QUANTITATIVE claims the specific number/value must appear in the evidence (literal match or trivial unit conversion). "completely absent" does NOT verify "shifted by 180°"; a different number does not verify this number. A cited-abstract [A#] match ("we performed more than 175 edits…" in the abstract of the paper cited for "over 175 edits") IS literal corroboration.
-- CONTRADICTED — evidence directly refutes the claim. HARD RULE: when the claim asserts a positive finding, a specific value, or the existence of something, while the evidence explicitly reports its ABSENCE (phrases like "completely absent", "no … has been reported", "remains unresolved/unknown"), the verdict is CONTRADICTED even when other parts of the sentence match the evidence. This applies to [A#] too: the sentence says "X, [n]" while [A#] (the abstract of [n]) reports the opposite — that is a misreported citation, CONTRADICTED.
-- UNVERIFIABLE — the evidence is topical but silent on the claim, or off-topic. Absence of corroboration is NOT contradiction. Do not guess.
-- COMPOSITE SENTENCES: adjudicate the WHOLE sentence by its weakest factual component. One contradicted component ⇒ CONTRADICTED. A merely-unfound component ⇒ UNVERIFIABLE.
-- ATTRIBUTION claims ("X et al. demonstrated …"): check whether the evidence attributes that work/finding to that group. Wrong group ⇒ CONTRADICTED with reason "attribution error".
-- Use ONLY the EVIDENCE provided — never your own memory of the literature to confirm or refute. If the evidence is silent, say UNVERIFIABLE.
-
-Respond as STRICT JSON only:
-{"checks":[{"id":1,"verdict":"VERIFIED|CONTRADICTED|UNVERIFIABLE","confidence":0,"reason":"one sentence","evidence_quote":"the literal evidence fragment relied on, or empty"}]}
-confidence is 0-100. Output JSON only.`;
+// ARBITER_SYSTEM moved verbatim into the skill (skills-evidence.ts) in RT6.
 
 async function arbitrate(
   projectId: string,
@@ -321,82 +307,34 @@ async function arbitrate(
   citedRefs: RefMeta[],
   abstracts: RefAbstractEvidence[] = []
 ): Promise<FactCheckFinding> {
-  const evidenceBlock =
-    evidence.length > 0
-      ? evidence
-          .slice(0, 5)
-          .map(
-            (e, i) =>
-              `[E${i + 1}] ${String(e.name || "").slice(0, 120)} — ${String(e.snippet || "").slice(0, 260)} (${e.host_name || e.url || ""})`,
-          )
-          .join("\n")
-      : "(no web evidence provided)";
-
-  const abstractBlock =
-    abstracts.length > 0
-      ? abstracts
-          .map(
-            (a, i) =>
-              `[A${i + 1}] ABSTRACT OF CITED SOURCE [${a.num}] "${a.title.slice(0, 140)}" (the paper this sentence cites):\n${a.abstract.slice(0, 1800)}`,
-          )
-          .join("\n\n")
-      : "";
-
-  const citedBlock =
-    citedRefs.length > 0
-      ? citedRefs
-          .map((r) => `- [${r.authors || "Anon"}${r.year ? ` (${r.year})` : ""}] ${r.title}`)
-          .join("\n")
-      : "(the sentence carries NO inline citation — this is an uncited assertion)";
-
-  const prompt = `CHECK ${claim.id} (category: ${claim.category})
-CLAIM SENTENCE: "${claim.sentence}"
-${citedRefs.length > 0 ? `SENTENCE CITES: [${claim.citedNums.join(", ")}]` : "UNCITED ASSERTION"}
-
-CITED SOURCES OF THIS SENTENCE (the article's own references):
-${citedBlock}
-${abstractBlock ? `\nCITED SOURCE ABSTRACTS (what the cited papers themselves report — authoritative for whether the citation supports the claim):
-${abstractBlock}` : ""}
-
-WEB SEARCH RESULTS (external evidence):
-${evidenceBlock}
-
-Adjudicate CHECK ${claim.id}. Respond as STRICT JSON:
-{"checks":[{"id":${claim.id},"verdict":"...","confidence":0,"reason":"...","evidence_quote":"..."}]}`;
-
-  const raw = await chatWithSession(projectId, prompt, {
-    system: ARBITER_SYSTEM,
-    temperature: 0.1,
-    thinking: false,
-    taskType: "review",
-    maxTokens: 3000,
-    metadata: {
-      step: "fact-check",
-      claimCategory: claim.category,
-      cited: claim.citedNums.length > 0,
+  // RT6 (B-family migration): prompt (ARBITER_SYSTEM + claim/evidence
+  // blocks), parseLlmJson semantics, verdict whitelist and confidence
+  // clamps all live in the skill now. noCache keeps the legacy
+  // every-claim-really-calls behavior; thinking:false rides the skill's
+  // chat options.
+  const result = await runSkill(
+    factCheckArbitrateSkill,
+    { claim, evidence, citedRefs, abstracts },
+    {
+      projectId,
+      // The skill's parse slot (parseLlmJson) never reads fallbackValue —
+      // it throws on no-JSON instead; this placeholder only satisfies the
+      // executor's typed contract.
+      fallbackValue: {
+        claimId: claim.id,
+        category: claim.category,
+        sentence: claim.sentence,
+        citedNums: claim.citedNums,
+        verdict: "UNVERIFIABLE",
+        reason: "",
+        evidenceQuote: "",
+        evidenceUrls: [],
+        confidence: 0,
+      } satisfies FactCheckFinding,
+      noCache: true, // legacy: no LLM cache — verdicts are time-sensitive
     },
-  });
-
-  // round-RT2: parseLlmJson handles fences / preamble prose / JSON5 shapes;
-  // `ok:false` is the explicit no-JSON error (replaces the old throw).
-  const parsed = parseLlmJson<any>(raw, { checks: [] });
-  if (!parsed.ok) throw new Error("arbiter returned no JSON");
-  const check = (parsed.value.checks || [])[0] || {};
-  let verdict = String(check.verdict || "").toUpperCase();
-  if (!["VERIFIED", "CONTRADICTED", "UNVERIFIABLE"].includes(verdict)) {
-    verdict = "UNVERIFIABLE";
-  }
-  return {
-    claimId: claim.id,
-    category: claim.category,
-    sentence: claim.sentence,
-    citedNums: claim.citedNums,
-    verdict: verdict as FactVerdict,
-    reason: String(check.reason || "").slice(0, 300),
-    evidenceQuote: String(check.evidence_quote || "").slice(0, 300),
-    evidenceUrls: evidence.slice(0, 3).map((e) => e.url).filter(Boolean),
-    confidence: Math.max(0, Math.min(100, parseInt(String(check.confidence ?? 50), 10) || 50)),
-  };
+  );
+  return result.output;
 }
 
 /** Abstracts available for a claim's cited numbers (round-61 P0-A). */

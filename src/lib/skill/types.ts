@@ -35,6 +35,7 @@ export const SKILL_IDS = [
   "gap-design",
   "evidence-extract",
   "evidence-verify",
+  "evidence-allocate",
   "generate",
   "verify",
   "review",
@@ -97,6 +98,8 @@ export interface SkillChatOptions {
   timeoutMs?: number;
   /** Provider routing: review-family vs generate (llm-selection). */
   role?: "generate" | "review";
+  /** Disable thinking/reasoning mode (fact-check's forensic adjudication). */
+  thinking?: boolean;
 }
 
 /**

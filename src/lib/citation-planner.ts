@@ -25,7 +25,6 @@
  *   - prompts stay well under llm-session's 28000-char compression cap.
  */
 
-import { chatWithSession } from "@/lib/llm-session";
 import { safeParseJSON, scoreRelevance, extractSectionKeywords } from "@/lib/generate-full-helpers";
 import { fetchFullTextForPubMed } from "@/lib/databases";
 import { maxCitableRefsFor } from "@/lib/v2-config";
@@ -270,71 +269,28 @@ export async function smartCurateReferences(
   const order = scores.map((s, i) => ({ score: s, ref: refs[i] }));
   order.sort((a, b) => b.score.priority - a.score.priority);
 
-  const scoredList = order
-    .map((o, i) => {
-      const ft = o.score.depth === "fulltext" ? " | FULL TEXT: yes" : "";
-      return `[${i + 1}] PRIORITY ${o.score.priority.toFixed(1)} | ${o.score.tier.toUpperCase()} | REL ${o.score.relevance}/10, IMP ${o.score.importance}/10${ft} | (${o.ref.year || "n.d."}) ${String(o.ref.title || "").slice(0, 95)}`;
-    })
-    .join("\n");
-
-  const system =
-    "You are a review-article citation strategist. Given a scored source pool and the article's target length, " +
-    "decide which references the article should cite — and HOW MANY it genuinely needs.";
-
-  const prompt = `RESEARCH TOPIC: ${topic}
-FIELD: ${field}
-TARGET ARTICLE LENGTH: ${targetWords} words
-POOL: ${refs.length} gathered references, pre-scored for relevance (topical fit) and importance (scholarly weight).
-
-SCORED SOURCES (sorted by citation priority):
-${scoredList}
-
-CITATION BUDGET:
-- A ${targetWords}-word review typically cites ~${typical} references.
-- Acceptable range: ${softFloor}-${hardCap}. YOU decide the final count — it must follow the POOL, not the typical number.
-
-SELECTION RULES (in priority order):
-1. Relevance first: NEVER include a source with REL <= 3. An uncited point is better than an irrelevant citation.
-2. Include EVERY source marked CORE (tier column), up to ${hardCap}.
-3. LANDMARKS ARE MANDATORY (round-57): first discoveries, gene/protein cloning papers, structure determinations, and clinical-trial milestones for the topic's central molecules are ALWAYS in scope for a review — include them even when their raw priority ties with newer work. A review that narrates a discovery without citing its primary paper is a failed review.
-4. If the pool is thin or mostly MARGINAL, choose FEWER references — do NOT pad toward the typical count.
-5. For a SHORT article with a RICH pool, drop MARGINAL sources and keep the high-priority ones.
-6. Prefer primary research over reviews when both report the same finding; prefer the peer-reviewed version over its preprint.
-7. FULL TEXT sources support deeper discussion — break ties toward them.
-
-Respond as STRICT JSON only:
-{ "indices": [1, 2, 5, ...], "plannedCount": 18, "rationale": "one sentence explaining the count" }
-"indices" are the [n] numbers above (1-based, priority-sorted list). Output JSON only.`;
+  // RT6 (A-family migration): the prompt/cache/parse block runs through the
+  // shared skill executor (skills-curation.ts curateSmartSkill). The
+  // guardrails below stay HERE — they are pool orchestration, not skill
+  // semantics. result.degraded replaces the legacy try/catch's llmDriven
+  // flag (degraded ⇒ mechanical fallback path, exactly like the old catch).
+  const { curateSmartSkill } = await import("@/lib/skill/registry");
+  const curateResult = await runSkill(
+    curateSmartSkill,
+    { topic, field, targetWords, refs, scores, typical, softFloor, hardCap },
+    {
+      projectId,
+      fallbackValue: { indices: [], rationale: "" },
+      chatOverrides: opts.maxTokens ? { maxTokens: opts.maxTokens } : undefined,
+    },
+  );
 
   let selectedOrder: { score: SourceScore; ref: any }[] = [];
   let rationale = "";
   let llmDriven = false;
 
-  try {
-    const { llmCacheKey, getCachedLLMResult, setCachedLLMResult } = await import("@/lib/llm-cache");
-    const cacheKey = await llmCacheKey(prompt, { system, temperature: 0.2, taskType: "curate-smart", maxTokens: opts.maxTokens });
-    const cached = getCachedLLMResult(cacheKey);
-    let raw: string;
-    if (cached) {
-      raw = cached;
-    } else {
-      raw = await chatWithSession(projectId, prompt, {
-        system,
-        temperature: 0.2,
-        taskType: "curate-smart",
-        maxTokens: opts.maxTokens,
-        metadata: { step: "curate-smart", pool: refs.length, typical, softFloor, hardCap },
-      });
-      setCachedLLMResult(cacheKey, raw);
-    }
-
-    const parsed = safeParseJSON(raw, { indices: [] });
-    const picked = new Set<number>();
-    for (const n of parsed.indices || []) {
-      const idx = parseInt(String(n), 10);
-      if (!isNaN(idx) && idx >= 1 && idx <= order.length) picked.add(idx);
-    }
-
+  if (!curateResult.degraded) {
+    const picked = curateResult.output.indices;
     // Guardrail 1: force-include every CORE-tier source (up to hardCap).
     for (let i = 0; i < order.length && selectedOrder.length < hardCap; i++) {
       if (order[i].score.tier === "core") selectedOrder.push(order[i]);
@@ -356,11 +312,9 @@ Respond as STRICT JSON only:
         if (!selectedOrder.includes(o) && o.score.relevance >= 4) selectedOrder.push(o);
       }
     }
-    rationale = String(parsed.rationale || "").slice(0, 240);
+    rationale = curateResult.output.rationale;
     llmDriven = true;
     if (!rationale) rationale = `LLM selected ${selectedOrder.length} of ${refs.length} scored sources`;
-  } catch (err: any) {
-    console.warn(`[smartCurateReferences] LLM failed, mechanical fallback: ${err?.message?.slice(0, 100)}`);
   }
 
   // Mechanical fallback: core + important tiers up to typical, then marginal

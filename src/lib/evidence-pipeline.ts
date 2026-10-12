@@ -32,8 +32,11 @@
  *       which measurably reduces cross-topic miscitation
  */
 
-import { chatWithSession } from "@/lib/llm-session";
-import { safeParseJSON, extractSectionKeywords, scoreRelevance } from "@/lib/generate-full-helpers";
+import { extractSectionKeywords, scoreRelevance } from "@/lib/generate-full-helpers";
+// RT6 (B-family migration): both LLM stages run through the shared skill
+// executor (skills-evidence.ts evidenceExtractSkill / evidenceAllocateSkill).
+import { runSkill } from "@/lib/skill/executor";
+import { evidenceAllocateSkill, evidenceExtractSkill } from "@/lib/skill/skills-evidence";
 
 export interface EvidenceItem {
   /** 1-based index into the curated reference array. */
@@ -67,13 +70,8 @@ export interface EvidenceRefInput {
   url?: string | null;
 }
 
-function formatRefForAnalysis(r: EvidenceRefInput, i: number): string {
-  const auth = (r.authors || "Anon").trim();
-  const yr = r.year ? ` (${r.year})` : "";
-  const jour = r.journal ? `, ${r.journal}` : "";
-  const abs = r.abstract ? `\n  Abstract: ${r.abstract.slice(0, 700)}` : "\n  (no abstract available — use the TITLE only)";
-  return `[REF-${i + 1}] ${auth}${yr}${jour}. ${r.title}.${abs}`;
-}
+// formatRefForAnalysis moved into the skill (skills-evidence.ts) with the
+// rest of the extract prompt assembly in RT6.
 
 /**
  * Stage 1 — Analyze gathered sources and extract a structured evidence bank.
@@ -105,71 +103,39 @@ export async function extractEvidenceBank(
     : (opts.batchSize ?? 14);
   const limited = refs.slice(0, maxRefs);
 
-  const system = `You are a meticulous research analyst building an EVIDENCE BANK for a review article on: ${topic} (${field}).
-Your ONLY job is to extract claims that each source ACTUALLY makes. You are the anti-hallucination stage:
-- Every claim must be directly supported by the reference's title/abstract (and full-text excerpt, when shown) — never beyond what is shown.
-- Do NOT infer, extrapolate, or add domain knowledge not present in the source.
-- Do NOT write claims about the topic in general.
-- Prefer quantitative specifics (numbers, methods, named proteins, trial names) over vague statements.`;
-
   const allEvidence: EvidenceItem[] = [];
 
   // round-RT2 (evidence acceleration): serial batch loop → bounded pool of 3.
-  // Per-batch failures degrade that batch only (unchanged semantics).
+  // Per-batch failures degrade that batch only (the skill's fallback returns
+  // empty evidence — same semantics as the legacy per-batch catch).
   const { runWithConcurrency } = await import("@/lib/search-enhance");
   const batchStarts: number[] = [];
   for (let b = 0; b < limited.length; b += batchSize) batchStarts.push(b);
   await runWithConcurrency(batchStarts, 3, async (b: number) => {
     const batch = limited.slice(b, b + batchSize);
-    const refList = batch.map((r, j) => {
-      const base = formatRefForAnalysis(r, b + j);
-      const ft = opts.fullTexts?.get(r.id || "");
-      if (ft) {
-        const excerpt = ft.replace(/\s+/g, " ").slice(0, 900);
-        return `${base}\n  FULL-TEXT EXCERPT (from the complete article — extract claims from here too, deeper than the abstract): ${excerpt}`;
-      }
-      return base;
-    }).join("\n\n");
-    const prompt = `SOURCES (batch ${Math.floor(b / batchSize) + 1}):
-${refList}
-
-For EACH source above, extract 1-4 key claims it makes. A claim is a single checkable factual statement that this specific paper/database record supports.
-
-Respond as STRICT JSON only:
-{
-  "evidence": [
-    { "ref": 1, "claims": ["claim 1 ...", "claim 2 ..."] },
-    { "ref": 2, "claims": ["..."] }
-  ]
-}
-"ref" is the number in [REF-n]. Keep each claim under 40 words. Output JSON only.`;
-
-    try {
-      const raw = await chatWithSession(projectId, prompt, {
-        system,
-        temperature: 0.2,
-        taskType: "analyze",
-        maxTokens: opts.maxTokens,
-        metadata: { step: "evidence-extract", batch: Math.floor(b / batchSize) + 1, refs: batch.length },
-      });
-      const parsed = safeParseJSON(raw, { evidence: [] });
-      for (const e of parsed.evidence || []) {
-        const refIndex = parseInt(String(e.ref), 10);
-        if (isNaN(refIndex) || refIndex < 1 || refIndex > limited.length) continue;
-        const claims = Array.isArray(e.claims) ? e.claims : [];
-        for (const claim of claims) {
-          if (typeof claim === "string" && claim.trim().length > 8) {
-            allEvidence.push({
-              refIndex,
-              claim: claim.trim().slice(0, 400),
-              kind: "finding",
-            });
-          }
-        }
-      }
-    } catch (err: any) {
-      console.warn(`[extractEvidenceBank] batch ${Math.floor(b / batchSize) + 1} failed: ${err?.message?.slice(0, 100)}`);
-    }
+    const totalBatches = Math.ceil(limited.length / batchSize);
+    // RT6 (B-family migration): prompt/formatRefForAnalysis/parsing/range
+    // filtering live in the skill (skills-evidence.ts evidenceExtractSkill).
+    const result = await runSkill(
+      evidenceExtractSkill,
+      {
+        topic,
+        field,
+        batch,
+        batchNo: Math.floor(b / batchSize) + 1,
+        totalBatches,
+        batchStartIndex: b,
+        totalRefs: limited.length,
+        fullTexts: opts.fullTexts,
+      },
+      {
+        projectId,
+        fallbackValue: { evidence: [] },
+        noCache: true, // legacy: no LLM cache on the evidence path
+        chatOverrides: opts.maxTokens ? { maxTokens: opts.maxTokens } : undefined,
+      },
+    );
+    allEvidence.push(...result.output.evidence);
   });
 
   return allEvidence;
@@ -251,69 +217,27 @@ export async function allocateEvidenceToSections(
     return merged;
   }
 
-  const system = `You are a review-article architect allocating an EVIDENCE BANK to article sections.
-Given the section plan and the extracted evidence (each item pre-bound to a reference), decide which
-references each section should draw on. Rules:
-- Allocate a reference to a section ONLY if its evidence is topically relevant to that section.
-- Aim for ${minRefs}-${maxRefs} references per section (more for longer sections).
-- References may appear in multiple sections when genuinely relevant.
-- Do NOT allocate a reference just to fill quota — relevance first.`;
-
-  const sectionList = sections
-    .map((s, i) => `SECTION ${i + 1}: ${s.title}\n  Focus: ${s.focus || "(none)"}`)
-    .join("\n\n");
-
-  const refList = refs
-    .slice(0, 40)
-    .map((r, i) => `[REF-${i + 1}] ${(r.authors || "Anon").trim()}${r.year ? ` (${r.year})` : ""}. ${r.title}`)
-    .join("\n");
-
-  const evidenceDigest = evidence
-    .slice(0, 160)
-    .map((e) => `[REF-${e.refIndex}] ${e.claim}`)
-    .join("\n");
-
-  const prompt = `ARTICLE TOPIC: ${topic}
-
-SECTION PLAN:
-${sectionList}
-
-REFERENCE LIST:
-${refList}
-
-EVIDENCE BANK (claim → reference):
-${evidenceDigest}
-
-Allocate references to sections.
-
-Respond as STRICT JSON only:
-{
-  "allocations": [
-    { "section": 1, "refs": [1, 4, 7], "rationale": "..." },
-    { "section": 2, "refs": [2, 5], "rationale": "..." }
-  ]
-}
-"section" is 1-based. "refs" are the [REF-n] numbers. Output JSON only.`;
-
-  try {
-    const raw = await chatWithSession(projectId, prompt, {
-      system,
-      temperature: 0.2,
-      taskType: "allocate",
-      maxTokens: opts.maxTokens,
-      metadata: { step: "evidence-allocate", sections: sections.length, refs: refs.length },
-    });
-    const parsed = safeParseJSON(raw, { allocations: [] });
-
-    const bySection = new Map<number, number[]>();
-    for (const a of parsed.allocations || []) {
-      const s = parseInt(String(a.section), 10);
-      if (isNaN(s) || s < 1 || s > sections.length) continue;
-      const arr = (Array.isArray(a.refs) ? a.refs : [])
-        .map((n: any) => parseInt(String(n), 10))
-        .filter((n: number) => n >= 1 && n <= refs.length) as number[];
-      if (arr.length) bySection.set(s, [...new Set(arr)]);
-    }
+  // RT6 (B-family migration): the LLM allocator lives in the skill
+  // (skills-evidence.ts evidenceAllocateSkill). degraded ⇒ the caller
+  // returns the precomputed keyword allocation (the legacy catch path,
+  // byte-identical). noCache keeps the legacy behavior.
+  const allocateResult = await runSkill(
+    evidenceAllocateSkill,
+    { topic, sections, refs, evidence, minRefs, maxRefs },
+    {
+      projectId,
+      fallbackValue: { allocations: [] },
+      noCache: true, // legacy: no LLM cache on the allocate path
+      chatOverrides: opts.maxTokens ? { maxTokens: opts.maxTokens } : undefined,
+    },
+  );
+  if (allocateResult.degraded) {
+    return fallbackAlloc;
+  }
+  const bySection = new Map<number, number[]>();
+  for (const a of allocateResult.output.allocations) {
+    bySection.set(a.section, a.refs);
+  }
 
     // Merge: LLM allocation where usable, topped up by keyword fallback
     const merged: SectionAllocation[] = sections.map((_s, i) => {
@@ -338,10 +262,6 @@ Respond as STRICT JSON only:
       };
     });
     return merged;
-  } catch (err: any) {
-    console.warn(`[allocateEvidenceToSections] LLM failed, using keyword fallback: ${err?.message?.slice(0, 100)}`);
-    return fallbackAlloc;
-  }
 }
 
 /** Deterministic keyword-overlap allocator (fallback + top-up source). */

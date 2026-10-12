@@ -198,16 +198,19 @@ export async function POST(req: NextRequest) {
       // paragraph.content. Apply the same format gauntlet the v2 generate
       // loop runs (numeric-citation routes get the format layers only).
       {
-        const { normalizeAsciiPunctuation, normalizeSectionMarkdown, enforceUniformSectionFormat, stripResidualCJK } = await import("@/lib/writing");
-        let cleaned = normalizeAsciiPunctuation(content);
-        cleaned = normalizeSectionMarkdown(cleaned);
-        cleaned = enforceUniformSectionFormat(cleaned);
-        const cjkStripped = stripResidualCJK(cleaned);
-        if (cjkStripped.removed > 0) {
-          send("step", { status: "progress", message: `Removed ${cjkStripped.removed} residual non-English character(s).` });
-          cleaned = cjkStripped.content;
+        // RT6: the gauntlet is the registered fixed-order gate chain
+        // (applyFormatContract). The language now routes through the
+        // contract (zh output skips the englishOnly gates instead of being
+        // CJK-stripped unconditionally — the pre-RT6 bug).
+        const { applyFormatContract } = await import("@/lib/skill/format-contract");
+        const fmt = applyFormatContract(content, {
+          gates: ["ascii-punctuation", "section-markdown", "uniform-section", "cjk-residual"],
+          language: body.language === "zh" ? "zh" : "en",
+        });
+        if (fmt.cjkRemoved > 0) {
+          send("step", { status: "progress", message: `Removed ${fmt.cjkRemoved} residual non-English character(s).` });
         }
-        content = cleaned;
+        content = fmt.content;
       }
 
       send("step", { status: "progress", message: "Sanitizing out-of-range citations..." });

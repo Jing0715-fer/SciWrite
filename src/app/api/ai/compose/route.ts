@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { createSSEStream, SSE_HEADERS } from "@/lib/sse";
-import { countWords, cleanArticleContent, normalizeSectionTitle, normalizeSectionMarkdown, removeReferenceBlocks, enforceUniformSectionFormat } from "@/lib/writing";
+import { countWords, cleanArticleContent, normalizeSectionTitle } from "@/lib/writing";
+// RT6: the per-paragraph format gauntlet is the registered fixed-order
+// gate chain (format-contract).
+import { applyFormatContract } from "@/lib/skill/format-contract";
 import { parseReferenceList, refIdentity } from "@/lib/citation-audit";
 import type { ComposeRequest } from "@/lib/types";
 
@@ -91,6 +94,9 @@ export async function POST(req: NextRequest) {
         // half skips ASCII-punctuation conversion: fullwidth punctuation is
         // legitimate Chinese typography).
         try {
+          // RT6: both halves run the registered fixed-order gate chain
+          // (remove-ref-blocks → section-markdown → uniform-section; the ZH
+          // half skips the englishOnly gates automatically via language).
           const zhMarkerRe = /\n##\s*中文\s*\n/;
           const zhMatch = content.match(zhMarkerRe);
           if (zhMatch && zhMatch.index !== undefined) {
@@ -98,11 +104,20 @@ export async function POST(req: NextRequest) {
             const afterMarker = zhMatch.index + zhMatch[0].length;
             const zhPart = content.slice(afterMarker);
             content =
-              enforceUniformSectionFormat(normalizeSectionMarkdown(removeReferenceBlocks(enPart))) +
+              applyFormatContract(enPart, {
+                gates: ["remove-ref-blocks", "section-markdown", "uniform-section"],
+                language: "en",
+              }).content +
               "\n\n## 中文\n\n" +
-              enforceUniformSectionFormat(normalizeSectionMarkdown(removeReferenceBlocks(zhPart)));
+              applyFormatContract(zhPart, {
+                gates: ["remove-ref-blocks", "section-markdown", "uniform-section"],
+                language: "zh",
+              }).content;
           } else {
-            content = enforceUniformSectionFormat(normalizeSectionMarkdown(removeReferenceBlocks(content)));
+            content = applyFormatContract(content, {
+              gates: ["remove-ref-blocks", "section-markdown", "uniform-section"],
+              language: "en",
+            }).content;
           }
         } catch {
           // Non-fatal: keep the pre-normalization content on any failure.

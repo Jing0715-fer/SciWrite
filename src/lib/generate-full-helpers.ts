@@ -367,6 +367,11 @@ Respond as STRICT JSON: { "queries": ["query 1", "query 2", ...] }`;
 /**
  * Have the LLM curate the most relevant references for the article.
  * This reduces the reference set to a manageable size and ensures focus.
+ *
+ * RT6 (A-family migration): the prompt/cache/parse/fallback skeleton moved
+ * to the skill registry (skills-curation.ts curateSkill) and runs through
+ * the shared executor. This function keeps the maxCount short-circuit and
+ * the empty-indices fallback, exactly as before.
  */
 export async function curateReferences(
   projectId: string,
@@ -378,70 +383,22 @@ export async function curateReferences(
 ): Promise<any[]> {
   if (references.length <= maxCount) return references;
 
-  try {
-    const system = "You are a research curator who selects the most relevant references for a review article.";
-    const refList = references.map((r, i) => {
-      const auth = r.authors || "Anon";
-      const yr = r.year ? ` (${r.year})` : "";
-      return `[${i + 1}] ${auth}${yr} ${r.title?.slice(0, 80) || ""}`;
-    }).join("\n");
-
-    const prompt = `RESEARCH TOPIC: ${topic}
-FIELD: ${field}
-TARGET: Select the ${maxCount} MOST relevant references for a comprehensive review.
-
-AVAILABLE REFERENCES (${references.length} total):
-${refList}
-
-Select the most relevant, recent, and authoritative references. Prioritize:
-1. Recent publications (last 5 years)
-2. Seminal/foundational papers
-3. Review articles covering the topic
-4. Primary research with key findings
-5. The ORIGINAL papers behind key advances (e.g., the primary structure
-   determination, functional demonstration, or therapy papers) — a review
-   about a structure/mechanism/therapy topic MUST cite the primary papers,
-   not only reviews describing them
-6. When a preprint AND its peer-reviewed version are both listed, select the
-   peer-reviewed version — never select both
-
-Respond as STRICT JSON: { "indices": [1, 3, 5, 7, ...] }
-Use 1-based indices. Select exactly ${maxCount} references.`;
-
-    // Check LLM cache — if the user has regenerated with the same topic +
-    // reference list, the curation result is reusable. This saves a 5-15s
-    // LLM call on every regeneration.
-    const { llmCacheKey, getCachedLLMResult, setCachedLLMResult } = await import("@/lib/llm-cache");
-    const cacheKey = await llmCacheKey(prompt, { system, temperature: 0.3, taskType: "curate", maxTokens });
-    const cached = getCachedLLMResult(cacheKey);
-    let raw: string;
-    if (cached) {
-      console.log("[curateReferences] cache hit — skipping LLM call");
-      raw = cached;
-    } else {
-      console.log("[curateReferences] cache miss — calling LLM");
-      raw = await chatWithSession(projectId, prompt, {
-        system,
-        temperature: 0.3,
-        taskType: "curate",
-        metadata: { step: "curate", total: references.length, maxCount },
-        maxTokens,
-      });
-      setCachedLLMResult(cacheKey, raw);
-    }
-    const parsed = safeParseJSON(raw, { indices: [] });
-    const indices = (parsed.indices || [])
-      .filter((n: number) => n >= 1 && n <= references.length)
-      .slice(0, maxCount);
-
-    if (indices.length === 0) {
-      return references.slice(0, maxCount);
-    }
-
-    return indices.map((n: number) => references[n - 1]);
-  } catch {
+  const { runSkill } = await import("@/lib/skill/executor");
+  const { curateSkill } = await import("@/lib/skill/registry");
+  const result = await runSkill(
+    curateSkill,
+    { topic, field, references, maxCount },
+    {
+      projectId,
+      fallbackValue: { indices: [] },
+      chatOverrides: maxTokens ? { maxTokens } : undefined,
+    },
+  );
+  const indices = result.output.indices;
+  if (indices.length === 0) {
     return references.slice(0, maxCount);
   }
+  return indices.map((n: number) => references[n - 1]);
 }
 
 /**
