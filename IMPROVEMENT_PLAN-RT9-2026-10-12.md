@@ -146,15 +146,14 @@ the correct path; all subsequent QA green on the real data.
 
 ## 4. E2E full generation (1500 words)
 
-**STATUS: armed, pending provider quota window** — see the E2E-RESULTS
-appendix. The manual launch at 14:26Z fast-failed on the pre-flight 503
-(storm #5: the local abort flag had expired ten seconds earlier, but
-the provider-side account quota was still exhausted — the same RT3/RT8
-account-level outage class, not a code defect; the guard did exactly
-its job: 348ms, no state consumed). `scripts/rt9-e2e-runner.ts` is
-armed (50 probes × 180s ≈ 2.5h) and fires
-`full-generation-test.ts --base :3001 --words 1500` in the first clean
-window, retrying through further 503s. The report lands in
+**PASS — see the E2E-RESULTS appendix.** The manual launch at 14:26Z
+fast-failed on the pre-flight 503 (storm #5: the local abort flag had
+expired ten seconds earlier, but the provider-side account quota was
+still exhausted — the same RT3/RT8 account-level outage class, not a
+code defect; the guard did exactly its job: 348ms, no state consumed).
+`scripts/rt9-e2e-runner.ts` rode out storms #5/#6 (~2h) and fired
+`full-generation-test.ts --base :3001 --words 1500` automatically in the
+first clean window (16:28Z); the report landed in
 `tool-results/full-gen-test-report.json`.
 
 What this E2E validates beyond the standard audit (decomposition
@@ -227,6 +226,55 @@ regression coverage):
 
 ## E2E-RESULTS (appendix — filled from tool-results/full-gen-test-report.json)
 
-<!-- RT9 fill-in marker: the armed runner writes the report; copy the
-     numbers here, compare verdict stats vs RT8 (28 checked / 0 removed /
-     8 flagged), confirm the new stats fields, then commit. -->
+**PASS — 32.99 min (1,979s), 106 stage events, ZERO degraded skills
+(`skillDegraded: {}` — the cleanest full-pipeline run on record; RT8's
+comparable run degraded score×8 + curate-smart×1 through a mid-run
+storm).** Fired automatically by the armed runner at 16:28Z after riding
+out storms #5/#6 (account-level 429, ~2h); dev server survived the full
+cycle on the 1536MB heap cap.
+
+- **Decomposition regression: NONE.** The extracted gather stage drove the
+  real pipeline (10 queries → 199 sources → 157 refs saved; coverage
+  check: 12/12 facets covered → top-up correctly skipped at ratio 1.0);
+  the compose-transforms chain produced the same mechanical-audit
+  results as the inline code ever did — **0 blocking errors, 0 orphans**,
+  10 topicality warnings; 37 citation markers ↔ 14/14 listed references.
+- **Article**: 2,502 words composed / 1,472 EN body words (98% of the
+  1,500 target), 6 sections, 8 full texts used, 26 curated → 14 final
+  references; `citationPlanLLMDriven: true` (clean window — the LLM
+  citation map ran, unlike RT8's mechanical fallback).
+- **Review-stateless flip verdict check (the RT8 backlog #4 gate)**:
+  in-pipeline adversarial verify **27 checked / 1 removed / 2 flagged**;
+  the removal applied with clean renumbering (removed cite #6,
+  "reference focuses on off-target effects, not conformational
+  dynamics"). RT8 baseline was 28/0/8 in a storm-degraded window — the
+  verdict MACHINERY is unchanged (removal threshold behavior, flag
+  classes, contradiction guard all firing normally); the count deltas
+  track article content, not the context-loading change. Repair loop
+  converged in 3 rounds (2 scoped revisions, final verdict
+  minor-revision overall 6/10, stop reason "review clean — no actionable
+  findings"); numeric sweep 23 sentences / 22 covered / 1 advisory gap;
+  coherence polish 2 passes, 5/5 findings addressed.
+- **The RT8-pending standalone adversarial leg ALSO completed in this
+  window** (E2E [4/4]): 25 checked / 23 supported / 0 partial /
+  2 unsupported / **0 removed**, in 49.7s with batch-20 prompts — the
+  RT8 plan's night-runner gap is closed by RT9's clean window.
+- **New stats fields live in the complete payload**: `skillCacheHits`
+  (all 0 — expected: full fresh runs clear the LLM cache at gather
+  start; the metric matters for resumed runs) and `sessionContext` —
+  real per-taskType assembled-prompt data at last: gather 8 calls /
+  46.7K chars (max 15.6K), score 8 calls / 78.5K chars (max 12.4K),
+  curate-smart 1 call / 23.4K chars. The RT10 context-budget decision
+  now has numbers to stand on.
+- **Skill coverage**: 12+ distinct skills invoked (knowledge 3, score 8,
+  curate-smart 1, gap-design 1, gap-research 1, evidence-extract 3,
+  fact-check 3, review 3, revision 8, coherence-review 2, …) — the new
+  timeline tiles surface exactly this.
+- **Memory**: per-section RSS watermarks 1826 → 1826 → 1827 → 1827 →
+  1827 → 1828 MB (flat — the RT8 ratchet fix holds), post-complete
+  working-set release logged at 1,880 MB, standalone re-review batches
+  at 1,892 MB — every phase comfortably under the RT7 OOM death line
+  (~2.3GB).
+- **Run lifecycle**: pool checkpoint saved (26 refs, 6 sections, 8 full
+  texts) → cleared on completion — the resume machinery round-tripped
+  cleanly through the extracted gather stage.
