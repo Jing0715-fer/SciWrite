@@ -1,0 +1,178 @@
+{
+  "$comment": "RT17 SSE scenario `tiny` — the happy-path full-run fixture. Every LLM reply is dispatched by metadata.skill (skill calls) or taskType (direct route calls: gather/plan/generate/verify); `default` serves @/lib/ai chat() calls that carry neither (article title). Database/web replies are keyed `source:query` / query-string. All responses are shaped so the pipeline runs CLEAN: zero skill degradation, zero gaps, zero repair rounds, zero polish findings, all citations SUPPORTED.",
+  "project": {
+    "topic": "Zinc finger nuclease engineering",
+    "field": "biochemistry"
+  },
+  "request": {
+    "targetWords": 400,
+    "maxDbQueries": 6,
+    "maxWebSearchQueries": 2,
+    "language": "en",
+    "journalTemplate": "general"
+  },
+  "responses": {
+    "gather": "{\"queries\":[{\"database\":\"pubmed\",\"query\":\"zinc finger nuclease review\",\"rationale\":\"reviews\"},{\"database\":\"rcsb\",\"query\":\"zinc finger\",\"rationale\":\"structures\"}]}",
+    "gather:web-search-queries": "{\"queries\":[\"zinc finger nuclease engineering news\",\"zinc finger nuclease clinical applications\"]}",
+    "gather:coverageTopUp": "{\"queries\":[{\"database\":\"pubmed\",\"query\":\"zinc finger nuclease specificity\",\"rationale\":\"topup\"}]}",
+    "knowledge": "{\"sources\":[{\"n\":1,\"known\":true}],\"missing\":[]}",
+    "knowledge-summary": "{\"missing\":[]}",
+    "score": "{\"scores\":[{\"ref\":1,\"relevance\":9,\"importance\":8,\"reason\":\"core review\"},{\"ref\":2,\"relevance\":8,\"importance\":7,\"reason\":\"mechanism\"},{\"ref\":3,\"relevance\":8,\"importance\":7,\"reason\":\"engineering\"},{\"ref\":4,\"relevance\":7,\"importance\":6,\"reason\":\"application\"},{\"ref\":5,\"relevance\":7,\"importance\":6,\"reason\":\"structure\"},{\"ref\":6,\"relevance\":6,\"importance\":5,\"reason\":\"web supplement\"},{\"ref\":7,\"relevance\":6,\"importance\":5,\"reason\":\"web news\"},{\"ref\":8,\"relevance\":5,\"importance\":5,\"reason\":\"web clinical\"},{\"ref\":9,\"relevance\":5,\"importance\":4,\"reason\":\"web method\"},{\"ref\":10,\"relevance\":5,\"importance\":4,\"reason\":\"web extra\"}]}",
+    "curate-smart": "{\"indices\":[1,2,3,4,5,6,7,8,9,10],\"plannedCount\":10,\"rationale\":\"small article rich pool keep high priority\"}",
+    "plan": "{\"sections\":[{\"title\":\"Introduction\",\"targetWords\":80,\"focus\":\"origins of zinc finger engineering\"},{\"title\":\"DNA Recognition Modules\",\"targetWords\":80,\"focus\":\"C2H2 motif specificity\"},{\"title\":\"Nuclease Fusion Strategies\",\"targetWords\":80,\"focus\":\"FokI domain fusion\"},{\"title\":\"Applications\",\"targetWords\":80,\"focus\":\"therapeutic genome editing\"},{\"title\":\"Future Directions\",\"targetWords\":80,\"focus\":\"precision and delivery\"}]}",
+    "gap-design": "{\"gaps\": [{\"sectionIndex\": 0, \"sectionTitle\": \"Introduction\", \"gap\": \"no reference covering the original zinc finger nuclease discovery paper\", \"queries\": [{\"database\": \"pubmed\", \"query\": \"zinc finger nuclease discovery original\"}]}]}",
+    "gap-research": "{\"keep\":[\"C1\"]}",
+    "evidence-extract": "{\"evidence\":[{\"ref\":1,\"claims\":[\"Zinc finger nucleases combine modular DNA recognition with nuclease domains.\"]},{\"ref\":2,\"claims\":[\"C2H2 motifs govern target site recognition.\"]},{\"ref\":3,\"claims\":[\"Fusion to FokI nuclease domains enables double-strand cleavage.\"]},{\"ref\":4,\"claims\":[\"Engineered platforms support therapeutic genome editing.\"]},{\"ref\":5,\"claims\":[\"Structural studies defined the DNA-binding interface.\"]},{\"ref\":6,\"claims\":[\"Clinical translation advanced through dose escalation studies.\"]}]}",
+    "evidence-allocate": "{\"allocations\":[{\"section\":1,\"refs\":[1,2],\"rationale\":\"foundations\"},{\"section\":2,\"refs\":[1,2],\"rationale\":\"recognition\"},{\"section\":3,\"refs\":[3,5],\"rationale\":\"fusion\"},{\"section\":4,\"refs\":[4,6],\"rationale\":\"applications\"},{\"section\":5,\"refs\":[3,4],\"rationale\":\"future\"}]}",
+    "generate": "Engineered zinc finger nucleases combine modular DNA recognition with dedicated nuclease domains for precise genome editing {{R1}}. Early studies established how C2H2 motifs read target sequences with high specificity {{R2}}. Subsequent engineering fused these modules to cleavage domains, enabling targeted double-strand breaks {{R1}}. These modular platforms now support therapeutic development and functional genomics studies {{R2}}.",
+    "verify": "{\"checks\":[{\"id\":1,\"verdict\":\"SUPPORTED\",\"confidence\":85,\"reason\":\"reference explicitly describes the claim\"},{\"id\":2,\"verdict\":\"SUPPORTED\",\"confidence\":85,\"reason\":\"reference directly matches the claim\"},{\"id\":3,\"verdict\":\"SUPPORTED\",\"confidence\":80,\"reason\":\"supported by the cited reference\"},{\"id\":4,\"verdict\":\"SUPPORTED\",\"confidence\":80,\"reason\":\"supported by the cited reference\"},{\"id\":5,\"verdict\":\"SUPPORTED\",\"confidence\":75,\"reason\":\"supported by the cited reference\"}]}",
+    "fact-check": "{\"checks\":[]}",
+    "review": "{\"scores\":{\"novelty\":8,\"significance\":8,\"clarity\":8,\"methodology\":8,\"citations\":9,\"overall\":8},\"verdict\":\"accept\",\"weaknesses\":[],\"weakness_classes\":[]}",
+    "revision": "Engineered zinc finger nucleases combine modular DNA recognition with nuclease domains for precise genome editing {{R1}}. Studies established C2H2 motif specificity {{R2}}. These platforms support therapeutic genome editing {{R1}}.",
+    "revision-section": "Engineered zinc finger nucleases combine modular DNA recognition with nuclease domains for precise genome editing {{R1}}. Studies established C2H2 motif specificity {{R2}}.",
+    "coherence-review": "{\"summary\":\"The article is coherent throughout.\",\"findings\":[]}",
+    "coherence-edit": "Engineered zinc finger nucleases combine modular DNA recognition with nuclease domains for precise genome editing {{R1}}. Studies established C2H2 motif specificity {{R2}}. These platforms support therapeutic genome editing {{R1}}.",
+    "translate": "工程化锌指核酸酶将模块化 DNA 识别与核酸酶结构域结合。",
+    "default": "Engineered Zinc Finger Nucleases: A Modular Toolkit"
+  },
+  "databases": {
+    "pubmed:zinc finger nuclease review": {
+      "items": [
+        {
+          "externalId": "PMID:10000001",
+          "title": "Zinc finger nucleases: a review of modular genome editing",
+          "authors": "Smith J, Lee K",
+          "journal": "Nature Reviews Genetics",
+          "year": "2021",
+          "url": "https://pubmed.ncbi.nlm.nih.gov/10000001/",
+          "doi": "10.1000/zfn-review",
+          "abstract": "Zinc finger nucleases combine modular DNA recognition with nuclease domains for precise genome editing. This review covers their design and applications.",
+          "source": "pubmed"
+        },
+        {
+          "externalId": "PMID:10000002",
+          "title": "DNA recognition by C2H2 zinc finger motifs",
+          "authors": "Chen R, Patel S",
+          "journal": "Nucleic Acids Research",
+          "year": "2020",
+          "url": "https://pubmed.ncbi.nlm.nih.gov/10000002/",
+          "doi": "10.1000/c2h2-recognition",
+          "abstract": "C2H2 zinc finger motifs govern target site recognition with high specificity across diverse genomic contexts.",
+          "source": "pubmed"
+        },
+        {
+          "externalId": "PMID:10000003",
+          "title": "FokI fusion strategies for targeted cleavage",
+          "authors": "Garcia M",
+          "journal": "Methods in Enzymology",
+          "year": "2019",
+          "url": "https://pubmed.ncbi.nlm.nih.gov/10000003/",
+          "doi": "10.1000/foki-fusion",
+          "abstract": "Fusion of zinc finger modules to FokI nuclease domains enables targeted double-strand breaks.",
+          "source": "pubmed"
+        },
+        {
+          "externalId": "PMID:10000004",
+          "title": "Therapeutic applications of engineered nucleases",
+          "authors": "Okafor T, Diaz L",
+          "journal": "Molecular Therapy",
+          "year": "2022",
+          "url": "https://pubmed.ncbi.nlm.nih.gov/10000004/",
+          "doi": "10.1000/therapeutic-zfn",
+          "abstract": "Engineered nuclease platforms support therapeutic genome editing across preclinical models.",
+          "source": "pubmed"
+        }
+      ]
+    },
+    "pubmed:zinc finger nuclease specificity": {
+      "items": [
+        {
+          "externalId": "PMID:10000005",
+          "title": "Specificity determinants of zinc finger binding",
+          "authors": "Ito Y",
+          "journal": "J Biol Chem",
+          "year": "2018",
+          "url": "https://pubmed.ncbi.nlm.nih.gov/10000005/",
+          "doi": "10.1000/zfn-specificity",
+          "abstract": "Determinants of zinc finger binding specificity inform rational engineering.",
+          "source": "pubmed"
+        }
+      ]
+    },
+    "rcsb:zinc finger": {
+      "items": [
+        {
+          "externalId": "PDB:1ZNF",
+          "title": "Crystal structure of a zinc finger DNA-binding domain",
+          "authors": "Pavletich N, Pabo C",
+          "journal": "Science",
+          "year": "1991",
+          "url": "https://www.rcsb.org/structure/1ZNF",
+          "doi": "10.1000/1znf",
+          "abstract": "The structure defined the DNA-binding interface of classical zinc fingers.",
+          "source": "rcsb"
+        },
+        {
+          "externalId": "PDB:2ZFN",
+          "title": "Engineered zinc finger nuclease in complex with DNA",
+          "authors": "Miller J",
+          "journal": "Structure",
+          "year": "2007",
+          "url": "https://www.rcsb.org/structure/2ZFN",
+          "doi": "10.1000/2zfn",
+          "abstract": "An engineered zinc finger nuclease bound to its target DNA sequence.",
+          "source": "rcsb"
+        }
+      ]
+    },
+    "pubmed:zinc finger nuclease discovery original": {
+      "items": [
+        {
+          "externalId": "PMID:10000099",
+          "title": "The original zinc finger nuclease discovery",
+          "authors": "Kim YG, Chandrasegaran S",
+          "journal": "PNAS",
+          "year": "1994",
+          "url": "https://pubmed.ncbi.nlm.nih.gov/10000099/",
+          "doi": "10.1000/zfn-discovery",
+          "abstract": "The first demonstration that zinc finger motifs fused to a nuclease domain direct targeted cleavage.",
+          "source": "pubmed"
+        }
+      ]
+    }
+  },
+  "webSearch": {
+    "zinc finger nuclease engineering news": [
+      {
+        "url": "https://www.nature.com/articles/zfn-news",
+        "name": "Zinc finger engineering enters clinical era",
+        "snippet": "Recent advances in zinc finger nuclease engineering reach clinical translation.",
+        "host_name": "nature.com",
+        "date": "2024-01-15"
+      },
+      {
+        "url": "https://www.science.org/content/zfn-method",
+        "name": "A modular method for nuclease design",
+        "snippet": "A modular design method streamlines nuclease engineering.",
+        "host_name": "science.org",
+        "date": "2023-11-02"
+      }
+    ],
+    "zinc finger nuclease clinical applications": [
+      {
+        "url": "https://www.nature.com/articles/zfn-clinical",
+        "name": "Clinical translation of zinc finger nucleases",
+        "snippet": "Dose escalation studies advance clinical translation.",
+        "host_name": "nature.com",
+        "date": "2024-03-20"
+      },
+      {
+        "url": "https://www.science.org/content/zfn-delivery",
+        "name": "Delivery strategies for engineered nucleases",
+        "snippet": "Delivery vectors improve editing efficiency in vivo.",
+        "host_name": "science.org",
+        "date": "2023-08-14"
+      }
+    ]
+  }
+}

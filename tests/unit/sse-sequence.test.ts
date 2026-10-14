@@ -63,7 +63,7 @@ const RECORD_ENV = process.env.SCIWRITE_RECORD_SSE ?? "";
 
 /** Scenarios in the loop. Degraded-window scenarios are added when their
  * consumer seams are re-extracted (contract-triggered discipline). */
-const SCENARIOS = ["tiny"] as const;
+const SCENARIOS = ["tiny", "gap-merge"] as const;
 
 // ---------------------------------------------------------------------------
 // Mock state (module-level so the mock closures read CURRENT values)
@@ -432,6 +432,56 @@ afterAll(async () => {
       // ignore
     }
   }
+});
+
+describe("sse scenario framework: gap-merge (gap agent round with a real merge)", () => {
+  test(
+    "gapAgent terminal: gapsFound ≥1, newRefs ≥1, done (not skipped)",
+    () => {
+      const run = runs.get("gap-merge")!;
+      const gapDone = run.frames.filter(
+        (f) => f.event === "step" && f.step === "gapAgent" && f.status === "done",
+      );
+      expect(gapDone.length).toBe(1);
+      expect(gapDone[0].gapsFound ?? 0).toBeGreaterThanOrEqual(1);
+      expect(gapDone[0].newRefs ?? 0).toBeGreaterThanOrEqual(1);
+      const gapSkipped = run.frames.filter(
+        (f) => f.event === "step" && f.step === "gapAgent" && f.status === "skipped",
+      );
+      expect(gapSkipped.length).toBe(0);
+    },
+    30_000,
+  );
+  test(
+    "complete: skillCalls include gap-design + gap-research; curated pool grew by ≥1",
+    () => {
+      const run = runs.get("gap-merge")!;
+      const complete = run.frames.find((f) => f.event === "complete")!;
+      expect(complete.stats.skillCalls["gap-design"]).toBeGreaterThanOrEqual(1);
+      expect(complete.stats.skillCalls["gap-research"] ?? 0).toBeGreaterThanOrEqual(1);
+      const tiny = runs.get("tiny")!;
+      const tinyComplete = tiny.frames.find((f) => f.event === "complete")!;
+      expect(complete.stats.curatedReferences).toBeGreaterThan(
+        tinyComplete.stats.curatedReferences,
+      );
+    },
+    30_000,
+  );
+  test(
+    "GOLDEN + terminal: hash matches the recorded manifest, complete is last",
+    () => {
+      const run = runs.get("gap-merge")!;
+      const manifestPath = join(FIXTURE_DIR, "gap-merge.manifest.json");
+      if (!existsSync(manifestPath)) {
+        expect(RECORD_ENV).not.toBe("");
+        return;
+      }
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      expect(run.hash).toBe(manifest.tokenSequenceHash);
+      expect(run.frames[run.frames.length - 1].event).toBe("complete");
+    },
+    30_000,
+  );
 });
 
 describe("sse scenario framework: tiny (happy path)", () => {
