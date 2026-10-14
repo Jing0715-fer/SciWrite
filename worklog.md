@@ -4170,3 +4170,39 @@ Stage Summary:
 - RT15 三项 backlog 全部处置：#1 web-search 干净窗口重试 DONE（共享 clean-window 提取的黄金哈希三场景字节不变证明 + 无缓存盲区 + SSE 第四场景钉死降级契约 + 风暴 saga live 深度验证——40 轮真实等待/窗口排空后探针拒绝 RT12 教训二证/诚实放弃/管线自主继续）、#3 时间线恢复徽标 DONE（事故与恢复双披露 UI；live 徽标验证受 NO-GO 限制由 SSE 断言钉死数据路径）、#2 对抗带被动滚动。
 - 恢复类机制设计规范新增实证：有界等待的"结构性放弃"形态（预算 < 风暴阶梯 TTL 时诚实放弃是设计答案而非缺陷）——RT16 #1 候选方向。
 - 遗留：7.2h 记录风暴致 E2E 完整腿 NO-GO（环境容量）；恢复徽标 live 验证与对抗带数据点滚入 RT16；生产构建/push 环境受限继续滚动。
+
+---
+Task ID: RT16 (disaster recovery + storm-resilience re-land + QA + E2E + first push)
+Agent: main (Z.ai Code orchestrator)
+Task: 第二次沙箱全重置灾后恢复；重实现 RT14/RT15 风暴韧性（含 RT16 backlog 修复设计）；QA + E2E + RT17 规划；token 就位后执行第 6 轮 push。
+
+Work Log:
+- 灾情确认：/home/z/SciWrite 全灭（RT10-RT15 代码丢失——push 6 轮 NO-GO 致无远端副本）；幸存物 = my-project 的 80KB worklog（RT2→RT15 全记录）+ iteration-state + 脚手架。GitHub main 止于 37ee9e5（RT9 完成态，169 commits）。
+- 用户本轮提供 token（Jing0715-fer 本人）→ push 第 6 轮 GO。
+- 环境恢复（RT10-DEV playbook + 新发现）：重克隆至 RT9 完成态；bun install + prisma generate + 库内 DB + 显式 DATABASE_URL；**新沙箱孵化器在命令边界收割孤儿进程**（setsid/nohup/disown 全灭——实证）——唯一生存路径 = bun spawn detached+unref（scripts/dev-daemon.ts）；SciWrite 独占 :3000；调度器远未来禁用；基线 364/364 与 RT9 恢复核对完全一致。
+- 优先级决策：先重实现风暴韧性（RT14 rescore + RT15 web-retry——每轮 E2E 都遇风暴、live 验证最深），并把 RT16 backlog 修复直接设计进去；缝 4-8 提取 + SSE 契约框架顺延 RT17（依赖序：框架先行）；verdict ledger / translate 处置被动滚动。
+- RT16 开发（6 文件 + 3 新基建脚本）：
+  (1) rate-limiter 加 getAbortInfo()（复用 isAborted 水合/过期语义，纯增量 +26 行——首轮编辑事故性破坏 isAborted 原体，git diff + 26/26 测试确认已恢复原样）。
+  (2) src/lib/storm-recovery.ts（新）：waitForCleanWindow——TTL 感知预算 budget=clamp(TTL+margin, poll, hardMax)（backlog #1 修复：30min 阶梯步从结构性注定放弃变为可等 31.5min；>35min hardMax 立即诚实披露 structurally-doomed 零等待剧场）；同风暴单飞去重（backlog #2 修复：abort epoch 键控 in-flight map，第二等待者 join 首者 promise，一风暴一等待）；onRound 逐轮披露（waitedMs/windowCount/TTL remaining）；shouldAbort 客户端断连钩子；测试接缝（状态读取器替换 + 假时钟）。
+  (3) gather-stage：web 查询 per-query 体提取 executeWebQuery（主循环与重试轮字节同语义）；rate-limit 退化的查询收集；干净窗口等待→真探针（RT12 教训：probe 即首个重试，健康则顺带入结果）→剩余查询单轮重试；全部失败路径诚实披露（"N query(ies) not retried — ...; database-gathered sources are unaffected"）；stats.stormRecovery 记账。
+  (4) citation-planner scoreSources：风暴退化批检测（仅 chat 层失败——parse 垃圾回退会缓存重放，重跑无意义）；runBatch(b, rescoreRound) 双轮共享；重批评分轮（首个重试即探针——withRateLimit+withAbortWaitout 秒拒仍热账户）；批计数跨轮修正（自审抓到两个首稿 bug：llmBatches 双计 + 迭代中数组变异）。
+  (5) route：stats.stormRecovery 初始化 + scoreSources 记录器 + complete-event payload。
+  (6) 时间线恢复徽标（run-timeline-dialog + i18n en/zh 5 keys）：HeartPulse 标签 + emerald recovered / slate gave-up 徽标，tooltip 带详情；空集零噪音。
+  (7) 基建：dev-daemon/e2e-daemon/armed-e2e-runner（reaper-proof 启动器家族 + RT15 armed runner 模式重落地：60 探针 × 180s，首净探针即开火 E2E；首版 writeSync 修复）。
+- QA：378/378 单测（+14：无风暴快路径/结构性短跳/TTL 超默认扩展/短风暴 TTL 穿越/预算耗尽/窗口排空/caller-abort/onRound 披露/单飞 join/新纪元/结局短语/getAbortInfo live 3 项）、26/26 集成、tsc 4 基线误差 0 新增、lint 0 err/187 warn 基线持平。
+- E2E 第一发（05:32Z）被 pre-flight 守卫正确拒绝（8-token 探针 429 → abort → 503 "pipeline NOT started…nothing was consumed"——RT12 5e0dd09 行为 live 复现，零配额浪费）；armed runner 部署（05:35Z，pid 3839）持续探针中。
+- 浏览器验证（agent-browser，E2E 前置）：主页 0 console/0 page 错误；503 项目局部态优雅渲染（0 段落/0 引用/Start writing + Timeline 空事件正确）；390px scrollW=innerW 无横向溢出；footer bottom=844=viewportH 粘底；3 截图（rt16-home/timeline-failed-run/mobile-390）；验证毕关浏览器释放内存。
+- **push 第 6 轮 GO 成功：37ee9e5..2f244ef（RT16 dev commit 上远端，六轮 NO-GO 终结）**；远端 head 核对 2f244ef。
+- worklog 灾备归档：RT10→RT15 全部条目 + 归档说明横幅（说明代码已灭、条目作为规格与记录）并入 repo worklog.md 随 push 上远端——日志成为唯一跨重置幸存物的教训固化。
+
+Work Log (续，终局):
+- armed runner round-1（05:35Z→08:32Z）：60 探针全 429（风暴 ≥3h，史上第二深；RT15 最深 7.2h）——探针全部 fail-fast、零配额浪费；预算耗尽诚实放弃（"storm never cleared after 60 probes — honest give-up" + 非零 exit）。round-2 重臂（08:32Z→11:32Z 覆盖，pid 7438）继续自主待窗。
+- E2E 判定：完整腿环境 NO-GO（provider 容量，RT15 同类终局）；特性验证五腿站立——14/14 单测（假时钟全套语义）、恢复徽标 UI 数据路径 LIVE 验证（合成 TaskRun 注入 stats.stormRecovery → 浏览器渲染 emerald "gather-web: 3/3 recovered" + slate "score: provider still throttled" + 等待事件序列全渲染 + 0 console/page 错误 + 截图 rt16-recovery-badge-expanded.png——RT15 没能拿到的 live 徽标验证，本轮以同一数据路径达成）、pre-flight 守卫 LIVE（秒拒 + 零消耗，RT12 5e0dd09 行为复现）、armed-runner 诚实性 LIVE（60/60 fail-fast + 放弃披露）、浏览器应用健康 LIVE（主页/局部态/时间线/390px 无溢出/页脚粘底 + 3 截图）。
+- 遗留（滚入 RT17 #4）：等待/重试钩子本体无 in-pipeline live 数据点（守卫正确阻止了对死供应商的启动——设计的取舍：零浪费 vs 无观测）；单飞去重无 live 数据点。
+
+Stage Summary:
+- RT16 闭环：灾后恢复（37ee9e5 重克隆 + 364/364 基线核对）+ 风暴韧性重落地（storm-recovery.ts TTL 感知预算 + 单飞去重 + gather web-retry + score rescore + 恢复徽标 + 14 单测）+ QA 全绿（378/378/26/26/tsc 4 基线/lint 0-187 基线）+ E2E 环境判定（NO-GO + 五腿验证）+ **push 第 6 轮 GO 成功（37ee9e5..2f244ef）——六轮 NO-GO 终结，RT16 dev 已上远端**。
+- RT16 backlog 处置：#1 TTL 感知预算 DONE（30min 阶梯步从结构性注定放弃变为可等；>35min 硬顶立即诚实披露）、#2 同风暴单飞去重 DONE（一风暴一等待）、#3 对抗带被动（E2E NO-GO 无数据）、#4 生产构建第 7 轮环境 NO-GO 滚动、#5 push GO。
+- 运维新知识固化：本沙箱孵化器在命令边界收割孤儿进程（setsid/nohup/disjoin 全灭）——bun spawn detached+unref 是唯一生存路径（dev-daemon/e2e-daemon/armed-e2e-runner 三件套）；worklog 灾备归档（RT10-15 条目 + 归档横幅随 repo push 上远端）。
+- RT17 backlog 定稿（IMPROVEMENT_PLAN-RT16 §5）：#1 SSE 事件序列回归框架先行（缝手术安全网）→ #2 缝 4a/5/4b/6/8 重提取 → #3 RT10 伴随项（[1 3] 标记展开/对抗路由统一/revise 无状态）→ #4 风暴窗口 armed E2E（钩子 live 数据点 + 去重 live）→ #5-8 对抗带/verdict ledger/生产构建/每轮必推纪律。
+
