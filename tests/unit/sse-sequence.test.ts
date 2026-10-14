@@ -63,7 +63,7 @@ const RECORD_ENV = process.env.SCIWRITE_RECORD_SSE ?? "";
 
 /** Scenarios in the loop. Degraded-window scenarios are added when their
  * consumer seams are re-extracted (contract-triggered discipline). */
-const SCENARIOS = ["tiny", "gap-merge"] as const;
+const SCENARIOS = ["tiny", "gap-merge", "web-retry-window", "rescore-window"] as const;
 
 // ---------------------------------------------------------------------------
 // Mock state (module-level so the mock closures read CURRENT values)
@@ -472,6 +472,95 @@ describe("sse scenario framework: gap-merge (gap agent round with a real merge)"
     () => {
       const run = runs.get("gap-merge")!;
       const manifestPath = join(FIXTURE_DIR, "gap-merge.manifest.json");
+      if (!existsSync(manifestPath)) {
+        expect(RECORD_ENV).not.toBe("");
+        return;
+      }
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      expect(run.hash).toBe(manifest.tokenSequenceHash);
+      expect(run.frames[run.frames.length - 1].event).toBe("complete");
+    },
+    30_000,
+  );
+});
+
+describe("sse scenario framework: web-retry-window (degraded web-search heal)", () => {
+  test(
+    "degraded web query disclosed, probe-as-first-retry heals it, stormRecovery entry records the recovery",
+    () => {
+      const run = runs.get("web-retry-window")!;
+      // Event sequence rides the existing gather:progress slots (no new
+      // event types — the golden-hash discipline for degraded paths).
+      const msgs = run.frames
+        .filter((f) => f.event === "step" && f.step === "gather" && f.status === "progress")
+        .map((f) => String(f.message || ""));
+      expect(msgs.some((m) => /degraded: rate-limit/.test(m))).toBe(true);
+      expect(msgs.some((m) => /query\(ies\) degraded/.test(m))).toBe(true);
+      expect(msgs.some((m) => /recovery probe succeeded/i.test(m))).toBe(true);
+      expect(msgs.some((m) => /rate-limited web search\(es\) recovered/.test(m))).toBe(true);
+      // The incident + recovery land in complete.stats.stormRecovery (the
+      // RT16 entry shape — timeline recovery badges read exactly this).
+      const complete = run.frames.find((f) => f.event === "complete")!;
+      expect(Array.isArray(complete.stats.stormRecovery)).toBe(true);
+      expect(complete.stats.stormRecovery.length).toBeGreaterThanOrEqual(1);
+      const entry = complete.stats.stormRecovery[0];
+      expect(entry.stage).toContain("gather");
+      expect(["recovered", "clean"]).toContain(entry.outcome);
+      expect(entry.retriedCount ?? 0).toBeGreaterThanOrEqual(1);
+      expect(entry.recoveredCount ?? 0).toBeGreaterThanOrEqual(1);
+    },
+    30_000,
+  );
+  test(
+    "GOLDEN + terminal: hash matches the recorded manifest, complete last",
+    () => {
+      const run = runs.get("web-retry-window")!;
+      const manifestPath = join(FIXTURE_DIR, "web-retry-window.manifest.json");
+      if (!existsSync(manifestPath)) {
+        expect(RECORD_ENV).not.toBe("");
+        return;
+      }
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      expect(run.hash).toBe(manifest.tokenSequenceHash);
+      expect(run.frames[run.frames.length - 1].event).toBe("complete");
+    },
+    30_000,
+  );
+});
+
+describe("sse scenario framework: rescore-window (degraded score heal)", () => {
+  test(
+    "score:done carries batch counts; skillDegraded keeps the incident record",
+    () => {
+      const run = runs.get("rescore-window")!;
+      const scoreDone = run.frames.find(
+        (f) => f.event === "step" && f.step === "score" && f.status === "done",
+      );
+      expect(scoreDone).toBeDefined();
+      // RT16 cross-round count correction: after a successful rescore the
+      // healed batch counts as LLM (llmBatches ≥1, fallbackBatches back to
+      // 0) — the INCIDENT stays disclosed via skillDegraded + the event
+      // sequence below (dual disclosure: incident AND recovery).
+      expect(scoreDone!.llmBatches ?? 0).toBeGreaterThanOrEqual(1);
+      const scoreMsgs = run.frames
+        .filter((f) => f.event === "step" && f.step === "score" && f.status === "progress")
+        .map((f) => String(f.message || ""));
+      expect(scoreMsgs.some((m) => /mechanical fallback/.test(m))).toBe(true);
+      expect(scoreMsgs.some((m) => /Rescored \d+\/\d+ storm-degraded batch/.test(m))).toBe(true);
+      const complete = run.frames.find((f) => f.event === "complete")!;
+      expect((complete.stats.skillDegraded ?? {}).score ?? 0).toBeGreaterThanOrEqual(1);
+      expect(complete.stats.skillCalls.score ?? 0).toBeGreaterThanOrEqual(2);
+      const entry = (complete.stats.stormRecovery ?? [])[0];
+      expect(entry?.stage).toBe("score");
+      expect(entry?.outcome).toBe("recovered");
+    },
+    30_000,
+  );
+  test(
+    "GOLDEN + terminal: hash matches the recorded manifest, complete last",
+    () => {
+      const run = runs.get("rescore-window")!;
+      const manifestPath = join(FIXTURE_DIR, "rescore-window.manifest.json");
       if (!existsSync(manifestPath)) {
         expect(RECORD_ENV).not.toBe("");
         return;
