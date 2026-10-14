@@ -46,6 +46,139 @@ const MAX_DB_QUERIES = Number(arg("maxDbQueries", "12"));
 // stage (EN sections → per-section translation → bilingual article).
 const LANGUAGE = arg("language", "en");
 const SKIP_ADVERSARIAL = args.includes("--skip-adversarial");
+// RT13 (re-landed RT17): the verdict ledger turns E2E acceptance from
+// eyeballing into a FAIL-on-regression gate. Custom topics/word counts
+// move the baselines — the ledger auto-skips unless forced.
+const FORCE_LEDGER = args.includes("--force-ledger");
+const NO_LEDGER = args.includes("--no-ledger");
+const DEFAULT_TOPIC =
+  "CRISPR-Cas9 genome editing: molecular mechanisms, off-target effects, and clinical applications";
+const LEDGER_APPLIES =
+  !NO_LEDGER &&
+  (FORCE_LEDGER ||
+    (TOPIC === DEFAULT_TOPIC && TARGET_WORDS === 1500 && LANGUAGE === "en" && !SKIP_ADVERSARIAL));
+
+// ----- verdict ledger (RT13/RT14, re-landed) ---------------------------------
+// Six pipeline checks (ranges anchored to the RT10-RT13 clean-window E2E
+// datapoints) + four adversarial-leg checks (RT14 band, calibrated on the
+// four-datapoint sequence 2/2/0/3 for unsupported, 0-2 for removed —
+// removed is the real quality signal; a stray unsupported flag is not).
+interface LedgerCheck {
+  name: string;
+  desc: string;
+  value: (r: any) => number | null | undefined;
+  range: [number, number];
+  skipWhen?: (r: any) => boolean;
+}
+
+const VERDICT_LEDGER: LedgerCheck[] = [
+  {
+    name: "citationsChecked",
+    desc: "adversarially checked citations in range 30-40 (RT10/RT11/RT13 baselines)",
+    value: (r) => r?.pipeline?.complete?.accuracy?.citationsChecked,
+    range: [30, 40],
+  },
+  {
+    name: "auditOrphans",
+    desc: "final mechanical audit orphan refs <= 0",
+    value: (r) => r?.pipeline?.complete?.accuracy?.auditOrphans,
+    range: [-Infinity, 0],
+  },
+  {
+    name: "autoRepairRevisions",
+    desc: "auto-repair applied revisions <= 2 (REPAIR_MAX_REVISIONS bound)",
+    value: (r) => r?.pipeline?.complete?.accuracy?.autoRepairRevisions,
+    range: [0, 2],
+  },
+  {
+    name: "autoRepairGuardRejections",
+    desc: "revision-guard rejections <= 0 (guards are a smell, not a feature)",
+    value: (r) => r?.pipeline?.complete?.accuracy?.autoRepairGuardRejections,
+    range: [0, 0],
+  },
+  {
+    name: "articleWordCount",
+    desc: "composed article body >= 900 words (1500 target, -40% floor)",
+    value: (r) => r?.article?.wordCount,
+    range: [900, Infinity],
+  },
+  {
+    name: "uniqueRefNumbers",
+    desc: "unique cited reference numbers in 1-40",
+    value: (r) => r?.article?.uniqueRefNumbers,
+    range: [1, 40],
+  },
+  {
+    name: "advSupported",
+    desc: "adversarial leg: supported citations >= 15",
+    value: (r) => advSummary(r)?.supported,
+    range: [15, Infinity],
+    skipWhen: (r) => !advSummary(r) || !!r?.adversarial?.error,
+  },
+  {
+    name: "advPartial",
+    desc: "adversarial leg: partial verdicts <= 5",
+    value: (r) => advSummary(r)?.partial,
+    range: [0, 5],
+    skipWhen: (r) => !advSummary(r) || !!r?.adversarial?.error,
+  },
+  {
+    name: "advUnsupported",
+    desc: "adversarial leg: unsupported verdicts <= 3 (RT14 band)",
+    value: (r) => advSummary(r)?.unsupported,
+    range: [0, 3],
+    skipWhen: (r) => !advSummary(r) || !!r?.adversarial?.error,
+  },
+  {
+    name: "advRemoved",
+    desc: "adversarial leg: removed citations <= 2",
+    value: (r) => advSummary(r)?.removed,
+    range: [0, 2],
+    skipWhen: (r) => !advSummary(r) || !!r?.adversarial?.error,
+  },
+];
+
+/** RT14 shape fix: the adversarial POST returns the report FLAT (payload
+ * itself or payload.report) — the legacy reportJson.summary path silently
+ * read {} and skipped all four checks. */
+function advSummary(r: any): any {
+  const p = r?.adversarial?.payload;
+  const rep = p?.report ?? p;
+  const s = rep?.summary ?? rep;
+  return s && typeof s === "object" ? s : null;
+}
+
+function evaluateVerdictLedger(r: any): any {
+  if (r?.pipeline?.error) {
+    return {
+      applies: true,
+      outcome: "SKIPPED",
+      reason: `pipeline error: ${String(r.pipeline.error).slice(0, 120)} (regressions cannot masquerade as storm refusals)`,
+      checks: [],
+    };
+  }
+  if (!r?.pipeline?.complete) {
+    return {
+      applies: true,
+      outcome: "FAIL",
+      reason: "pipeline reported no error but the complete payload is missing",
+      checks: [],
+    };
+  }
+  const checks: any[] = [];
+  let failed = 0;
+  for (const c of VERDICT_LEDGER) {
+    if (c.skipWhen?.(r)) {
+      checks.push({ name: c.name, skipped: true, desc: c.desc });
+      continue;
+    }
+    const v = c.value(r);
+    const ok = typeof v === "number" && v >= c.range[0] && v <= c.range[1];
+    if (!ok) failed++;
+    checks.push({ name: c.name, value: v ?? null, ok, range: c.range, desc: c.desc });
+  }
+  return { applies: true, outcome: failed > 0 ? "FAIL" : "PASS", failed, checks };
+}
 
 // ----- helpers ---------------------------------------------------------------
 async function jfetch<T>(url: string, init?: RequestInit): Promise<T> {
@@ -197,6 +330,10 @@ async function main() {
                 checked: data.checked,
                 removed: data.removed,
                 flagged: data.flagged,
+                // RT14: score-batch disclosure keys ride score:done.
+                llmBatches: data.llmBatches,
+                fallbackBatches: data.fallbackBatches,
+                rescoredBatches: data.rescoredBatches,
               },
             });
             if (data.status === "done") delete stageStart[stage];
@@ -345,6 +482,22 @@ async function main() {
 
   report.meta.finishedAt = new Date().toISOString();
 
+  // RT13/RT14 verdict ledger (re-landed): attach before the report is
+  // written; a FAIL exits non-zero so the wait-storm wrapper treats it as
+  // a hard regression (it can never be mistaken for a storm refusal — a
+  // refused launch lands in pipeline.error, which the ledger SKIPS).
+  if (LEDGER_APPLIES) {
+    report.verdict = evaluateVerdictLedger(report);
+    const v = report.verdict;
+    console.error(`[verdict] ${v.outcome}${v.reason ? ` — ${v.reason}` : v.failed != null ? ` — ${v.failed} check(s) failed` : ""}`);
+    for (const c of v.checks ?? []) {
+      if (c.skipped) console.error(`    - ${c.name}: SKIPPED`);
+      else console.error(`    - ${c.name}: ${c.value} in [${c.range ? c.range.join(", ") : ""}] ${c.ok ? "ok" : "FAIL"}`);
+    }
+  } else {
+    report.verdict = { applies: false, reason: NO_LEDGER ? "--no-ledger" : "custom topic/words/language — baselines do not apply (use --force-ledger)" };
+  }
+
   // 5. Dump JSON + markdown summary --------------------------------------
   // round-RT3 (R8/O2): the report path is now pinned RELATIVE TO THIS
   // SCRIPT (…/SciWrite/tool-results/), not the CWD it was launched from —
@@ -360,6 +513,10 @@ async function main() {
 
   // stdout: compact JSON for the orchestrator
   console.log(JSON.stringify(report, null, 2));
+
+  if (report.verdict?.outcome === "FAIL") {
+    process.exit(1);
+  }
 }
 
 main().catch((e) => {
