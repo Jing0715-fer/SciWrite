@@ -38,6 +38,11 @@ import {
 import { queryDatabase } from "@/lib/databases";
 import { webSearchDetailed } from "@/lib/ai";
 import { STEP } from "@/lib/skill/steps";
+import {
+  describeWaitOutcome,
+  waitForCleanWindow,
+  type StormRecoveryEntry,
+} from "@/lib/storm-recovery";
 
 export interface GatherStageCtx {
   projectId: string;
@@ -213,64 +218,82 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
   // return immediately instead of no-op'ing.
   let providerUnavailable = false;
   let providerUnavailableAnnounced = false;
+  // RT16 (storm recovery): queries that degraded specifically due to
+  // RATE-LIMITING are retry candidates — parse errors / timeouts / a
+  // provider without hosted search are not (retrying them cannot heal).
+  const rateLimitedQueries: string[] = [];
+  /** Shared per-query body — used by BOTH the main web loop and the RT16
+   *  clean-window retry round so the mapping/event/tally semantics stay
+   *  byte-identical between the two passes. Returns the query's outcome
+   *  reason for retry classification. */
+  const executeWebQuery = async (
+    q: string,
+    wi: number,
+    total: number,
+  ): Promise<string | undefined> => {
+    if (providerUnavailable) return "provider-unavailable";
+    try {
+      const outcome = await webSearchDetailed(q, 10);
+      const searchResults = outcome.items;
+      if (outcome.reason) {
+        searchFailTally[outcome.reason] = (searchFailTally[outcome.reason] || 0) + 1;
+        if (outcome.reason === "provider-unavailable") {
+          providerUnavailable = true;
+          if (!providerUnavailableAnnounced) {
+            providerUnavailableAnnounced = true;
+            send("step", {
+              step: STEP.gather,
+              status: "progress",
+              message: `Web search unavailable — the selected provider has no hosted search tool. Skipping remaining web-search query(ies); gathering continues on database queries.`,
+            });
+            log(`gather: web search disabled for the selected provider — skipping remaining queries`);
+          }
+          return outcome.reason;
+        }
+      }
+      for (const item of searchResults) {
+        webItems.push({
+          source: "web",
+          externalId: item.url,
+          title: item.name || item.url,
+          // round-35: the search host is NOT an author — storing it as
+          // one put "www.nature.com" in authors for 40 rows of real
+          // project data. extra.host keeps the provenance display.
+          authors: undefined,
+          // round-35: dates like "Jul 15, 2024" sliced to "Jul " —
+          // extract a real 4-digit year or leave empty for the
+          // knowledge pass to fill.
+          year: item.date?.match(/\b(19|20)\d{2}\b/)?.[0] || undefined,
+          url: item.url,
+          abstract: item.snippet,
+          extra: { host: item.host_name, rank: item.rank },
+          queryUsed: "web_search",
+          gatherMethod: "web",
+        });
+      }
+      const failNote = outcome.reason
+        ? ` (degraded: ${outcome.reason}${searchFailTally[outcome.reason] > 1 ? ` ×${searchFailTally[outcome.reason]}` : ""})`
+        : "";
+      send("step", {
+        step: STEP.gather,
+        status: "progress",
+        message: `Web search ${wi + 1}/${total}: "${q.slice(0, 50)}" → ${searchResults.length} results${failNote}`,
+      });
+      return outcome.reason;
+    } catch (webErr: any) {
+      // FIX (silent-catch telemetry): failed web-search queries were
+      // previously invisible, making "few sources gathered" bugs
+      // impossible to diagnose from the logs.
+      log(`gather: web search "${q.slice(0, 40)}" failed: ${String(webErr?.message ?? webErr).slice(0, 100)}`);
+      return "error";
+    }
+  };
   await runWithConcurrency(
     webSearchQueries,
     3,
     async (q: string, wi: number) => {
-      if (providerUnavailable) return;
-      try {
-        const outcome = await webSearchDetailed(q, 10);
-        const searchResults = outcome.items;
-        if (outcome.reason) {
-          searchFailTally[outcome.reason] = (searchFailTally[outcome.reason] || 0) + 1;
-          if (outcome.reason === "provider-unavailable") {
-            providerUnavailable = true;
-            if (!providerUnavailableAnnounced) {
-              providerUnavailableAnnounced = true;
-              send("step", {
-                step: STEP.gather,
-                status: "progress",
-                message: `Web search unavailable — the selected provider has no hosted search tool. Skipping remaining web-search query(ies); gathering continues on database queries.`,
-              });
-              log(`gather: web search disabled for the selected provider — skipping remaining queries`);
-            }
-            return;
-          }
-        }
-        for (const item of searchResults) {
-          webItems.push({
-            source: "web",
-            externalId: item.url,
-            title: item.name || item.url,
-            // round-35: the search host is NOT an author — storing it as
-            // one put "www.nature.com" in authors for 40 rows of real
-            // project data. extra.host keeps the provenance display.
-            authors: undefined,
-            // round-35: dates like "Jul 15, 2024" sliced to "Jul " —
-            // extract a real 4-digit year or leave empty for the
-            // knowledge pass to fill.
-            year: item.date?.match(/\b(19|20)\d{2}\b/)?.[0] || undefined,
-            url: item.url,
-            abstract: item.snippet,
-            extra: { host: item.host_name, rank: item.rank },
-            queryUsed: "web_search",
-            gatherMethod: "web",
-          });
-        }
-        const failNote = outcome.reason
-          ? ` (degraded: ${outcome.reason}${searchFailTally[outcome.reason] > 1 ? ` ×${searchFailTally[outcome.reason]}` : ""})`
-          : "";
-        send("step", {
-          step: STEP.gather,
-          status: "progress",
-          message: `Web search ${wi + 1}/${webSearchQueries.length}: "${q.slice(0, 50)}" → ${searchResults.length} results${failNote}`,
-        });
-      } catch (webErr: any) {
-        // FIX (silent-catch telemetry): failed web-search queries were
-        // previously invisible, making "few sources gathered" bugs
-        // impossible to diagnose from the logs.
-        log(`gather: web search "${q.slice(0, 40)}" failed: ${String(webErr?.message ?? webErr).slice(0, 100)}`);
-      }
+      const reason = await executeWebQuery(q, wi, webSearchQueries.length);
+      if (reason === "rate-limit") rateLimitedQueries.push(q);
     },
   );
   const failTotal = Object.values(searchFailTally).reduce((a, b) => a + b, 0);
@@ -282,6 +305,141 @@ Use lowercase database names: pubmed, uniprot, rcsb, ncbi, blast. Output JSON on
       message: `Web search phase: ${failTotal}/${webSearchQueries.length} query(ies) degraded (${breakdown}) — database-gathered sources are unaffected.`,
     });
     log(`gather: web search degraded tally — ${breakdown}`);
+  }
+
+  // ============ STEP 1.1.5 (RT16): rate-limited web-search clean-window retry ============
+  // A rate-limited web search is DEGRADED, not lost: the account storm
+  // that refused the queries auto-expires (rate-limiter abort TTL), and a
+  // bounded wait + one real probe + a single retry round can bring the
+  // queries' results in after all (live-proven pattern from the RT14/15
+  // E2E storms; re-landed here with the RT16 TTL-aware budget + probe
+  // discipline). All failure modes stay honest — the pipeline ALWAYS
+  // continues on database-gathered sources.
+  if (rateLimitedQueries.length > 0) {
+    const recoveryStats: StormRecoveryEntry[] = (ctx.stats.stormRecovery ??= []);
+    const wait = await waitForCleanWindow({
+      label: "gather-web-retry",
+      shouldAbort: ctx.isClientDisconnected,
+      onRound: (r) =>
+        send("step", {
+          step: STEP.gather,
+          status: "progress",
+          message:
+            `Waiting out the rate-limit storm before retrying ${rateLimitedQueries.length} degraded web search(es) — ` +
+            `round ${r.round}, ${Math.round(r.waitedMs / 60000)} min elapsed ` +
+            `(recent calls: ${r.windowCount}` +
+            (r.abortTtlRemainingMs != null
+              ? `, cooldown ~${Math.max(1, Math.ceil(r.abortTtlRemainingMs / 60000))} min left`
+              : "") +
+            ")",
+        }),
+    });
+    log(
+      `gather: storm recovery wait for ${rateLimitedQueries.length} web query(ies) — outcome=${wait.outcome} rounds=${wait.rounds} waitedMs=${wait.waitedMs}`,
+    );
+
+    if (!wait.clean) {
+      // Honest give-up — never a silent drop, never a broken pipeline.
+      const why = describeWaitOutcome(wait);
+      const outcome: StormRecoveryEntry["outcome"] =
+        wait.outcome === "structurally-doomed" ? "structurally-doomed" : "gave-up";
+      const msg =
+        `${rateLimitedQueries.length} web search query(ies) not retried — ${why}; ` +
+        `database-gathered sources are unaffected.`;
+      send("step", { step: STEP.gather, status: "progress", message: msg });
+      log(`gather: ${msg}`);
+      recoveryStats.push({
+        stage: "gather-web",
+        outcome,
+        rounds: wait.rounds,
+        waitedMs: wait.waitedMs,
+        retriedCount: 0,
+        recoveredCount: 0,
+        joinedSharedWait: wait.joinedSharedWait,
+        detail: why,
+      });
+    } else {
+      // RT12 lesson (twice-proven live): the in-process limiter reading
+      // "clean" says NOTHING about the account — probe with a REAL query
+      // before spending the retry pool. The probe doubles as the first
+      // retry: a healthy probe's results are ingested like any other.
+      const probeQuery = rateLimitedQueries[0];
+      const probe = await webSearchDetailed(probeQuery, 10);
+      if (probe.reason === "rate-limit") {
+        const msg =
+          `${rateLimitedQueries.length} web search query(ies) not retried — provider still throttled after the recovery wait (probe refused); ` +
+          `database-gathered sources are unaffected.`;
+        send("step", { step: STEP.gather, status: "progress", message: msg });
+        log(`gather: ${msg}`);
+        recoveryStats.push({
+          stage: "gather-web",
+          outcome: "probe-refused",
+          rounds: wait.rounds,
+          waitedMs: wait.waitedMs,
+          retriedCount: 1,
+          recoveredCount: 0,
+          joinedSharedWait: wait.joinedSharedWait,
+          detail: "probe refused after clean wait (RT12 lesson: account still throttled)",
+        });
+      } else {
+        // Healthy probe: ingest its results (when present), then retry the
+        // REMAINING rate-limited queries once with the same pool/semantics.
+        let recoveredCount = probe.items.length > 0 && !probe.reason ? 1 : 0;
+        let retriedCount = 1;
+        for (const item of probe.items) {
+          webItems.push({
+            source: "web",
+            externalId: item.url,
+            title: item.name || item.url,
+            authors: undefined,
+            year: item.date?.match(/\b(19|20)\d{2}\b/)?.[0] || undefined,
+            url: item.url,
+            abstract: item.snippet,
+            extra: { host: item.host_name, rank: item.rank },
+            queryUsed: "web_search",
+            gatherMethod: "web",
+          });
+        }
+        const remaining = rateLimitedQueries.slice(1);
+        let probeFailNote = probe.reason ? ` (probe degraded: ${probe.reason})` : " (probe healthy)";
+        send("step", {
+          step: STEP.gather,
+          status: "progress",
+          message:
+            `Recovery probe succeeded — retrying ${remaining.length} rate-limited web search(es)` +
+            `${probeFailNote}...`,
+        });
+        if (remaining.length > 0) {
+          await runWithConcurrency(remaining, 3, async (q: string, i: number) => {
+            const reason = await executeWebQuery(q, i, remaining.length);
+            retriedCount++;
+            if (reason === "rate-limit") {
+              // Still throttled — count as not-retried-honestly (the tally
+              // already disclosed it; no second wait round by design).
+              log(`gather: retry of "${q.slice(0, 40)}" refused again — keeping it degraded`);
+            } else {
+              recoveredCount++;
+            }
+          });
+        }
+        const msg =
+          `Storm recovery: ${recoveredCount}/${rateLimitedQueries.length} rate-limited web search(es) recovered after ` +
+          `${Math.round(wait.waitedMs / 60000)} min of waiting` +
+          `${wait.joinedSharedWait ? " (shared storm wait)" : ""}.`;
+        send("step", { step: STEP.gather, status: "progress", message: msg });
+        log(`gather: ${msg}`);
+        recoveryStats.push({
+          stage: "gather-web",
+          outcome: "recovered",
+          rounds: wait.rounds,
+          waitedMs: wait.waitedMs,
+          retriedCount,
+          recoveredCount,
+          joinedSharedWait: wait.joinedSharedWait,
+          detail: `clean wait (${wait.rounds} rounds) + live probe + single retry round`,
+        });
+      }
+    }
   }
 
   // Dedup + save

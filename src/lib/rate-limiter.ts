@@ -283,6 +283,32 @@ export function isAborted(): boolean {
   return true;
 }
 
+/** RT16 (storm-recovery support): read the LIVE abort state — reason, set
+ *  time, TTL, and ladder position — so recovery waiters can compute
+ *  TTL-aware budgets instead of guessing. Mirrors isAborted()'s hydration
+ *  + auto-expiry semantics exactly: null when no abort is active. */
+export function getAbortInfo(): RateAbortInfo | null {
+  if (!isAborted()) return null;
+  // isAborted() true ⇒ abortInfo is non-null here.
+  return {
+    reason: abortInfo!.reason,
+    at: abortInfo!.at,
+    ttl: abortInfo!.ttl,
+    consecutiveStorms,
+  };
+}
+
+export interface RateAbortInfo {
+  /** epoch ms when the abort was set */
+  at: number;
+  /** ttl ms — abort auto-expires after at + ttl */
+  ttl: number;
+  /** escalating-ladder consecutive-storm count */
+  consecutiveStorms: number;
+  /** short reason string (disclosure-grade, slice as needed) */
+  reason: string;
+}
+
 /** Force-clear the abort flag (escape hatch; stale aborts also self-expire).
  *  RT4: also resets the storm ladder and removes the persisted marker —
  *  a manual clear means "start over" in every sense. */

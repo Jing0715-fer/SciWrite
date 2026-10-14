@@ -501,6 +501,10 @@ export async function POST(req: NextRequest) {
         gapAgent: null as { gaps: number; queries: number; newRefs: number } | null,
         // round-cs-2: coherence polish telemetry (STEP 8.6)
         coherencePolish: null as { findings: number; revisedSections: number; triggered: boolean } | null,
+        // RT16: storm-recovery telemetry — every bounded recovery wait
+        // (gather web-retry / score rescore) records its outcome here for
+        // the timeline's recovery badge (incident AND recovery disclosed).
+        stormRecovery: [] as import("@/lib/storm-recovery").StormRecoveryEntry[],
       };
 
       // Hoisted for the catch block's failure-recovery logic (try-block
@@ -1071,6 +1075,8 @@ export async function POST(req: NextRequest) {
           {
             maxTokens,
             onProgress: (m) => send("step", { step: STEP.score, status: "progress", message: m }),
+            // RT16: storm-recovery stats recorder (timeline recovery badge).
+            onStormRecovery: (entry) => stats.stormRecovery.push(entry),
           }
         );
         const allScores = scoring.scores;
@@ -4497,6 +4503,9 @@ ${cleanEn}`;
             // to a fully clean one in the final stats block.
             skillDegraded: getSkillDegradedCounts(),
             skillCalls: getSkillStats().calls,
+            // RT16: storm-recovery waits (gather web-retry / score rescore) —
+            // incident + recovery disclosed in the timeline's recovery badge.
+            stormRecovery: stats.stormRecovery,
             // RT9: cache-hit totals per skill (the collector always had
             // them; they only ever reached the console) + assembled-prompt
             // cost per taskType (chars — the 28K budget unit), so the next

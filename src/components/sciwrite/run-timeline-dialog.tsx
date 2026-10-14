@@ -27,6 +27,7 @@ import {
   Cpu,
   Database,
   TriangleAlert,
+  HeartPulse,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -486,6 +487,62 @@ function RunCard({
                     className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400"
                   >
                     {skill}×{n}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* RT16 (storm-recovery disclosure): bounded recovery waits
+              (gather web-retry / score rescore) ride the complete-event
+              stats block as `stormRecovery`. Incident AND recovery are both
+              visible — recovered waits render emerald with recovered
+              counts; gave-up / probe-refused / structurally-doomed waits
+              render slate with the honest outcome. Only non-empty sets
+              render (a storm-free run adds zero noise). */}
+          {(() => {
+            type StormWait = {
+              stage: string;
+              outcome: string;
+              rounds: number;
+              waitedMs: number;
+              retriedCount: number;
+              recoveredCount: number;
+              joinedSharedWait: boolean;
+              detail?: string;
+            };
+            const waits = (stats.stormRecovery ?? []) as StormWait[];
+            if (!Array.isArray(waits) || waits.length === 0) return null;
+            const recovered = waits.filter((w) => w.outcome === "recovered");
+            const notRecovered = waits.filter((w) => w.outcome !== "recovered");
+            const outcomeLabel = (o: string) =>
+              o === "probe-refused"
+                ? t("timeline.stormProbeRefused")
+                : o === "structurally-doomed"
+                  ? t("timeline.stormDoomed")
+                  : t("timeline.stormGaveUp");
+            return (
+              <div className="flex items-center gap-2 flex-wrap mb-3">
+                <span className="eyebrow inline-flex items-center gap-1">
+                  <HeartPulse className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                  {t("timeline.stormRecovery")}
+                </span>
+                {recovered.map((w, i) => (
+                  <span
+                    key={`sr-${i}`}
+                    title={`${w.detail ?? ""}${w.joinedSharedWait ? " (shared storm wait)" : ""}`}
+                    className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400"
+                  >
+                    {w.stage}: {w.recoveredCount}/{Math.max(w.retriedCount, w.recoveredCount)} {t("timeline.stormRecovered")} · {fmtDuration(w.waitedMs)}
+                  </span>
+                ))}
+                {notRecovered.map((w, i) => (
+                  <span
+                    key={`sg-${i}`}
+                    title={w.detail ?? ""}
+                    className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-500/10 border border-slate-500/30 text-slate-600 dark:text-slate-400"
+                  >
+                    {w.stage}: {outcomeLabel(w.outcome)} · {fmtDuration(w.waitedMs)}
                   </span>
                 ))}
               </div>

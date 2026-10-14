@@ -148,12 +148,20 @@ export async function scoreSources(
     batchSize?: number;
     maxTokens?: number;
     onProgress?: (message: string) => void;
+    /** RT16: recorder for storm-recovery stats (timeline recovery badge). */
+    onStormRecovery?: (entry: import("@/lib/storm-recovery").StormRecoveryEntry) => void;
   } = {}
 ): Promise<{ scores: SourceScore[]; llmBatches: number; fallbackBatches: number }> {
   const batchSize = opts.batchSize ?? 20;
   const scores: SourceScore[] = new Array(refs.length);
   let llmBatches = 0;
   let fallbackBatches = 0;
+  // RT16 (storm rescore): batches that fell back due to a RATE-LIMIT storm
+  // (chat-level failure — nothing cached, so a retry really re-calls) are
+  // rescore candidates once the provider recovers. Parse-garbage fallbacks
+  // are NOT: their chat reply is cached, and re-running would replay the
+  // same garbage through the same parser.
+  const stormDegradedBatchStarts: number[] = [];
 
   // round-RT2 (score acceleration): batches previously ran strictly serial
   // (~18 batches × 30-90s each ≈ 4-8 min). Writes go to distinct `scores`
@@ -164,7 +172,7 @@ export async function scoreSources(
   for (let b = 0; b < refs.length; b += batchSize) batchStarts.push(b);
   const totalBatches = batchStarts.length;
 
-  await runWithConcurrency(batchStarts, 3, async (b: number) => {
+  const runBatch = async (b: number, rescoreRound = false) => {
     const batch = refs.slice(b, b + batchSize);
     const batchNo = Math.floor(b / batchSize) + 1;
 
@@ -194,11 +202,111 @@ export async function scoreSources(
       scores[b + j] = result.output.scores[j];
     }
 
+    // RT16: storm-degradation detection — the skill fallback records the
+    // caught error in issues[0] ("fallback: <message>"); abort/429/rate-
+    // limit signatures mark the batch as rescorable. Disabled during the
+    // rescore round itself (re-failures stay mechanical — no third round
+    // by design — and pushing into the array being iterated is unsafe).
+    if (
+      !rescoreRound &&
+      result.degraded &&
+      /abort|429|rate.?limit|too many/i.test((result.issues ?? []).join("; "))
+    ) {
+      stormDegradedBatchStarts.push(b);
+    }
+
     const usedFallback = result.degraded || scores[b]?.reason.startsWith("mechanical") === true;
     opts.onProgress?.(
       `Scored ${Math.min(b + batchSize, refs.length)}/${refs.length} sources — batch ${batchNo}/${totalBatches}${usedFallback ? " (mechanical fallback)" : ""}`
     );
-  });
+    return result;
+  };
+
+  // runWithConcurrency hands the callback (item, index) — bind only the
+  // batch start (the index would collide with runBatch's rescoreRound flag).
+  await runWithConcurrency(batchStarts, 3, (b: number) => runBatch(b));
+
+  // ============ RT16: clean-window rescore for storm-degraded batches ============
+  // The mechanical scores that ride a 429 storm are DEGRADED, not lost: a
+  // TTL-aware bounded wait + one re-run round can restore the LLM scores
+  // (live-proven in the RT14/RT15 E2E storms; re-landed with the RT16
+  // budget + single-flight fixes). Batches that fail again stay mechanical
+  // — the pipeline is always honest about what it actually has.
+  if (stormDegradedBatchStarts.length > 0) {
+    const { waitForCleanWindow, describeWaitOutcome } = await import("@/lib/storm-recovery");
+    const degradedCount = stormDegradedBatchStarts.length;
+    const wait = await waitForCleanWindow({
+      label: "score-rescore",
+      onRound: (r) =>
+        opts.onProgress?.(
+          `Waiting out the rate-limit storm to re-score ${degradedCount} mechanical batch(es) — ` +
+          `round ${r.round}, ${Math.round(r.waitedMs / 60000)} min elapsed (recent calls: ${r.windowCount}` +
+          (r.abortTtlRemainingMs != null
+            ? `, cooldown ~${Math.max(1, Math.ceil(r.abortTtlRemainingMs / 60000))} min left`
+            : "") +
+          ")",
+        ),
+    });
+
+    if (!wait.clean) {
+      // Honest give-up — mechanical scores stand, disclosed.
+      const why = describeWaitOutcome(wait);
+      opts.onProgress?.(
+        `${degradedCount} batch(es) keep mechanical scores — ${why}.`
+      );
+      opts.onStormRecovery?.({
+        stage: "score",
+        outcome: wait.outcome === "structurally-doomed" ? "structurally-doomed" : "gave-up",
+        rounds: wait.rounds,
+        waitedMs: wait.waitedMs,
+        retriedCount: 0,
+        recoveredCount: 0,
+        joinedSharedWait: wait.joinedSharedWait,
+        detail: why,
+      });
+    } else {
+      // No separate probe: the rescore batches re-enter withRateLimit +
+      // withAbortWaitout, so a still-hot provider refuses them instantly —
+      // the first retry IS the probe (RT12 lesson applied per-capability).
+      // Note: runBatch already incremented llmBatches for a successful
+      // rescore; the outer correction only cancels the first pass's
+      // fallbackBatches count for this batch.
+      let recoveredBatches = 0;
+      await runWithConcurrency(stormDegradedBatchStarts, 3, async (b: number) => {
+        const result = await runBatch(b, true);
+        if (!result.degraded) {
+          recoveredBatches++;
+          fallbackBatches--;
+        } else {
+          // Re-failure: runBatch re-counted this batch's fallback — cancel
+          // the duplicate so one batch never counts twice.
+          fallbackBatches--;
+        }
+      });
+      if (recoveredBatches > 0) {
+        opts.onProgress?.(
+          `Rescored ${recoveredBatches}/${degradedCount} storm-degraded batch(es) back to LLM scores after ${Math.round(wait.waitedMs / 60000)} min of waiting${wait.joinedSharedWait ? " (shared storm wait)" : ""}.`
+        );
+      } else {
+        opts.onProgress?.(
+          `${degradedCount} batch(es) keep mechanical scores — provider still throttled after the recovery wait.`
+        );
+      }
+      opts.onStormRecovery?.({
+        stage: "score",
+        outcome: recoveredBatches > 0 ? "recovered" : "probe-refused",
+        rounds: wait.rounds,
+        waitedMs: wait.waitedMs,
+        retriedCount: degradedCount,
+        recoveredCount: recoveredBatches,
+        joinedSharedWait: wait.joinedSharedWait,
+        detail:
+          recoveredBatches > 0
+            ? `clean wait (${wait.rounds} rounds) + rescore round`
+            : "rescore calls refused after clean wait (account still throttled)",
+      });
+    }
+  }
 
   // Anyhow-fill (defensive — e.g. empty refs edge)
   for (let i = 0; i < refs.length; i++) {

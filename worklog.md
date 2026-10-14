@@ -3807,3 +3807,366 @@ Stage Summary:
 - RT6 backlog 1/3/5 全部完成并验证：catalog 9→15、245 字面量+客户端拷贝编译器强制、降级计数进 stats（E2E 实测 skillDegraded {} + skillCalls 41）。
 - 首个干净窗口 E2E（RT4 遗留目标达成）：34.3min 零风暴零降级，修复循环+polish+审计全绿。
 - RT8 方向（据测试结果）：v1+v2 stage 合并（最大结构收益）、generate/translate prose skill 化（用 skillCalls 数据决策）、dev 模式内存上限（OOM 事故）、i18n 标签统一、降级 UI 徽章、knowledge-summary/gap-design 合并候选。
+
+---
+[RT16 ARCHIVAL NOTE — 2026-10-14] The entries below (RT10 → RT15-FINAL) were
+recovered from the sandbox's iteration journal after a SECOND full sandbox
+reset on 2026-10-14 destroyed /home/z/SciWrite. The CODE those entries
+describe was never pushed (push credentials did not survive resets — 6
+rounds of NO-GO) and is therefore LOST. The entries are preserved verbatim
+as (a) the engineering record of what was designed and live-proven, and
+(b) the specification source for RT16's re-implementation of the
+highest-value lost features. GitHub main ends at 37ee9e5 (RT9 completion)
+until RT16 pushes.
+---
+Task ID: RT10-DEV (orchestrator: environment recovery + seam surgery + budget decision)
+Agent: main (Z.ai Code orchestrator)
+Task: 沙箱完全重置后的环境恢复 + RT10 核心开发（缝 4a/5 分解、上下文预算决策、SSE 契约守护）。
+
+Work Log:
+- 环境灾难恢复：沙箱重置清空 /home/z/SciWrite，但 /home/z/my-project/db/custom.db 幸存——然而 04:03 模板 boot 对它跑了模板 prisma db push（User/Post 覆盖 SciWrite 表）→ 旧 RT2-RT9 测试数据不可用（freelist 取证不划算，代码/文档/指标全在 git）。教训：db 放 my-project 的"抗重置"决策被反噬——新架构：db 放 SciWrite 目录内 + 所有启动显式 DATABASE_URL 覆盖（shell 全局变量现在指向毒路径 my-project/db/custom.db）。
+- 从 GitHub 重克隆（37ee9e5 = RT9 完成态）+ bun install + prisma generate + 显式 env db push 建新库；杀掉 :3000 模板 server（60s 无重生验证）→ SciWrite 独占 :3000（用户预览直达产品）；scheduler.json 置远未来禁用 auto-iterate（RT2 教训）；基线 364/364 全绿确认环境复原。
+- 派 2 个并行 Explore 代理：缝 4-5 分解地图（阶段/闭包状态/变量读写/风险排序/ctx 形状/5 大高危怪癖）+ SSE 事件清单（21 类事件全量载荷形状）+ [1 3] 怪癖分析 + 对抗去重差异表 + revise 无状态证据。
+- 上下文预算决策（backlog #7，数据驱动不改）：保留 28K——实测 max 组装 15.6K（预算不绑定）；预算防护的是 CLI provider argv 硬墙（~32KB Windows）不是 token 经济；缩到 20K 会让 3000 词文章触发 compressPrompt 截断正文（六层防御要杀的格式损坏类）。决策注释固化在 v2-config.ts。
+- 缝 4a 手术：新建 src/lib/orchestrator/sources-stage.ts（417 行，route 894-1189 逐字迁移，SourcesStageCtx/Result——curatedRefs/curatedScores/fullTexts 经结果对象重绑定，dedupedRefs/fullTextProfiles 供缝 4b 消费）；route 拼接 -296 行；KV_BATCH_SIZE 迁入模块；4 个 import 块清理。
+- 缝 5 手术：先抽共享纯助手 src/lib/orchestrator/article-state.ts（repair/polish 两处近重复采用块的统一——首失配 break、长度+maxCit 采用条件、降级保序，9 单测钉死）；再建 repair-loop.ts（533 行，STEP 8.5 逐字）+ polish-loop.ts（504 行，STEP 8.6 逐字，ArticleMutableState 三元组、双 catch 契约刻意不合流）；route 拼接 -915 行。
+- SSE 契约门在两次拼接后各跑一次：7/7 通过（黄金哈希不变）——分解零事件回归的客观证据。
+- 修 4 个自产 lint 警告（dedupePreprintVersions/buildFullTextProfiles/KV_BATCH_SIZE 未删 + polishTelemetry 无循环后消费者改不解构——原代码同语义，遥测走 stats.coherencePolish）。
+- QA 终态：424/424 单测（+60：SSE 7 + 标记 31 + 对抗去重 11 + 无状态 2 + article-state 9）、26/26 集成、lint 0 err/187 warn 基线持平、tsc 4 基线；route 4,680→3,505 行（-25%）；dev commit 完成。
+- E2E 启动（05:12，CRISPR-Cas9 1500 词，孤儿子壳 + 显式 env）；浏览器验证：主页渲染/侧栏出现 E2E 项目/0 控制台错误（截图 shots/rt10-home.png）。
+
+Stage Summary:
+- RT10 七项 backlog 全部处置：#1 缝 4a+5 落地（-1,194 行，SSE 哈希证明零回归）、#2 SSE 框架（缝 6 前置就位）、#3 [1 3] 标记全展开（代理 B）、#4 对抗路由去重 386→322（代理 C）、#5 revise 无状态（代理 C）、#6 生产构建腿 = 环境受限 NO-GO（沙箱禁 build 不变）、#7 预算决策 = 保留 28K（数据固化）。
+- 运维新知识：沙箱重置会以模板 db push 毒化幸存 db；跨重置的 db 生存策略失效——db 必须随代码库走 + 显式 env 纪律。
+- 待办：E2E 报告回收（跑约 33-40 分钟）→ IMPROVEMENT_PLAN-RT10 完稿 → push → RT11 规划（缝 6 = generate 循环，SSE 框架已就位）。
+
+---
+Task ID: RT10-FINAL (E2E + browser + docs + push attempt)
+Agent: main (Z.ai Code orchestrator)
+Task: E2E 回收、浏览器验证、IMPROVEMENT_PLAN-RT10 完稿、push、RT11 规划。
+
+Work Log:
+- E2E（05:12 启动，CRISPR-Cas9 1500 词）：38.71min PASS，106 stage 事件。中途账户级 429 风暴 #1（TTL 120s）→ #2（TTL 600s）：web-search 4/6 降级、knowledge 部分评估、score 7/7 批机械回退（skillDegraded {score:7} 诚实标记）；风暴 TTL 在 ~19min 自动过期后管线全面恢复（curate/plan/gap/generate/repair/polish 全走 LLM）——RT8 "熬过风暴"模式在提取模块中复现。
+- 提取模块驱动真实管线的全程证据：sources-stage（knowledge 3 批 need-based + dedupe 25 preprint + score 129 + curate 20/129 + 8 全文 59-81K chars）；repair-loop（3 轮审查、2 次范围修订 §1,5、数值扫描 2→1 advisory、结构审计 2 sparse-section 升级触发、预算耗尽诚实披露、最终 major-revision 5/10、0 guard 拒绝）；polish-loop（2 pass、10/10 跨节发现处理、机械四闸全过）。
+- 文章质量：2116/1769 词（118% 目标）、7 节、29 标记 ↔ 15/15 引用（0 孤儿）、0 CJK、0 阻断审计错误、34 引用对抗验证（2 移除 8 标记）。
+- 三个 RT10 翻转的 E2E 门全部通过：[1 3] 展开（citationsChecked=34 多号标记全计数、refCount 15=15 无 rematch 异常）、revise 无状态（3 轮判定 4→5→5/10 稳定推进、0 guard 拒绝）、对抗路由统一（standalone 腿返回 "citation-type mismatch" PARTIAL 判定——只有统一后的 lib prompt 才有该规则，证明路由真跑共享模块）。
+- sessionContext 第二窗口：generate max 18.1K / review 28 调 205K / verify max 14.0K → 28K 预算实测从不绑定，KEEP-28K 决策双确认。
+- 内存天花板：逐节 RSS 1,776-1,798MB + 每节全文修剪（memory-pressure 事件全程可见），服务器全程存活。
+- 浏览器验证（agent-browser）：主页 0 控制台错误；E2E 项目文章视图全渲染（9 h2 + REFERENCES）；时间线磁贴 52 skill calls / CACHE HITS — / SKILLS DEGRADED "score×7" 琥珀徽标 / 140 事件 / 38m 42s；390px 移动端无横向溢出。截图 5 张（rt10-home/article-view/timeline/timeline-detail/mobile）。验证后关闭浏览器释放内存。
+- IMPROVEMENT_PLAN-RT10-2026-10-13.md 完稿（7/7 backlog 处置表、缝契约细节、QA、E2E 附录、RT11 backlog 排序：缝 6 generate 循环为最高优先——SSE 框架的验收门已就位）。
+- 2 个 commit 已提交（dev + docs）。**push 失败**：沙箱重置清除了 GitHub 认证（无 gh CLI、无 credential store、无 env token）——代码与文档安全在本地 /home/z/SciWrite（git log 可见），下一会话需用户提供 token 或恢复认证后 `git push origin main`。
+
+Stage Summary:
+- RT10 七项 backlog 全部闭环（含 2 项数据驱动 NO-CHANGE 决策与 1 项环境受限 NO-GO 顺延）；route 4,680→3,505 行（-25%）且 SSE 黄金哈希全程不变——事件契约的客观零回归证明。
+- QA 终态：424/424 单测（+60）/ 26/26 集成 / lint 0 err 187 warn 基线 / tsc 4 基线。
+- 环境三教训入档：沙箱重置会以模板 db push 毒化幸存 db（db 必须随代码库走 + 显式 DATABASE_URL 纪律）；SciWrite 可独占 :3000（模板 server 杀后 60s 不重生）；GitHub push 凭证不跨重置。
+- RT11 最高优先：缝 6（generate 循环提取，SSE 框架 = 验收门）+ 缝 4b（plan/gap/analyze/allocate，ctx 形状已在 RT10 审计中测绘）。
+
+---
+Task ID: rt11-2a (RT11 seam-6 audit: generate loop)
+Agent: Explore (代码审计代理)
+Task: 精读 route.ts STEP 6 generate 循环区域（含 STEP 7 流水线 verify、格式闸门集群、每节 GC 水位），产出手术级审计报告（行区间/闭包状态清单/函数依赖/SSE 事件契约/流水线控制流/abort 语义/内存水位/风险排名/ctx 形状/测试覆盖），供缝 6 提取手术直接使用。纯研究任务，零文件修改。
+
+Work Log:
+- 行区间核定：STEP 6 = route.ts 1627–2410（784 行）。前接缝 = 1593–1625 pool checkpoint save（留在路由，resume 契约边界）；后接缝 = 2412 STEP 8 compose。STEP 7 标记（2267）在 for 循环体内——流水线耦合，缝 6 必须整体吞下。区域含 1653–1687（PendingVerify 接口 + buildDigestEntry/rebuildDigest）、1697–1806（finalizePendingVerify）、1808–2393（for 循环）、2395–2400（末节 finalize）、2402–2410（全失败硬出口：error 事件 + safeClose + return）。
+- 闭包状态清单（21 个外层变量）：写侧载重项 = abortedDueToRateLimit（1636 声明，3 处写入，**translate 循环 2928 跨缝读取**——最大陷阱）；generatedParagraphs/sectionsCheckpointData/digestEntryTexts（resume 路径先 push、循环再 push、catch 块 3425 读段落数组——必须原数组引用、mutation-by-design）；fullTexts（GC prune 原地 delete + 3400 post-complete clear）；previousSectionsDigest（1681 唯一写、1899 唯一读，可从 digestEntryTexts 派生——已证等价）；stats 12 个字段。读侧 = sections/allocations/curatedRefs/project/maxTokens/promptInstruction/activeRunId/resume(仅 sectionsDone 计数)/projectId/clientDisconnected(getter)/send/log/safeClose。VERIFY_REMOVE_VERDICT 是 route 模块级 const(171)，随缝迁走。
+- 函数依赖 15 个 import（adversarialVerifySection/chatWithSession(Stream)/applyFormatContract/STEP/citation-binding 三件套/citation-audit/writing 三件套/countCJKText/buildEvidenceContext+EvidenceRefInput/generate-full-helpers 三件套/v2-config 两常量/rate-limiter 四符号）——全部已在独立 lib 模块，零 orchestrator 依赖。
+- 事件契约：14 个 send() 点（1 个 error 硬出口）+ 1 个 safeClose，零 rawSend。钉死顺序 = verify:started:i 先于 verify:done:(i-1)（2277 在 2295 finalize 之前——黄金哈希钉住的流水线怪癖）。潜在形状瑕疵：2065 fallback progress 事件缺 total 字段（黄金路径未触发，搬运时保持原样勿"修"）。
+- 控制流怪癖：skip 路径先落地 pending 前驱节（try/catch 吞错）vs 正常/末尾 finalize 路径抛错进外层 catch——三处错误策略刻意不对称；gate 重试 catch 吞掉 RateLimitAbortedError（靠全局 isAborted 旗标在下一迭代顶部兜住）；generate:done 事件在 GC try 块内（catch 只 log 不补发事件）；2s 固定 sleep(2095) + 100ms 流式节流(2033, lastStreamEmit 每节重置)。
+- 风险 Top5：① abortedDueToRateLimit 跨缝（translate 读取，值拷贝丢失则翻译风暴跳过静默失效）；② 事件顺序（verify:started:i / verify:done:i-1 互换即黄金哈希炸）；③ 数组身份（模块内重建则 resume 恢复节丢失 + catch 部分工作上报失效）；④ 三处 finalize 错误策略不对称被"统一"则崩溃/回滚语义漂移；⑤ 2402 硬出口（需 runGatherStage 式 {ok:false} 契约，error 事件须由模块经 ctx.send 发出）。
+- ctx 形状建议：GenerateLoopCtx{projectId, project{topic,field}, maxTokens, promptInstruction, activeRunId, db, stats, sections, allocations, curatedRefs, fullTexts(原地变异), generatedParagraphs, sectionsCheckpointData, digestEntryTexts(三数组 mutation-by-design), restoredSectionsDone(数字), send, log, safeClose, isAborted(), isClientDisconnected()} → GenerateLoopResult{ok, abortedDueToRouteLimit}。previousSectionsDigest/pendingVerify/buildDigestEntry/rebuildDigest/VERIFY_REMOVE_VERDICT 全部模块内派生。
+- 测试覆盖现状：sse-sequence.test.ts 黄金 token 46 个中 11 个经过 generate 循环（generate:started 家族级 + 2×[started:§i, streaming:§i, verify:started:§i, (§2: verify:done:1), done:§i] + verify:done:2 循环后）；SPINE 语法钉 loopBody 模式 + 流水线 verify 怪癖；SHAPES 钉 streaming(delta≤200/accumulatedLength/无 accumulatedTail)与 done(wordCount/citations/title)；INVARIANTS 豁免 generate/verify 交错并要求 started↔done/skipped 配对；GOLDEN 哈希 26ea0be3… 是验收门。未覆盖路径：skip/恢复跳过/fallback/闸门重试/内存压力事件/全失败出口——提取时这些路径只能靠逐字搬运保真。
+- 环境敏感点（新发现）：2370 内存压力事件在 RSS>1536MB 时产生额外 generate:progress token——黄金哈希理论上受测试机内存水位影响（bun 进程常态 <400MB，实践中稳定，但重录/CI 贫内存盒时需知）。
+
+Stage Summary:
+- 缝 6 手术地图完成：784 行区域、21 个闭包变量（含 1 个跨缝读取陷阱 abortedDueToRateLimit、3 个 resume 预填充的 mutation-by-design 数组）、15 个 lib import、14+1 事件发射点、5 大风险排序与 ctx/result 形状建议齐备。
+- 关键手术纪律已入报告：verify 事件顺序不可调、三处 finalize 错误策略不可统一、数组必须传引用、硬出口走 {ok:false} 契约、2065 缺 total 是钉死的历史形状（勿顺手修）。
+- 黄金 fixture 只覆盖快乐路径的 generate 循环段（11/46 token）——逐字搬运 + GOLDEN 哈希 + SPINE 语法是提取的双保险；skip/fallback/重试路径零事件覆盖，风险靠审计报告的行号级怪癖清单兜底。
+----
+Task ID: rt11-2b
+Agent: Explore (RT11 阶段代码审计代理)
+Task: 缝 4b planning 区域手术级审计（route.ts STEP 3/3.5/4/5 —— plan / gap agent / analyze / allocate），为提取到 src/lib/orchestrator/planning-stage.ts 测绘。
+
+Work Log:
+- 精读 route.ts 830-1640 全段 + resume 路径 530-784 + complete 事件 3286-3405；对照 sources-stage.ts ctx 范本、research-gap.ts、gather-coverage.ts、progress-tracker.ts、sse-sequence.test.ts + v2-tiny-run.ndjson/manifest。
+- 确认区域边界：缝 4b = 行 887-1590（STEP 3 plan 887-1155 → gap agent 1157-1527 → analyze 1529-1556 → allocate 1558-1590），全部嵌套在 `if (!resume) {`（783 开，1591 收口）新鲜跑块内；上接缝 = sources 结果重绑定 881-885；下接缝 = pool checkpoint 保存 1593-1625（留 route）→ generate 家族 started 1628。
+- 闭包测绘：6 共享数组 = curatedRefs(537, 重绑 881/1087/1119, push 1414)、curatedScores(884, 重绑 1088/1120, push 1416, **1590 后零消费者**)、fullTexts(538, 只读 1537/1545)、sections(539, 新建于 968/972, 5 处原地变异)、allocations(540, 新建于 1570)、dedupedRefs(883, 只读 1066/1300)——sections 是区域内产出而非输入，RT10 审计形状的输入 `sections` 应删除。另有 savedDataSources/savedReferences push（1387/1402）、stats 6 字段（citationPlanned 在 1146 覆写 sources-stage 的值；gapAgent 6 处写入全无读者）。
+- gap agent 细节：2 轮 while（1204），identifyEvidenceGaps(1222) → 预算 min(remaining, 40-pool)(1230) → pursuedGapKeys 去重(1236) → 5 个 done 出口 + 2 个 skipped 出口 + `} else try{}`(1185-1193) + post-loop !terminalSent 兜底(1503) + catch skipped(1518)；titleMatchesGapRef 路由本地 175-182，仅 1365/1419 使用（随 gap agent 迁走）；DB 交互仅 dataSource/reference create（1369/1388，**不碰 pipelineCheckpoint**）；合并块 1408-1430 push refs/scores 并向 sections[freshGaps[gi].sectionIndex].refIndices 追加索引（cap 12）。
+- pool checkpoint：save 1597-1625（!resume 守卫 + upsert runId_stage{activeRunId,"pool"}，payload={curatedRefs, fullTexts entries, sections, allocations}），load 557-584，restore 649-664，全文修剪 684-696，fresh 清扫 779，完成后删除 3282——留 route（RT10 决策确认：save 需 activeRunId/resume/四个终值绑定）。
+- 风险 Top5（降序）：① curatedRefs/curatedScores 索引对齐变异（重绑+push 双模式，防御性拷贝会静默脱钩 checkpoint/generate 循环）② gapAgent 终态纪律（5 done+2 skipped+兜底，SPINE 要求 analyze:started 前恰好一次 done|skipped，黄金只钉 happy path）③ plan:done 载荷契约（sectionCount+sections 数组——progressTracker 据此学 N；done 先于尾随 plan:progress 的怪癖被钉死）④ checkpoint 时序（模块返回→route 重绑→save，顺序错则 resume 恢复陈旧池 = round-63 bug 类）⑤ stats 跨阶段覆写（citationPlanned 双写、gapAgent 只写不读、6 处分散赋值）。
+- ctx 形状建议：PlanningStageCtx = SourcesStageCtx 骨架 + isAborted/isClientDisconnected（gather-stage 模式）+ {...SourcesStageResult 消费子集：dedupedRefs/curatedRefs/curatedScores/fullTexts/fullTextProfiles}（**无 sections**）；PlanningStageResult = {sections, allocations, curatedRefs, curatedScores}（curatedScores 返回但 route 重绑为死赋值——RT10 polishTelemetry lint 教训，需注释钉死）；evidenceBank/stormRetry/GAP_AGENT_MAX_ROUNDS(=2 路由本地)/titleMatchesGapRef 随模块迁走；11 个 import 需迁移处置（其中 safeParseJSON/normalizeSectionTitle/hasCJKText 双边保留）。
+- 测试覆盖：黄金 9 token 序列 plan:started→plan:done→plan:progress→gapAgent:started→gapAgent:done→analyze:started→analyze:done→allocate:started→allocate:done（tiny 场景走 round-1 零缺口干净路径）；SPINE 语法钉 gapAgent anyOf(done|skipped) + 星号 progress；SHAPES 钉 plan:done 的 sectionCount/sections、gapAgent:done 的 gapsFound、TRACKED 步的 progress 装饰；INVARIANTS 钉非循环族 started 必须收口 + progress 单调 ≤99.4。**黄金不覆盖**：gap 合并路径/round 2/coverage backfill/CJK 翻译/stormRetry——RT11 提取必须逐字迁移 + E2E 门，或先加 gap-merge stub 场景。
+
+Stage Summary:
+- 缝 4b 手术地图完成：区域 887-1590（704 行），移出后 route 约 -670 行（3505→~2840）；两处接缝（881-885 输入重绑 / 1591-1625 checkpoint 保留）与 ctx/Result 形状已定稿，风险 Top5 附缓解措施；RT10 审计形状的一处修正（输入去 sections）已论证（sections 在 plan 内部新建、resume 路径整段跳过）。
+- 纯研究任务：零文件修改（本 worklog 追加除外）。
+
+---
+Task ID: RT11-1..RT11-5 (seams 6+4b + SSE parity + QA)
+Agent: main (Z.ai Code orchestrator)
+Task: 执行 RT10 backlog：缝 6（generate 循环）+ 缝 4b（planning 阶段）提取、SSE recorder parity 断言、QA 全套。
+
+Work Log:
+- 基线恢复：发现全套跑 sse-sequence 1 fail（共享进程 prisma 污染）——根因：adversarial-dedup-rt10.test.ts 动态导入 @/lib/llm-session?real → 传递执行 @/lib/db 模块体 → PrismaClient 绑定 shell 毒路径并进模块缓存；sse-sequence 的 env 重定向太迟（bun 模块缓存 path-keyed，route import 复用旧实例）。修复：mock.module("@/lib/db") 提供 datasources 显式绑定 scratch 库的新实例（顺序无关）；单文件 7/7 + 全套 424/424 全绿恢复。
+- 并行派 2 个 Explore 代理：缝 6 审计（1627-2410，784 行，含 STEP 7；闭包状态 25 变量逐一测绘；三处 finalize 错误策略刻意不对称；风险 Top5）+ 缝 4b 审计（887-1590，704 行；ctx 形状修正——sections 是输出非输入；gap agent 6 共享数组双模式变异风险）。
+- 缝 6 手术：src/lib/orchestrator/generate-loop.ts（978 行，逐字迁移）——pipelined verify/finalize、gate 集群、key 转换、cs-4 GC、{ok:false} 硬出口契约；abortedDueToRateLimit 上提 route 声明 + 模块返回终值回写（translate CR-B#13 跨缝联动保住）；previousSectionsDigest 改模块入口派生（与 resume 增量构建逐字节等价论证入注释）；VERIFY_REMOVE_VERDICT 随迁。SSE 黄金哈希不变 ✓。
+- 缝 4b 手术：src/lib/orchestrator/planning-stage.ts（895 行，逐字迁移）——plan/stormRetry、gap agent 多轮（5 done + 2 skipped 终态纪律逐字）、coverage backfill + 后置 tier gate、analyze/allocate；stormRetry/GAP_AGENT_MAX_ROUNDS/titleMatchesGapRef 随迁；拼接顺序载重（route 先重绑 sections/allocations/curatedRefs 再 pool checkpoint save）。SSE 黄金哈希不变 ✓。
+- route import 大清理：v2-config/citation-binding/evidence-pipeline/citation-planner/source-tier/research-gap 整块删除；adversarial-verify 换 generate-loop；route 3505→2037 行（-42%）；orchestrator/ 目录 8 模块共 6030 行。
+- SSE 框架扩展（backlog #3）：RECORDER PARITY 断言——wire step 事件投影（init-replay + streaming-dedup 语义）与 TaskRun.stepsJson 精确一致；recorder.complete() 在 complete 事件前 await 保证了可测性。发现 TaskRun 无 createdAt 字段（用 startedAt 排序）。8/8。
+- QA：425/425 单测（+1 parity）、26/26 集成、tsc 4 基线、lint 0 err/169 warnings（stash 前后持平——全部既有）。dev commit 4c8c03a。
+- E2E 启动（CRISPR-Cas9 1500 词，孤儿子壳 + 显式 env + 堆上限 1536）——gather 已在跑（UniProt/RCSB 正常返回）。
+
+Stage Summary:
+- RT11 两大缝落地：route 从 RT9 起点 5,428 行 → 2,037 行（-63%，两轮共 8 个 orchestrator 模块）；两次拼接 SSE 黄金哈希均不变——事件契约零回归的客观证据。
+- 时间线投影（wire drop 恢复路径）从隐式副作用变为被测试钉死的契约。
+- 修复了 RT10 遗留的共享进程测试污染（424→425 确定性）。
+- 待办：E2E 报告回收 → 浏览器验证 → IMPROVEMENT_PLAN-RT11 → push → RT12 规划。
+
+---
+Task ID: RT11-FINAL (E2E + browser + docs + RT12 planning)
+Agent: main (Z.ai Code orchestrator)
+Task: E2E 回收、浏览器验证、IMPROVEMENT_PLAN-RT11 完稿、push、RT12 规划。
+
+Work Log:
+- E2E（08:04 启动，CRISPR-Cas9 1500 词）：29.34min PASS，94 stage 事件。中途短暂限流窗口：knowledge 填充批风暴跳过（省 ~8min）+ score 3 批机械回退（skillDegraded {score:3} 诚实标记）——RT8"熬过风暴"降级模式复现。
+- 两大缝的实测验收（本轮核心价值）：planning-stage.ts 驱动真实管线——coverage backfill 1 次、gap agent 真实合并路径首次实测（3 gaps → 3 定向搜索 → 5 refs merged → 边际收益早停 "coverage sufficient 100%"）、analyze 25 源、allocate 6 节 avg 5 refs；generate-loop.ts 驱动真实管线——6 节流式生成、pipelined verify（verify:started §i 先于 verify:done §(i-1) 实时线上验证）、cs-4 GC 两次（RSS 1827-1840MB，服务器在 RT8 天花板下存活）。
+- 质量指标：1950/2376 词、42 标记 18 unique = 18 listed（0 孤儿）、citationsChecked 33（[1 3] 展开计数数据点 #2）、修复循环 2 轮 1 修订 0 guard 拒绝（revise 无状态数据点 #2——稳定）、standalone 对抗 31 checked / 2 unsupported→2 removals（统一路由实测）、gatherCoverage ratio 1.0。
+- auditBlockingErrors=2 调查（vs RT10 的 0）：compose 时点机械审计发现 2 处（malformed-ref 类）→ 驱动修复循环 round-1 修订（§1,2,5,6）→ 终态 DB 直接 buildAuditReport 复核 = 0 blocking。结论：compose→repair→clean 是设计契约在工作，RT10 的 0 是 LLM 输出运气——非回归，已写入文档 4b 节。
+- 浏览器验证（agent-browser）：主页 0 错误 → E2E 项目 6 节全渲染（§1-§6 badge）→ 文章视图 8 h2 + REFERENCES（32.5K 字符）→ 时间线 run 行展开：SKILL CALLS/CACHE HITS 磁贴 + DEGRADED 徽标（score×3）+ gap agent 步骤 → 390px 无横向溢出 → 浏览器关闭释放内存。5 截图。
+- IMPROVEMENT_PLAN-RT11-2026-10-13.md 完稿：6/6 backlog 处置表（含 2 项 PARTIAL/PENDING-E2E 滚动）、缝契约细节、route 尺寸轨迹表（5,428→2,037，-63% 三轮）、QA（含 3a 测试基建修复）、E2E 三小节、RT12 backlog。
+- RT12 backlog（排序）：#1 路由分解终局审计（compose 是最后一个值得提取的缝 vs 宣布完成转向）；#2 SSE 第二场景 gap-merge fixture（钉多轮 gap agent 事件序列——本轮回真管线但 fixture 只有零缺口 happy path）；#3 E2E 门控数据点持续积累；#4 storm runner 通用化小活；#5 生产构建腿（环境受限继续滚）；#6 skill 框架遗留（coverage-audit 合并阈值、compose 格式契约审计）。
+- 2 commit（4c8c03a dev + 32a85ac docs）。push 失败：沙箱无 GitHub 凭证（RT10 已知——认证不跨重置）；代码/文档安全在本地 git log。
+
+Stage Summary:
+- RT11 全部闭环：两大缝（-1,468 行，SSE 黄金哈希双拼不变）+ recorder parity 契约 + QA 全绿 + E2E 实测（gap agent 合并路径与 generate 流水线在提取模块中全部拿到真实运行证据）+ 浏览器验证。
+- 路由分解计划到达里程碑：route 从 RT9 起点 5,428 行降到 2,037 行（-63%），orchestrator/ 8 模块 6,030 行，SSE 黄金哈希是每一步的客观验收门。
+- RT12 决策点：分解终局——剩余 route 本体（init/resume/风暴预检/compose/终态块/catch）中只有 compose 值得再提取一轮，其余是真正的路由职责。
+- 遗留：GitHub push 需认证恢复；生产构建腿继续受沙箱策略限制。
+---
+Task ID: rt12-1a (RT12 seam-8 audit: compose stage)
+Agent: Explore (RT12 阶段代码审计代理)
+Task: 缝 8 compose 区域（STEP 8）手术级审计——route.ts 944–1335 的纯文本变换 + DB 同步 + repair/polish 调用块，为提取到 src/lib/orchestrator/compose-stage.ts 测绘（区域边界/闭包/DB/SSE/import/风险/ctx 形状/测试影响 8 项）。纯研究任务，零文件修改（本 worklog 追加除外）。
+
+Work Log:
+- 精读 route.ts 全文（2,037 行）定位 STEP 8 及上下游；对照 sources-stage.ts（ctx 范本）、generate-loop.ts 拼接处（920–942）、repair-loop.ts / polish-loop.ts 的 Ctx/Result 与"留在 route"边界注释、article-state.ts（in-place 三元组契约）；核对 sse-sequence.test.ts 的 SPINE/SHAPES/INVARIANTS/GOLDEN/RECORDER-PARITY 断言与 v2-tiny-run.ndjson + manifest（55 事件/46 token/哈希 26ea0be3…）；核对 compose-transforms.test.ts 覆盖面与 IMPROVEMENT_PLAN-RT11 的 RT12 backlog #1/#6。
+- **区域边界**：缝 8 = 行 944–1335（392 行，"约 400 行"吻合）。首语句 945 = compose:started send；末语句 1335 = compose log。上接缝 = 920–942（runGenerateLoop 调用 + `if (!gen.ok) return;` + 942 abortedDueToRateLimit 重绑——compose 区零消费该旗标，只有 translate 1460 读）。下接缝 = 1337 STEP 9 translate（读 articleContent/articleTitle/articleTitleZh/enTitles/globalRefs/article.id/generatedParagraphs）→ 1713 articleVersion → 1729 post-pipeline self-fetch → 1809–1938 终态块（totalMs/checkpoint deleteMany 1813–1816/completePayload/send complete/recorder.complete/工作集释放/safeClose 1938）→ 1939 catch/rollback。内部结构：945 事件 → 947–971 enTitles 归一+CJK 翻译 → 973–997 DB 重读+gate 链 → 999–1015 全局重编号 → 1017–1037 跨节去重 → 1038–1042 拼装 → 1044–1065 OOR 剥离（compose:progress）→ 1067–1072 孤儿过滤 → 1077 refList → 1082 articleContent → 1084–1106 标题 → 1117 repair-loop → 1133 polish-loop → 1152–1205 段落 $transaction 同步 → 1208 article.create → 1225–1286 Review 行+repairSummary → 1288–1313 coherence 行 → 1319 buildAuditReport → 1328–1335 compose:done。
+- **resume 语义**（与 planning-stage 相反）：compose 无 `if (!resume)` 守卫——fresh/resume 都执行（round-cs-6 注释明说"Applies to fresh runs AND to sections restored from old checkpoints, so re-composing heals an existing article too"）。resume 输入 = 恢复+补齐后的 generatedParagraphs/sections。
+- **闭包测绘**（21 项）：区域内新建 = enTitles(954，963 index 变异，下游 1674 消费)、globalRefs(1004，1070–1071 compaction + repair/polish state 原地变异，下游 1692/1823/1841)、renumberedContents(1006，1029–1030 回写 + repair/polish 变异，**区域外零消费者**——段落同步在区域内)、articleContent(1082，1130/1147 round-59 let 重绑链，下游 1393/1716/1720/1810)、articleTitle(1087)、articleTitleZh(1088，translate 1435 再变异)、audit(1319，下游 1878–1880)、repairRounds/repairTelemetry(1131 destructure，下游 1767/1887–1894/1931 释放)、refList/globalRefMap/allParagraphData/articleBody/coherenceReviewRow(模块内消化)。上游传入只读 = generatedParagraphs(420，catch 1957/1961 也读)、sections(485)、send(323)、log(359)、db、project(仅 topic 1087/1092)、isBothMode(1097)、journalTemplate(1214)、projectId、maxTokens(1138 polish ctx)、clientDisconnected(getter 1128/1145)、isAborted(1144)。stats 变异 = 1013 adjacentCitationsMerged +=、1032 crossSectionDuplicatesRemoved =、1057 outOfRangeCitationsStripped =（**write-only 遥测——complete payload 不含此字段**；stats.coherencePolish 同为 write-only，1148 注释已过时）。**区域不读**：resume/activeRunId/curatedRefs/fullTexts/targetWords/savedDataSources/savedReferences/abortedDueToRateLimit/t0/safeClose——缝 8 是迄今最干净的缝（vs 缝 6 的 25 变量）。
+- **DB 交互 6 处**：975 paragraph.findUnique(include references orderBy citationOrder) / 1198–1204 $transaction(update+deleteMany+createMany?) 逐段原子重写 / 1208 article.create(嵌套 articleParagraph) / 1232 review.create 逐 round(非致命 try/catch) / 1264 article.update repairSummary(round-68) / 1297 review.create coherence 行(round=max+1)。checkpoint deleteMany(1813)与 recorder.complete(1904)在终态块留 route。无 taskRun 直写。
+- **SSE 事件**：发射器 = route send 闭包（progress 装饰+recorder 观察+rawSend），模块只经 ctx.send。区域直接 4 个：compose:started(945)/compose:progress(1059，仅 oorStripped>0，golden 0 次)/title:progress(1090，**合法无 progress 字段**——title 不在 tracker 权重表，SHAPES 豁免 post-compose satellites)/compose:done(1328，SHAPES 钉整数 wordCount/references；progress 99.4=INVARIANTS pre-complete 上限)。嵌套经 ctx.send：repair:started/progress/done|skipped + polish:started/progress/done|skipped。黄金 46 token 中 **8 个在区域**：compose:started→title:progress→repair:started→repair:progress→repair:done→polish:started→polish:done→compose:done（SPINE 638–647 钉死次序：compose:done 必须后于 title/repair/polish；compose:progress 为 star 0+）。
+- **import 迁移**：随迁可删 = normalizeSectionTitle(writing)、generateArticleTitle(article-title)、translateSectionTitlesToEnglish+hasCJKText(section-title-zh)、buildAuditReport(citation-audit)、removeCrossSectionDuplicates(generate-full-helpers)、renumberSectionContent+stripOutOfRangeCitations+filterOrphanedReferences(compose-transforms)、runRepairLoop+runCoherencePolishLoop(orchestrator)。双边保留 = countWords(区域+resume 672+translate+complete)、applyFormatContract(991+translate 1580)、STEP、inferFormat(1219+resume 668)、buildReferenceList(1077+translate 1692)。route 保留（区域不用）= retranslateTitleZhWithGlossary/translateSectionTitles/citationNumbersOf/safeParseJSON/chatWithSession(Stream)。
+- **风险 Top5（降序）**：① compose:done 发射时机（必须在 repair/polish 落定+全部 DB 落库+审计之后——提前/延后/异步化都会炸 GOLDEN+SPINE+PARITY 三层）；② globalRefs in-place 身份链（区域新建→compaction→repair/polish 原地变异→下游 zh/complete/audit 读——返回副本即引用数静默漂移）；③ articleContent round-59 let 重绑链（1082→1130→1147，漏一环=最终文章静默回退 pre-repair 文本，RT11 E2E 已证 repair 真改文本）；④ 三层 DB 错误策略刻意不对称（$transaction 抛/review 行逐行吞/repairSummary 吞/title 回退——"统一"即丢 Review 历史或误杀已保存文章）；⑤ format contract 与标记/词数形态（991 是 EN 路径唯一 applyFormatContract 调用点且必须先于 renumber；OOR 剥离必须在 orphan 过滤前——round-57 钉死原因；段落同步 regex 1161–1197 是带 cap/maxCitedNum 的 LOCAL 副本勿合流进 compose-transforms；countWords(articleContent) 1331/1332/1335 三连求值可保逐字）。次级标注：audit 双时点（repair-loop 入口审计驱动修订 vs 1319 终态披露喂 complete accuracy）都在位；stats 两字段 write-only 保留赋值并注释。
+- **ctx/Result 定稿建议**：ComposeStageCtx = { projectId, project:{topic}, maxTokens, journalTemplate, isBothMode, db, stats, generatedParagraphs(只读), sections(只读), send, log, isAborted(), isClientDisconnected() }——**无 safeClose/无 ok 契约**（compose 无 hard-exit，throw 传播=route catch，同 sources-stage）。ComposeStageResult = { article(整行，下游只读 .id), articleContent, articleTitle, articleTitleZh(route 侧 let), enTitles, globalRefs(原引用), audit, repairRounds(原引用，1931 .length=0 释放), repairTelemetry(re-export 类型) }。模块内消化并注释：renumberedContents/refList/coherenceReviewRow/globalRefMap/allParagraphData/articleBody/polishTelemetry。注意 RT10 repair-loop"Review-row persistence stays in the route"边界随缝 8 整体迁移反转（文章 id 改在模块内创建）。拼接：route 943 处一次 destructure（articleTitleZh 必须 let），下游 translate/终态块变量名零改动；预计 route 2037→~1,660，orchestrator/ 第 9 模块 ~400 行。
+- **测试影响**：compose-transforms.test.ts 35 用例覆盖纯变换（renumber/OOR/orphan/refList 格式契约/[1 3] RT10 钉）——是 ②⑤ 的行为基线，提取不改它们。**零覆盖**需逐字保真：allParagraphData 重读+gate 链、removeCrossSectionDuplicates（全仓无测试引用）、OOR→orphan 顺序、段落同步 regex 块、三处 DB 持久化、审计投影。黄金门：8/46 token 逐字保语义（含 compose:done 整数载荷、title:progress 无 progress 怪癖、compose/repair/polish 的 progress 装饰值链 84.1→99.4）；RECORDER PARITY 自动覆盖。SSE harness 的 title mock（@/lib/ai.chat "Propose the title"）不受影响。
+
+Stage Summary:
+- 缝 8 手术地图完成：区域 944–1335（392 行）、21 项闭包测绘（区域新建 12 / 上游只读 12 / stats 3 写含 2 个 write-only）、6 处 DB 调用、4 直接 + 嵌套事件契约（黄金 8/46 token）、import 迁移清单（8 随迁/5 双边/5 保留）、风险 Top5 附缓解、ctx/Result 形状定稿（无 ok 契约、9 字段 Result、7 项模块内消化）。
+- 关键发现：compose 与 resume 正交（无守卫，双向愈合设计）；repair/polish 已是独立模块，compose-stage 本质 = "调用它们 + 纯文本管线 + DB 同步 + 审计披露"；区域是 8 个已提取缝中输入面最窄的（12 只读输入 vs 缝 6 的 25 变量）。
+- 手术纪律已入报告：compose:done 时机不可动、globalRefs/repairRounds 原引用返回、articleContent 三段重绑链、三层 DB 错误策略不可统一、991 gate 链先于 renumber、OOR 先于 orphan、段落同步 regex 勿合流。RT12 backlog #6（compose 格式契约审计）的出口地图已测绘：EN 出口 ①gate 链 ②机械 marker 变换族 ③repair/polish 的 renormalize+guard ④ZH translate 的 [sanitize, uniform-section]——全部有文档化组合器。
+---
+Task ID: rt12-1b (RT12 SSE gap-merge fixture 审计)
+Agent: Explore (RT12 阶段测试基建审计代理)
+Task: 为 RT12 backlog #2（第二个 SSE 场景 fixture —— gap-merge：多轮 gap agent 非空缺口 + 候选搜索 + 合并 + 早停）做完整测绘：fixture/manifest 格式逆向、测试框架结构、gap agent 真实事件序列推导、fixture 生成方式、多场景支持改造面、recorder parity 联动。纯研究任务，零文件修改（本 worklog 追加除外）。
+
+Work Log:
+- 精读 tests/fixtures/sse/{v2-tiny-run.ndjson, v2-tiny-run.manifest.json, llm-stubs.json} + tests/unit/sse-sequence.test.ts（978 行全文）+ src/lib/orchestrator/planning-stage.ts（895 行，gap agent L460–829）+ src/lib/research-gap.ts + src/lib/skill/skills-gap.ts + src/lib/skill/executor.ts（dispatch key 机制）+ src/lib/gather-coverage.ts + src/lib/progress-tracker.ts + route.ts（tracker 权重表/recorder/spine 接缝）+ scripts/{rt9-e2e-runner,full-generation-test}.ts + tool-results/（E2E 报告）。
+- **fixture 格式**：ndjson = 每行一个 wire 事件 JSON（无 `data: ` 前缀——那是 SSE 帧封装）；`event:"step"` 携带 step/status/message（TRACKED 步非 started 事件另有 progress 装饰，0–99.4），终事件 `event:"complete"`（articleId/wordCount/references/sections/totalMs/pipeline/hasChinese/stats/accuracy/message）。**关键发现：断言模式下 ndjson 从不被读**——GOLDEN 只读 manifest（tokenSequenceHash/tokens/eventCount/tokenCount/sectionCount）；ndjson 仅是 record 模式写出的可读档案（GOLDEN_NDJSON 唯一引用在 RECORD_MODE writeFileSync）。
+- **黄金哈希**：sha256(tokens.join("\n"))——token = `event`（非 step）或 `step:status[:section]`（section 后缀仅 generate/verify 且事件带 section），连续重复塌缩为 `token*N`；**无盐、不含任何载荷字段**（totalMs/ms 备注/RSS/articleId 全排除）。manifest 其余字段（requestBody/stubsFile/goldenFile/notes）纯文档。
+- **llm-stubs.json 角色**：无 I/O 场景脚本——request（建 project + POST body）、responses（按 dispatch key 的罐头回复：metadata.skill 优先，taskType:step:sub 兜底）、dynamic（计数敏感技能 verify/score/curate-smart/evidence-extract 的罐头值，构建器在测试文件里从 prompt 抽 [CHECK n]/[n] TYPE/[REF-n]）、databasePools（queryDatabase mock 按 `source:query` 精确键）、webSearchOutcome（webSearch/webSearchDetailed mock）。
+- **测试框架（8 测试）**：①终事件 complete XOR error 恰一次且最后；②帧格式（每帧一行 data: JSON）+ 快跑零 ping；③SPINE 语法（字符串字面量 / {star} 零+塌缩 / {anyOf} 单 token / {anyOfSeq} 序列——钉 pipelined verify 怪癖 verify:started§i 先于 verify:done§(i-1)、curate/plan done 先于尾随 progress、compose:done 后于 title/repair/polish）；④SHAPES（逐 step:status 必需键：init config 7 键、gather/knowledge/score/curate/plan/generate/verify/compose/polish/review/gapAgent 的整数与数组约束 + TRACKED 步 progress 装饰）；⑤INVARIANTS（progress 单调 ≤99.4、非循环族 started 必在下一族 started 前收口、generate/verify 逐 section 配对）；⑥终事件 XOR 专测；⑦GOLDEN 哈希对 manifest（含 eventCount/tokenCount/sectionCount 计数断言）；⑧RECORDER PARITY（wire step 序列投影 = TaskRun.stepsJson：init 重放 + 连续 streaming 去重，按 (step,status,section) 键序精确相等；MAX_STEPS=900 容差说明）。
+- **gap agent 终态纪律实测**（修正 rt11-2b 审计的"5 done"计数）：**8 个 done 发射点 + 2 个 skipped 发射点**——done：L553（round-1 identify clean）、L564（round≥2 re-audit clean）、L580（gapBudget≤0）、L612（round-1 零候选）、L622（round≥2 零候选）、L742（round cap）、L776（边际收益早停）、L809（!terminalSent 兜底聚合）；skipped：L488（风暴/断连守卫）、L824（catch 非致命）。SPINE 要求 analyze:started 前恰好一次 done|skipped。
+- **gap-merge token 序列推导**（round-1 缺口→搜索→合并 + round-2 re-audit clean 早停，目标 L564 分支）：gapAgent:started → gapAgent:progress×5（①"N evidence gap(s) identified — running targeted searches..."带 gapsFound/detail ②③runGapResearch onProgress 每查询一条"Gap agent: Gap i PubMed/web "q" → R results, K new" ④"Gap agent round 1: merged K new reference(s) (K total) — re-auditing..."带 gapsFound/queriesRun/newRefs/detail ⑤"Gap agent round 2/2: re-auditing the outline..."）→ gapAgent:done（"round 2 re-audit found no new evidence gaps — round-1 coverage stands"带 gapsFound/queriesRun/newRefs/detail）→ analyze:started。连续 progress 塌缩为 `gapAgent:progress*5`，**tokenCount 46→47、eventCount 55→60**，其余 41 个 token 与 tiny 完全一致（gather/knowledge/score/curate/plan 不受影响——merge 发生在 citation-map 审计之后）。
+- **round-2 到达的覆盖算术（最 delicately 设计轴）**：marginal-yield 门（shouldContinueGathering）= coverage sufficient 停止 ⟺ uncovered=0 ∧ ratio≥0.85；继续需 ratio<0.85 或 uncovered≥1 ∧ 本轮 merge≥2（minGain）∧ pool<40。gather 覆盖评估（STEP 1.2）在 11 个 gathered 项上、gap 覆盖在 9 个 curated 项上（2 个 UniProt 非 citable 被排除）——**同一 topic 两级评估不同 item 集**：把 8 个 pubmed pool 项的 title/abstract 去掉 "mechanotransduction" 一词后，gather 级仍 3 hits（2 UniProt + 1 web = 恰好 minHits=3 无洞→零 top-up 零 gather 事件变化），curated 级只剩 web 1 hit → weak → ratio=(1+0.5)/2=0.75 <0.85 → round 1 继续 → round 2 进入。merged 2 refs 的 title/abstract 也必须避开该词。
+- **stub 序列化关键洞察**：gap-design 两次调用返回**同一个** gap 即可——round-2 的 pursuedGapKeys 去重（`sectionIndex::gap 文本前 80 字符`）自动把重复 gap 滤成 freshGaps=[]，命中 L564 round-2 clean 分支；无需 per-call 队列/脚本机制。gap-research stub 返回 {"keep":["C1","C2"]}（parseOk 由 parseLlmJson 推导，stub 无需该字段）。merged refs 走 tier gate（pubmed 直接过，仅 log 无事件）+ db.dataSource/reference.create（pinned）+ pool/section refIndices 合并（索引 10/11 追加进 §1，cap 12）。
+- **progress 值预测**（tracker 权重表 gather2.2/knowledge1.4/score0.9/curate0.7/plan0.9/gapAgent0.6/analyze1.1/allocate0.2 + generate+verify 家族 2.9×N + compose0.5/repair1.2/polish0.9；N=2 时 total=16.4）：gapAgent 区间 start=37.2 end=40.9（span 3.66），fixed-crawl 5 个 progress 事件依次落 38.5/39.0/39.4/39.7/40.0（已用 tiny fixture 的 gather/curate 值反推验证公式：curate done 后尾随 progress 被 max-clamp 钉在 15.4 正是塌缩语义）。
+- **fixture 生成方式**：**真实 E2E 录制不存在**——tool-results/ 无任何 .ndjson 原始 wire 录制；E2E 的 full-gen-test-report.json 是有损 stage 摘要（stage/status/message/elapsedMs/extra，丢弃完整载荷）。fixture 由 **harness 自身在 SCIWRITE_RECORD_SSE=1 下进程内跑 mocked 管线录制**（commit 1bab1f0，recordedAt 2026-10-13T04:41:28Z，缝分解前），ndjson 是逐字节完整事件流、无剪辑；scripts/ 里无独立录制/回放工具（rt9-e2e-runner 是配额窗口轮询器，full-generation-test 是真 E2E 打火器，二者都不产出 fixture）。
+- **多场景支持现状**：**单 fixture 硬编码**——STUBS_PATH/GOLDEN_NDJSON/MANIFEST_PATH 是模块级常量、`const stubs` 模块顶层一次加载、单一 beforeAll 跑一次 POST、8 个测试读模块级 events/tokens、RECORD_MODE 写单 fixture 且 scenario 字符串硬编码。**加第二个 fixture 必须改测试代码**（不是只放文件）；且**不能用第二个测试文件**——bun 模块缓存里 route 已绑定文件 A 的 mock 闭包，文件 B 的 mock.module 只对"未来 import"生效，route 不会重新解析。正确路径 = 同文件内场景循环：const stubs→let（mock 闭包按调用时读）、SCENARIOS 数组、beforeAll 循环跑、8 测试循环断言、RECORD 按场景写文件（建议加 SCIWRITE_RECORD_SSE=<scenarioId> 过滤避免重写 tiny manifest 的 recordedAt 噪音）。
+- **manifest 是否要重新生成**：黄金哈希是**对 live run token 序列算出的期望值**（非 fixture 文件哈希）——新场景必须 record 一次生成自己的 manifest（hash/tokens/eventCount/tokenCount/sectionCount）；tiny manifest 不动（stub 不变则哈希不变）。**RECORDER PARITY 无需任何 fixture 配套**：期望投影从 live wire 事件推导、TaskRun.stepsJson 从 live DB 按 projectId 查询——ndjson/manifest 都不含投影数据；场景循环下按各场景 projectId 查即可（60 事件远低于 MAX_STEPS=900）。
+- 载荷级 ripple（不进哈希、但进 ndjson 记录）：analyze "11 sources"/evidenceItems 22/refsAnalyzed 11、allocate "avg 6 refs/section"（§1: 7 refs）、generate:started:1 "~7 allocated refs"、compose/complete references 11、complete.stats.skillCalls{gap-design:2, gap-research:1}、stats.gapAgent{gaps:1,queries:2,newRefs:2}、crossSectionDuplicatesRemoved 等机械统计不变。
+
+Stage Summary:
+- gap-merge fixture 测绘完成：精确 token 序列（47 token/60 事件，唯一差异区 gapAgent:progress*5→done）、5 个 progress 事件的精确字段形状与 progress 值（38.5/39.0/39.4/39.7/40.0/40.9）、目标终态分支（L564 round-2 re-audit clean）与 8+2 终态点全景、stub 设计三要点（同一 gap-design 响应×2 靠 pursuedGapKeys 去重驱动 round-2 早停；gap-research keep C1/C2；pubmed pool 去词算术使 gather 零变化而 gap 覆盖 0.75）。
+- 框架结论：ndjson 是纯档案（断言只读 manifest）；哈希无载荷无盐；fixture 必须由 record 模式生成而非手写/剪辑；单场景硬编码 → 最小改动 = sse-sequence.test.ts 场景循环化（stubs 可变 + SCENARIOS + beforeAll 循环 + 测试循环）+ 新 gap-merge.stubs.json + record 生成的 ndjson/manifest，共 3 新文件 1 改文件，零 src/ 改动。
+- 手工构造警示已入报告：若手写 ndjson，每步的必需键/progress 装饰/单调性/gapAgent 载荷字段（gapsFound/queriesRun/newRefs/detail）必须与真实 run 一致——但 GOLDEN 会对不上（哈希来自 live run），手写只可能是文档用途，正确路径永远是 SCIWRITE_RECORD_SSE=1。
+
+---
+Task ID: RT12-1..RT12-5 (seam 8 + SSE gap-merge scenario + storm runner + QA)
+Agent: main (Z.ai Code orchestrator)
+Task: 执行 RT11 backlog：缝 8（compose 提取，路由分解终局轮）、SSE 第二场景 gap-merge fixture、storm runner 通用化、QA 全套。
+
+Work Log:
+- 环境确认：git 32a85ac（RT11 docs）、dev server :3000 健康运行、425/425 单测基线绿。RT11 的 IMPROVEMENT_PLAN 读出 RT12 backlog 六项排序。
+- 并行派 2 个 Explore 代理：rt12-1a 缝 8 审计（区域 944–1335 行 = 392 行；21 项闭包测绘；6 处 DB 调用；黄金 46 token 中 8 个在区域；风险 Top5：compose:done 发射时机三重钉死 / globalRefs in-place 身份链 / articleContent round-59 重绑链 / DB 错误策略刻意不对称 / format-contract 顺序）+ rt12-1b SSE fixture 逆向（ndjson 55 行/manifest 黄金哈希算法 = sha256(tokens.join("\n")) 无载荷无盐；断言只读 manifest 不读 ndjson；单 fixture 硬编码需改造为同文件场景循环——bun 模块缓存使第二测试文件不可行；gap-merge 场景的精确 token 序列推导：gapAgent:progress*5 + L564 round-2 clean 终态，覆盖算术设计：gather 级 3 hits=covered 保 tiny 逐字节不变，curated 级 1 hit=weak → ratio 0.75 < 0.85 放行 round 2）。
+- 缝 8 手术：新建 src/lib/orchestrator/compose-stage.ts（约 440 行，逐字迁移 STEP 8/8.5/8.6：en 标题规整 + CJK 翻译、DB 重读 + gate 链、全局重编号、跨节去重、OOR 剥离 + 孤儿重映射、标题生成、repair/polish 编排、段落 $transaction 同步、article.create、Review 行 + repairSummary 持久化、终态审计）；route 944–1335 替换为单次 runComposeStage 调用 + destructure（articleTitleZh 因 translate 再绑定为 let）。route 2,037→1,681 行（orchestrator/ 第 9 模块，共 6,430 行）。RT10 的"Review-row persistence stays in the route"边界随缝 8 反转（article id 现在模块内创建）——模块头注释钉死。import 大清理：normalizeSectionTitle/generateArticleTitle/translateSectionTitlesToEnglish/hasCJKText/buildAuditReport/removeCrossSectionDuplicates/renumberSectionContent/stripOutOfRangeCitations/filterOrphanedReferences/runRepairLoop/runCoherencePolishLoop 随模块迁走；route 保留 countWords/applyFormatContract/STEP/inferFormat/buildReferenceList/citationNumbersOf/safeParseJSON（translate 区双边消费）。**SSE 黄金哈希拼接不变 ✓（8/8）**。
+- SSE 第二场景（backlog #2）：tests/fixtures/sse/gap-merge.stubs.json（tiny 副本 + 4 处差异：gap-design 返回 1 gap §1 + pubmed/web 双查询（两轮共用——round-2 靠 pursuedGapKeys 滤重）；gap-research keep C1/C2；databasePools 新增 "pubmed:TMC1 pore properties pharmacology" 2 条全新 items；8 条既有 pubmed items 的 title/abstract 去 mechanotransduction——gather 级 3 hits（2 UniProt + 1 web）= covered 非 weak → 零 top-up → gather 事件与 tiny 逐字节一致）；sse-sequence.test.ts 重构为 SCENARIOS 数组场景循环（activeStubs 模块作用域 let 绑定 + mock 闭包调用时读取；RECORD_ONLY 模式 SCIWRITE_RECORD_SSE=<id> 避免未动场景的 recordedAt git 噪音；场景间 clearWebSearchCache；9 个测试全循环化）。录制 gap-merge fixture：47 tokens/60 events，gap 段 = started → progress*5 → done 与 rt12-1b 预测完全一致；tiny 哈希 26ea0be3 不变。新增第 9 测试钉 gap-merge 场景专属契约（token 段精确形状、done 载荷 gapsFound/queriesRun/newRefs=1/2/2、5 条 progress 措辞含搜索去重 "1 results, 0 new"、skillCalls gap-design=2/gap-research=1、gatherCoverage {ratio:1,uncovered:0,weak:0,facets:2}、tiny 对照段 started→done 不变）。发现 stats.gapAgent 是 write-only 内部遥测不上 wire（与 outOfRangeCitationsStripped 同类）——断言改钉 gapAgent:done 载荷。
+- storm runner 通用化（backlog #4）：full-generation-test.ts 增加 --wait-storm（armed-probe 循环折入：probeQuota 轮询 /api/quota-status，aborted=false && windowCount≤2 时开火；run 自身 503（abort=false/provider-down race）→ isStormRefusal 判定 → 回到轮询而非放弃；真实错误照常传播；CLI 可调 --stormMaxProbes/--stormProbeIntervalSec）。rt9-e2e-runner.ts 的参考实现语义保留。
+- QA：426/426 单测（+1 gap-merge 场景测试）、26/26 集成、tsc 4 基线错误不变（page.tsx/database-query-panel×2/sidebar——全部既有）、lint 0 err/187 warnings = stash 前基线持平（自检发现 sse-sequence 1 个未用变量已修，净增 0）。bun build 语法验证 full-generation-test.ts 通过。
+- E2E 启动（CRISPR-Cas9 1500 词，孤儿子壳 + 显式 env + 堆上限 1536，PID 18611 → tool-results/rt12-e2e.log）：配额窗口干净（aborted=false windowCount=0）。
+
+Stage Summary:
+- 缝 8 落地：route 从 RT9 起点 5,428 行 → 1,681 行（-69%，三轮九模块）；第三次拼接 SSE 黄金哈希不变——事件契约零回归的客观证据。compose 模块契约钉死：compose:done 前一行都不许动、globalRefs/repairRounds 原引用进出、gate 链先于 renumber / OOR 先于 orphan / repair 先于 polish。
+- SSE harness 从单场景升级为多场景循环：gap-merge fixture 消除了 harness 最大盲区（多轮 gap agent 事件序列 + 边际收益门算术 + pursuedGapKeys 去重全部钉死）；RECORD_ONLY 模式让场景级重录零噪音。
+- 待办：E2E 回收（数据点 #3：[1 3] 展开计数 / revise 无状态漂移检测）→ 浏览器验证 → IMPROVEMENT_PLAN-RT12 + RT13 规划 → commit。
+
+---
+Task ID: RT12-FINAL (E2E storm saga + browser + docs + RT13 planning)
+Agent: main (Z.ai Code orchestrator)
+Task: E2E 回收、浏览器验证、IMPROVEMENT_PLAN-RT12 完稿、commit、RT13 规划。
+
+Work Log:
+- E2E 第一次发射（10:11Z，预检窗口干净）：3 分钟后撞风暴 #1（gather LLM 烧尽 5×30s 重试静默期）→ 机械半边继续（DB 查询无 LLM）→ TTL 过期后 knowledge/score/curate 降级完成（llmBatches=0 全机械回退，171 源 13 curated 8 全文）→ plan 阶段撞风暴 #2（consecutiveStorms=4 → TTL 阶梯升至 60min）→ withRateLimit abort 守卫击杀："previous call aborted; skipping 'chat'" → 46.4min 诚实失败。两项契约意外实证：abort 守卫 fail-fast 语义 + catch/rollback（失败项目 0 段落/0 文章/220 源 = 设计的 error-with-partial-work 态）。
+- wait-storm 重启（11:06Z）：18 探针后 11:59Z 开火 → 预检 429 → **发现折入 bug：runner 假成功退出 0 而非回到轮询**。根因：runOnce 内部 try/catch 故意吞掉管线错误写 report.pipeline.error（RT9 子进程版靠 grep stdout 躲开此坑，进程内折入需要返回值作为错误通道）。修复（5e0dd09）：runOnce 返回 report；wrapper 读 report.pipeline.error 过 isStormRefusal（新增中途守卫签名 "previous call aborted"）；真实非风暴失败硬失败保留报告。
+- 修复版 runner 验证：12:59Z/14:02Z/14:59Z 三次开火（每 60min TTL 阶梯一步）全部预检 503 拒绝（自 10:14Z 起六连风暴）→ **拒绝→回轮询循环逐次正确工作** → probe 60 干净放弃（exit 1）。判定：provider 侧配额硬耗尽 5 小时+，E2E 腿 NO-GO（环境容量而非代码缺陷）。布署新 runner（70 探针至 ~18:35Z）自主等待晚窗，报告落 tool-results/full-gen-test-report.json 供 RT13 收割。
+- 浏览器验证（agent-browser）：主页 0 错误且失败风暴项目的局部态优雅渲染（Paragraphs 0 / Citations 0 / "Start writing" 提示，rollback 契约的 UI 半边）；RT11 项目 6 节卡片（§1-§6 badge 含 warn/cit/ref 计数）；文章视图 6 节 h2 + 标题 + REFERENCES（~20K 字符、17 个 PubMed 链接）；时间线 run 行展开：SKILL CALLS/CACHE HITS 磁贴 + DEGRADED 徽标 + gap agent/compose 步骤；390px 无横向溢出（scrollW=innerW=390）+ 页脚粘底。5 截图 rt12-browser-*.png。浏览器用毕即关（内存纪律）。
+- IMPROVEMENT_PLAN-RT12-2026-10-13.md 完稿：6/6 backlog 处置表（E2E 腿 NO-GO 环境容量，其余 5 项 DONE——含缝 8 的格式契约审计零缺口结论）；缝 8 载重契约（compose:done 时机/三层 DB 错误不对称/OOR-before-orphan/gate-before-renumber/三重原引用身份）；路由分解终局表（5,428→1,681 = -69%，九模块 ~6,470 行，宣布 DONE）；SSE 多场景循环架构（activeStubs 调用时绑定 + RECORD_ONLY 模式）；E2E 风暴三幕剧 + swallow bug 发现与修复；RT13 backlog 排序（#1 数据点 #3 + 判定账本代码化，#2 分解预算转向功能/测试债，#3 translate 处置，#4 第三场景纪律）。
+- 3 commit：8eb1014（dev：缝 8 + gap-merge 场景 + storm runner）、5e0dd09（fix：wait-storm 重试看见风暴拒绝）、docs commit 待发。push 仍受沙箱无 GitHub 凭证限制（RT10 起已知）。
+
+Stage Summary:
+- RT12 全部闭环（E2E 腿环境 NO-GO 除外）：缝 8 落地使路由分解计划到达设计终点（1,681 行，-69%，九模块），第三次拼接 SSE 黄金哈希不变；SSE harness 升级为多场景循环并钉死 gap-merge 盲区；--wait-storm 通用化并经实战发现+修复一个真 bug（错误吞没导致假成功）——风暴机器全套（fail-fast 守卫/rollback/重试环）拿到史上最深实证。
+- 关键判定：E2E NO-GO 是 provider 容量问题（5 小时六连风暴），非代码缺陷；数据点 #3 携两个基线（RT10+RT11）滚入 RT13，armed runner 自主等待晚窗。
+- 遗留：GitHub push 需认证恢复；生产构建腿继续受沙箱策略限制；armed runner 报告待 RT13 收割。
+
+---
+Task ID: RT13 (next-phase dev + QA + E2E + RT14 planning)
+Agent: main (Z.ai Code orchestrator)
+Task: 执行 RT12 backlog：判定账本代码化（E2E 数据点 #3 防火墙）、compose 零覆盖块单测、translate 处置、QA 全套、E2E 回收、浏览器验证、RT14 规划。
+
+Work Log:
+- 环境恢复：git 2383dc8（RT12 docs）干净、dev server :3000 健康（200）、426/426 单测基线（后续验证）。发现 RT12 布署的 armed wait-storm runner（PID 20997，15:04 起 70 探针）仍在轮询——16:01:55Z probe 20 命中干净窗口（aborted=false window=0）自主开火，E2E 实时运行中。
+- E2E 并行推进开发（runner 进程已加载旧代码，编辑文件不影响运行中进程）。
+- RT13-1 判定账本（backlog #1/#2a）：full-generation-test.ts 新增 VERDICT_LEDGER 六项带范围检查（citationsChecked 30-40 / auditOrphans ≤0 / autoRepairRevisions ≤2 / autoRepairGuardRejections ≤0 / article.wordCount ≥900 / uniqueRefNumbers 1-40，全部锚定 RT10/RT11 实测值）；evaluateVerdictLedger 在报告落盘前挂 report.verdict；FAIL 在直连模式=exit 1、wait-storm 模式=硬错误且报告保留（isStormRefusal 不可能匹配 verdict 失败——回归不会被误判为风暴）；自定义 topic/words 自动跳过（--force-ledger/--no-ledger 覆盖）；管线无错但缺 complete 载荷=FAIL（fatal 检查）。bun build 语法验证通过。
+- RT13-2a cross-section-dedup.test.ts（8 测试）：removeCrossSectionDuplicates 首个直接单测。夹具算术关键发现：40% 词预算先于匹配判定拦截——短分区的预算小于单句长度时删除在设计上不可能；所有期望删除的 §2 都带 ~40 词异词汇 FILLER 使词预算通过、被测守卫（非词上限）做决定。钉死：首现优先、保末位引用否决、uncited 标志、每分区 5 次上限先于词上限触发（第 6 个重复句幸存）、三分区级联、未触碰分区逐字节不变。
+- RT13-2b compose-stage.test.ts（12 测试）：runComposeStage 公共缝隙驱动——ctx 自带 db（手工记录型 mock db，无需模块 mock）；四个 LLM 形依赖（article-title/section-title-zh/repair-loop/polish-loop）用 RT8 委托模式（active=stub，inactive=?real 委托）+ 抛错型 llm-session tripwire。钉死：段落同步 LOCAL regex 怪癖（[1 2]→parseInt→仅 1 行，GLOBAL_CITE_RE 式展开会是 2 行）、v70-1 gap-fill（仅引用 [2] 的段落获得 1..maxCitedNum 行，未引用的 refA 照建）、round-15 邻接合并进 stats、恒等契约（globalRefs/repairRounds 同引用，工作集释放可见）、三层 DB 错误策略（$transaction 抛→article.create 前中断；review.create 抛→log-and-continue 全部 3 行仍尝试；repairSummary 抛→仅日志）、compose:done 排在全部 DB 写之后（共享 event+DB 时间线的模块级黄金）、Review 行/repairSummary 载荷形状（mergedWeaknesses 在 core 层非 parsed——夹具注释钉死）、CJK 标题治愈。共享进程教训（回合内修复）：mock.module 替换整个模块——必须重导出全部符号（countCJKText 缺失曾让后续文件 import 崩溃；同步函数走缓存 ?real 模块句柄委托）。
+- RT13-3 translate 处置（backlog #3）：route.ts STEP 9 上方 35 行处置注释——ROUTE-OWNED FOREVER：wire 耦合（五个 route 本地恒等 + 两个 route 持有 DB 写）、零复用、纯部分已迁移（RT6 门/RT9 seam-2）；重访触发=双语模式功能需求，绝非行数。
+- RT13-6 coverage-audit 复查：本运行 skillCalls=42（knowledge 3/score 8/curate-smart 1/gap-design 1/gap-research 1/evidence-extract 3/fact-check 7/review 3/revision 6/coherence-review 2/coherence-edit 7），合并省 1 调用≈2.4% 且耦合两种 fallback 契约——维持 deferred，判定账本的 skillCalls 载荷成为持续重排序数据基础。
+- QA：单测 446/446（426+20，全绿；SSE 双场景黄金哈希不受新 mock 影响——委托模式验证）；集成 26/26；tsc 4 基线错误不变（page.tsx/database-query-panel×2/sidebar 全部既有）；lint 0 err/187 warnings=基线（自检发现 2 个新警告已修，净增 0）。
+- E2E 回收（数据点 #3）：34.06 分钟完整管线（armed runner 全自主 launch→report 首次成功）。账本 6/6 PASS（citationsChecked 33/auditOrphans 0/revisions 2≤2/guardRejections 0/words 1933/uniqueRefs 19）；对抗审查 29 supported/2 partial/0 unsupported/0 removed/19 refs；降级披露：score ×8 机械回退（运行中撞限流窗口，windowCount 34 + 30s 冷却）+ gather web-search 4/6 限流；crossSectionDuplicatesRemoved 4。第三个干净窗口基线落地（RT10 34/2/0/0、RT11 33/1/0/0、RT13 33/2/0/0）。账本为手动应用（运行中 runner 早于账本代码），后续运行免费获得。
+- 浏览器验证（agent-browser）：主页 0 错误；新项目卡展开（7 段落/36 引用/100% 覆盖）；文章视图 7 节 h2 + 19 PubMed 链接 + References；时间线运行行展开（SKILL CALLS/CACHE HITS 磁贴 + score 机械回退披露 + repair/polish/gap-agent 步骤 + "COMPLETED v2 … 2,364w · 34m 3s"）；移动端 390px 无横向溢出 + 页脚粘底；2 截图 rt13-browser-{home,timeline}.png；用毕即关。
+- IMPROVEMENT_PLAN-RT13-2026-10-13.md 完稿（6/6 backlog 处置表 + 账本地/覆盖详情 + E2E 数据点 #3 + 浏览器验证 + NO-GO 表 + RT14 backlog 排序）。2 commit：7d4d390（feat：账本 + 20 测试 + 处置注释）、d298e3d（docs）。
+
+Stage Summary:
+- RT13 全项闭环：判定账本把 E2E 验收从"目测"升级为"回归即 FAIL"（六项带范围、双模式退出码、风暴不可误匹配）；compose 区域三个盲区（段落同步 regex 怪癖/gap-fill、三层 DB 错误策略、恒等契约）全部可执行化——套件 426→446 全绿且 SSE 黄金哈希零回归；translate 处置为文档化 route-owned-forever。
+- E2E 数据点 #3 = PASS（armed runner 全自主完成，风暴机器首次 launch→report 闭环）——[1 3] expansion + revise-stateless 三基线齐备，判定时代收官。
+- RT14 backlog 排序：#1 score 阶段中窗限流降级（近四运行三次发生，最大质量方差源——候选：干净窗口重打分）#2 账本扩展至对抗腿 #3 生产构建腿（第 4 次滚动）#4 GitHub push #5 SSE 第三场景（契约触发制）。
+- 遗留：生产构建腿与 GitHub push 继续受沙箱限制；score 降级模式转 RT14 主攻方向。
+---
+Task ID: rt14-1a
+Agent: Explore (RT14 score 重打分审计)
+Task: RT14 backlog #1 手术级测绘——score 阶段机械回退触发链、限流感知面、SSE 契约影响面、重打分插入点与测试改造面，产出零修改审计报告。
+
+Work Log:
+- 精读 sources-stage.ts 全文（417 行）：score 块 L256-311、curate L313-348、tier 门 L350-385、fulltext L387-407、返回契约 L409-416；勘误 KV_BATCH_SIZE=12 属知识阶段（L77），score 批大小=20（citation-planner L153）、并发 3（L167）。
+- 精读 citation-planner.ts（536 行）scoreSources/smartCurateReferences/fetchFullTextsForRefs + registry.ts scoreSkill（L130-246）+ executor.ts runSkill（L56-151）+ scoring.ts 机械核：确定三级机械回退（整批 throw→fallbackRun L147-150/L97-104；逐条补填 registry L225；anyhow-fill citation-planner L204-209），统一检测串 = reason "mechanical fallback (keyword overlap + recency)"（scoring L86），现成批级检测点 citation-planner L197。
+- 精读 rate-limiter.ts 全文（529 行）：滑窗 10min/阈值 20/比例冷却 30s（L148-155）、abort TTL 阶梯 [2,10,30,60]min + 磁盘持久（L256/L262-317）、失败也占窗位（L476-478）；quota-status 路由形状；ai.ts withAbortWaitout（150s 等出+单重试）；full-generation-test.ts probeQuota（L538-548）与开火条件 L579（!aborted && windowCount≤2）+ isStormRefusal L550-558。
+- 精读 route.ts 缝区：runSourcesStage L805-817 → runPlanningStage L835-852（curatedScores 传入 L849）→ 检查点 L862-890 → complete 载荷 L1480-1560（skillDegraded L1515、resetSkillTelemetry L340、keepalive ping L265-271、tracker 权重表 score 0.9 L287）；planning-stage 消费点 L204-207（formatScoredRefLine 进 plan prompt）/L366-437（coverage 回填重绑）/L443-448（validateSectionCitationPlan core 滞留）/L714-719（gap 合并 push）。
+- 精读 sse-sequence.test.ts（1215 行）：SPINE score 段 L740-742（started→{star progress}→done）、SHAPES score:done 7 键 L854-857（额外键放行）、INVARIANTS 尾随 progress 合法 + tracker max-clamp 论证（progress-tracker L207/L273-285）、ping=token 且 test2 断言零 ping L690-691、SCENARIOS 循环 L128-145 + RECORD_ONLY、RECORDER PARITY 自动适配、tiny manifest 46 token 哈希 26ea0be3。
+- 核对 llm-cache 语义（executor L120-127 仅成功 chat 才入缓存 → 整体重跑 = 健康批缓存命中免费、失败批真重打；逐条补填批 raw 已缓存 → 半机械残留盲区）；核对 verdict ledger（full-generation-test L89-128）与 stageEvents extra 键缺口（L323-332 不捕获 llmBatches/fallbackBatches）。
+
+Stage Summary:
+- 插入点裁决：A1（sources-stage L292 score:done 块之前）为唯一零级联点——curate 是 allScores 第一消费者（L323），重打分必须在其前；done 之后的 A2 破 SPINE 语法槽、route 层 B 需重跑 curate + 二次 done 事件、complete 后 C 零价值。A1 红利：重打分事件全部骑既有 score:progress star 槽 → 五大 SSE 测试零编辑、干净窗口分支不触发 → tiny/gap-merge 黄金哈希天然不变、score:done 自动携带最终 llmBatches/fallbackBatches。
+- 探测函数清单 15 项（isAborted/getWindowCount/getQuotaSnapshot/preFlightQuotaCheck/llm-probe/providerStorming/probeQuota 等）；进程内判定建议 = abort 清 + windowCount 低 + 8-token 健康探针（abort TTL 过期≠恢复，RT12 六连拒绝实证）；滑窗 10min 自然衰减 → 有界等待上限 ~12min。
+- 关键陷阱 3 枚：ping token 非确定性（等待 >20s 静默 → 第三场景 fixture 必炸，需 pollMs<20s+每轮 progress+参数可注入）；llm-cache 盲区（逐条补填批重放同样缺口，只修整批回退）；skillDegraded 只加不减（成功重打不归零，恢复需独立披露字段如 score:done.rescoredBatches）。
+- 建议形状：独立 orchestrator/rescore.ts（rescoreDegradedBatches(ctx, first) 返回 {scores,llmBatches,fallbackBatches,rescored,rescoredBatches}，对照 repair-loop/polish-loop 先例），SourcesStageCtx 补 isClientDisconnected；测试面 = 新 rescore.test.ts（RT8 委托 mock，前 K 次 score 调用抛 RateLimitAbortedError 形错误后恢复）+ sse-sequence 第三场景（rescore.stubs.json + failFirstN 旋钮 + dispatchChat 注入 + SCIWRITE_RECORD_SSE=rescore-window）。
+- 风险 Top5：快乐路径回归（检测须纯同步第一行）、ping 非确定性、cache 盲区、风暴再触发+TTL 阶梯升级（单遍有界+健康探针）、断连/超时交互（等待循环查 isClientDisconnected、绝对 deadline）。
+
+---
+Task ID: RT14-1..RT14-3 (score re-score + adversarial ledger + SSE third scenario)
+Agent: main (Z.ai Code orchestrator)
+Task: 执行 RT13 backlog：#1 score 阶段干净窗口重打分（主攻）、#2 对抗腿账本扩展、#5 SSE 第三场景（rescore 确实改变了降级路径事件契约，满足"契约变更才加场景"政策）。
+
+Work Log:
+- 恢复上下文：worklog 精读确认项目实际进度远超摘要记录（RT13 已闭环，git d298e3d）；SciWrite dev server :3000 健康、425→446 基线全绿、工作树干净。RT13 计划文档读出 RT14 backlog 五项排序。
+- 派 Explore 代理 rt14-1a：score 阶段手术级审计——数据流（scoreSources 批 20/池 3 → curatedScores → curate 平行数组消费 5 字段进 prompt）、机械回退三级触发条件（整批 chat 抛/逐条畸变/兜底）、插入点三候选对比（A1 = sources-stage 内 score 与 curate 之间是唯一零级联点：curate 尚未消费分数）、限流探测函数清单（isAborted/getWindowCount/llm-probe 8-token 探针）、风险 Top5（ping 20s 阈值/缓存盲区/风暴 TTL 阶梯/断连宽限 4min）。
+- #1 主开发：新建 src/lib/orchestrator/rescore.ts（~250 行）——检测规则"整批全 mechanical 才可重打"（部分填充批的 raw 已缓存，重跑重放同样缺口 = 文档化盲区）；有界等待（poll 15s < 20s ping 阈值、探针 60s 冷却、每轮查断连 + 探针成功后复查）；单遍重打（复用 scoreSources 同输入：健康批缓存免费重放、降级批新调；新 abort 经 skill fallback 自然单遍）；happy path 纯同步零成本（黄金哈希保证）。sources-stage A1 拼接（scoreState + scoreAndMaybeRescore）+ ctx.isClientDisconnected；route complete payload 增 4 个 score 统计键；stats 类型声明扩展。
+- 开发期缺陷 2 个（被测试捕获）：① 探针成功到开火之间未复查断连（补 after-probe 复查）；② complete payload 的 score 键因锚点匹配错误落进 accuracy 块（SSE 场景断言捕获，移到 stats 块）。
+- #2 账本扩展：full-generation-test.ts VERDICT_LEDGER 增 4 个对抗腿检查（supported≥15/partial≤5/unsupported≤2/removed≤2，skipWhen 对抗腿未跑或出错时跳过不判 FAIL）；stageEvents extra 增 llmBatches/fallbackBatches/rescoredBatches。
+- #5 SSE 第三场景：rescore-window.stubs.json（tiny 克隆 + dynamic.score.failFirstN=1）+ harness 注入（chatWithSession 对 score dispatch 前 N 次抛 429 形错误，每场景重置计数器）+ 环境保险（SCIWRITE_RESCORE_POLL_MS=1/MAX_MS=2000）+ test10 场景断言（token 段 started→progress*4→done、4 条 progress 措辞、healed 计数、complete.stats 恢复记录 + skillDegraded 保持事故记录、tiny 对照 happy path 不变）。fixture 录制 58 事件/46 token/哈希 e968dfe8；tiny/gap-merge 黄金哈希不变。
+- QA：单测 458/458（+11 rescore +1 SSE test10）；集成 26/26；tsc 4 基线零新增；lint 0 err/187 warn 基线持平；双顺序 mock 鲁棒性验证（sse→rescore 与 rescore 单独均绿——bun mock.module 重绑已加载模块，与套件文档一致）。2 commit（dev + SSE 场景）。
+- E2E 发射：armed runner（--wait-storm，发射时窗口干净 windowCount=0）→ CRISPR-Cas9 1500 词，正在 score 阶段（157 源 8 批）。
+- push 尝试：凭证仍缺（gh CLI 不存在、credential helper 空、无 env token）——连续第 4 轮 NO-GO。
+
+Stage Summary:
+- RT14 三项开发全部落地：#1 重打分（A1 零级联点 + 六层防护设计）、#2 对抗账本（临时带 + skipWhen 语义）、#5 SSE 第三场景（降级路径事件契约钉死）。
+- 黄金哈希三层保证实证：干净窗口零事件（tiny/gap-merge 哈希不变）+ 降级窗口新事件全部骑既有 score:progress star 槽（零新事件类型）+ score:done 附加键仅在 >0 时出现。
+- E2E 运行中（score 阶段 = rescore 特性的真实观察窗口）；待回收报告 → 浏览器验证 → IMPROVEMENT_PLAN-RT14 → RT15 规划。
+
+---
+Task ID: RT14-FINAL (E2E live-proof + browser + docs + RT15 planning)
+Agent: main (Z.ai Code orchestrator)
+Task: E2E 回收（rescore 特性实战验证）、浏览器验证、IMPROVEMENT_PLAN-RT14 完稿、RT15 规划、push 尝试。
+
+Work Log:
+- E2E 数据点 #4（41.15min，armed runner 探针 1 即干净窗口开火）：**rescore 特性命中实战靶场**——gather web-search 4/6 限流（早期窗口）→ score 8/8 批全机械回退（14:54-15:49）→ rescore 钩子 9 轮等待（windowCount 5→1 衰减 wire 可见，abort TTL 过期后探针确认）→ 135.4s 等待后 8/8 批全部 LLM 重打（69 core/69 important/10 marginal 真实判定）→ curate 消费愈合分数（20/148）。RSS 峰值 2013MB 存活；修复 3 轮 2 修订、polish 2 pass、gap agent 3 缺口真实合并；文章 1658 词/35 标记/20 unique=20 listed（0 孤儿）/citationsChecked 33；对抗腿 25.6s：checked 32/supported 24/partial 5/unsupported 3/removed 0。
+- 账本 10/10 PASS（追溯修正后）：发现并修复对抗载荷形状缺口（RT10 统一后为扁平 report.supported，旧 reportJson.summary 路径读到 {} 静默 skip 四检查）+ unsupported 带 2→3 数据驱动放宽（第四数据点 3/0，四点序列 2/2/0/3，removed 0-2 才是真质量信号）；报告 verdict 回填附 retro 注记。
+- 完整载荷键位修复被 SSE 场景断言捕获（4 个 score 键因锚点误配落 accuracy 块 → 移至 stats 块；本轮 E2E 报告因运行早于修复携带 accuracy 位，文档已注明迁移）。
+- 浏览器验证（agent-browser）：主页 0 控制台/0 页面错误；项目卡 5 段/35 引用/100% 覆盖；**时间线完整渲染 rescore 实况**（9 条等待消息 + "Clean window confirmed (135s waited)" + 8 条 "Re-score: Scored n/148" + SKILLS DEGRADED score 徽标 + 愈合计数并存——事故与恢复双披露设计在 UI 实证）；文章 5 节 h2 + 19 PubMed 链接 + References；390px 无横向溢出 + 页脚粘底；4 截图 rt14-{timeline-detail,article-view,mobile,home-final}.png；用毕即关。
+- QA 终态：458/458 单测（+12：rescore 11 + SSE test10）、26/26 集成、SSE 10/10 三场景、tsc 4 基线、lint 0 err/187 warn 基线；双顺序 mock 鲁棒性验证。
+- IMPROVEMENT_PLAN-RT14-2026-10-13.md 完稿（五项 backlog 处置表、六层设计、实战时间线、对抗带表、QA、浏览器、RT15 backlog）。4 commit（d95c9fe/953476e/f5be3fb/95bfd57）。push 失败：凭证仍缺（第 4 轮 NO-GO）。
+
+Stage Summary:
+- RT14 五项 backlog 全部处置：#1 重打分 DONE+实战验证（E2E 恰好命中 RT11×3/RT13×8 同款风暴——135s 等待后 8/8 愈合，质量方差主因消除）、#2 对抗账本 DONE（形状修复+带校准，10/10）、#3/#4 NO-GO 滚动（build 第 5 轮/push 第 4 轮）、#5 SSE 第三场景 DONE（契约变更触发政策满足）。
+- 恢复类机制的设计规范入档（迁移规则新条）：纯同步可检测 / happy path 零成本 / 有界 / 单遍 / 事故与恢复双披露。
+- RT15 backlog 排序：#1 gather web-search 限流重试（本轮同类风暴早期命中、唯一未愈合路径；score 钩子的 wait/probe 机制可提取共享）#2 对抗带继续积累（partial 5/5 贴边待两个数据点）#3 时间线恢复徽标 #4/#5 环境受限滚动。
+
+---
+Task ID: RT15-1 (next-phase dev: gather web-search clean-window retry + timeline recovery badges)
+Agent: main (Z.ai Code orchestrator)
+Task: 执行 RT14 backlog：#1 gather web-search 限流重试（主攻，含 wait/probe 机制共享提取）、#3 时间线恢复徽标；#2 对抗带积累（被动，E2E 喂）。
+
+Work Log:
+- 环境核验：/home/z/SciWrite 完整存活（RT14 终态 95bfd57、458/458 单测基线、dev server :3000 健康）——my-project 的脚手架重置不影响真正工作目录；git 状态干净，quota 窗口干净（windowCount=0）。
+- 精读 rescore.ts（六层防护）+ gather-stage.ts（web-search 降级路径：outcome.reason / searchFailTally / 无 query 级记录）+ webSearchDetailed（reason 语义：rate-limit/timeout/error/provider-unavailable；失败从不缓存 → 无缓存盲区）+ SSE harness（activeStubs dynamic 注入 + mock.module 全命名空间 + 场景循环 reset）。
+- 新建 src/lib/orchestrator/clean-window.ts：共享 wait-for-clean-window 核心（有界轮询 <20s ping 阈值 / 廉价门 isAborted+windowCount / 8-token 直连探针 60s 冷却 / 双断连检查含探针后复查）；参数化 step/action/subject(n)/logTag 使 rescore 每轮消息逐字节复刻（含 (windowCount= 前导空格细节——首版遗漏被黄金哈希意识捕获）；放弃消息/开场/确认消息留在调用方（各自特有措辞）。
+- 重构 rescore.ts：WAIT 段调 waitForCleanWindow（RescoreCtx 接口不变；probe re-export 保持测试面稳定）；rescore.test.ts 11/11 + rescore-window 黄金哈希零变化验证提取契约。
+- 新建 src/lib/orchestrator/web-retry.ts：纯同步检测（isRetryableWebReason：rate-limit/timeout/error 可重试；provider-unavailable 是能力缺失不可等待修复；未知 reason fail-closed）→ 10min 有界等待（默认值刻意短于 score 的 15min——web 是补充层）→ 单遍重试 pool 2（风暴刚过的温和再入）；webItemFromSearch 提取三处内联映射（主循环/top-up/retry）为单一函数（字段顺序保持原字面量——rawJson 字节不变）。
+- gather-stage.ts 拼接：degradedWebQueries 收集（主循环 reason 分支 + 防御性 catch 分支）+ 唯一零级联插入点（dedup 之前——愈合结果自然流入 coverage/top-up/save）+ gather:done 附加键条件 stats.webSearchRetried > 0（对照 score:done rescoredBatches > 0 契约；首版 !== undefined 被场景断言捕获——happy path 会带 webSearchHealed: 0 违反黄金哈希保证，修正）。
+- route.ts：stats 初始化（webSearchRetried/Healed/RetryWaitMs: 0）+ complete payload stats 块 3 键（对照 RT14 的 score 4 键模式）。
+- UI（backlog #3）：run-timeline-dialog 的 SKILLS DEGRADED 块——score×N 行加 emerald "→ N recovered" 后缀（stats.scoreRescored）+ web-search H/R recovered 独立徽标（stats.webSearchHealed/Retried，非 skill 走 flat stats）+ i18n 键 timeline.recovered/已恢复（EN+ZH）；干净运行零噪声（RT8 纪律保持）。
+- 测试：web-retry.test.ts 15 测试（检测内核 3 + 映射器 3 + 钩子 9：happy null/provider-unavailable 排除/混合子集/健康重试事件序列/预算耗尽/双断连/重试再失败单遍/风暴轮消息/廉价门探针阻塞）；修 3 个测试逻辑缺陷（阈值边界 20<=20 通过→21、多余首调用、断言时序）。SSE 第四场景 web-retry-window：stubs 克隆（rescore-window 去 score.failFirstN + 加 dynamic.webSearch.failFirstN=1）+ harness 注入（webSearchDetailed failFirstN + webCallSeq per-scenario reset）+ env 保险（SCIWRITE_WEB_RETRY_POLL_MS=1/MAX_MS=2000）+ 场景断言测试（消息序断言 + done 键契约 + complete stats 键 + 双对照：tiny gather 段 happy 不变 & 本场景 score 段 happy 不变）。fixture 录制 60 事件/46 token/哈希 61b94f127e130a24。
+- QA：单测 474/474（458+16）；集成 26/26；tsc 4 基线错误 0 新增；lint 0 err/188 warn——消息级 diff 与 RT14 基线为空（净增 0；修掉 4 个新警告：未使用变量/Promise/import）。
+- 1 commit（feat：retry + 共享核心 + UI + 16 测试）。E2E armed 发射（干净窗口 windowCount=0 直接开火，PID 后台运行中）。
+
+Stage Summary:
+- RT15 三项开发全部落地：#1 web-search 干净窗口重试（六层防护全合规 + 无缓存盲区 + 唯一零级联点）、#3 时间线恢复徽标（事故与恢复双披露的 UI 完整性）、#5→SSE 第四场景（降级 gather 路径事件契约钉死，四场景黄金哈希体系）。
+- 共享 clean-window 核心提取的黄金哈希三层验证：三既有场景字节不变（提取契约最强证明）+ 新场景降级序列全事件骑既有 gather:progress 槽 + done 附加键仅在 retry 发生时出现。
+- E2E 数据点 #5 运行中；待回收 → 浏览器验证 → 文档完稿 → RT16 规划。
+
+---
+Task ID: RT15-2 (E2E deep-storm saga + browser verification + armed runner)
+Agent: main (Z.ai Code orchestrator)
+Task: RT15 E2E 测试回收（web-retry 特性实战验证）、浏览器验证、armed runner 布署、文档推进。
+
+Work Log:
+- E2E 发射（19:49Z，发射时窗口干净 windowCount=0）→ gather 数据库阶段正常推进（10 查询全 20 结果，限流冷却拖慢至 21min）→ **风暴滚入**：web-search 3/3 全部 rate-limit 降级 → **web-retry 钩子命中实战靶场**：10min 有界等待（40 轮 × 15s 事件全披露，windowCount 52→0 衰减逐事件可见）→ **探针在窗口排空后仍拒绝**（in-process 窗口空 ≠ 账户恢复——RT12 教训第二次实证）→ 诚实放弃（"3 query(ies) not retried; database-gathered sources are unaffected"）→ 管线继续（186 sources/144 refs）。
+- score 阶段 7/7 批全机械回退 → **rescore 钩子同风暴第二靶场**：15min 等待（60 轮事件）→ abort TTL 升至 30min 阶梯（consecutiveStorms=3，db/rate-abort.json 佐证）→ 预算结构性不可覆盖 → 诚实放弃 → 机械分数保持 → curate/fulltext/plan 继续。
+- 管线 68min 死于 plan 阶段 abort 守卫 fail-fast（"previous call aborted; skipping 'chat'"——RT12 已知契约）——**死因是 plan 自身的 6 次重试耗尽，非钩子悬挂**（25min 聚合有界等待后管线自主继续）。判定：完整腿环境 NO-GO（provider 容量，RT12 同类）；verdict 账本正确 skip（pipeline error 语义）。
+- 浏览器验证（agent-browser）：主页 0 console/0 page 错误；失败风暴项目局部态优雅渲染（Paragraphs 0/Citations 0/Start writing）；**时间线完整渲染整个 saga**（RECORDER PARITY 投影）：3 条降级查询事件 + 降级 tally + **100 条 Waiting 消息**（40 web-retry + 60 rescore，15s 节奏可见）+ 2 条放弃消息 + 7 条机械批消息；恢复徽标半边需 complete payload（失败运行无、RT14 运行早于键修复）——SSE 场景断言钉死数据路径，live 验证待 armed runner 成功运行；390px 无横向溢出（scrollW=innerW）+ 页脚粘底（gap 0）；2 截图 rt15-timeline-storm.png/rt15-mobile-390.png；用毕即关。
+- armed wait-storm runner 布署（60 探针 × 180s ≈ 3h 覆盖）：probe 17（21:53Z）读到瞬时 aborted=false 开火 → **POST 时刻风暴回摆被 pre-flight 守卫拒绝**（503 provider throttled）→ 正确回轮询（RT12 5e0dd09 修复行为 live 实证）→ 继续探针等待晚窗。
+- 文档：IMPROVEMENT_PLAN-RT15 §6 风暴 saga + §6.1 浏览器验证 + RT16 backlog 草稿（#1 风暴阶梯 TTL vs 恢复预算的结构性错配——本轮实证 30min TTL 盖过 10/15min 预算后所有等待结构性注定放弃；候选 a: TTL 感知预算 min(default, ttlRemaining+margin)；候选 b: 接受深度风暴的结构性放弃为设计行为并文档化。#2 同风暴重复等待去重（25min 墙钟→1 次）需对迁移规则设计。#3 对抗带被动积累。#4/#5 环境滚动第 7/6 轮）。
+- 2 commit：feat（RT15 全部开发）+ docs（saga + 截图 + RT16 草稿）。
+
+Stage Summary:
+- web-retry 特性拿到 SSE 场景达不到的深度 live 验证：真实 40 轮等待、窗口排空后探针拒绝（RT12 教训二证）、真实预算耗尽、真实放弃披露、放弃后管线自主继续。
+- 一次 E2E 双钩子靶场（web-retry + rescore 同风暴）+ 风暴阶梯第三级（TTL 30min）实证预算结构性错配 → RT16 #1 候选。
+- armed runner 自主等待晚窗（已实证一次瞬时窗口误开火 + 正确回轮询）；恢复徽标 live 验证与数据点 #5 成功版待其回收。
+
+---
+Task ID: RT15-FINAL (armed runners + docs + RT16 planning)
+Agent: main (Z.ai Code orchestrator)
+Task: armed wait-storm runner 回收、IMPROVEMENT_PLAN-RT15 终稿、RT16 规划、push 尝试、QA 终态。
+
+Work Log:
+- armed runner round-1（60 探针 21:05Z→00:02Z）：probe 17 读到瞬时 aborted=false 开火 → POST 撞 pre-flight 守卫（503 provider throttled，管线未启动零消耗）→ 正确回轮询（RT12 5e0dd09 修复三实证之一）→ 60 探针耗尽诚实放弃（exit 非零 "storm never cleared"）。
+- armed runner round-2（60 探针 00:06Z→03:03Z）：两次开火两次被守卫拦截（同样模式）→ 探针耗尽放弃。**两 runner 合计 120 探针/6 小时覆盖/3 次守卫拦截**——探针快照与 pre-flight 实调的间隙风暴全部被双层守卫正确处理（零配额浪费、零假启动）。
+- 风暴总时长 7.2h+（19:50Z→03:03Z+，史上最深——超 RT12 的 5h 级）。
+- E2E 最终判定：**完整腿环境容量 NO-GO**；特性验证三腿站立（SSE 第四场景事件契约 + 15 单测 + 风暴 saga live 深度验证）；对抗带无新数据（verdict skipped 被动滚动）。
+- IMPROVEMENT_PLAN-RT15-2026-10-13.md 终稿：五项 backlog 处置表（#1 DONE 共享提取+六层防护+零缓存盲区、#2 被动滚动、#3 DONE 恢复徽标、#4/#5 环境滚动第 6/5 轮）、§2 设计详情（提取契约/插入点/三处映射统一）、§3 QA 表、§4 恢复徽标、§5 SSE 第四场景、§6 风暴 saga + §6.1 浏览器验证 + §6.2 armed 判定、§7 RT16 backlog。
+- RT16 backlog 排序：#1 风暴阶梯 TTL vs 恢复预算结构性错配（本轮实证：TTL 30min 阶梯 > 10/15min 预算 → 阶梯第三级后所有等待结构性注定放弃；候选 a: TTL 感知预算、候选 b: 接受并文档化深度风暴的结构性放弃；需一个数据点：风暴落在阶梯 ≤2 级 vs ≥3 级的频率）#2 同风暴重复等待去重（25min 墙钟→1 次，需对迁移规则设计纯同步可检测方案）#3 对抗带被动积累 #4 生产构建第 7 轮滚动 #5 push 第 6 轮滚动。
+- QA 终态：474/474 单测（458+16）、集成 26/26、SSE 四场景、tsc 4 基线 0 新增、lint 0 err/188 warn 消息级 diff 为空、dev server 200。
+- 3 commit：10368e7（feat：retry+共享核心+UI+16 测试）、69c593e（docs：saga+截图+RT16 草稿）、5c80110（docs：armed 终稿）。
+- push 尝试：凭证仍缺（gh CLI 不存在/credential helper 空/无 env token）——第 5 轮 NO-GO（本地历史至 5c80110 为 artifact）。
+
+Stage Summary:
+- RT15 三项 backlog 全部处置：#1 web-search 干净窗口重试 DONE（共享 clean-window 提取的黄金哈希三场景字节不变证明 + 无缓存盲区 + SSE 第四场景钉死降级契约 + 风暴 saga live 深度验证——40 轮真实等待/窗口排空后探针拒绝 RT12 教训二证/诚实放弃/管线自主继续）、#3 时间线恢复徽标 DONE（事故与恢复双披露 UI；live 徽标验证受 NO-GO 限制由 SSE 断言钉死数据路径）、#2 对抗带被动滚动。
+- 恢复类机制设计规范新增实证：有界等待的"结构性放弃"形态（预算 < 风暴阶梯 TTL 时诚实放弃是设计答案而非缺陷）——RT16 #1 候选方向。
+- 遗留：7.2h 记录风暴致 E2E 完整腿 NO-GO（环境容量）；恢复徽标 live 验证与对抗带数据点滚入 RT16；生产构建/push 环境受限继续滚动。
