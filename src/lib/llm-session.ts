@@ -81,9 +81,22 @@ const STATELESS_TASK_TYPES = new Set([
   // RT8 plan explicitly gated this flip on "next E2E shows no verdict
   // drift" — the RT8 run provided that evidence. This removes ~12 ×
   // 20-row findMany deserializations per run (fact-check ×8, review ×2,
-  // coherence-review ×2). "revise" stays generation-side (context-loaded)
-  // by design — the RT8 data covers verdict passes only.
+  // coherence-review ×2).
+  // RT10 (re-landed RT17-3c): "revise" joins the stateless set too. Its
+  // three consumers (reviseArticle / reviseSection / coherenceEdit) all
+  // build prompts that are 100% self-contained — full article or section
+  // text + review feedback, typically 20-40KB — versus the ≤1.2KB
+  // generation-chatter preamble a context load prepends; the preamble was
+  // pure DB + RSS churn (20-row findMany per repair round, and the repair
+  // loop fires multiple rounds per E2E). E2E gate for this flip (drift
+  // detectors to watch on the next armed run): repair ROUND COUNT (context
+  // should have influenced nothing), mechanical-guard rejection rate, and
+  // coherence-review finding count — any sustained move in those means the
+  // preamble was doing real work and this flip should be reverted.
   "review",
+  // (provider-role routing is UNaffected: "revise" still routes to the
+  // generate model — see llm-selection.ts; stateless ≠ review-role.)
+  "revise",
 ]);
 
 export function isStatelessTaskType(taskType: string): boolean {

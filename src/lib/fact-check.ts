@@ -133,7 +133,12 @@ function citedNumsOf(sentence: string): number[] {
   let m: RegExpExecArray | null;
   CITE_NUM_RE.lastIndex = 0;
   while ((m = CITE_NUM_RE.exec(sentence)) !== null) {
-    for (const part of m[1].split(/[,;]\s*/)) {
+    // RT10: \s joins the split class so a GLOBAL-form "[1 3]" marker
+    // contributes BOTH numbers (previously parseInt("1 3") = 1 dropped the
+    // second). No dash-space collapse needed here: CITE_NUM_RE's separator
+    // class ([,\-–\s] with no trailing \s*) cannot produce an inner with a
+    // space after a dash — "1- 3" simply never matches this regex.
+    for (const part of m[1].split(/[,;\s]\s*/)) {
       const rm = part.match(/^(\d+)\s*[-–]\s*(\d+)$/);
       if (rm) {
         for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) nums.add(n);

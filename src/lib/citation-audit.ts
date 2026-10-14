@@ -124,11 +124,23 @@ const STOPWORDS = new Set([
   "you","your","he","she","his","her","et","al","fig","figure","table","ref",
 ]);
 
-/** Expand a citation inner string like "1,2,3" or "1-3" into an array of numbers. */
+/** Expand a citation inner string like "1,2,3" or "1-3" into an array of numbers.
+ * RT10: space-separated inners ("1 3") expand fully — the separator class
+ * gains \s to mirror GLOBAL_CITE_RE, so extractBodyCitations /
+ * structuralCitationFindings / the adversarial pair collection all see
+ * every number a marker displays. A dash-adjacent-space COLLAPSE runs
+ * first and is load-bearing: callers' regexes admit "1- 3" inners (dash
+ * separator + its optional trailing \s*), and a naive space split would
+ * cut that range into "1-"/"3" — parseInt("1-") = 1, silently turning
+ * [1,2,3] into [1,3]. Collapsing to "1-3" first preserves those paths
+ * byte-identically (the sanitize Layer-1 regex's inners are unchanged).
+ */
 export function expandCitationRange(inner: string): number[] {
-  const trimmed = inner.trim();
+  const trimmed = inner
+    .replace(/\s*([-–])\s*/g, "$1")
+    .trim();
   const nums: number[] = [];
-  const parts = trimmed.split(/[,;]\s*/);
+  const parts = trimmed.split(/[,;\s]\s*/);
   for (const p of parts) {
     const rangeMatch = p.match(/^(\d+)\s*[-–]\s*(\d+)$/);
     if (rangeMatch) {
@@ -243,7 +255,7 @@ export function extractBodyCitations(body: string): {
   index: number;
   sentence: string;
 }[] {
-  const citeRe = /\[(\d{1,3}(?:[,\-–]\s*\d{1,3})*)\]/g;
+  const citeRe = /\[(\d{1,3}(?:[,\-–\s]\s*\d{1,3})*)\]/g;
   const out: { n: number; marker: string; index: number; sentence: string }[] = [];
   let m: RegExpExecArray | null;
   while ((m = citeRe.exec(body))) {
@@ -395,7 +407,11 @@ export function structuralCitationFindings(
 
   for (const sec of sections) {
     const secCites: number[] = [];
-    const re = /\[(\d{1,3}(?:[,\-–]\s*\d{1,3})*)\]/g;
+    // RT10: separator class mirrors GLOBAL_CITE_RE (space admitted) so the
+    // structural counters agree with extractBodyCitations — otherwise
+    // buildAuditReport contradicts itself (orphan check sees {1,3} while
+    // sparse-section still counts 0 → false "no citations" findings).
+    const re = /\[(\d{1,3}(?:[,\-–\s]\s*\d{1,3})*)\]/g;
     let mm: RegExpExecArray | null;
     while ((mm = re.exec(sec.body))) {
       for (const n of expandCitationRange(mm[1])) {

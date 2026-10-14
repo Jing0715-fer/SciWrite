@@ -24,10 +24,22 @@
  * the flat list of numbers it denotes. Shared by every marker pass: the
  * renumber map, the OOR strip, the orphan remap, and the translate drift
  * check. Ranges are inclusive; non-numbers yield nothing.
+ *
+ * RT10 decision: space-separated markers ("[1 3]" — the GLOBAL_CITE_RE
+ * family admits a bare \s as separator) now expand FULLY instead of
+ * silently collapsing to their first number (parseInt("1 3") = 1). The
+ * split class therefore gains \s — but it is preceded by a dash-adjacent-
+ * space COLLAPSE, which is load-bearing for the LOCAL_CITE_RE paths
+ * (renumber / translate drift): that regex can produce an inner like
+ * "1- 3" (dash separator followed by its optional \s*), and a naive space
+ * split would cut the range into "1-"/"3" — parseInt("1-") = 1, silently
+ * turning [1,2,3] into [1,3]. Collapsing to "1-3" first keeps every LOCAL
+ * path's output byte-identical to the pre-RT10 behavior.
  */
 export function expandCitationNumbers(inner: string): number[] {
   return inner
-    .split(/[,;]\s*/)
+    .replace(/\s*([-–])\s*/g, "$1")
+    .split(/[,;\s]\s*/)
     .flatMap((s: string) => {
       const rm = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
       if (rm) {

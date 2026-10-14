@@ -87,7 +87,13 @@ function citedNumsOfSweep(sentence: string): number[] {
   let m: RegExpExecArray | null;
   CITE_NUM_RE_SWEEP.lastIndex = 0;
   while ((m = CITE_NUM_RE_SWEEP.exec(sentence)) !== null) {
-    for (const part of m[1].split(/[,;]\s*/)) {
+    // RT10: \s joins the split class — "[1 3]" contributes both numbers, so
+    // coverage can draw on the SECOND number's abstract too (this was the
+    // false-positive source: the second ref's abstract covered the value
+    // but the marker only admitted the first number). No dash-space
+    // collapse needed: CITE_NUM_RE_SWEEP's separator class has no trailing
+    // \s*, so a dash can never be followed by a space in its inners.
+    for (const part of m[1].split(/[,;\s]\s*/)) {
       const rm = part.match(/^(\d+)\s*[-–]\s*(\d+)$/);
       if (rm) {
         for (let n = parseInt(rm[1]); n <= parseInt(rm[2]); n++) nums.add(n);

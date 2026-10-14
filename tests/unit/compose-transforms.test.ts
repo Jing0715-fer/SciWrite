@@ -98,6 +98,16 @@ describe("renumberSectionContent", () => {
     const out = renumberSectionContent("X [1-3] y", refs, new Map(), []);
     expect(out.content).toBe("X [1,2,3] y");
   });
+
+  test("RT10: renumber path with LOCAL '1- 3' range is byte-identical to the comma expansion", () => {
+    // LOCAL_CITE_RE captures "1- 3" (dash separator + optional trailing
+    // \s*); the dash-adjacent-space collapse in expandCitationNumbers keeps
+    // this expanding to the full range — the naive space split would have
+    // turned [1,2,3] into [1,3].
+    const refs = [ref("1", "A"), ref("2", "B"), ref("3", "C")];
+    const out = renumberSectionContent("X [1- 3] y", refs, new Map(), []);
+    expect(out.content).toBe("X [1,2,3] y");
+  });
 });
 
 describe("stripOutOfRangeCitations", () => {
@@ -118,6 +128,20 @@ describe("stripOutOfRangeCitations", () => {
     expect(body).toBe("A [1,2] B [5-6] C");
     expect(stripped).toBe(0);
   });
+
+  test("RT10: OOR strip is honest about [1 3]'s second number (3 > max)", () => {
+    // The 3 in a space-separated marker is a REAL displayed citation — it
+    // must be stripped (and counted) exactly like a comma-separated one.
+    const { body, stripped } = stripOutOfRangeCitations("A [1 3] B", 2);
+    expect(body).toBe("A [1] B");
+    expect(stripped).toBe(1);
+  });
+
+  test("RT10: space-separated marker with all-valid numbers is untouched", () => {
+    const { body, stripped } = stripOutOfRangeCitations("A [2 3] B", 3);
+    expect(body).toBe("A [2 3] B");
+    expect(stripped).toBe(0);
+  });
 });
 
 describe("scanCitedNumbers / citationNumbersOf", () => {
@@ -129,14 +153,29 @@ describe("scanCitedNumbers / citationNumbersOf", () => {
     expect([...scanCitedNumbers("A [2-4]")].sort()).toEqual([2, 3, 4]);
   });
 
-  test("QUIRK (preserved): space-separated marker contributes only its first number", () => {
-    // "[1 3]" passes the GLOBAL_CITE_RE (the \s in the separator class lets
-    // the MARKER match), but the inner parser splits on commas/semicolons
-    // only — parseInt("1 3") is 1 (leading-digit semantics), so the marker
-    // contributes 1 and silently drops 3. Faithful to the route's original
-    // citedInBody scan; documented so a future "fix" consciously decides
-    // whether [1 3] markers should expand fully.
-    expect([...scanCitedNumbers("A [1 3] B [2]")].sort()).toEqual([1, 2]);
+  test("space-separated markers expand fully (RT10 decision)", () => {
+    // "[1 3]" passes GLOBAL_CITE_RE (the \s in the separator class lets the
+    // MARKER match). RT10: the inner parser's split class now admits \s too,
+    // so the marker contributes BOTH numbers — the old parseInt("1 3") = 1
+    // leading-digit silently dropped every number after a space separator
+    // (orphan filter, OOR strip and cited scan all under-counted).
+    expect([...scanCitedNumbers("A [1 3] B [2]").values()].sort()).toEqual([1, 2, 3]);
+  });
+
+  test("RT10: multi-space and mixed separators expand fully", () => {
+    expect(expandCitationNumbers("1  3")).toEqual([1, 3]);
+    expect(expandCitationNumbers("1 3-5")).toEqual([1, 3, 4, 5]);
+    expect(expandCitationNumbers("2, 4 6")).toEqual([2, 4, 6]);
+  });
+
+  test("RT10: dash-adjacent spaces collapse BEFORE the space split (LOCAL '1- 3' range pinned)", () => {
+    // LOCAL_CITE_RE (renumber / translate-drift) can capture an inner with a
+    // space after the dash ("1- 3"). A naive space split cuts the range into
+    // "1-"/"3" — parseInt("1-") = 1 turns [1,2,3] into [1,3]. The collapse
+    // keeps every LOCAL path byte-identical to the pre-RT10 behavior.
+    expect(expandCitationNumbers("1- 3")).toEqual([1, 2, 3]);
+    expect(expandCitationNumbers("1 – 3")).toEqual([1, 2, 3]);
+    expect(expandCitationNumbers("2 –4")).toEqual([2, 3, 4]);
   });
 
   test("citationNumbersOf (local form) ignores space-separated markers", () => {
@@ -173,6 +212,28 @@ describe("filterOrphanedReferences", () => {
     const { body, keptRefs } = filterOrphanedReferences("X [2] Y", refs);
     expect(keptRefs).toHaveLength(1);
     expect(body).toBe("X [1] Y");
+  });
+
+  test("RT10: ref cited only via the SECOND number of [1 3] survives; remap canonicalizes to comma form", () => {
+    // body cites {1,3} — ref 2 ("Two") orphans away. Pre-RT10 the marker
+    // contributed only 1, so "Three" was wrongly orphaned too. The remap
+    // pass rewrites the marker in its canonical comma form [1,2].
+    const { body, keptRefs, refNumberMap } = filterOrphanedReferences("X [1 3] Y", refs);
+    expect(keptRefs).toHaveLength(2);
+    expect(keptRefs[0].title).toBe("One");
+    expect(keptRefs[1].title).toBe("Three");
+    expect(body).toBe("X [1,2] Y");
+    expect(refNumberMap.get(3)).toBe(2);
+  });
+
+  test("RT10: full-citation passthrough — all refs cited via space markers leave the body untouched", () => {
+    // [1 3 2] covers the whole pool: the filter keeps every ref and skips
+    // the remap pass entirely, so the space-separated marker is preserved
+    // byte-for-byte (renormalization only happens when something is
+    // actually orphaned).
+    const { body, keptRefs } = filterOrphanedReferences("X [1 3 2] Y", refs);
+    expect(keptRefs).toHaveLength(3);
+    expect(body).toBe("X [1 3 2] Y");
   });
 });
 

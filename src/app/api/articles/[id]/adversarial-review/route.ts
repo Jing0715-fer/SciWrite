@@ -1,16 +1,17 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { chatWithSession } from "@/lib/llm-session";
-import { safeParseJSON } from "@/lib/generate-full-helpers";
 import { VERIFY_BATCH_SIZE, VERIFY_REMOVE_CONFIDENCE } from "@/lib/v2-config";
 import {
-  extractBodyCitations,
   splitBodyAndReferences,
   parseReferenceList,
   buildAuditReport,
 } from "@/lib/citation-audit";
 import { removeCitationsAndRenumber } from "@/lib/citation-binding";
 import { countWords } from "@/lib/writing";
+import {
+  adversarialVerifyWithRouteRetry,
+  type VerifyBatchDone,
+} from "@/lib/adversarial-verify";
 
 
 export const runtime = "nodejs";
@@ -29,6 +30,23 @@ export const maxDuration = 600;
  *   PARTIAL     — topically related but does not clearly cover the claim
  *   UNSUPPORTED — reference is about something else (miscitation)
  *
+ * RT10 (re-landed as RT17-3c after the 2026-10-14 sandbox reset): the
+ * reviewer machinery itself — sentence selection, the stricter reviewer
+ * prompt (CITATION-TYPE MISMATCH→PARTIAL, NUMERIC CLAIMS tracing), the
+ * verdict/reason contradiction guard, batching and retry ladders — now
+ * lives ONLY in @/lib/adversarial-verify (the v2 pipeline's STEP 7
+ * verifier). This route used to carry a 386-line sibling copy of all of
+ * that; it now builds the projected reference array and delegates. The
+ * unified behaviors (numeric-first sentence selection, stricter prompt,
+ * honest unverified counts) are the lib's.
+ *
+ * Rate-limit semantics (also RT10): the route's historical 2-attempts /
+ * 15s-cooldown / skip ladder is mapped onto the lib's PROPAGATE contract by
+ * adversarialVerifyWithRouteRetry — and the skip is now HONEST: a run killed
+ * twice by rate limiting returns an explicit { skipped, reason, message }
+ * report with zero counts and the real deterministic audit (and still writes
+ * the audit-trail row), instead of the old empty-results fake success.
+ *
  * With autoFix=true (default), citations judged UNSUPPORTED with confidence
  * ≥ 80 are surgically removed, the body is renumbered, uncited references
  * are dropped, and the article + paragraph references are updated. A
@@ -37,9 +55,8 @@ export const maxDuration = 600;
  * GET returns the latest adversarial review report for the article.
  */
 
-// RT8: batch size + removal threshold now come from the shared v2-config
-// (this standalone route was the last VERIFY_BATCH_SIZE=10 holdout while
-// the in-pipeline verifier runs 20 — one tuning source of truth).
+// RT8: batch size + removal threshold come from the shared v2-config (one
+// tuning source of truth — this route and the in-pipeline verifier agree).
 const BATCH_SIZE = VERIFY_BATCH_SIZE;
 
 export async function GET(
@@ -68,28 +85,6 @@ export async function GET(
   }
 }
 
-/**
- * Contradiction guard: an LLM adjudicator sometimes emits verdict=UNSUPPORTED
- * while its own reason explicitly says the reference covers the claim
- * (e.g. "Reference explicitly defines off-target effects as …" — observed
- * in E2E testing as the dominant false-positive mode). When the reason
- * indicates support, downgrade the verdict to PARTIAL so the citation is
- * flagged for human review instead of being surgically removed.
- */
-function guardVerdictConsistency(reason: string, verdict: string): string {
-  if (verdict !== "UNSUPPORTED") return verdict;
-  const supportPhrases = [
-    /explicitly (?:describes|defines|states|discusses|mentions|reports|shows|demonstrates)/i,
-    /directly matches/i,
-    /title directly matches/i,
-    /(?:directly|closely) (?:relates|aligns|correspond)s?/i,
-  ];
-  for (const re of supportPhrases) {
-    if (re.test(reason)) return "PARTIAL";
-  }
-  return verdict;
-}
-
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -116,7 +111,9 @@ export async function POST(
 
   const projectId = article.projectId;
 
-  // ---- Parse the article: body + ## References ----
+  // ---- Build the projected 1-indexed refs array for the verifier ----
+  // (DB 6-field projection ∪ parsed ## References entries: the DB rows carry
+  // abstracts, the parsed list covers numbers the paragraphs don't.)
   const { body, referencesText } = splitBodyAndReferences(article.content);
   const parsedRefs = parseReferenceList(referencesText);
   const refEntries = Array.from(parsedRefs.entries())
@@ -157,153 +154,131 @@ export async function POST(
     }
   }
 
-  // ---- Collect (sentence, citation) pairs ----
-  const citations = extractBodyCitations(body).filter(
-    (c) => c.n >= 1 && c.n <= Math.max(refEntries.length, dbRefByNum.size)
-  );
-  const byRef = new Map<number, { n: number; sentence: string }[]>();
-  for (const c of citations) {
-    const arr = byRef.get(c.n) || [];
-    if (arr.length < 2) arr.push({ n: c.n, sentence: c.sentence });
-    byRef.set(c.n, arr);
+  const totalRefs = Math.max(refEntries.length, dbRefByNum.size);
+  const refs: any[] = [];
+  for (let n = 1; n <= totalRefs; n++) {
+    const parsed = (parsedRefs.get(n) || {}) as Partial<{
+      title: string;
+      authors: string;
+      journal: string;
+      year: string;
+    }>;
+    const dbRef = dbRefByNum.get(n) as any;
+    refs.push({
+      title: dbRef?.title || parsed.title || "Untitled",
+      authors: dbRef?.authors || parsed.authors || "Anon",
+      journal: dbRef?.journal || parsed.journal || "",
+      year: dbRef?.year || parsed.year || "",
+      abstract: dbRef?.abstract || "",
+    });
   }
-  const checks: { n: number; sentence: string }[] = [];
-  for (const arr of byRef.values()) checks.push(...arr);
 
-  // ---- Run the hostile reviewer ----
-  const system = `You are a rigorous peer reviewer auditing citation accuracy in a scientific review article.
-For each CHECK you receive a claim sentence from the article and the metadata of the reference it cites.
-Decide whether that specific reference actually supports the specific claim.
-
-Be rigorous BUT FAIR:
-- UNSUPPORTED only when the reference is genuinely about a DIFFERENT subject than the claim
-  (different protein/method/organism/topic), or the claim asserts specifics that clearly
-  contradict or are absent from the reference's subject matter.
-- Topical match is enough for SUPPORTED: if the reference's title/abstract covers the SAME
-  subject as the claim (e.g. an off-target-effects review cited for a sentence about
-  off-target effects), verdict SUPPORTED even if the wording differs or the sentence adds
-  hyperbole ("unprecedented", "significant progress").
-- PARTIAL when the reference covers the topic but the sentence asserts a very specific
-  statistic or mechanism detail you cannot find in the reference.
-- Do NOT verdict UNSUPPORTED while your own reason says the reference "explicitly
-  describes/defines/states" the claim — that is a contradiction. If the reference covers
-  the claim, it is SUPPORTED. Be consistent between your verdict and your reason.
-
-Respond as STRICT JSON only:
-{"checks":[{"id":1,"verdict":"SUPPORTED|UNSUPPORTED|PARTIAL","confidence":0,"reason":"one line"}]}
-confidence is 0-100. Output JSON only.`;
-
-  const results: {
-    n: number;
-    sentence: string;
-    verdict: string;
-    confidence: number;
-    reason: string;
-  }[] = [];
-
-  for (let b = 0; b < checks.length; b += BATCH_SIZE) {
-    const batch = checks.slice(b, b + BATCH_SIZE);
-    const block = batch
-      .map((c, i) => {
-        const parsed = (parsedRefs.get(c.n) || {}) as Partial<{
-          title: string;
-          authors: string;
-          journal: string;
-          year: string;
-        }>;
-        const dbRef = dbRefByNum.get(c.n) as any;
-        const ref = {
-          title: dbRef?.title || parsed.title || "Untitled",
-          authors: dbRef?.authors || parsed.authors || "Anon",
-          journal: dbRef?.journal || parsed.journal || "",
-          year: dbRef?.year || parsed.year || "",
-          abstract: dbRef?.abstract || "",
-        };
-        const yr = ref.year ? ` (${ref.year})` : "";
-        const jour = ref.journal ? `, ${ref.journal}` : "";
-        const abs = ref.abstract
-          ? `\n  Abstract: ${ref.abstract.slice(0, 600)}`
-          : parsed.title
-            ? `\n  (no abstract — judge by title: ${parsed.title.slice(0, 200)})`
-            : "\n  (no metadata)";
-        return `[CHECK ${i + 1}] (cited as [${c.n}])\n  Claim sentence: "${c.sentence.slice(0, 400)}"\n  Reference: ${ref.authors}${yr}${jour}. ${ref.title}.${abs}`;
-      })
-      .join("\n\n");
-
-    try {
-      // Retry a failed batch once after a cool-down — transient 429s were
-      // silently producing empty results during the E2E runs.
-      let raw: string | null = null;
-      for (let attempt = 0; attempt < 2 && !raw; attempt++) {
-        try {
-          raw = await chatWithSession(projectId, `CHECKS:\n${block}\n\nAdjudicate every check. STRICT JSON only.`, {
-            system,
-            temperature: 0.1,
-            taskType: "adversarial-review",
-            metadata: { step: "adversarial-review", batch: Math.floor(b / BATCH_SIZE) + 1 },
-          });
-        } catch (err: any) {
-          if (attempt === 0) {
-            // One retry after a cool-down; aborts auto-expire now, so no
-            // clearAbort() (which would erase sibling runs' abort flags).
-            await new Promise((r) => setTimeout(r, 15000));
-          } else {
-            console.warn("[adversarial-review] batch failed:", err?.message?.slice(0, 120));
-          }
-        }
-      }
-      if (!raw) continue;
-      const parsed = safeParseJSON(raw, { checks: [] });
-      for (const c of parsed.checks || []) {
-        const cid = parseInt(String(c.id), 10);
-        if (isNaN(cid) || cid < 1 || cid > batch.length) continue;
-        let verdict = String(c.verdict || "").toUpperCase();
-        if (!["SUPPORTED", "UNSUPPORTED", "PARTIAL"].includes(verdict)) continue;
-        const reason = String(c.reason || "").slice(0, 240);
-        verdict = guardVerdictConsistency(reason, verdict);
-        results.push({
-          n: batch[cid - 1].n,
-          sentence: batch[cid - 1].sentence,
-          verdict,
-          confidence: Math.max(0, Math.min(100, parseInt(String(c.confidence ?? 50), 10) || 50)),
-          reason,
-        });
-      }
-    } catch {}
-    // RT8 (memory ceiling): per-batch GC hint + RSS watermark — mirrors the
-    // v2 pipeline's round-cs-4 block. The re-review runs right after a full
-    // generation on the same ratcheted dev heap; surfacing the watermark per
-    // batch makes the next incident diagnosable from the server log instead
-    // of a silent container kill.
+  // ---- Run the (single) hostile reviewer with the route retry ladder ----
+  // RT8 (memory ceiling): per-batch GC hint + RSS watermark — mirrors the
+  // v2 pipeline's round-cs-4 block. The re-review runs right after a full
+  // generation on the same ratcheted dev heap; surfacing the watermark per
+  // batch makes the next incident diagnosable from the server log instead
+  // of a silent container kill. (Pre-RT10 the route logged "n/total"; the
+  // lib owns sentence selection now, so only the ordinal survives.)
+  const onBatchDone = (info: VerifyBatchDone) => {
     if (typeof (globalThis as any).gc === "function") {
       try { (globalThis as any).gc(); } catch {}
     }
     const rssMb = Math.round(process.memoryUsage().rss / 1048576);
     console.log(
-      `[adversarial-review] batch ${Math.floor(b / BATCH_SIZE) + 1}/${Math.ceil(checks.length / BATCH_SIZE)} done [mem ${rssMb}MB]`,
+      `[adversarial-review] batch ${info.batchIndex} done [mem ${rssMb}MB]`,
     );
-    await new Promise((r) => setTimeout(r, 1200));
+  };
+
+  const outcome = await adversarialVerifyWithRouteRetry(
+    projectId,
+    article.content,
+    refs,
+    {
+      batchSize: BATCH_SIZE,
+      removeVerdict: "UNSUPPORTED",
+      removeConfidence: VERIFY_REMOVE_CONFIDENCE,
+      taskType: "adversarial-review",
+      onBatchDone,
+    },
+  );
+
+  // ---- Persist the report for the audit trail (both paths) ----
+  const persistReport = async (
+    report: Record<string, any>,
+    issueCount: number,
+    bodyUpdated: boolean,
+  ) => {
+    try {
+      await db.citationAuditReport.create({
+        data: {
+          paragraphId: article.id, // article-scoped report (no FK on this column)
+          projectId,
+          trigger: `adversarial:${article.id}`,
+          checkedCount: report.checked,
+          issueCount,
+          fixedCount: report.removed,
+          bodyUpdated,
+          reportJson: JSON.stringify(report),
+        },
+      });
+    } catch {}
+  };
+
+  // ---- Honest rate-skip report (RT10) ----
+  // The pre-dedup route swallowed a double-429 into an empty results array —
+  // a fake all-clean report. Now the skip is explicit: zero counts + the
+  // REAL deterministic audit + skipped/reason/message, and an audit row so
+  // the trail shows the attempt happened.
+  if (outcome.rateSkipped) {
+    const audit = buildAuditReport(article.content, []);
+    const report = {
+      articleId: article.id,
+      skipped: true,
+      reason: outcome.reason,
+      message: outcome.message,
+      checked: 0,
+      supported: 0,
+      partial: 0,
+      unsupported: 0,
+      removed: 0,
+      removedCitations: [] as any[],
+      flagged: [] as any[],
+      unverified: 0,
+      llmCalls: 0,
+      audit: {
+        blockingErrors: audit.summary.blockingErrors,
+        topicalityWarnings: audit.summary.suspect + audit.summary.unsupported,
+        orphans: audit.summary.orphan,
+      },
+      refCountBefore: refEntries.length,
+      refCountAfter: refEntries.length,
+      autoFix,
+    };
+    await persistReport(report, 0, false);
+    return Response.json({ report });
   }
 
-  const supported = results.filter((r) => r.verdict === "SUPPORTED").length;
-  const partial = results.filter((r) => r.verdict === "PARTIAL").length;
-  const unsupported = results.filter((r) => r.verdict === "UNSUPPORTED").length;
-  const toRemove = [
-    ...new Set(
-      results
-        .filter((r) => r.verdict === "UNSUPPORTED" && r.confidence >= VERIFY_REMOVE_CONFIDENCE)
-        .map((r) => r.n)
-    ),
-  ];
+  const result = outcome.result!;
+
+  const unsupportedCount =
+    result.removals.length + result.flagged.filter((r) => r.verdict === "UNSUPPORTED").length;
+  const partialCount = result.flagged.filter((r) => r.verdict === "PARTIAL").length;
+  // checked (successfully adjudicated checks) minus the removals and flags
+  // the verifier surfaced; unverified batches are already excluded from
+  // `checked` and reported separately below.
+  const supportedCount = Math.max(0, result.checked - unsupportedCount - partialCount);
+
+  const toRemove = new Set(result.removedNums);
 
   let updatedContent = article.content;
   let removedCount = 0;
   let refCountAfter = refEntries.length;
 
-  if (autoFix && toRemove.length > 0) {
+  if (autoFix && toRemove.size > 0) {
     // Surgical removal + renumber over the BODY only, then rebuild references
-    const removal = removeCitationsAndRenumber(body, refEntries, new Set(toRemove));
-    removedCount = toRemove.length;
+    const removal = removeCitationsAndRenumber(body, refEntries, toRemove);
+    removedCount = toRemove.size;
 
     // Rebuild the reference list from surviving refs
     const survivingRefs = removal.refs;
@@ -342,20 +317,27 @@ confidence is 0-100. Output JSON only.`;
 
   const report = {
     articleId: article.id,
-    checked: results.length,
-    supported,
-    partial,
-    unsupported,
+    checked: result.checked,
+    supported: supportedCount,
+    partial: partialCount,
+    unsupported: unsupportedCount,
     removed: removedCount,
-    removedCitations: results.filter((r) => toRemove.includes(r.n)).map((r) => ({
+    removedCitations: result.removals.map((r) => ({
       n: r.n,
       reason: r.reason,
       confidence: r.confidence,
       sentence: r.sentence.slice(0, 200),
     })),
-    flagged: results
-      .filter((r) => r.verdict !== "SUPPORTED" && !toRemove.includes(r.n))
-      .map((r) => ({ n: r.n, verdict: r.verdict, confidence: r.confidence, reason: r.reason })),
+    flagged: result.flagged.map((r) => ({
+      n: r.n,
+      verdict: r.verdict,
+      confidence: r.confidence,
+      reason: r.reason,
+    })),
+    // RT10 honest-report fields: checks saved unverified after a failed
+    // retry, and the raw LLM call count (incl. retry calls).
+    unverified: result.unverifiedChecks,
+    llmCalls: result.llmCalls,
     audit: {
       blockingErrors: audit.summary.blockingErrors,
       topicalityWarnings: audit.summary.suspect + audit.summary.unsupported,
@@ -366,21 +348,7 @@ confidence is 0-100. Output JSON only.`;
     autoFix,
   };
 
-  // Persist the report for the audit trail
-  try {
-    await db.citationAuditReport.create({
-      data: {
-        paragraphId: article.id, // article-scoped report (no FK on this column)
-        projectId,
-        trigger: `adversarial:${article.id}`,
-        checkedCount: report.checked,
-        issueCount: report.unsupported + report.partial,
-        fixedCount: report.removed,
-        bodyUpdated: removedCount > 0,
-        reportJson: JSON.stringify(report),
-      },
-    });
-  } catch {}
+  await persistReport(report, unsupportedCount + partialCount, removedCount > 0);
 
   return Response.json({ report });
 }

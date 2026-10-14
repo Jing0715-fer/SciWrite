@@ -602,7 +602,12 @@ const CITE_MARKER_RE = /\[(\d+(?:[,\-–\s]\d+)*)\]/g;
 /** Expand the inner text of one citation marker into its numbers. */
 function expandCitationInner(inner: string): number[] {
   return inner
-    .split(/[,;]\s*/)
+    // RT10: \s joins the split class so a GLOBAL-form "[1 3]" marker
+    // contributes BOTH numbers (distinctCitations / renormalize / revision
+    // guard all ride this). No dash-space collapse needed: CITE_MARKER_RE's
+    // separator class ([,\-–\s], no trailing \s*) can never capture a space
+    // after a dash, so a naive space split cannot cut a range in half here.
+    .split(/[,;\s]\s*/)
     .flatMap((s: string) => {
       const rm = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
       if (rm) {

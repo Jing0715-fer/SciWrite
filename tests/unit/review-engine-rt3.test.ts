@@ -13,12 +13,19 @@
  *  repairRoundSnapshotOf: snapshots overall/hard/contradicted/fixable from
  *    a ReviewCoreResult-shaped object, with hedged UNVERIFIABLEs excluded
  *    from the hard count (matching actionableFindings).
+ *  RT10 ([1 3] decision): distinctCitations and renormalizeArticleCitations
+ *    are GLOBAL_CITE_RE-family cited-set views — space-separated markers
+ *    now expand fully (both numbers), the survivor/drop decisions and the
+ *    OOR strip are honest about the second number, and the remap pass
+ *    canonicalizes [1 3] to its comma form.
  */
 import { test, expect, describe } from "bun:test";
 import {
   actionableFindings,
   shouldStopForConvergence,
   repairRoundSnapshotOf,
+  distinctCitations,
+  renormalizeArticleCitations,
 } from "@/lib/review-engine";
 import type { ReviewCoreResult } from "@/lib/review-engine";
 
@@ -205,5 +212,66 @@ describe("repairRoundSnapshotOf", () => {
     expect(s.hardCount).toBe(0);
     expect(s.contradictedCount).toBe(0);
     expect(s.overall).toBe(7);
+  });
+});
+
+describe("distinctCitations / renormalizeArticleCitations (RT10 [1 3] expansion)", () => {
+  /**
+   * RT10: CITE_MARKER_RE is a GLOBAL_CITE_RE-family regex (bare \s is a
+   * legal separator), and expandCitationInner's split class now admits \s
+   * — so "[1 3]" contributes BOTH numbers to the distinct-citation set and
+   * to renormalize's survivor/drop decisions. No dash-space collapse is
+   * needed here (unlike the LOCAL regexes): this family's separator class
+   * has no trailing \s*, so a dash can never be followed by a space in a
+   * captured inner — pinned by the "dash-space marker is invisible" test.
+   */
+  test("a [1 3] marker contributes both numbers to the distinct set", () => {
+    expect([...distinctCitations("A [1 3] B [2].", 3)].sort()).toEqual([1, 2, 3]);
+  });
+
+  test("mixed forms expand; out-of-range numbers stay filtered (honest set)", () => {
+    expect([...distinctCitations("A [1 3 5] B [2,4].", 4)].sort()).toEqual([1, 2, 3, 4]);
+    expect([...distinctCitations("A [1 3 5].", 3)].sort()).toEqual([1, 3]);
+  });
+
+  test("dash-space marker is INVISIBLE to this family — the no-collapse rationale pinned", () => {
+    // CITE_MARKER_RE cannot capture "1- 3" (no \s* after the separator
+    // class), which is why expandCitationInner's naive space split is safe
+    // here without the dash collapse the LOCAL regexes require.
+    expect([...distinctCitations("A [1- 3] B [2].", 3)].sort()).toEqual([2]);
+  });
+
+  test("renormalize keeps a ref cited ONLY via the second number of [1 3]; remap canonicalizes to comma form", () => {
+    const content =
+      "The pathway proceeds [1 3].\n\n## References\n\n" +
+      "[1] Alpha authors (2020), Nature. Alpha study.\n\n" +
+      "[2] Beta authors (2021), Cell. Beta study.\n\n" +
+      "[3] Gamma authors (2022), Science. Gamma study.";
+    const r = renormalizeArticleCitations(content);
+    // ref 2 is the only orphan; pre-RT10 "Three" was wrongly orphaned too
+    expect(r.droppedRefs).toBe(1);
+    expect(r.refCount).toBe(2);
+    expect(r.renumbered).toBe(true);
+    expect(r.oldToNew.get(3)).toBe(2);
+    expect(r.content).toContain("The pathway proceeds [1,2].");
+    expect(r.content).toContain("[1] Alpha authors (2020), Nature. Alpha study.");
+    expect(r.content).toContain("[2] Gamma authors (2022), Science. Gamma study.");
+    expect(r.content).not.toContain("Beta authors");
+  });
+
+  test("renormalize honestly strips the second number of [1 5] when it exceeds the pool", () => {
+    const content =
+      "First claim [1]. Second claim [2]. Third claim [3]. Mixed claim [1 5].\n\n## References\n\n" +
+      "[1] A (2020), J. Study a.\n\n" +
+      "[2] B (2021), J. Study b.\n\n" +
+      "[3] C (2022), J. Study c.";
+    const r = renormalizeArticleCitations(content);
+    // every ref is still cited after the strip → no orphan drop, no renumber
+    expect(r.strippedNumbers).toBe(1);
+    expect(r.droppedRefs).toBe(0);
+    expect(r.renumbered).toBe(false);
+    expect(r.refCount).toBe(3);
+    expect(r.content).toContain("Mixed claim [1].");
+    expect(r.content).toContain("[3] C (2022), J. Study c.");
   });
 });

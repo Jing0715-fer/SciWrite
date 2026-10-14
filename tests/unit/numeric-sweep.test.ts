@@ -127,4 +127,42 @@ describe("sweepNumericClaims", () => {
     expect(w).toContain("7.3 nm");
     expect(w).toContain("cites [1]");
   });
+
+  test("RT10: space-separated marker is flagged with BOTH cited numbers", () => {
+    // "[1 2]" is a GLOBAL_CITE_RE-family marker (bare \s separator); the
+    // sweep previously admitted only parseInt("1 2") = 1, so the finding
+    // under-reported what the sentence actually cites.
+    const r = sweepNumericClaims("The conductance reaches 99.9 pS in vivo [1 2].", refs);
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0].citedNums).toEqual([1, 2]);
+    expect(r.findings[0].searchedRefs).toEqual([1, 2]);
+  });
+
+  test("RT10: false-positive inversion — the SECOND number's abstract covers the value", () => {
+    // Pre-RT10 this exact shape flagged a bogus gap: the marker contributed
+    // only the FIRST number, the sweep cross-checked "5.5" against ref 1's
+    // abstract (which lacks it) and never consulted ref 2 (which has it).
+    // With both numbers admitted, the coverage draws on any cited abstract
+    // — the multi-ref contract, now honest for space-separated markers.
+    const refs2 = new Map<number, { title: string; abstract: string }>([
+      [1, {
+        title: "A",
+        abstract: LONG("Electrophysiological recordings revealed a conductance of 76.3 pS under saturating ligand conditions across independent preparations"),
+      }],
+      [2, {
+        title: "B",
+        abstract: LONG("Cryo-EM reconstruction of the pore architecture established an internal diameter of 5.5 nm at the constriction with side portals"),
+      }],
+    ]);
+    const r = sweepNumericClaims("The pore diameter is 5.5 nm [1 2].", refs2);
+    expect(r.findings).toHaveLength(0);
+    expect(r.sentencesExamined).toBe(1);
+    expect(r.covered).toBe(1);
+  });
+
+  test("RT10: weakness line carries both cited numbers from a space-separated marker", () => {
+    const r = sweepNumericClaims("The conductance reaches 99.9 pS in vivo [1 2].", refs);
+    const w = numericFindingToWeakness(r.findings[0]);
+    expect(w).toContain("cites [1,2]");
+  });
 });
